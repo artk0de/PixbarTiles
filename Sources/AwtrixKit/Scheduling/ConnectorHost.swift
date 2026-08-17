@@ -31,8 +31,9 @@ public enum RunResult: Sendable, Equatable {
     case delivered
     /// The user switched this connector off.
     case skipped
-    /// Called off before it delivered. Not a failure — nobody is waiting for
-    /// the result any more, and a feed outage is a different thing entirely.
+    /// Called off. Not a failure — nobody is waiting for the result any more,
+    /// and a feed outage is a different thing entirely. Anything already put on
+    /// the clock was taken back down first.
     case cancelled
     case failed(String)
 }
@@ -89,6 +90,20 @@ public actor ConnectorHost {
     /// minute long, and making the banner wait behind it is the trade the queue
     /// exists to avoid.
     public func runOnce(connectorId: String) async -> RunResult {
+        // Answered before a place in the chain is claimed. Neither a registry
+        // lookup nor a settings read touches the device, so serialising them
+        // buys nothing — and behind the chain a "run now" on a switched-off
+        // connector, or a typo in an id, would sit through the whole of a
+        // playing anecdote before answering "it's off".
+        //
+        // Enablement is therefore read when the run is asked for, not when it
+        // reaches the front of the queue: a connector switched off while an
+        // anecdote is still playing does not retract a run already queued.
+        guard let connector = registry.connector(id: connectorId) else {
+            return .failed("unknown connector \(connectorId)")
+        }
+        guard store.settings(for: connectorId).isEnabled else { return .skipped }
+
         let predecessor = tail
         let work = Task { [self] () -> RunResult in
             await predecessor?.value
@@ -96,7 +111,7 @@ public actor ConnectorHost {
             // `predecessor?.value`, so without this a run cancelled while
             // queued goes on to put a banner up that nobody is waiting for.
             if Task.isCancelled { return .cancelled }
-            return await deliver(connectorId: connectorId)
+            return await deliver(connector)
         }
         tail = Task { _ = await work.value }
 
@@ -128,17 +143,14 @@ public actor ConnectorHost {
         do {
             try await maintaining.maintain()
             return .completed
+        } catch is CancellationError {
+            return .cancelled
         } catch {
-            return Self.isCancellation(error) ? .cancelled : .failed(String(describing: error))
+            return .failed(String(describing: error))
         }
     }
 
-    private func deliver(connectorId: String) async -> RunResult {
-        guard let connector = registry.connector(id: connectorId) else {
-            return .failed("unknown connector \(connectorId)")
-        }
-        guard store.settings(for: connectorId).isEnabled else { return .skipped }
-
+    private func deliver(_ connector: any Connector) async -> RunResult {
         do {
             let output = try await connector.produce()
             var iconName: String?
@@ -173,22 +185,33 @@ public actor ConnectorHost {
                 await audio.play(output.localAudio)
                 // The banner was held so it would last exactly as long as the
                 // speech; nothing else knows when that is.
-                if holding { try await device.dismissNotification() }
+                if holding { try await releaseBanner() }
             }
+            // Reached only when nothing threw, so this cannot turn a fault into
+            // a cancellation — it says the caller stopped waiting, after the
+            // banner was already taken down above.
+            if Task.isCancelled { return .cancelled }
             return .delivered
+        } catch is CancellationError {
+            return .cancelled
         } catch {
-            return Self.isCancellation(error) ? .cancelled : .failed(String(describing: error))
+            return .failed(String(describing: error))
         }
     }
 
-    /// Whether the run was called off rather than broken.
+    /// Takes the held banner down.
     ///
-    /// The thrown `CancellationError` is the ordinary case — a refill queued
-    /// behind a running batch throws it. `Task.isCancelled` catches the rest:
-    /// a cancelled `URLSession` request surfaces as `URLError(.cancelled)`, and
-    /// reporting that as a device fault would put an outage in front of the
-    /// user for something they asked to stop.
-    private static func isCancellation(_ error: any Error) -> Bool {
-        error is CancellationError || Task.isCancelled
+    /// `hold: true` is a promise the device keeps until something dismisses it,
+    /// so the release must not ride a task that can be torn down. App quit
+    /// cancelling the timer is the ordinary way that happens, and a dismiss
+    /// sent on the cancelled task never leaves the Mac — leaving the clock on
+    /// that banner until somebody walks over and presses the middle button.
+    ///
+    /// An unstructured task inherits no cancellation, and awaiting one is not
+    /// interrupted by cancellation either, so the dismiss both goes out and is
+    /// still reported when the device rejects it.
+    private func releaseBanner() async throws {
+        let release = Task { try await self.device.dismissNotification() }
+        try await release.value
     }
 }

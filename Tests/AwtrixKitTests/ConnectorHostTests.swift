@@ -24,10 +24,14 @@ private struct BoomError: Error {}
 /// Records what it was asked to play, and what the device had already been told
 /// at the moment it was asked.
 ///
-/// Lock-guarded like every other double in this suite. The host serialises runs
-/// through an unstructured task, so `play` is entered from a task the test does
-/// not own, and a double that loses an append would turn an ordering assertion
-/// into an assertion about nothing.
+/// Lock-guarded because `@unchecked Sendable` turns the compiler's checking off
+/// and this instance is handed to an actor, which enters `play` from a task the
+/// test does not own. No test here drives two `play` calls at once, so the lock
+/// is not what makes any current assertion sound — every read is ordered after
+/// its write by an `await`. It is the repo's standing rule for these doubles:
+/// the happens-before edge is a property of how the tests are written today,
+/// and relying on it means the next test that stops awaiting introduces a race
+/// with nothing to catch it.
 private final class SpyAudio: AudioPlaying, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [[SpokenClip]] = []
@@ -103,6 +107,25 @@ private struct StubIconInstaller: IconInstalling {
 private struct FailingIconInstaller: IconInstalling {
     let error: any Error
     func ensureInstalled(_ ref: IconReference) async throws -> String { throw error }
+}
+
+/// Fails the way `URLSession` does when the surrounding task has been
+/// cancelled, so a run can be torn down mid-delivery the way app quit tears one
+/// down. A request that is not cancelled succeeds and is recorded.
+private final class CancellationAwareTransport: Transport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [URLRequest] = []
+
+    var requests: [URLRequest] { lock.withLock { recorded } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if Task.isCancelled { throw URLError(.cancelled) }
+        lock.withLock { recorded.append(request) }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+        )!
+        return (Data("OK".utf8), response)
+    }
 }
 
 /// Serves a server error for one endpoint and success for every other, so a
@@ -191,8 +214,33 @@ private func makeHost(
     )
 }
 
-private func paths(_ transport: RecordingTransport) -> [String] {
+/// Every transport double here records; this is how a test reads what reached
+/// the device without caring which double it is holding.
+private protocol RequestRecording {
+    var requests: [URLRequest] { get }
+}
+
+extension RecordingTransport: RequestRecording {}
+extension PathFailingTransport: RequestRecording {}
+extension CancellationAwareTransport: RequestRecording {}
+
+private func paths(_ transport: any RequestRecording) -> [String] {
     transport.requests.compactMap { $0.url?.path }
+}
+
+/// A result the probing task can publish before anyone awaits it.
+///
+/// Polled rather than awaited on purpose: what is under test is whether the
+/// answer arrives BEFORE the delivery ahead of it finishes, and awaiting the
+/// task would simply wait for it and prove nothing. This one genuinely needs
+/// its lock — the write happens on the probe's task and the read on the test's,
+/// with no `await` ordering them.
+private final class ResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: RunResult?
+
+    var value: RunResult? { lock.withLock { stored } }
+    func record(_ result: RunResult) { lock.withLock { stored = result } }
 }
 
 private func jsonBody(_ request: URLRequest) -> [String: Any] {
@@ -205,11 +253,32 @@ private func clip(_ path: String = "/tmp/a.wav") -> SpokenClip {
 
 /// Polls rather than sleeps a fixed span, so a fast machine is not made to wait
 /// and a slow one is not made to flake.
+///
+/// For a condition that must NOT come true, use `staysFalse(for:_:)` — this one
+/// times out silently, which is the wrong shape for an assertion and makes the
+/// passing case pay the whole budget.
 private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
     for _ in 0..<500 {
         if condition() { return }
         try await Task.sleep(nanoseconds: 1_000_000)
     }
+}
+
+/// Answers whether a condition stayed false for the whole window.
+///
+/// The inverse of `waitUntil`, and worth its own name: the passing case here is
+/// the one that runs to the deadline, so the budget is small and the result is
+/// handed back to be asserted rather than swallowed by a silent timeout.
+private func staysFalse(
+    for duration: Duration = .milliseconds(100),
+    _ condition: @Sendable () -> Bool
+) async throws -> Bool {
+    let deadline = ContinuousClock.now + duration
+    while ContinuousClock.now < deadline {
+        if condition() { return false }
+        try await Task.sleep(nanoseconds: 1_000_000)
+    }
+    return true
 }
 
 // MARK: - Delivery
@@ -487,8 +556,9 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
     let second = Task { await host.runOnce(connectorId: "stub") }
     // An unserialised second run reaches `/api/notify` before it reaches the
     // gate, so a moment is enough for it to show up.
-    try await waitUntil { paths(transport).filter { $0 == "/api/notify" }.count > 1 }
-    #expect(paths(transport).filter { $0 == "/api/notify" }.count == 1)
+    #expect(try await staysFalse {
+        paths(transport).filter { $0 == "/api/notify" }.count > 1
+    })
     #expect(audio.enteredCount == 1)
 
     audio.open()
@@ -528,6 +598,121 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
     // Only the first delivery reached the clock.
     #expect(paths(transport) == ["/api/notify", "/api/notify/dismiss"])
     #expect(audio.enteredCount == 1)
+}
+
+// MARK: - The guards answer without waiting for the chain
+
+// A typo in an id, answered while an anecdote is still playing. Behind the
+// serialisation chain this waits out the whole delivery — half a minute of a
+// menu that has not answered — to say a name does not exist, which no registry
+// lookup needs the device for.
+@Test func anUnknownConnectorAnswersWhileADeliveryIsStillPlaying() async throws {
+    let transport = RecordingTransport()
+    let audio = GatedAudio()
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(
+        text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
+    )
+    let host = makeHost(connector: connector, transport: transport, audio: audio)
+
+    let playing = Task { await host.runOnce(connectorId: "stub") }
+    try await waitUntil { audio.enteredCount == 1 }
+
+    let answer = ResultBox()
+    let probe = Task { answer.record(await host.runOnce(connectorId: "nope")) }
+    try await waitUntil { answer.value != nil }
+
+    // Asserted rather than awaited: awaiting would wait out the delivery and
+    // report a pass, which is the defect.
+    guard case .failed = answer.value else {
+        Issue.record("expected .failed while the gate was still shut, got \(String(describing: answer.value))")
+        audio.open()
+        _ = await (probe.value, playing.value)
+        return
+    }
+    #expect(paths(transport) == ["/api/notify"])
+
+    audio.open()
+    _ = await probe.value
+    #expect(await playing.value == .delivered)
+}
+
+// The same for enablement, and it doubles as the record that enablement is read
+// when the run is asked for rather than when it reaches the front of the queue.
+@Test func aDisabledConnectorAnswersWhileADeliveryIsStillPlaying() async throws {
+    let transport = RecordingTransport()
+    let audio = GatedAudio()
+    let store = InMemorySettingsStore()
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(
+        text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
+    )
+    let host = makeHost(
+        connector: connector, transport: transport, store: store, audio: audio
+    )
+
+    let playing = Task { await host.runOnce(connectorId: "stub") }
+    try await waitUntil { audio.enteredCount == 1 }
+    store.save(ConnectorSettings(isEnabled: false, intervalPosition: 0), for: "stub")
+
+    let answer = ResultBox()
+    let probe = Task { answer.record(await host.runOnce(connectorId: "stub")) }
+    try await waitUntil { answer.value != nil }
+
+    #expect(answer.value == .skipped)
+
+    audio.open()
+    _ = await probe.value
+    #expect(await playing.value == .delivered)
+}
+
+// MARK: - Tearing a run down mid-delivery
+
+// `hold: true` is a promise the device keeps until something dismisses it. App
+// quit cancels the timer, and a dismiss sent on the cancelled task never leaves
+// the Mac — so the banner outlives the app and sits on the clock until somebody
+// presses the middle button. The release has to survive the teardown that
+// triggered it.
+@Test func aCancelledRunStillTakesTheHeldBannerDown() async throws {
+    let transport = CancellationAwareTransport()
+    let audio = GatedAudio()
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(
+        text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
+    )
+    let host = makeHost(connector: connector, transport: transport, audio: audio)
+
+    let run = Task { await host.runOnce(connectorId: "stub") }
+    try await waitUntil { audio.enteredCount == 1 }
+    run.cancel()
+    audio.open()
+
+    #expect(await run.value == .cancelled)
+    #expect(paths(transport) == ["/api/notify", "/api/notify/dismiss"])
+}
+
+// A real fault raised while the run happens to be cancelled is still a fault.
+// Classifying by "was this task cancelled" rather than by the error itself is
+// exactly how a rejected dismiss disappears into `.cancelled` and a stuck
+// banner is reported as an orderly shutdown.
+@Test func aRejectedDismissDuringACancelledRunIsStillAFailure() async throws {
+    let transport = PathFailingTransport(failingPath: "/api/notify/dismiss")
+    let audio = GatedAudio()
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(
+        text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
+    )
+    let host = makeHost(connector: connector, transport: transport, audio: audio)
+
+    let run = Task { await host.runOnce(connectorId: "stub") }
+    try await waitUntil { audio.enteredCount == 1 }
+    run.cancel()
+    audio.open()
+
+    guard case .failed = await run.value else {
+        Issue.record("a 500 on the dismiss is a fault, not a cancellation")
+        return
+    }
 }
 
 // MARK: - The background pass

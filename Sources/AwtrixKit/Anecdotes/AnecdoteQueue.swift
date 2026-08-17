@@ -38,7 +38,13 @@ public actor AnecdoteQueue {
     /// un-handed because the disk was full — throwing there would report a
     /// problem by creating a worse one. What a failed write actually costs is
     /// the next launch: a played id that never reached disk comes back
-    /// unplayed and the anecdote repeats. The host reads this and says so.
+    /// unplayed and the anecdote repeats.
+    ///
+    /// Nothing in production reads this, and that is deliberate. The host's
+    /// background pass calls `flush()` instead, which re-attempts the write:
+    /// that is both the cure and a live error, where this flag can only
+    /// describe a state the retry may already have repaired. It stays as a
+    /// diagnostic for whoever is looking at a queue in a debugger.
     public private(set) var lastPersistFailure: (any Error)?
 
     public init(storeURL: URL) {

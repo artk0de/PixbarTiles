@@ -26,13 +26,45 @@ public enum Laughter {
     }
 }
 
+/// How much silence precedes each clip of an anecdote.
+///
+/// The three lead-ins are held as values rather than written into the mapping,
+/// because the part that can go wrong is not the numbers but the ORDER the
+/// cases are tried in — and `firstLine` and `laughter` are both tuned to 0.7 s,
+/// so no assertion against the real values can tell a correct order from a
+/// wrong one. Sentinels make the rule observable without disturbing timings
+/// that were tuned by ear against real hardware.
+struct ClipPacing: Sendable, Equatable {
+    var firstLine: TimeInterval
+    var betweenLines: TimeInterval
+    var laughter: TimeInterval
+
+    /// Tuned by ear: 0 before the announcement, 0.7 s before the first line,
+    /// 0.25 s between dialogue lines, 0.7 s before the laughter — the last a
+    /// comic beat rather than a separator.
+    static let tuned = ClipPacing(firstLine: 0.7, betweenLines: 0.25, laughter: 0.7)
+
+    /// The silence before the clip at `index` of `count`.
+    ///
+    /// The laughter is matched before the first line. In a two-clip anecdote —
+    /// a joke whose only dialogue line is a bare marker, which the parser drops
+    /// — the second clip is both "the first line" and "the last", and what it
+    /// actually holds is the laughter.
+    func leadIn(forClipAt index: Int, of count: Int) -> TimeInterval {
+        switch index {
+        case 0: return 0
+        case count - 1: return laughter
+        case 1: return firstLine
+        default: return betweenLines
+        }
+    }
+}
+
 /// Fills the queue in batches. One sidecar session per batch: loading the model
 /// is the entire cost of synthesis, so paying it per anecdote is the worst
 /// possible trade.
 public actor AnecdotePreparer {
-    static let leadFirstLine: TimeInterval = 0.7
-    static let leadBetweenLines: TimeInterval = 0.25
-    static let leadLaughter: TimeInterval = 0.7
+    static let pacing = ClipPacing.tuned
 
     private let source: AnecdoteSource
     private let speech: any SpeechSynthesizing
@@ -86,7 +118,16 @@ public actor AnecdotePreparer {
             return try await self.performRefill(target: target)
         }
         tail = Task { _ = try? await work.value }
-        return try await work.value
+
+        // `work` is unstructured, so it does not inherit the caller's
+        // cancellation and awaiting its value does not break on it. Forwarded
+        // by hand, or a host that wraps `produce()` in a timeout gets neither
+        // the work stopped nor its caller back.
+        return try await withTaskCancellationHandler {
+            try await work.value
+        } onCancel: {
+            work.cancel()
+        }
     }
 
     private func performRefill(target: Int) async throws -> Int {
@@ -132,20 +173,8 @@ public actor AnecdotePreparer {
         let urls = try await speech.synthesize(
             caster.cast(turns), namespace: PreparedAnecdote.namespace(for: anecdote.id)
         )
-        var clips: [SpokenClip] = []
-        for (index, url) in urls.enumerated() {
-            let lead: TimeInterval
-            // The laughter case is matched before the first-line case, so a
-            // two-clip anecdote takes the beat the code says it takes. The two
-            // are the same 0.7 s today, which is exactly why retuning one of
-            // them would otherwise move the other in silence.
-            switch index {
-            case 0: lead = 0
-            case urls.count - 1: lead = Self.leadLaughter
-            case 1: lead = Self.leadFirstLine
-            default: lead = Self.leadBetweenLines
-            }
-            clips.append(SpokenClip(url: url, leadIn: lead))
+        let clips = urls.enumerated().map { index, url in
+            SpokenClip(url: url, leadIn: Self.pacing.leadIn(forClipAt: index, of: urls.count))
         }
         return PreparedAnecdote(
             id: anecdote.id, text: anecdote.text, clips: clips, laughter: laughter

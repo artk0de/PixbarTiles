@@ -158,6 +158,51 @@ private func prepared(_ id: String) -> PreparedAnecdote {
     #expect(fresh.map(\.id) == ["a", "b"])
 }
 
+/// An anecdote whose single clip really exists, in a directory of its own —
+/// so retiring it registers a directory that is safe to reclaim later.
+private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("clips-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let clip = directory.appendingPathComponent("turn-0.wav")
+    try Data().write(to: clip)
+    return PreparedAnecdote(
+        id: id, text: "joke \(id)", clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+    )
+}
+
+// The reaper removes a whole directory, so it may only do that when the
+// directory holds nothing but that anecdote's clips. Clips spread across two
+// directories have no such directory — the only one covering both is their
+// parent, and deleting that would take everything else in it.
+@Test func clipsSpreadAcrossTwoDirectoriesReclaimNothing() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("split-\(UUID().uuidString)")
+    let left = root.appendingPathComponent("left")
+    let right = root.appendingPathComponent("right")
+    for directory in [left, right] {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    let leftClip = left.appendingPathComponent("turn-0.wav")
+    let rightClip = right.appendingPathComponent("turn-1.wav")
+    // Something the reaper has no business touching, in the parent they share.
+    let bystander = root.appendingPathComponent("bystander.wav")
+    for file in [leftClip, rightClip, bystander] { try Data().write(to: file) }
+
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    await queue.retire(PreparedAnecdote(
+        id: "split", text: "joke",
+        clips: [SpokenClip(url: leftClip), SpokenClip(url: rightClip)],
+        laughter: "АХАХАХА"
+    ))
+    // The retire that would reclaim whatever the previous one registered.
+    await queue.retire(try preparedOnDisk("next"))
+
+    #expect(FileManager.default.fileExists(atPath: leftClip.path))
+    #expect(FileManager.default.fileExists(atPath: rightClip.path))
+    #expect(FileManager.default.fileExists(atPath: bystander.path))
+}
+
 @Test func aCorruptStoreStartsEmptyInsteadOfThrowing() async {
     let store = temporaryStore()
     try? Data("not json".utf8).write(to: store)

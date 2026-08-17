@@ -103,6 +103,24 @@ private final class SuspendingSpeechSynthesizer: SpeechSynthesizing, @unchecked 
     }
 }
 
+/// Blocks in `synthesize` until cancelled, and reports when it got there.
+///
+/// A cancelled sleep throws, which is how a real async synthesizer surfaces
+/// cancellation. The wait is long enough that a refill which ignores
+/// cancellation is unmistakable rather than merely slow.
+private final class BlockingSpeechSynthesizer: SpeechSynthesizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+
+    var hasStarted: Bool { lock.withLock { started } }
+
+    func synthesize(_ turns: [VoicedTurn], namespace: String) async throws -> [URL] {
+        lock.withLock { started = true }
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+        return []
+    }
+}
+
 /// Deterministic, so the short-joke draw can be asserted.
 ///
 /// A counter rather than the constant it looks like it should be:
@@ -148,6 +166,36 @@ private struct SeededGenerator: RandomNumberGenerator {
     let laugh = Laughter.forAnecdote("Коротко", using: &generator)
 
     #expect(Laughter.shortVariants.contains(laugh))
+}
+
+// MARK: - Clip pacing
+
+// Sentinels rather than the tuned values. On real hardware `firstLine` and
+// `laughter` are both 0.7 s, so a table written against the real numbers
+// cannot tell the intended case order from the reverse of it — which is what
+// made the end-to-end two-clip test unable to observe the rule it named.
+@Test func theLeadInTableMatchesTheLaughterBeforeTheFirstLine() {
+    let pacing = ClipPacing(firstLine: 1, betweenLines: 2, laughter: 3)
+
+    // Five clips: announcement, first line, two between, laughter.
+    #expect(pacing.leadIn(forClipAt: 0, of: 5) == 0)
+    #expect(pacing.leadIn(forClipAt: 1, of: 5) == 1)
+    #expect(pacing.leadIn(forClipAt: 2, of: 5) == 2)
+    #expect(pacing.leadIn(forClipAt: 3, of: 5) == 2)
+    #expect(pacing.leadIn(forClipAt: 4, of: 5) == 3)
+
+    // Three clips: no "between" at all.
+    #expect(pacing.leadIn(forClipAt: 1, of: 3) == 1)
+    #expect(pacing.leadIn(forClipAt: 2, of: 3) == 3)
+
+    // Two clips: the second is both the first line and the last, and it holds
+    // the laughter. This case is the whole reason the order is what it is.
+    #expect(pacing.leadIn(forClipAt: 0, of: 2) == 0)
+    #expect(pacing.leadIn(forClipAt: 1, of: 2) == 3)
+}
+
+@Test func theTunedPacingIsWhatWasMeasuredByEar() {
+    #expect(ClipPacing.tuned == ClipPacing(firstLine: 0.7, betweenLines: 0.25, laughter: 0.7))
 }
 
 // MARK: - Namespacing
@@ -272,6 +320,34 @@ private struct SeededGenerator: RandomNumberGenerator {
     #expect(queued == ["https://www.anekdot.ru/id/1/", "https://www.anekdot.ru/id/2/"])
 }
 
+// Serialising refills through an unstructured `Task` costs the caller's
+// cancellation unless it is forwarded by hand: an unstructured task does not
+// inherit it, and awaiting its value does not break on it. `produce()` refills
+// inside that task, so a host wrapping `produce()` in a timeout would neither
+// stop the work nor get its caller back.
+@Test func cancellingARefillStopsItRatherThanRunningItToCompletion() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let speech = BlockingSpeechSynthesizer()
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: speech, queue: queue
+    )
+
+    let refill = Task { try await preparer.refill(target: 10) }
+    var waited = 0
+    while !speech.hasStarted, waited < 500 {
+        try await Task.sleep(nanoseconds: 1_000_000)
+        waited += 1
+    }
+    #expect(speech.hasStarted)
+
+    let cancelledAt = ContinuousClock.now
+    refill.cancel()
+    await #expect(throws: (any Error).self) { _ = try await refill.value }
+
+    #expect(ContinuousClock.now - cancelledAt < .seconds(1))
+    #expect(await queue.ready() == 0)
+}
+
 // MARK: - The connector
 
 @Test func connectorEmitsTheBannerNotTheJoke() async throws {
@@ -304,7 +380,7 @@ private struct SeededGenerator: RandomNumberGenerator {
     let output = try await connector.produce()
 
     #expect(output.localAudio.first?.leadIn == 0)                             // announcement
-    #expect(output.localAudio.last?.leadIn == AnecdotePreparer.leadLaughter)  // punchline beat
+    #expect(output.localAudio.last?.leadIn == AnecdotePreparer.pacing.laughter)  // punchline beat
     #expect(output.localAudio.count == 5)
 }
 
@@ -322,7 +398,7 @@ private struct SeededGenerator: RandomNumberGenerator {
     let prepared = try #require(await queue.next())
 
     #expect(prepared.clips.count == 2)
-    #expect(prepared.clips.last?.leadIn == AnecdotePreparer.leadLaughter)
+    #expect(prepared.clips.last?.leadIn == AnecdotePreparer.pacing.laughter)
 }
 
 @Test func playingAnAnecdoteMarksItSoItNeverRepeats() async throws {
@@ -378,6 +454,47 @@ private struct SeededGenerator: RandomNumberGenerator {
     // One behind: half an hour has passed, so the first has long finished.
     #expect(FileManager.default.fileExists(atPath: firstDirectory.path) == false)
     #expect(FileManager.default.fileExists(atPath: secondDirectory.path))
+}
+
+// Through `produce()`, which is the path the app actually takes: `retire()` is
+// the only write on it, and `markPlayed` has no production caller at all. A
+// durability test that goes through `markPlayed` pins a method nothing calls.
+@Test func anAnecdotePlayedThroughProduceIsStillPlayedAfterARestart() async throws {
+    let store = temporaryStore()
+    let queue = AnecdoteQueue(storeURL: store)
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    _ = try await preparer.refill(target: 2)
+    _ = try await AnecdoteConnector(queue: queue, preparer: preparer).produce()
+
+    let reopened = AnecdoteQueue(storeURL: store)
+
+    #expect(await reopened.hasPlayed("https://www.anekdot.ru/id/1/"))
+}
+
+// The pointer to the spent clip directory has to reach disk too, or a restart
+// between two anecdotes leaks that directory forever — nothing else ever
+// looks at it again.
+@Test func aSpentClipDirectorySurvivesARestartAndIsStillReclaimed() async throws {
+    let store = temporaryStore()
+    let speech = StubSpeechSynthesizer()
+    let queue = AnecdoteQueue(storeURL: store)
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: speech, queue: queue
+    )
+    _ = try await preparer.refill(target: 2)
+    let first = try await AnecdoteConnector(queue: queue, preparer: preparer).produce()
+    let firstDirectory = try #require(first.localAudio.first?.url.deletingLastPathComponent())
+
+    // Killed between two anecdotes, then relaunched onto the same store.
+    let reopened = AnecdoteQueue(storeURL: store)
+    let reopenedPreparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: speech, queue: reopened
+    )
+    _ = try await AnecdoteConnector(queue: reopened, preparer: reopenedPreparer).produce()
+
+    #expect(FileManager.default.fileExists(atPath: firstDirectory.path) == false)
 }
 
 // A batch survives a restart; the temporary directory holding its audio may

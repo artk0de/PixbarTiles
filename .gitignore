@@ -8,3 +8,4 @@ prototype/*.json
 .DS_Store
 build/
 DerivedData/
+.superpowers/

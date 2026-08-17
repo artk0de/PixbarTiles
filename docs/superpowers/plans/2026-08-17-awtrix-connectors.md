@@ -1343,7 +1343,7 @@ git commit -m "feat: anecdote source reading the vote-ranked feed"
 - Produces:
   - `protocol SpeechSynthesizing: Sendable { func synthesize(_ turns: [VoicedTurn]) async throws -> [URL] }`
   - `actor SidecarSpeechSynthesizer: SpeechSynthesizing` with `init(pythonPath: String, scriptPath: String, workingDirectory: String, outputDirectory: URL)`
-  - `struct StubSpeechSynthesizer: SpeechSynthesizing` for tests and for running without the sidecar installed
+  - `final class StubSpeechSynthesizer: SpeechSynthesizing` for tests and for running without the sidecar installed — a class, not a struct: it records what it was asked, and Task 10's tests hold a reference to the same instance the connector uses
   - `enum SpeechError: Error, Sendable { case sidecarUnavailable(String); case synthesisFailed(String) }`
   - `static func requestLine(for turn: VoicedTurn, outputPath: String) -> String`
   - `static func parseResponse(_ line: String) throws -> URL`
@@ -2688,6 +2688,9 @@ final class AppModel: ObservableObject {
     }
     @Published private(set) var monitor: DeviceMonitor
     @Published var lastResults: [String: String] = [:]
+    /// Mirrored from `monitor` because a Scene does not observe a nested
+    /// ObservableObject — the menu bar glyph would never change otherwise.
+    @Published private(set) var isDeviceOnline = false
 
     let registry = ConnectorRegistry()
     private let store = UserDefaultsSettingsStore()
@@ -2760,9 +2763,11 @@ final class AppModel: ObservableObject {
     }
 
     private func startMonitoring() {
-        Task { [monitor] in
+        Task { [weak self] in
             while !Task.isCancelled {
-                await monitor.refresh()
+                guard let self else { return }
+                await self.monitor.refresh()
+                self.isDeviceOnline = self.monitor.isOnline
                 try? await Task.sleep(for: .seconds(20))
             }
         }
@@ -2867,7 +2872,7 @@ struct AwtrixConnectorsApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        MenuBarExtra("AWTRIX", systemImage: model.monitor.isOnline ? "clock.fill" : "clock.badge.xmark") {
+        MenuBarExtra("AWTRIX", systemImage: model.isDeviceOnline ? "clock.fill" : "clock.badge.xmark") {
             MenuPanel(model: model, monitor: model.monitor)
         }
         .menuBarExtraStyle(.window)

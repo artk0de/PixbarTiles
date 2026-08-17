@@ -122,23 +122,54 @@ Reference values chosen during the probe: laughing icon is LaMetric id `9039`
 
 ### TTS sidecar
 
-XTTS-v2 exists only in Python, so speech synthesis stays a Python process. It is
-a long-lived sidecar (`arthas.py --serve`) that keeps the model resident and
-reads requests line by line — model load costs seconds and must not be paid per
-phrase. The app supervises it: start on first use, restart on exit, surface a
-degraded state in the tray if it will not come up.
+XTTS-v2 exists only in Python, so speech synthesis stays a Python process. It
+lives at `~/.local/share/tts-voices/`, is started once as `speak.py --serve`, and
+speaks JSON Lines — one request object per line in, one response per line out:
 
-Two environment constraints are load-bearing and will resurface on any rebuild:
-`transformers` must stay below 5.x, and the process must not run with a working
-directory that contains a `coverage/` directory.
+```
+in   {"voice":"arthas","text":"Внимание, анекдот","out":"/tmp/turn-0.wav"}
+out  {"ok":true,"voice":"arthas","out":"/tmp/turn-0.wav","duration":1.995}
+out  {"ok":false,"error":"unknown voice: foo (have: arthas, peon)"}
+```
 
-Voice references are built the same way for every character: take the longest
-clips from a peon-ping voice pack, concatenate with silence removal and loudness
-normalization, target roughly 20 seconds. Arthas already exists at
-`~/.local/share/tts-arthas/arthas_ref.wav`; Peon needs the same treatment.
+A voice is addressed by **name**, and the sidecar resolves it to
+`voices/<name>.wav`. Adding a third actor is dropping a file in that directory —
+no code change on either side. `out` is optional; when omitted the sidecar picks
+a temp path and the caller owns the file.
 
-Synthesized output should be loudness-normalized — the first Arthas sample
-peaked at −0.0 dB, which will clip on some phrases.
+The process is started once and reused. Model load costs seconds, and
+conditioning latents are cached per voice after first use, so alternating voices
+mid-dialogue costs nothing beyond the synthesis itself. Verified with an
+Arthas → Peon → Arthas → Peon run in a single process. Spawning per phrase would
+throw that cache away every time. The app supervises the process: start on first
+use, restart if it exits, surface a degraded state in the tray if it will not
+come up.
+
+Available voices: `arthas` (19.39 s reference) and `peon` (23.16 s). Both are
+built from peon-ping packs by concatenating the longest clips through ffmpeg
+silence removal and loudness normalization, targeting roughly 20 seconds.
+
+Four environment constraints are load-bearing and will resurface on any rebuild:
+
+- `transformers` must stay below 5.x — 5.x removed `isin_mps_friendly`, which
+  coqui-tts imports.
+- The process must not run with a working directory containing a `coverage/`
+  directory; it shadows the PyPI package and surfaces as an unrelated numba error.
+- ffmpeg's `loudnorm` filter resamples to 192 kHz internally and writes that rate
+  out unless `-ar` is set explicitly. Always pass the target rate.
+- Python's `wave` module cannot read `WAVE_FORMAT_EXTENSIBLE` headers, which
+  ffmpeg emits at non-standard rates. A duration probe that trips on this fails
+  *after* successful synthesis and masquerades as a generation error.
+
+Output is loudness-normalized at `I=-18 TP=-2`, measured at −2.4 dB and −2.0 dB
+peak, so there is headroom. XTTS emits 24000 Hz mono; resample explicitly if the
+audio ever joins a pipeline with another rate.
+
+**Unverified:** nobody has listened to any synthesis yet. Whether the two clones
+are distinguishable matters more than whether either is good — if Arthas and Peon
+sound alike, a dialogue stops reading as a dialogue and the multi-voice
+requirement loses its point. Laughter synthesis is a traditional TTS weak spot
+and `АХАХАХАХАХА` is mandatory, so it needs its own listen.
 
 ## Menu bar UI
 

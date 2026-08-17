@@ -948,7 +948,7 @@ git commit -m "feat: dialogue parser splitting anecdotes into speaker turns"
 **Interfaces:**
 - Consumes: Task 5's `Turn`, `Speaker`
 - Produces:
-  - `struct Voice: Sendable, Equatable, Hashable { let id: String; let referencePath: String }`
+  - `struct Voice: Sendable, Equatable, Hashable { let id: String }` — the id is the voice name the synthesis sidecar resolves to `voices/<id>.wav`
   - `struct VoicedTurn: Sendable, Equatable { let voice: Voice; let text: String }`
   - `struct VoiceCaster: Sendable` with `init(narrator: Voice, pool: [Voice])` and `func cast(_ turns: [Turn]) -> [VoicedTurn]`
   - `static let arthas: Voice`, `static let peon: Voice`
@@ -962,7 +962,7 @@ Casting rules, straight from the requirement: narration is Arthas, the *second* 
 import Testing
 @testable import AwtrixKit
 
-private let extra = Voice(id: "extra", referencePath: "/voices/extra.wav")
+private let extra = Voice(id: "extra")
 
 private func makeCaster() -> VoiceCaster {
     VoiceCaster(narrator: .arthas, pool: [.arthas, .peon, extra])
@@ -1031,26 +1031,18 @@ Expected: FAIL — `Voice`, `VoicedTurn`, `VoiceCaster` are undefined.
 // Sources/AwtrixKit/Anecdotes/VoiceCaster.swift
 import Foundation
 
+/// A voice is addressed by name. The synthesis sidecar resolves the name to
+/// `voices/<name>.wav` itself, so adding a third actor means dropping a file in
+/// that directory — no code change here.
 public struct Voice: Sendable, Equatable, Hashable {
     public let id: String
-    public let referencePath: String
 
-    public init(id: String, referencePath: String) {
+    public init(id: String) {
         self.id = id
-        self.referencePath = referencePath
     }
 
-    public static let arthas = Voice(
-        id: "arthas",
-        referencePath: NSString(string: "~/.local/share/tts-arthas/arthas_ref.wav")
-            .expandingTildeInPath
-    )
-
-    public static let peon = Voice(
-        id: "peon",
-        referencePath: NSString(string: "~/.local/share/tts-arthas/peon_ref.wav")
-            .expandingTildeInPath
-    )
+    public static let arthas = Voice(id: "arthas")
+    public static let peon = Voice(id: "peon")
 }
 
 public struct VoicedTurn: Sendable, Equatable {
@@ -1353,13 +1345,30 @@ git commit -m "feat: anecdote source reading the vote-ranked feed"
   - `actor SidecarSpeechSynthesizer: SpeechSynthesizing` with `init(pythonPath: String, scriptPath: String, workingDirectory: String, outputDirectory: URL)`
   - `struct StubSpeechSynthesizer: SpeechSynthesizing` for tests and for running without the sidecar installed
   - `enum SpeechError: Error, Sendable { case sidecarUnavailable(String); case synthesisFailed(String) }`
+  - `static func requestLine(for turn: VoicedTurn, outputPath: String) -> String`
+  - `static func parseResponse(_ line: String) throws -> URL`
 
 Why a protocol and a stub: the sidecar needs a 1.8 GB model and a Python environment, so nothing above this line may depend on it being present. The connector takes `SpeechSynthesizing`, and the app degrades to no audio rather than failing to run.
+
+**The sidecar contract** (already built and verified — do not redesign it). Script
+`~/.local/share/tts-voices/speak.py`, launched once as `speak.py --serve`, then
+one JSON object per line on stdin, one per line on stdout:
+
+```
+in   {"voice":"arthas","text":"Внимание, анекдот","out":"/tmp/turn-0.wav"}
+out  {"ok":true,"voice":"arthas","out":"/tmp/turn-0.wav","duration":1.995}
+out  {"ok":false,"error":"unknown voice: foo (have: arthas, peon)"}
+```
+
+A voice is addressed by **name**, not by a reference path — the sidecar owns
+`voices/<name>.wav`. Alternating voices mid-stream is free: conditioning latents
+are cached per voice after the first use. Verified with an Arthas → Peon →
+Arthas → Peon run in one process, all four `ok:true`.
 
 Environment constraints that will resurface — encode them, do not rediscover them:
 - `transformers` must stay below 5.x; 5.x removed `isin_mps_friendly`, which coqui-tts imports.
 - The sidecar must not run with a working directory containing a `coverage/` directory — it shadows the PyPI package and the failure surfaces as an unrelated numba error. Hence the explicit `workingDirectory`.
-- Model load costs seconds, so the process is long-lived and reads requests line by line. Do not spawn per phrase.
+- Model load costs seconds. **The process is started once and reused.** Spawning per phrase pays that load every time and throws away the cached latents, which is the whole reason `--serve` exists.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1389,24 +1398,45 @@ import Testing
     #expect(stub.received.map(\.text) == ["работа-работа"])
 }
 
-@Test func sidecarRequestLineCarriesVoiceReferenceAndText() throws {
+@Test func sidecarRequestLineAddressesTheVoiceByName() throws {
     let line = SidecarSpeechSynthesizer.requestLine(
         for: VoicedTurn(voice: .arthas, text: "Внимание, анекдот"),
         outputPath: "/tmp/turn0.wav"
     )
     let object = try JSONSerialization.jsonObject(with: Data(line.utf8)) as! [String: Any]
 
+    #expect(object["voice"] as? String == "arthas")
     #expect(object["text"] as? String == "Внимание, анекдот")
     #expect(object["out"] as? String == "/tmp/turn0.wav")
-    #expect((object["reference"] as? String)?.hasSuffix("arthas_ref.wav") == true)
-    #expect(line.hasSuffix("\n") == false)
-    #expect(line.contains("\n") == false)  // one request per line
+    #expect(!line.contains("\n"))  // one request per line
+}
+
+@Test func sidecarResponseYieldsTheProducedFile() throws {
+    let url = try SidecarSpeechSynthesizer.parseResponse(
+        #"{"ok":true,"voice":"peon","out":"/tmp/turn-1.wav","duration":3.52}"#
+    )
+
+    #expect(url.path == "/tmp/turn-1.wav")
+}
+
+@Test func sidecarFailureResponseSurfacesTheReportedReason() {
+    #expect(throws: SpeechError.self) {
+        _ = try SidecarSpeechSynthesizer.parseResponse(
+            #"{"ok":false,"error":"unknown voice: foo (have: arthas, peon)"}"#
+        )
+    }
+}
+
+@Test func unparseableSidecarOutputIsAFailureNotACrash() {
+    #expect(throws: SpeechError.self) {
+        _ = try SidecarSpeechSynthesizer.parseResponse("Traceback (most recent call last):")
+    }
 }
 
 @Test func missingSidecarScriptIsReportedAsUnavailable() async {
     let synthesizer = SidecarSpeechSynthesizer(
         pythonPath: "/usr/bin/false",
-        scriptPath: "/nonexistent/arthas.py",
+        scriptPath: "/nonexistent/speak.py",
         workingDirectory: NSTemporaryDirectory(),
         outputDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
     )
@@ -1461,13 +1491,19 @@ import Foundation
 
 /// Drives the long-lived Python synthesis process.
 ///
-/// The model costs seconds to load, so the process stays resident and takes one
-/// JSON request per line. Spawning per phrase would pay that load every time.
+/// The model costs seconds to load and caches conditioning latents per voice, so
+/// the process is started once and reused. Spawning per phrase would pay the
+/// load every time and discard the cache that makes alternating voices free.
 public actor SidecarSpeechSynthesizer: SpeechSynthesizing {
     private let pythonPath: String
     private let scriptPath: String
     private let workingDirectory: String
     private let outputDirectory: URL
+
+    private var process: Process?
+    private var input: FileHandle?
+    private var output: FileHandle?
+    private var pending = Data()
 
     public init(
         pythonPath: String,
@@ -1484,55 +1520,102 @@ public actor SidecarSpeechSynthesizer: SpeechSynthesizing {
     /// One request per line: the sidecar reads stdin line by line.
     public static func requestLine(for turn: VoicedTurn, outputPath: String) -> String {
         let object: [String: Any] = [
+            "voice": turn.voice.id,
             "text": turn.text,
-            "reference": turn.voice.referencePath,
             "out": outputPath,
         ]
         let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
     }
 
-    public func synthesize(_ turns: [VoicedTurn]) async throws -> [URL] {
-        guard FileManager.default.isReadableFile(atPath: scriptPath) else {
-            throw SpeechError.sidecarUnavailable("script not found at \(scriptPath)")
+    /// `{"ok":true,"out":"..."}` on success, `{"ok":false,"error":"..."}` otherwise.
+    public static func parseResponse(_ line: String) throws -> URL {
+        guard
+            let data = line.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw SpeechError.synthesisFailed("unparseable sidecar output: \(line)")
         }
+        guard object["ok"] as? Bool == true else {
+            throw SpeechError.synthesisFailed(object["error"] as? String ?? "unknown error")
+        }
+        guard let path = object["out"] as? String else {
+            throw SpeechError.synthesisFailed("sidecar reported success without a file")
+        }
+        return URL(fileURLWithPath: path)
+    }
+
+    public func synthesize(_ turns: [VoicedTurn]) async throws -> [URL] {
+        try start()
         try FileManager.default.createDirectory(
             at: outputDirectory, withIntermediateDirectories: true
         )
 
-        var outputs: [URL] = []
+        var produced: [URL] = []
         for (index, turn) in turns.enumerated() {
-            let output = outputDirectory.appendingPathComponent("turn-\(index).wav")
-            try await run(turn: turn, output: output)
-            outputs.append(output)
+            let destination = outputDirectory.appendingPathComponent("turn-\(index).wav")
+            let request = Self.requestLine(for: turn, outputPath: destination.path)
+            try write(request)
+            produced.append(try Self.parseResponse(try readLine()))
         }
-        return outputs
+        return produced
     }
 
-    private func run(turn: VoicedTurn, output: URL) async throws {
+    /// Restarts the sidecar if it died; a crashed synthesizer must not wedge the app.
+    private func start() throws {
+        if let process, process.isRunning { return }
+
+        guard FileManager.default.isReadableFile(atPath: scriptPath) else {
+            throw SpeechError.sidecarUnavailable("script not found at \(scriptPath)")
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonPath)
-        process.arguments = [scriptPath, turn.text, "-o", output.path,
-                             "--reference", turn.voice.referencePath]
+        process.arguments = [scriptPath, "--serve"]
         // A working directory holding a `coverage/` directory shadows the PyPI
         // package and surfaces as an unrelated numba error.
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
 
-        let errorPipe = Pipe()
-        process.standardError = errorPipe
+        let stdin = Pipe()
+        let stdout = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
             throw SpeechError.sidecarUnavailable(String(describing: error))
         }
-        process.waitUntilExit()
 
-        guard process.terminationStatus == 0 else {
-            let message = String(
-                decoding: errorPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self
-            )
-            throw SpeechError.synthesisFailed(message)
+        self.process = process
+        self.input = stdin.fileHandleForWriting
+        self.output = stdout.fileHandleForReading
+        self.pending = Data()
+    }
+
+    private func write(_ line: String) throws {
+        guard let input else {
+            throw SpeechError.sidecarUnavailable("sidecar stdin is closed")
+        }
+        input.write(Data((line + "\n").utf8))
+    }
+
+    private func readLine() throws -> String {
+        guard let output else {
+            throw SpeechError.sidecarUnavailable("sidecar stdout is closed")
+        }
+        while true {
+            if let newline = pending.firstIndex(of: UInt8(ascii: "\n")) {
+                let line = pending[pending.startIndex..<newline]
+                pending.removeSubrange(pending.startIndex...newline)
+                return String(decoding: line, as: UTF8.self)
+            }
+            let chunk = output.availableData
+            guard !chunk.isEmpty else {
+                throw SpeechError.synthesisFailed("sidecar closed its output")
+            }
+            pending.append(chunk)
         }
     }
 }
@@ -1541,7 +1624,7 @@ public actor SidecarSpeechSynthesizer: SpeechSynthesizing {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter SpeechTests`
-Expected: PASS, 4 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2630,11 +2713,11 @@ final class AppModel: ObservableObject {
             AnecdoteConnector(
                 source: AnecdoteSource(transport: transport),
                 speech: SidecarSpeechSynthesizer(
-                    pythonPath: NSString(string: "~/.local/share/tts-arthas/.venv/bin/python")
+                    pythonPath: NSString(string: "~/.local/share/tts-voices/.venv/bin/python")
                         .expandingTildeInPath,
-                    scriptPath: NSString(string: "~/.local/share/tts-arthas/arthas.py")
+                    scriptPath: NSString(string: "~/.local/share/tts-voices/speak.py")
                         .expandingTildeInPath,
-                    workingDirectory: NSString(string: "~/.local/share/tts-arthas")
+                    workingDirectory: NSString(string: "~/.local/share/tts-voices")
                         .expandingTildeInPath,
                     outputDirectory: FileManager.default.temporaryDirectory
                         .appendingPathComponent("awtrix-speech")

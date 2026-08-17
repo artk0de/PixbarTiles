@@ -165,11 +165,13 @@ Output is loudness-normalized at `I=-18 TP=-2`, measured at −2.4 dB and −2.0
 peak, so there is headroom. XTTS emits 24000 Hz mono; resample explicitly if the
 audio ever joins a pipeline with another rate.
 
-**Unverified:** nobody has listened to any synthesis yet. Whether the two clones
-are distinguishable matters more than whether either is good — if Arthas and Peon
-sound alike, a dialogue stops reading as a dialogue and the multi-voice
-requirement loses its point. Laughter synthesis is a traditional TTS weak spot
-and `АХАХАХАХАХА` is mandatory, so it needs its own listen.
+**Listened to and accepted, 2026-08-17.** Both clones were played back to back:
+Arthas and Peon are clearly distinguishable, Russian prosody holds, and the
+mandatory `АХАХАХАХАХА` comes out usable — laughter is a traditional TTS weak
+spot, so it was checked on its own. This was the project's largest open risk,
+because indistinguishable clones would have made a voiced dialogue pointless and
+sent the multi-voice requirement back to design. It is closed; XTTS-v2 stays, and
+the Silero+RVC fallback is off the table.
 
 ## Menu bar UI
 

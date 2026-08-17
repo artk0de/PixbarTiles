@@ -113,6 +113,18 @@ private func feed(item: String) -> Data {
     #expect(emptyText.isEmpty)
 }
 
+@Test func parseDoesNotLeakCdataMarkersWhenPrecededByWhitespace() {
+    let anecdotes = AnecdoteSource.parse(feed(item: """
+    <description>
+    <![CDATA[текст]]>
+    </description>
+    <guid>https://www.anekdot.ru/id/6/</guid>
+    """))
+
+    #expect(anecdotes.count == 1)
+    #expect(anecdotes.first?.text == "текст")
+}
+
 @Test func fetchRejectsANonSuccessStatusInsteadOfParsingTheErrorPage() async {
     let transport = RecordingTransport()
     transport.status = 503

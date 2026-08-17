@@ -87,8 +87,21 @@ private func decodeBody(_ request: URLRequest) throws -> [String: Any] {
     transport.body = Data("FileNotFound".utf8)
     let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
 
-    await #expect(throws: AwtrixError.self) {
+    do {
         try await device.playMelody(named: "missing")
+        Issue.record("expected a failure for a 404 response")
+    } catch let AwtrixError.http(status, body, endpoint) {
+        #expect(status == 404)
+        #expect(body == "FileNotFound")
+        #expect(endpoint == "/api/sound")
+    }
+}
+
+@Test func anUnusableHostThrowsInsteadOfTrapping() async {
+    let device = AwtrixDevice(host: "not a host", transport: RecordingTransport())
+
+    await #expect(throws: AwtrixError.self) {
+        try await device.stats()
     }
 }
 

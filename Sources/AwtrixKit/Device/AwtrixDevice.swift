@@ -119,7 +119,10 @@ public actor AwtrixDevice {
         body: Data? = nil,
         contentType: String? = nil
     ) async throws -> Data {
-        var request = URLRequest(url: URL(string: "http://\(host)\(path)")!)
+        guard let url = URL(string: "http://\(host)\(path)") else {
+            throw AwtrixError.invalidHost(host)
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
         if let contentType {

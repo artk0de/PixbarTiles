@@ -1061,6 +1061,8 @@ git commit -m "feat: dialogue parser splitting anecdotes into speaker turns"
 
 Casting rules, straight from the requirement: narration is Arthas, the *second* speaking actor is Peon, further actors draw from the pool in first-appearance order. The laughter tail is always Arthas, and Task 8 appends it as a narrator turn, which is what makes that fall out for free.
 
+**Pool size is coupled to parser capability.** When actors outnumber voices the pool wraps, so two characters share a voice with nothing to signal it. That is unreachable today — `DialogueParser` advances with `(nextActor + 1) % 2` and can only emit `.actor(0)` and `.actor(1)`, because a bare dash carries no speaker identity and a third speaker cannot be detected from the text. Anyone teaching the parser to distinguish three or more speakers must add voices in the same change, or the third character will quietly sound like the first.
+
 - [ ] **Step 1: Write the failing test**
 
 ```swift

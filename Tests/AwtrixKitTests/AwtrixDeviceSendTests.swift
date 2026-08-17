@@ -3,13 +3,44 @@ import Testing
 @testable import AwtrixKit
 
 /// Records what was sent and replays a canned response.
+///
+/// Shared by several test files, so the recorded state is lock-guarded: a test
+/// that drives one recorder from two devices or a `TaskGroup` would otherwise
+/// race on `append`.
+///
+/// `@unchecked` is not a waiver here — every access below goes through `lock`.
+/// Swift rejects a plain `Sendable` conformance on any class with mutable
+/// stored properties, however they are synchronized ("stored property
+/// 'recorded' of 'Sendable'-conforming class 'RecordingTransport' is
+/// mutable"). Holding the state in a `let Mutex` would satisfy the checker, but
+/// `Mutex` is macOS 15+ and this package floors at macOS 14.
 final class RecordingTransport: Transport, @unchecked Sendable {
-    private(set) var requests: [URLRequest] = []
-    var status = 200
-    var body = Data("OK".utf8)
+    private let lock = NSLock()
+    private var recorded: [URLRequest] = []
+    private var cannedStatus = 200
+    private var cannedBody = Data("OK".utf8)
+
+    var requests: [URLRequest] {
+        lock.withLock { recorded }
+    }
+
+    var status: Int {
+        get { lock.withLock { cannedStatus } }
+        set { lock.withLock { cannedStatus = newValue } }
+    }
+
+    var body: Data {
+        get { lock.withLock { cannedBody } }
+        set { lock.withLock { cannedBody = newValue } }
+    }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        requests.append(request)
+        // One acquisition, released before the response is built — never held
+        // across a suspension point.
+        let (status, body) = lock.withLock { () -> (Int, Data) in
+            recorded.append(request)
+            return (cannedStatus, cannedBody)
+        }
         let response = HTTPURLResponse(
             url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil
         )!

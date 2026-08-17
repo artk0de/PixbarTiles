@@ -63,24 +63,34 @@ public actor SidecarSpeechSynthesizer: SpeechSynthesizing {
         return URL(fileURLWithPath: path)
     }
 
-    public func synthesize(_ turns: [VoicedTurn]) async throws -> [URL] {
-        // Nothing to say costs nothing: an empty batch must not pay a model load.
+    /// Writes one batch into `outputDirectory/<namespace>/turn-<index>.wav`.
+    ///
+    /// The subdirectory is what keeps batches apart: the index restarts at zero
+    /// for every call, so ten anecdotes written flat would leave one survivor.
+    ///
+    /// Called once per anecdote and still one session for the whole batch —
+    /// `start()` returns immediately while the process is alive, so the model
+    /// load is paid on the first call and no other.
+    public func synthesize(_ turns: [VoicedTurn], namespace: String) async throws -> [URL] {
+        // Nothing to say costs nothing: an empty batch must not pay a model
+        // load, and must not leave an empty directory behind either.
         guard !turns.isEmpty else { return [] }
 
+        let directory = outputDirectory.appendingPathComponent(namespace)
         do {
             try FileManager.default.createDirectory(
-                at: outputDirectory, withIntermediateDirectories: true
+                at: directory, withIntermediateDirectories: true
             )
         } catch {
             throw SpeechError.synthesisFailed(
-                "cannot create \(outputDirectory.path): \(error)"
+                "cannot create \(directory.path): \(error)"
             )
         }
         try start()
 
         var produced: [URL] = []
         for (index, turn) in turns.enumerated() {
-            let destination = outputDirectory.appendingPathComponent("turn-\(index).wav")
+            let destination = directory.appendingPathComponent("turn-\(index).wav")
             let request = Self.requestLine(for: turn, outputPath: destination.path)
             try write(request)
             produced.append(try Self.parseResponse(try readResponseLine()))

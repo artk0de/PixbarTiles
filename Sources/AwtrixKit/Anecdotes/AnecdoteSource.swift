@@ -20,6 +20,15 @@ public struct Anecdote: Sendable, Equatable {
 /// path whose only caller wants something to display.
 public struct AnecdoteSource: Sendable {
     public static let topFeed = URL(string: "https://www.anekdot.ru/rss/export_top.xml")!
+    /// Twelve, the best of past years on this date.
+    public static let bestOfDayFeed = URL(string: "https://www.anekdot.ru/rss/export_bestday.xml")!
+    /// The fresh ten, unranked.
+    public static let freshFeed = URL(string: "https://www.anekdot.ru/rss/export_j.xml")!
+
+    /// Widest-first, most popular first. Roughly 72 items in total, refreshed
+    /// daily — enough that a half-hourly reading never doubles back, which
+    /// resetting the played set instead would break inside a day.
+    public static let cascade: [URL] = [topFeed, bestOfDayFeed, freshFeed]
 
     private let transport: Transport
     private let feed: URL
@@ -30,6 +39,10 @@ public struct AnecdoteSource: Sendable {
     }
 
     public func fetch() async throws -> [Anecdote] {
+        try await fetch(from: feed)
+    }
+
+    public func fetch(from feed: URL) async throws -> [Anecdote] {
         var request = URLRequest(url: feed)
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await transport.send(request)

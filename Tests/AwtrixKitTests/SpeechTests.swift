@@ -10,7 +10,7 @@ import Testing
     let urls = try await stub.synthesize([
         VoicedTurn(voice: .arthas, text: "раз"),
         VoicedTurn(voice: .peon, text: "два"),
-    ])
+    ], namespace: "batch")
 
     #expect(urls.count == 2)
 }
@@ -18,7 +18,9 @@ import Testing
 @Test func stubSynthesizerRecordsWhatItWasAsked() async throws {
     let stub = StubSpeechSynthesizer()
 
-    _ = try await stub.synthesize([VoicedTurn(voice: .peon, text: "работа-работа")])
+    _ = try await stub.synthesize(
+        [VoicedTurn(voice: .peon, text: "работа-работа")], namespace: "batch"
+    )
 
     #expect(stub.received.map(\.voice.id) == ["peon"])
     #expect(stub.received.map(\.text) == ["работа-работа"])
@@ -101,7 +103,9 @@ import Testing
     )
 
     await #expect(throws: SpeechError.self) {
-        _ = try await synthesizer.synthesize([VoicedTurn(voice: .arthas, text: "hi")])
+        _ = try await synthesizer.synthesize(
+            [VoicedTurn(voice: .arthas, text: "hi")], namespace: "batch"
+        )
     }
 }
 
@@ -115,9 +119,66 @@ import Testing
         outputDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
     )
 
-    let urls = try await synthesizer.synthesize([])
+    let urls = try await synthesizer.synthesize([], namespace: "batch")
 
     #expect(urls.isEmpty)
+}
+
+// MARK: - One session per batch, against a real child process
+
+/// Writes a stand-in for `speak.py` and returns its path.
+///
+/// It records every process start, then answers one request per line the way
+/// the real sidecar does. A shell script rather than a mock because the claim
+/// under test is about process lifetime, and a mock cannot have one.
+private func fakeSidecar(recordingStartsTo marker: String, in directory: URL) throws -> String {
+    let script = directory.appendingPathComponent("fake_sidecar.sh").path
+    try """
+    echo start >> \(marker)
+    while IFS= read -r line; do
+      out=$(printf '%s' "$line" | sed -n 's/.*"out":"\\([^"]*\\)".*/\\1/p')
+      printf '{"ok":true,"out":"%s"}\\n' "$out"
+    done
+    """.write(toFile: script, atomically: true, encoding: .utf8)
+    return script
+}
+
+// The economics the whole queue rests on. Loading the model costs 70 seconds
+// and the synthesis on top of it costs fractions of a second, so a batch of ten
+// is only worth preparing if the ten share one session. The preparer calls
+// `synthesize` once per anecdote, which is exactly the shape that would pay the
+// load ten times if the session did not outlive the call.
+@Test func abatchOfAnecdotesSharesOneSidecarSession() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("sidecar-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let marker = root.appendingPathComponent("starts.log").path
+    let synthesizer = SidecarSpeechSynthesizer(
+        pythonPath: "/bin/sh",
+        scriptPath: try fakeSidecar(recordingStartsTo: marker, in: root),
+        workingDirectory: root.path,
+        outputDirectory: root
+    )
+
+    // Two anecdotes, driven the way `AnecdotePreparer.refill` drives them.
+    let first = try await synthesizer.synthesize(
+        [VoicedTurn(voice: .arthas, text: "раз"), VoicedTurn(voice: .peon, text: "два")],
+        namespace: "anecdote-one"
+    )
+    let second = try await synthesizer.synthesize(
+        [VoicedTurn(voice: .arthas, text: "три")], namespace: "anecdote-two"
+    )
+
+    let starts = try String(contentsOfFile: marker, encoding: .utf8)
+        .split(whereSeparator: \.isNewline).count
+    #expect(starts == 1)
+
+    // And the namespace reaches the real output path, not just the stub's.
+    // Both batches name their first file turn-0.wav — that collision is what
+    // used to leave one survivor out of ten.
+    #expect(first.map(\.lastPathComponent) == ["turn-0.wav", "turn-1.wav"])
+    #expect(second.map(\.lastPathComponent) == ["turn-0.wav"])
+    #expect(Set(first).isDisjoint(with: Set(second)))
 }
 
 // MARK: - Normalisation. Every rule below fixes a defect that was heard.

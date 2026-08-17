@@ -1455,6 +1455,8 @@ git commit -m "feat: anecdote source reading the vote-ranked feed"
   - `enum SpeechError: Error, Sendable { case sidecarUnavailable(String); case synthesisFailed(String) }`
   - `static func requestLine(for turn: VoicedTurn, outputPath: String) -> String`
   - `static func parseResponse(_ line: String) throws -> URL`
+  - `enum SpeechText { static func prepare(_ line: String) -> String }` — the
+    normalisation every line passes through before synthesis
 
 Why a protocol and a stub: the sidecar needs a 1.8 GB model and a Python environment, so nothing above this line may depend on it being present. The connector takes `SpeechSynthesizing`, and the app degrades to no audio rather than failing to run.
 
@@ -1472,6 +1474,24 @@ A voice is addressed by **name**, not by a reference path — the sidecar owns
 `voices/<name>.wav`. Alternating voices mid-stream is free: conditioning latents
 are cached per voice after the first use. Verified with an Arthas → Peon →
 Arthas → Peon run in one process, all four `ok:true`.
+
+**Text normalisation is not optional and not cosmetic.** Each rule below fixes a
+defect that was heard, reproduced, and confirmed. `SpeechText.prepare` applies
+them; the clock keeps the original text.
+
+- Strip `«» “” „‟ " ' ‘’ ` ´`. XTTS vocalises quotation marks —
+  `точка»` came out as "точкала", the closing quote becoming a syllable.
+- Drop a dash surrounded by spaces. Kept, it pauses long enough to sound broken.
+- Remove a trailing full stop. It provokes the decoder into appending an audible
+  fragment after the sentence, separated by real silence — a phantom syllable.
+- KEEP a trailing `?` or `!` and append a space. The mark carries the intonation;
+  without the space the final consonant is swallowed and "Анекдот!" loses its Т.
+- Collapse whitespace runs, and never leave a space before punctuation.
+
+Do NOT add stress marks. `+` and the combining acute are absent from the XTTS BPE
+vocabulary, encode to `[UNK]`, and corrupt the characters next to them; a capital
+is lowercased before tokenization. All four conventions were tested and all four
+fail. This is recorded in the spec so it is not attempted again.
 
 Environment constraints that will resurface — encode them, do not rediscover them:
 - `transformers` must stay below 5.x; 5.x removed `isin_mps_friendly`, which coqui-tts imports.
@@ -1753,7 +1773,8 @@ git commit -m "feat: speech synthesis protocol with sidecar and stub implementat
 **Interfaces:**
 - Consumes: nothing from earlier tasks
 - Produces:
-  - `struct ConnectorOutput: Sendable, Equatable` with `text`, `icon: IconRef?`, `jingle: String?`, `localAudio: [URL]`, `duration: Int?`, `color: String?`
+  - `struct SpokenClip: Sendable, Equatable { let url: URL; let leadIn: TimeInterval }` — `leadIn` is silence inserted BEFORE the clip
+  - `struct ConnectorOutput: Sendable, Equatable` with `text`, `icon: IconRef?`, `jingle: String?`, `localAudio: [SpokenClip]`, `duration: Int?`, `color: String?`, `holdUntilAudioEnds: Bool`
   - `enum IconRef: Sendable, Equatable { case installed(String); case catalogue(Int) }`
   - `protocol Connector: Sendable { var id: String { get }; var displayName: String { get }; var defaultInterval: TimeInterval { get }; func produce() async throws -> ConnectorOutput }`
   - `final class ConnectorRegistry: @unchecked Sendable` with `register(_:)`, `all: [any Connector]`, `connector(id:) -> (any Connector)?`
@@ -1822,6 +1843,19 @@ Expected: FAIL — `Connector`, `ConnectorOutput`, `ConnectorRegistry` are undef
 // Sources/AwtrixKit/Connectors/Connector.swift
 import Foundation
 
+/// One audio file plus the silence that precedes it. The producer sets the
+/// pacing because it knows what each clip is — an announcement, a dialogue line,
+/// a punchline — and the player stays ignorant of all of that.
+public struct SpokenClip: Sendable, Equatable {
+    public let url: URL
+    public let leadIn: TimeInterval
+
+    public init(url: URL, leadIn: TimeInterval = 0) {
+        self.url = url
+        self.leadIn = leadIn
+    }
+}
+
 public enum IconRef: Sendable, Equatable {
     /// Already present on the device, referenced by basename.
     case installed(String)
@@ -1833,7 +1867,11 @@ public struct ConnectorOutput: Sendable, Equatable {
     public var text: String
     public var icon: IconRef?
     public var jingle: String?
-    public var localAudio: [URL]
+    public var localAudio: [SpokenClip]
+    /// Keep the banner on the clock until the audio finishes, rather than for a
+    /// fixed duration. The producer knows how long it will speak; the host does
+    /// not, and guessing a scroll count was worse.
+    public var holdUntilAudioEnds: Bool
     public var duration: Int?
     public var color: String?
 
@@ -1841,7 +1879,8 @@ public struct ConnectorOutput: Sendable, Equatable {
         text: String,
         icon: IconRef? = nil,
         jingle: String? = nil,
-        localAudio: [URL] = [],
+        localAudio: [SpokenClip] = [],
+        holdUntilAudioEnds: Bool = false,
         duration: Int? = nil,
         color: String? = nil
     ) {
@@ -1849,6 +1888,7 @@ public struct ConnectorOutput: Sendable, Equatable {
         self.icon = icon
         self.jingle = jingle
         self.localAudio = localAudio
+        self.holdUntilAudioEnds = holdUntilAudioEnds
         self.duration = duration
         self.color = color
     }

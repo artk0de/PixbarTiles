@@ -1014,6 +1014,11 @@ public enum DialogueParser {
             }
             let body = line.dropFirst()
                 .trimmingCharacters(in: .whitespaces)
+            // A marker with nothing after it is a separator, not speech. Emitting
+            // it would voice an empty string, and consuming a speaker slot would
+            // flip who talks next — two people would merge into one voice, with
+            // nothing failing to show it.
+            guard !body.isEmpty else { continue }
             turns.append(Turn(speaker: .actor(nextActor), text: body))
             nextActor = (nextActor + 1) % 2
         }
@@ -1026,7 +1031,10 @@ public enum DialogueParser {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter DialogueParserTests`
-Expected: PASS, 8 tests.
+Expected: PASS, 11 tests — the eight above plus three added during implementation:
+a bare-marker line must not consume a speaker slot, CRLF input must not produce
+empty entries, and a non-breaking space must be trimmed (both live risks for text
+scraped out of an HTML feed).
 
 - [ ] **Step 5: Commit**
 

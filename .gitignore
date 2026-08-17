@@ -9,3 +9,4 @@ prototype/*.json
 build/
 DerivedData/
 .superpowers/
+.build/

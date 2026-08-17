@@ -125,13 +125,48 @@ import Testing
 @testable import AwtrixKit
 
 /// Records what was sent and replays a canned response.
+///
+/// Shared by several test files, so the recorded state is lock-guarded: a test
+/// that drives one recorder from two devices or a `TaskGroup` would otherwise
+/// race on `append`. Measured, not assumed — a 200-way TaskGroup probe under
+/// ThreadSanitizer loses an append (199 of 200) without the lock.
+///
+/// `@unchecked` is not a waiver here — every access below goes through `lock`.
+/// Swift rejects a plain `Sendable` conformance on any class with mutable
+/// stored properties, however they are synchronized. Holding the state in a
+/// `let Mutex` would satisfy the checker, but `Mutex` is macOS 15+ and this
+/// package floors at macOS 14.
+///
+/// It stays a class with a synchronous property API on purpose: an actor would
+/// force `await` on every access, and Task 10 builds its fixture in a
+/// synchronous helper.
 final class RecordingTransport: Transport, @unchecked Sendable {
-    private(set) var requests: [URLRequest] = []
-    var status = 200
-    var body = Data("OK".utf8)
+    private let lock = NSLock()
+    private var recorded: [URLRequest] = []
+    private var cannedStatus = 200
+    private var cannedBody = Data("OK".utf8)
+
+    var requests: [URLRequest] {
+        lock.withLock { recorded }
+    }
+
+    var status: Int {
+        get { lock.withLock { cannedStatus } }
+        set { lock.withLock { cannedStatus = newValue } }
+    }
+
+    var body: Data {
+        get { lock.withLock { cannedBody } }
+        set { lock.withLock { cannedBody = newValue } }
+    }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        requests.append(request)
+        // One acquisition, released before the response is built — never held
+        // across a suspension point.
+        let (status, body) = lock.withLock { () -> (Int, Data) in
+            recorded.append(request)
+            return (cannedStatus, cannedBody)
+        }
         let response = HTTPURLResponse(
             url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil
         )!
@@ -209,8 +244,23 @@ private func decodeBody(_ request: URLRequest) throws -> [String: Any] {
     transport.body = Data("FileNotFound".utf8)
     let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
 
-    await #expect(throws: AwtrixError.self) {
+    // Asserting only the error TYPE would pass against an empty
+    // .http(0, "", "") — the payload is the whole point of the case.
+    do {
         try await device.playMelody(named: "missing")
+        Issue.record("expected a failure for a 404 response")
+    } catch let AwtrixError.http(status, body, endpoint) {
+        #expect(status == 404)
+        #expect(body == "FileNotFound")
+        #expect(endpoint == "/api/sound")
+    }
+}
+
+@Test func anUnusableHostThrowsInsteadOfTrapping() async {
+    let device = AwtrixDevice(host: "not a host", transport: RecordingTransport())
+
+    await #expect(throws: AwtrixError.self) {
+        try await device.stats()
     }
 }
 
@@ -269,6 +319,9 @@ import Foundation
 
 public enum AwtrixError: Error, Sendable {
     case http(status: Int, body: String, endpoint: String)
+    /// The configured host cannot form a URL. The address is user-typable from
+    /// Task 14 on, so this must be an error, never a trap.
+    case invalidHost(String)
 }
 
 extension AwtrixError: CustomStringConvertible {
@@ -276,6 +329,8 @@ extension AwtrixError: CustomStringConvertible {
         switch self {
         case let .http(status, body, endpoint):
             return "\(endpoint) -> HTTP \(status): \(body)"
+        case let .invalidHost(host):
+            return "invalid device host: \(host)"
         }
     }
 }
@@ -404,7 +459,12 @@ public actor AwtrixDevice {
         body: Data? = nil,
         contentType: String? = nil
     ) async throws -> Data {
-        var request = URLRequest(url: URL(string: "http://\(host)\(path)")!)
+        // Never force-unwrap: the host is user-typed from Task 14 on, and a
+        // trap in a background menu bar process makes the app vanish silently.
+        guard let url = URL(string: "http://\(host)\(path)") else {
+            throw AwtrixError.invalidHost(host)
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
         if let contentType {
@@ -426,7 +486,11 @@ public actor AwtrixDevice {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter AwtrixDeviceSendTests`
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests.
+
+Note for later tasks: `AwtrixError` now has two cases, so any exhaustive `switch`
+over it must handle `.invalidHost` — most relevant in Task 14, where the host
+becomes user-typable.
 
 - [ ] **Step 5: Commit**
 

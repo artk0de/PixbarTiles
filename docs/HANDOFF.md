@@ -19,11 +19,14 @@ shows them on the clock on a user-set interval.
 
 Branch `feat/menu-bar-app`, nothing merged, nothing pushed.
 
-| Tasks 1-7 | complete, reviewed |
-| Task 8 | implemented (`a14e4ba`), review was in flight at handoff |
+| Tasks 1-8 | complete, reviewed, all findings closed |
 | Tasks 9-16 | planned, not started |
 
-`swift test` passes 82 tests with zero warnings.
+Resume at Task 9. Its brief is generated with
+`.claude/plugins/.../subagent-driven-development/scripts/task-brief <plan> 9`;
+the ledger records the base commit each task started from.
+
+`swift test` passes 83 tests with zero warnings.
 
 ## Hardware, measured not assumed
 

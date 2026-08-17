@@ -147,6 +147,12 @@ import Testing
     #expect(SpeechText.prepare("работа-работа") == "работа-работа")
 }
 
+@Test func aSpacedAsciiHyphenIsNotTreatedAsADash() {
+    // The dash rule matches em and en dashes only. Widening it to the ASCII
+    // hyphen would eat the minus sign out of arithmetic.
+    #expect(SpeechText.prepare("50 - 30") == "50 - 30")
+}
+
 @Test func aTrailingFullStopIsRemoved() {
     // It provokes the decoder into appending an audible fragment after the
     // sentence, separated by 0.2 s of real silence at −94 dB.

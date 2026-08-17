@@ -118,16 +118,35 @@ public actor AnecdoteQueue {
         store.spentClipDirectory = nil
     }
 
-    /// The one directory holding every clip of an anecdote, or nil when they do
-    /// not share one.
+    /// The directory holding an anecdote's clips, but only when the reaper can
+    /// prove it is one we made.
     ///
-    /// Removing a directory that other anecdotes also write into would take
-    /// their audio with it, so anything but the namespaced shape the
-    /// synthesizer guarantees is left alone.
+    /// Two things must hold. Every clip shares one directory — otherwise the
+    /// only directory covering them all is a parent that holds other things
+    /// too. And that directory is *named for the anecdote*:
+    /// `namespace(for:)` is the name the preparer hands the synthesizer, so a
+    /// directory carrying it is one the synthesizer made for this anecdote and
+    /// for nothing else.
+    ///
+    /// The name is what makes this safe rather than merely tidy. `retire`
+    /// removes a directory tree, and `PreparedAnecdote` is `Codable` — it is
+    /// read back with `try?` from a file on the user's own disk at every
+    /// launch. A truncated write, a merged sync copy or a hand-edit during
+    /// debugging can each produce a perfectly decodable anecdote whose clips
+    /// point somewhere else entirely. An operation that deletes recursively
+    /// must not take its target from data it did not create, and the write path
+    /// promising to use a subdirectory is not a promise the delete path can
+    /// lean on — least of all after someone changes how clips are produced.
+    ///
+    /// A mismatch leaks a directory instead of removing the wrong one, which is
+    /// the right way round to fail.
     private static func clipDirectory(of anecdote: PreparedAnecdote) -> URL? {
         let directories = Set(anecdote.clips.map { $0.url.deletingLastPathComponent() })
-        guard directories.count == 1 else { return nil }
-        return directories.first
+        guard directories.count == 1, let directory = directories.first else { return nil }
+        guard directory.lastPathComponent == PreparedAnecdote.namespace(for: anecdote.id) else {
+            return nil
+        }
+        return directory
     }
 
     private func persist() {

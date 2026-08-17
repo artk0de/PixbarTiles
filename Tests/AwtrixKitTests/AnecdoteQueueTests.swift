@@ -158,11 +158,13 @@ private func prepared(_ id: String) -> PreparedAnecdote {
     #expect(fresh.map(\.id) == ["a", "b"])
 }
 
-/// An anecdote whose single clip really exists, in a directory of its own —
-/// so retiring it registers a directory that is safe to reclaim later.
+/// An anecdote whose single clip really exists, in a directory named the way
+/// the synthesizer names one — so retiring it registers a directory the reaper
+/// will accept as its own.
 private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("clips-\(UUID().uuidString)")
+        .appendingPathComponent(PreparedAnecdote.namespace(for: id))
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let clip = directory.appendingPathComponent("turn-0.wav")
     try Data().write(to: clip)
@@ -176,18 +178,26 @@ private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
 // directories have no such directory — the only one covering both is their
 // parent, and deleting that would take everything else in it.
 @Test func clipsSpreadAcrossTwoDirectoriesReclaimNothing() async throws {
-    let root = FileManager.default.temporaryDirectory
-        .appendingPathComponent("split-\(UUID().uuidString)")
-    let left = root.appendingPathComponent("left")
-    let right = root.appendingPathComponent("right")
+    // BOTH directories carry the anecdote's namespace, under different
+    // parents. That is deliberate: it keeps the name check from answering this
+    // question, so what is under test is the count of directories and nothing
+    // else. Named anything else, this test would pass for the wrong reason.
+    let namespace = PreparedAnecdote.namespace(for: "split")
+    let left = FileManager.default.temporaryDirectory
+        .appendingPathComponent("split-a-\(UUID().uuidString)").appendingPathComponent(namespace)
+    let right = FileManager.default.temporaryDirectory
+        .appendingPathComponent("split-b-\(UUID().uuidString)").appendingPathComponent(namespace)
     for directory in [left, right] {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
     let leftClip = left.appendingPathComponent("turn-0.wav")
     let rightClip = right.appendingPathComponent("turn-1.wav")
-    // Something the reaper has no business touching, in the parent they share.
-    let bystander = root.appendingPathComponent("bystander.wav")
-    for file in [leftClip, rightClip, bystander] { try Data().write(to: file) }
+    // Files the reaper has no business touching, beside each clip.
+    let leftBystander = left.appendingPathComponent("bystander.txt")
+    let rightBystander = right.appendingPathComponent("bystander.txt")
+    for file in [leftClip, rightClip, leftBystander, rightBystander] {
+        try Data().write(to: file)
+    }
 
     let queue = AnecdoteQueue(storeURL: temporaryStore())
     await queue.retire(PreparedAnecdote(
@@ -200,7 +210,53 @@ private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
 
     #expect(FileManager.default.fileExists(atPath: leftClip.path))
     #expect(FileManager.default.fileExists(atPath: rightClip.path))
+    #expect(FileManager.default.fileExists(atPath: leftBystander.path))
+    #expect(FileManager.default.fileExists(atPath: rightBystander.path))
+}
+
+// `retire` removes a directory tree, and a `PreparedAnecdote` is not something
+// this process necessarily created — it is decoded with `try?` from a file on
+// the user's own disk at every launch. A truncated write, a merged sync copy or
+// a hand-edit during debugging all decode cleanly while pointing the clips
+// somewhere else, and "the synthesizer always writes a subdirectory" is a
+// promise about the write path, offered to the delete path.
+//
+// So the reaper reclaims only a directory named for the anecdote it belongs to.
+@Test func aClipDirectoryNotNamedForItsAnecdoteIsNeverReclaimed() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("somewhere-else-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let clip = directory.appendingPathComponent("turn-0.wav")
+    let bystander = directory.appendingPathComponent("something-of-the-users.txt")
+    for file in [clip, bystander] { try Data().write(to: file) }
+
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    // Clips sitting directly in a directory that is not their namespace: what a
+    // store restored from a bad copy looks like.
+    await queue.retire(PreparedAnecdote(
+        id: "https://www.anekdot.ru/id/1/", text: "joke",
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+    ))
+    // The retire that reclaims whatever the previous one registered.
+    await queue.retire(try preparedOnDisk("https://www.anekdot.ru/id/2/"))
+
+    #expect(FileManager.default.fileExists(atPath: directory.path))
     #expect(FileManager.default.fileExists(atPath: bystander.path))
+}
+
+// The check is a proof of authorship, not a ban on reclaiming: a directory that
+// does carry the namespace is still removed. Without this, disabling the reaper
+// outright would satisfy the test above.
+@Test func aClipDirectoryNamedForItsAnecdoteIsStillReclaimed() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let spent = try preparedOnDisk("https://www.anekdot.ru/id/1/")
+    let spentDirectory = try #require(spent.clips.first?.url.deletingLastPathComponent())
+
+    await queue.retire(spent)
+    #expect(FileManager.default.fileExists(atPath: spentDirectory.path))
+    await queue.retire(try preparedOnDisk("https://www.anekdot.ru/id/2/"))
+
+    #expect(FileManager.default.fileExists(atPath: spentDirectory.path) == false)
 }
 
 @Test func aCorruptStoreStartsEmptyInsteadOfThrowing() async {

@@ -221,7 +221,10 @@ private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
 // somewhere else, and "the synthesizer always writes a subdirectory" is a
 // promise about the write path, offered to the delete path.
 //
-// So the reaper reclaims only a directory named for the anecdote it belongs to.
+// So the reaper reclaims only a directory NAMED for the anecdote it belongs to.
+// That is a naming rule rather than a proof of authorship — a store written
+// deliberately can satisfy it — but it is decisive against every accidental
+// shape, which is the case that needs defending.
 @Test func aClipDirectoryNotNamedForItsAnecdoteIsNeverReclaimed() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("somewhere-else-\(UUID().uuidString)")
@@ -244,8 +247,8 @@ private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
     #expect(FileManager.default.fileExists(atPath: bystander.path))
 }
 
-// The check is a proof of authorship, not a ban on reclaiming: a directory that
-// does carry the namespace is still removed. Without this, disabling the reaper
+// The check is a naming rule, not a ban on reclaiming: a directory that does
+// carry the namespace is still removed. Without this, disabling the reaper
 // outright would satisfy the test above.
 @Test func aClipDirectoryNamedForItsAnecdoteIsStillReclaimed() async throws {
     let queue = AnecdoteQueue(storeURL: temporaryStore())

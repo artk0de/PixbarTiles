@@ -118,25 +118,29 @@ public actor AnecdoteQueue {
         store.spentClipDirectory = nil
     }
 
-    /// The directory holding an anecdote's clips, but only when the reaper can
-    /// prove it is one we made.
+    /// The directory holding an anecdote's clips, when it is named for that
+    /// anecdote.
     ///
     /// Two things must hold. Every clip shares one directory — otherwise the
     /// only directory covering them all is a parent that holds other things
-    /// too. And that directory is *named for the anecdote*:
-    /// `namespace(for:)` is the name the preparer hands the synthesizer, so a
-    /// directory carrying it is one the synthesizer made for this anecdote and
-    /// for nothing else.
+    /// too. And that directory's name equals `namespace(for:)`, the name the
+    /// preparer hands the synthesizer.
     ///
-    /// The name is what makes this safe rather than merely tidy. `retire`
-    /// removes a directory tree, and `PreparedAnecdote` is `Codable` — it is
-    /// read back with `try?` from a file on the user's own disk at every
-    /// launch. A truncated write, a merged sync copy or a hand-edit during
-    /// debugging can each produce a perfectly decodable anecdote whose clips
-    /// point somewhere else entirely. An operation that deletes recursively
-    /// must not take its target from data it did not create, and the write path
-    /// promising to use a subdirectory is not a promise the delete path can
-    /// lean on — least of all after someone changes how clips are produced.
+    /// This establishes naming, not authorship: `id` and the clip paths come
+    /// out of the same record, so a store written deliberately can always
+    /// satisfy it. That is not the case being defended against. `retire`
+    /// removes a directory tree, and `PreparedAnecdote` is `Codable` — read
+    /// back with `try?` from a file on the user's own disk at every launch. A
+    /// truncated write, a merged sync copy or a hand-edit during debugging each
+    /// decode cleanly while pointing the clips somewhere else, and against
+    /// those the name is decisive: none of them lands on a directory named for
+    /// the sanitized guid. A store crafted on purpose needs no defence here,
+    /// because it sits at the user's own permissions — whoever can write it can
+    /// already delete what the reaper would.
+    ///
+    /// What the name really buys is that the delete path stops depending on the
+    /// write path's promise to use a subdirectory, which is not a promise it
+    /// can lean on once someone changes how clips are produced.
     ///
     /// A mismatch leaks a directory instead of removing the wrong one, which is
     /// the right way round to fail.

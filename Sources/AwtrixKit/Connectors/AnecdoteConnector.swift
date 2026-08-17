@@ -115,6 +115,15 @@ public actor AnecdotePreparer {
         let predecessor = tail
         let work = Task { () -> Int in
             await predecessor?.value
+            // Checked on the FAR SIDE of the wait, and only there. Cancellation
+            // cannot break `predecessor?.value`, so without this a refill
+            // cancelled while queued goes on to run a batch nobody is waiting
+            // for. Checking BEFORE the wait would be worse than useless: this
+            // task's own wrapper is what the next caller waits on, so bailing
+            // out early would complete that wrapper while the predecessor is
+            // still running and let the caller after us overlap it — which is
+            // the reentrancy defect this chain exists to prevent.
+            try Task.checkCancellation()
             return try await self.performRefill(target: target)
         }
         tail = Task { _ = try? await work.value }

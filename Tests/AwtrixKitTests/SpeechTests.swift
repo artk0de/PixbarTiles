@@ -179,6 +179,21 @@ private func fakeSidecar(recordingStartsTo marker: String, in directory: URL) th
     #expect(first.map(\.lastPathComponent) == ["turn-0.wav", "turn-1.wav"])
     #expect(second.map(\.lastPathComponent) == ["turn-0.wav"])
     #expect(Set(first).isDisjoint(with: Set(second)))
+
+    // The clips sit DIRECTLY in a directory named for the namespace, with no
+    // level in between. `AnecdoteQueue`'s reaper reclaims a directory only when
+    // its last path component equals `PreparedAnecdote.namespace(for:)`, so
+    // this layout is a contract between two types that never reference each
+    // other. Nest the output one level deeper and the reaper stops recognising
+    // any real directory: it reclaims nothing, for ever, and every reaper test
+    // still passes because they all run against the stub or hand-built
+    // anecdotes. It fails in the safe direction, which is why nothing notices.
+    #expect(first.allSatisfy {
+        $0.deletingLastPathComponent().lastPathComponent == "anecdote-one"
+    })
+    #expect(second.allSatisfy {
+        $0.deletingLastPathComponent().lastPathComponent == "anecdote-two"
+    })
 }
 
 // MARK: - Normalisation. Every rule below fixes a defect that was heard.

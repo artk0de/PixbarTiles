@@ -121,6 +121,58 @@ private final class BlockingSpeechSynthesizer: SpeechSynthesizing, @unchecked Se
     }
 }
 
+/// Holds the first request open until the test releases it, then serves the
+/// body to everyone.
+///
+/// The waiting is done with a continuation rather than a sleep, because a sleep
+/// throws on cancellation and that is not what the shipped code does: the real
+/// `SidecarSpeechSynthesizer` is a blocking synchronous read loop with no
+/// suspension point that could notice a cancelled task. A double that notices
+/// would let a refill die on its own and hide whether the guard under test
+/// works at all.
+private final class GatedTransport: Transport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var gate: CheckedContinuation<Void, Never>?
+    private var opened = false
+    private var seen = 0
+    private let body: Data
+
+    init(body: Data) { self.body = body }
+
+    var requestCount: Int { lock.withLock { seen } }
+
+    func open() {
+        let waiting = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            opened = true
+            let held = gate
+            gate = nil
+            return held
+        }
+        waiting?.resume()
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let isFirst = lock.withLock { () -> Bool in
+            seen += 1
+            return seen == 1
+        }
+        if isFirst {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let alreadyOpen = lock.withLock { () -> Bool in
+                    if opened { return true }
+                    gate = continuation
+                    return false
+                }
+                if alreadyOpen { continuation.resume() }
+            }
+        }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+        )!
+        return (body, response)
+    }
+}
+
 /// Deterministic, so the short-joke draw can be asserted.
 ///
 /// A counter rather than the constant it looks like it should be:
@@ -346,6 +398,47 @@ private struct SeededGenerator: RandomNumberGenerator {
 
     #expect(ContinuousClock.now - cancelledAt < .seconds(1))
     #expect(await queue.ready() == 0)
+}
+
+// Cancelling a refill that is still WAITING ITS TURN. `topUpIfNeeded()` can be
+// a minute into a ten-anecdote batch when the timer fires, `produce()` finds an
+// empty queue, and its `refill(target: 1)` lines up behind that batch. Without a
+// check on the far side of the wait, the queued refill runs a batch nobody is
+// waiting for any more and reports success.
+//
+// It still cannot return before the refill ahead of it finishes — the wait
+// itself is not interruptible, by design. See `refill(target:)`.
+@Test func cancellingARefillThatIsWaitingItsTurnStopsItToo() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let transport = GatedTransport(body: Data(batchFeed.utf8))
+    let preparer = AnecdotePreparer(
+        source: AnecdoteSource(transport: transport),
+        speech: StubSpeechSynthesizer(), queue: queue
+    )
+
+    // Park a refill at the head of the chain, inside its fetch.
+    let head = Task { try await preparer.refill(target: 1) }
+    var waited = 0
+    while transport.requestCount == 0, waited < 500 {
+        try await Task.sleep(nanoseconds: 1_000_000)
+        waited += 1
+    }
+    #expect(transport.requestCount == 1)
+
+    let queued = Task { try await preparer.refill(target: 10) }
+    await Task.yield()
+    queued.cancel()
+    transport.open()
+
+    await #expect(throws: CancellationError.self) { _ = try await queued.value }
+
+    // The refill ahead of it is untouched: cancelling a queued caller must not
+    // kill the batch already running.
+    let headAdded = try await head.value
+    #expect(headAdded == 1)
+    // Only the head's anecdote landed. The cancelled refill would have added
+    // the second one had it run.
+    #expect(await queue.ready() == 1)
 }
 
 // MARK: - The connector

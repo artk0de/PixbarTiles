@@ -44,9 +44,39 @@ private func bodyString(_ request: URLRequest) -> String {
 
     let request = try #require(transport.requests.first)
     #expect(request.httpMethod == "DELETE")
-    let body = bodyString(request)
-    #expect(body.contains(#"name="path""#))
-    #expect(body.contains("/MELODIES/nokia.txt"))
+    let contentType = try #require(request.value(forHTTPHeaderField: "Content-Type"))
+    let boundary = String(contentType.dropFirst("multipart/form-data; boundary=".count))
+    let expected =
+        "--\(boundary)\r\n"
+        + "Content-Disposition: form-data; name=\"path\"\r\n"
+        + "\r\n"
+        + "/MELODIES/nokia.txt\r\n"
+        + "--\(boundary)--\r\n"
+    #expect(String(decoding: try #require(request.httpBody), as: UTF8.self) == expected)
+}
+
+@Test func removeIconTargetsTheGifUnderIcons() async throws {
+    let transport = RecordingTransport()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    try await device.removeIcon(named: "laugh")
+
+    let request = try #require(transport.requests.first)
+    #expect(request.httpMethod == "DELETE")
+    #expect(String(decoding: try #require(request.httpBody), as: UTF8.self)
+        .contains("/ICONS/laugh.gif"))
+}
+
+@Test func removeMelodyTargetsTheTextFileUnderMelodies() async throws {
+    let transport = RecordingTransport()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    try await device.removeMelody(named: "nokia")
+
+    let request = try #require(transport.requests.first)
+    #expect(request.httpMethod == "DELETE")
+    #expect(String(decoding: try #require(request.httpBody), as: UTF8.self)
+        .contains("/MELODIES/nokia.txt"))
 }
 
 @Test func installMelodyWritesRtttlAsATextFile() async throws {

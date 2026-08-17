@@ -47,14 +47,12 @@ extension AwtrixDevice {
 
     public func delete(_ remotePath: String) async throws {
         let boundary = UUID().uuidString
-        let body = Data("""
-        --\(boundary)\r
-        Content-Disposition: form-data; name="path"\r
-        \r
-        \(remotePath)\r
-        --\(boundary)--\r
-
-        """.utf8)
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"path\"\r\n".utf8))
+        body.append(Data("\r\n".utf8))
+        body.append(Data("\(remotePath)\r\n".utf8))
+        body.append(Data("--\(boundary)--\r\n".utf8))
         _ = try await perform(
             "DELETE", "/edit", body: body,
             contentType: "multipart/form-data; boundary=\(boundary)"

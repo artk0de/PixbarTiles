@@ -74,6 +74,36 @@ ENTITIES = [("&quot;", '"'), ("&apos;", "'"), ("&lt;", "<"), ("&gt;", ">"),
             ("&nbsp;", " "), ("&mdash;", "—"), ("&ndash;", "–"), ("&amp;", "&")]
 
 
+QUOTES = "«»“”„‟\"‘’`´"
+
+
+def speech_text(line: str) -> str:
+    """Prepare one line for the synthesizer. Every rule here was settled by ear.
+
+    - Quotation marks are removed. XTTS vocalises them: `точка»` came out as
+      "точкала", the closing quote becoming a syllable of the word.
+    - A dash between spaces is dropped rather than kept or turned into a comma.
+      Kept, it produced a pause long enough to sound like a fault.
+    - A trailing full stop is removed. It provoked the decoder into appending an
+      audible fragment after the sentence — a spurious "по" separated from the
+      real speech by true silence. Raising the repetition penalty did not fix
+      that; deleting the full stop did.
+    - A trailing `?` or `!` is KEPT, because it carries the intonation, and a
+      space is added after it. Without the space the final consonant was
+      swallowed: "Анекдот!" lost its Т.
+    """
+    text = "".join(" " if ch in QUOTES else ch for ch in line)
+    text = re.sub(r"\s+[—–]\s+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+([,.!?;:…])", r"\1", text).strip()
+
+    if text.endswith("."):
+        return text.rstrip(".").rstrip()
+    if text and text[-1] in "?!":
+        return text + " "
+    return text
+
+
 def laughter_for(text: str) -> str:
     """The longer the anecdote, the longer the laugh.
 
@@ -181,7 +211,11 @@ def synthesize(voiced: list[tuple[str, str]]) -> list[str]:
     anecdote never starts the sidecar at all.
     """
     os.makedirs(CACHE_DIR, exist_ok=True)
-    files = [cache_path(voice, line) for voice, line in voiced]
+    # The synthesizer gets normalized text; the clock and the log keep the
+    # original. Normalization is part of the cache key, so changing a rule
+    # invalidates the clips it affected.
+    spoken = [(voice, speech_text(line)) for voice, line in voiced]
+    files = [cache_path(voice, line) for voice, line in spoken]
     missing = [i for i, path in enumerate(files) if not os.path.exists(path)]
 
     if not missing:
@@ -197,7 +231,7 @@ def synthesize(voiced: list[tuple[str, str]]) -> list[str]:
     )
     try:
         for index in missing:
-            voice, line = voiced[index]
+            voice, line = spoken[index]
             proc.stdin.write(
                 json.dumps({"voice": voice, "text": line, "out": files[index]}) + "\n"
             )

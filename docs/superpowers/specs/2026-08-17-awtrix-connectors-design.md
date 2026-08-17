@@ -145,9 +145,38 @@ throw that cache away every time. The app supervises the process: start on first
 use, restart if it exits, surface a degraded state in the tray if it will not
 come up.
 
-Available voices: `arthas` (19.39 s reference) and `peon` (23.16 s). Both are
-built from peon-ping packs by concatenating the longest clips through ffmpeg
-silence removal and loudness normalization, targeting roughly 20 seconds.
+### Voices
+
+Five, all speaking Russian, each measured by median fundamental frequency so the
+separation is a number rather than an impression:
+
+| Voice | F0 | Source |
+| --- | --- | --- |
+| `acolyte` | 92 Hz | Undead Acolyte, Warcraft 3 RU |
+| `arthas` | 134 Hz | Arthas, Warcraft 3 RU |
+| `peon` | 262 Hz | Orc Peon, Warcraft 3 RU |
+| `crystal` | 296 Hz | Crystal Maiden, Dota 2 RU — the only female voice |
+| `batrak` | 329 Hz | WC2 Peon RU |
+
+**How NOT to pick the clips.** The first references took the longest clips from
+each pack. That silently selected for declamation: the three most steeply falling
+pitch contours in the Arthas pack all landed in his reference, and every rising,
+question-like line was excluded for being short. The clone then read questions
+with a falling contour. Build a reference with both contours in it — measure each
+clip's pitch from its first third to its final sixth and keep a mix, roughly a
+third rising. Crystal's reference was built that way: 93 clips fetched over two
+rounds because the first round yielded only three rising ones, 14 kept, 5 rising.
+
+**Normalise every clip to one format before concatenating.** Packs are not
+internally consistent — Crystal's source was 22050 Hz with mixed mono and stereo,
+Arthas's was 48000 Hz. ffmpeg's concat demuxer applies the first file's
+parameters to the rest, and the result was 59% too long with its pitch dragged
+from 211 Hz down to 108 Hz. It was a plausible-looking file; the F0 number is
+what exposed it.
+
+There is no Russian female voice in the peon-ping registry — all nine of its
+Russian packs are male Warcraft characters. Crystal Maiden comes from the Dota 2
+Russian wiki instead, which is why the one female voice is not Warcraft.
 
 Four environment constraints are load-bearing and will resurface on any rebuild:
 
@@ -165,7 +194,77 @@ Output is loudness-normalized at `I=-18 TP=-2`, measured at −2.4 dB and −2.0
 peak, so there is headroom. XTTS emits 24000 Hz mono; resample explicitly if the
 audio ever joins a pipeline with another rate.
 
-**Listened to and accepted, 2026-08-17.** Both clones were played back to back:
+### Text normalisation before synthesis
+
+Every rule below was settled by listening, and each one fixes a specific audible
+defect. The clock keeps the original text; only the synthesizer gets the
+normalised version.
+
+| Rule | What it fixes |
+| --- | --- |
+| Strip `«» "" „" ' `` | XTTS vocalises quotation marks. `точка»` came out as "точкала" — the closing quote became a syllable of the word. |
+| Drop a dash between spaces | Kept, it produced a pause long enough to sound like a fault: "вкусно …… и точка". |
+| Remove a trailing full stop | It provoked the decoder into appending an audible fragment after the sentence — a spurious "по", separated from the real speech by 0.2 s of true digital silence at −94 dB. |
+| Keep a trailing `?` or `!`, and add a space | The punctuation carries the intonation; without the trailing space the final consonant is swallowed, and "Анекдот!" lost its Т. |
+
+The question mark does work. Measured on the same sentence with and without it,
+the pitch contour ends 18.5 Hz higher relative to the statement — a consistent
+difference, not noise. An earlier claim that it did nothing came from comparing
+different sentences on single samples of a stochastic model, which is not a
+measurement.
+
+### Stress marking is impossible here, and the reason is the tokenizer
+
+Russian needs stress to disambiguate homographs, and stock XTTS gets them wrong:
+`Он открыл замок` is read за́мок (the castle) where замо́к (the lock) is meant.
+Four conventions were tested by ear, and all four fail:
+
+| Convention | Result |
+| --- | --- |
+| combining acute `замо́к` | stress moves correctly — and the following consonant is lost |
+| `+` before the vowel, the RUAccent/Silero standard | the word breaks apart: "зам ок" |
+| capital `замОк` | lowercased before tokenization, ignored |
+| doubled vowel `замоок` | in-vocabulary, but sounds bad |
+
+The cause is that `+` and the combining acute are **absent from the XTTS BPE
+vocabulary** — both encode to `[UNK]`, which is what corrupts the neighbouring
+characters. That explains all four results at once.
+
+**No fine-tune can fix this.** `tensorbanana/xttsv2_banana` (to which
+`Ftfyhh/xttsv2_banana` redirects) ships a `vocab.json` byte-identical to stock,
+verified by md5. It was evaluated and rejected: it does not address stress, its
+livelier intonation comes with swallowed phonemes, and the swallowing could not
+be tuned out — lowering the sampling temperature removes the liveliness along
+with it, and `length_penalty` is silently ignored as an invalid generation flag
+by this version of transformers. `omogr/xtts-ru-ipa` does resolve homographs
+correctly but runs 1.3–2.3× slower with a one-second failure-to-stop tail and a
+non-commercial licence.
+
+Wrong stress on a homograph is accepted as a cosmetic flaw. Everything that was
+actually broken has been fixed.
+
+### Models that do not work for this, and why
+
+Recorded so nobody proposes them again. All three are strong models; all three
+fail on the same axis.
+
+- **F5-TTS** — no Russian in the base checkpoints, English and Chinese only.
+- **VibeVoice** (Microsoft) — the model card states it plainly: "the model is
+  trained only on English and Chinese data; outputs in other languages are
+  unsupported and may be unintelligible or offensive." Its multi-speaker
+  long-form design fits this product well, which makes the language gap the more
+  frustrating. Microsoft also withdrew the TTS inference code from the public
+  repository in September 2025 over deepfake misuse.
+- **Cross-lingual cloning** — an English reference speaking Russian was tried
+  with Jaina Proudmoore's Warcraft 3 lines. It produces Russian, and it sounds
+  bad. That closed off every English-only voice pack as a source.
+- **Silero + RVC** — Silero has native Russian with automatic stress, but does
+  not clone; RVC would restore the timbre but needs roughly ten minutes of
+  material per voice against the 20–28 seconds these references have.
+
+### Voice quality, listened to and accepted, 2026-08-17
+
+Both clones were played back to back:
 Arthas and Peon are clearly distinguishable, Russian prosody holds, and the
 mandatory `АХАХАХАХАХА` comes out usable — laughter is a traditional TTS weak
 spot, so it was checked on its own. This was the project's largest open risk,

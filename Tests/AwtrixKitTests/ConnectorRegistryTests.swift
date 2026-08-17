@@ -52,15 +52,47 @@ private struct FakeConnector: Connector {
 
 // The one call the host in Task 11 makes: reach a connector through the
 // registry's existential and await it.
+// Two connectors, and the one asked is not the one at the head, so the lookup
+// half of this has to be right as well as the await half.
 @Test func aConnectorFoundInTheRegistryCanBeAskedToProduce() async throws {
     let registry = ConnectorRegistry()
     registry.register(
-        FakeConnector(id: "a", displayName: "A", output: ConnectorOutput(text: "produced"))
+        FakeConnector(id: "a", displayName: "A", output: ConnectorOutput(text: "first"))
+    )
+    registry.register(
+        FakeConnector(id: "b", displayName: "B", output: ConnectorOutput(text: "second"))
     )
 
-    let connector = try #require(registry.connector(id: "a"))
+    let connector = try #require(registry.connector(id: "b"))
 
-    #expect(try await connector.produce().text == "produced")
+    #expect(try await connector.produce().text == "second")
+}
+
+// `@unchecked Sendable` turns the compiler's check off, so the lock inside the
+// registry is the only thing keeping `storage` consistent and nothing else
+// would notice if it went away. Task 11's host actor looks connectors up while
+// Task 14's `@MainActor` model reads `all`, so two isolation domains really do
+// touch this. Hammering it from 200 tasks is what makes the lock's absence
+// visible: unsynchronized, appends are lost.
+@Test func everyConcurrentRegistrationSurvives() async {
+    let registry = ConnectorRegistry()
+    let count = 200
+
+    await withTaskGroup(of: Void.self) { group in
+        for index in 0..<count {
+            group.addTask {
+                registry.register(FakeConnector(id: "c\(index)", displayName: "C\(index)"))
+            }
+            // A reader in the same window: `all` copies the array while the
+            // writers above are mutating it.
+            group.addTask {
+                _ = registry.all.count
+            }
+        }
+    }
+
+    #expect(registry.all.count == count)
+    #expect(Set(registry.all.map(\.id)).count == count)
 }
 
 // MARK: - The output shape
@@ -89,10 +121,11 @@ private struct FakeConnector: Connector {
     #expect(clip.leadIn == 0)
 }
 
-// A batch of clips is prepared in one run and played in a later one, so clips
-// are written to disk in between. Both halves have to survive the trip: a file
-// that no longer resolves plays nothing, and a lost lead-in loses the timing.
-@Test func aClipSurvivesBeingWrittenAndReadBack() throws {
+// A batch of clips is prepared in one run and played in a later one, which is
+// why a clip is encodable at all. Encoding is the part that can silently drop a
+// field, so this round-trips in memory rather than through a file: a URL that
+// no longer resolves plays nothing, and a lost lead-in loses the timing.
+@Test func aClipSurvivesEncodingAndDecoding() throws {
     let clip = SpokenClip(url: URL(fileURLWithPath: "/tmp/turn-0.wav"), leadIn: 0.7)
 
     let restored = try JSONDecoder().decode(

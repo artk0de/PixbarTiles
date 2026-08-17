@@ -10,6 +10,12 @@ public final class ConnectorRegistry: @unchecked Sendable {
 
     /// Adds a connector, or replaces the one already registered under the same
     /// identifier. A replacement keeps the original's position.
+    ///
+    /// The search for an existing entry reads `id` off every connector already
+    /// registered, and it does so holding a non-recursive lock. A conformer's
+    /// `id` must therefore be a cheap, non-reentrant read — returning a stored
+    /// property is the expected shape. An `id` getter that calls back into this
+    /// registry deadlocks the caller.
     public func register(_ connector: any Connector) {
         lock.withLock {
             if let existing = storage.firstIndex(where: { $0.id == connector.id }) {

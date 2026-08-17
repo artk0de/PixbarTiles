@@ -162,6 +162,21 @@ private final class CancellationAwareTransport: Transport, @unchecked Sendable {
     }
 }
 
+/// Throws one error for every request, so a transport-level fault can be aimed
+/// at the delivery path the way `SpyMaintainingConnector(failure:)` aims one at
+/// the background path.
+///
+/// A struct with no recording: what is under test is how the error is
+/// classified, and the run never gets far enough for the request log to say
+/// anything the result does not.
+private struct FaultingTransport: Transport {
+    let error: any Error & Sendable
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        throw error
+    }
+}
+
 /// Serves a server error for one endpoint and success for every other, so a
 /// failure can be aimed at a single step of the delivery.
 private final class PathFailingTransport: Transport, @unchecked Sendable {
@@ -783,8 +798,25 @@ private func staysFalse(
     #expect(await host.maintain(connectorId: "maintaining") == .cancelled)
 }
 
-// The other half of the same rule, on the same path: a feed that answers 503
-// during a restock is an outage, and must not be filed as an orderly stop.
+// The other half of the same rule, on the path the user actually sees. A
+// timeout, a DNS failure or a refused connection reaching `/api/notify` is the
+// clock being unreachable — an outage worth showing, not an orderly stop. Only
+// the code tells the two apart: both arrive as `URLError`, so a clause matching
+// the type rather than the code files an outage as a clean shutdown.
+@Test func aDeliveryThatHitsARealTransportFaultStillFails() async {
+    let host = makeHost(
+        connector: StubConnector(),
+        transport: FaultingTransport(error: URLError(.timedOut))
+    )
+
+    guard case .failed = await host.runOnce(connectorId: "stub") else {
+        Issue.record("a timeout is an outage, not a cancellation")
+        return
+    }
+}
+
+// The same on the background path: a restock reaches the feed through the same
+// transport, so the same misclassification is available there.
 @Test func aBackgroundPassThatHitsARealTransportFaultStillFails() async {
     let connector = SpyMaintainingConnector(failure: URLError(.timedOut))
     let host = makeHost(connector: connector)

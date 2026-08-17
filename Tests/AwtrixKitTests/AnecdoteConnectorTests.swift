@@ -684,6 +684,72 @@ private struct SeededGenerator: RandomNumberGenerator {
     #expect(await queue.ready() == 2)
 }
 
+// MARK: - The host's background pass
+
+// The host reaches this connector as `any Connector` and knows nothing about
+// queues or batches. `maintain()` is the one door through which the restocking
+// the queue depends on actually gets called.
+@Test func maintenanceRestocksTheQueue() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    try await connector.maintain()
+
+    #expect(await queue.ready() == 2)
+}
+
+// `retire()` cannot report a failed write — it is called with the anecdote
+// already on its way to the player, so there is nothing to undo. The write is
+// re-attempted here instead, which is both the remedy and the only place the
+// failure can be surfaced. Without it a played id that never reached disk comes
+// back unplayed and the anecdote repeats.
+//
+// The queue is stocked past the refill threshold on purpose, so the restock is
+// a no-op and the re-written file can only have come from the flush.
+@Test func maintenanceRewritesTheStoreSoAPlayedAnecdoteStaysPlayed() async throws {
+    let store = temporaryStore()
+    let queue = AnecdoteQueue(storeURL: store)
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    _ = try await preparer.refill(target: 2)
+    let connector = AnecdoteConnector(
+        queue: queue, preparer: preparer, refillThreshold: 1, batchSize: 10
+    )
+    try FileManager.default.removeItem(at: store)
+
+    try await connector.maintain()
+
+    #expect(FileManager.default.fileExists(atPath: store.path))
+    let reopened = AnecdoteQueue(storeURL: store)
+    #expect(await reopened.ready() == 2)
+}
+
+// A store that cannot be written is reported rather than swallowed, and it
+// stops the pass before the restock: ten anecdotes synthesized into a queue
+// that cannot reach disk are ten model-seconds spent on a batch the next launch
+// will not see.
+@Test func maintenanceReportsAStoreThatCannotBeWrittenAndDoesNotRestock() async throws {
+    // A regular file where the store's parent directory should be, so the write
+    // fails for a reason the code cannot talk its way around.
+    let blocker = FileManager.default.temporaryDirectory
+        .appendingPathComponent("blocked-\(UUID().uuidString)")
+    try Data().write(to: blocker)
+    let queue = AnecdoteQueue(storeURL: blocker.appendingPathComponent("store.json"))
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    await #expect(throws: (any Error).self) {
+        try await connector.maintain()
+    }
+    #expect(await queue.ready() == 0)
+}
+
 @Test func topUpIfNeededLeavesAStockedQueueAlone() async throws {
     let transport = RecordingTransport()
     transport.body = Data(batchFeed.utf8)

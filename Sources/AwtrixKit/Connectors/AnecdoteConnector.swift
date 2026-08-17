@@ -196,7 +196,7 @@ public struct AnecdoteConnector: Connector {
 
     /// A 55-frame grinning face. The catalogue's animated flag is unreliable —
     /// it marks single-frame icons animated — so the frames were counted.
-    public static let laughIcon = IconRef.catalogue(66558)
+    public static let laughIcon = IconReference.catalogue(66558)
     public static let nokiaJingle =
         "nokia:d=4,o=5,b=225:8e6,8d6,f#,g#,8c#6,8b,d,e,8b,8a,c#,e,2a"
     /// The clock shows this, not the joke: the joke is heard, not read.
@@ -272,5 +272,23 @@ public struct AnecdoteConnector: Connector {
     public func topUpIfNeeded() async throws {
         guard await queue.ready() <= refillThreshold else { return }
         try await preparer.refill(target: batchSize)
+    }
+}
+
+extension AnecdoteConnector: ConnectorMaintaining {
+    /// The background pass the host schedules: make sure what was already
+    /// played is on disk, then restock.
+    ///
+    /// The flush comes first and stops the pass when it fails, for two reasons.
+    /// The played set is what the "never repeat an anecdote" requirement rests
+    /// on, and re-attempting its write costs nothing next to a batch of
+    /// synthesis — `retire()` cannot report a failed write itself, because it
+    /// is called with the anecdote already on its way to the player and there
+    /// is nothing left to undo. And a store that cannot be written cannot hold
+    /// a restocked batch either, so synthesizing ten anecdotes into it would
+    /// spend a minute of model time on a queue the next launch will not see.
+    public func maintain() async throws {
+        try await queue.flush()
+        try await topUpIfNeeded()
     }
 }

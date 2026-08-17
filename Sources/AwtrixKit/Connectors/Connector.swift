@@ -16,7 +16,12 @@ public struct SpokenClip: Sendable, Equatable, Codable {
     }
 }
 
-public enum IconRef: Sendable, Equatable {
+/// Spelled out rather than `IconRef`: LaunchServices publicly declares
+/// `typedef struct OpaqueIconRef* IconRef`, so that name is ambiguous in any
+/// file reaching CoreServices — which is every file in the app target and every
+/// file in the test target. Module qualification cannot rescue it either,
+/// because this module declares an `enum AwtrixKit` that shadows its own name.
+public enum IconReference: Sendable, Equatable {
     /// Already present on the device, referenced by basename.
     case installed(String)
     /// Fetched from the LaMetric catalogue by id, then installed.
@@ -25,7 +30,7 @@ public enum IconRef: Sendable, Equatable {
 
 public struct ConnectorOutput: Sendable, Equatable {
     public var text: String
-    public var icon: IconRef?
+    public var icon: IconReference?
     public var jingle: String?
     public var localAudio: [SpokenClip]
     /// Keep the banner on the clock until the audio finishes, rather than for a
@@ -37,7 +42,7 @@ public struct ConnectorOutput: Sendable, Equatable {
 
     public init(
         text: String,
-        icon: IconRef? = nil,
+        icon: IconReference? = nil,
         jingle: String? = nil,
         localAudio: [SpokenClip] = [],
         holdUntilAudioEnds: Bool = false,

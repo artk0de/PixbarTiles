@@ -1970,6 +1970,15 @@ git commit -m "feat: connector protocol, output shape and registry"
   - `static let laughIcon = IconRef.catalogue(66558)`
   - `static let nokiaJingle`, `static let banner`, `static let announcement`
   - `enum Laughter { static func forAnecdote(_ text: String, using: RandomNumberGenerator) -> String }`
+  - EXTENDS Task 8's `SpeechSynthesizing` with a namespace:
+    `func synthesize(_ turns: [VoicedTurn], namespace: String) async throws -> [URL]`.
+    **This is not optional.** Task 8 writes `turn-<index>.wav` into one fixed
+    directory, so preparing ten anecdotes in a batch would have every one
+    overwrite the last — nine of the ten silently destroyed, with the queue still
+    reporting ten ready. The preparer passes the anecdote's id (hashed to a safe
+    filename) as the namespace, and the synthesizer writes into a subdirectory of
+    that name. Task 8's implementer found this and correctly declined to fix an
+    interface it did not own.
   - EXTENDS Task 7's `AnecdoteSource` with `static let cascade: [URL]` and
     `func fetch(from feed: URL) async throws -> [Anecdote]`. Task 7 shipped only
     `fetch()` against the primary feed; the cascade is new here. Keep the
@@ -2115,6 +2124,13 @@ public struct PreparedAnecdote: Sendable, Codable, Equatable {
     public let text: String
     public let clips: [SpokenClip]
     public let laughter: String
+
+    /// A filename-safe key derived from the feed guid, which contains slashes.
+    public static func namespace(for id: String) -> String {
+        String(
+            id.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" }
+        ).suffix(48).description
+    }
 
     public init(id: String, text: String, clips: [SpokenClip], laughter: String) {
         self.id = id
@@ -2441,7 +2457,11 @@ public actor AnecdotePreparer {
             + body
             + [Turn(speaker: .narrator, text: laughter)]
 
-        let urls = try await speech.synthesize(caster.cast(turns))
+        // Namespaced per anecdote: a batch of ten would otherwise write ten
+        // sets of turn-0.wav into the same directory.
+        let urls = try await speech.synthesize(
+            caster.cast(turns), namespace: PreparedAnecdote.namespace(for: anecdote.id)
+        )
         var clips: [SpokenClip] = []
         for (index, url) in urls.enumerated() {
             let lead: TimeInterval

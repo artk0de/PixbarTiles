@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+prototype/captures/
+prototype/icons/
+prototype/seq/
+prototype/*.json
+.DS_Store
+build/
+DerivedData/

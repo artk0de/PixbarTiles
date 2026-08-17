@@ -145,6 +145,12 @@ public actor ConnectorHost {
             return .completed
         } catch is CancellationError {
             return .cancelled
+        } catch let error as URLError where error.code == .cancelled {
+            // Same rule on this path: a restock reaches the feed through the
+            // same transport, so quitting mid-fetch surfaces here too. Backing
+            // a connector off for having been interrupted is the same defect as
+            // counting cancellation as a failure.
+            return .cancelled
         } catch {
             return .failed(String(describing: error))
         }
@@ -193,6 +199,14 @@ public actor ConnectorHost {
             if Task.isCancelled { return .cancelled }
             return .delivered
         } catch is CancellationError {
+            return .cancelled
+        } catch let error as URLError where error.code == .cancelled {
+            // The transport naming this specific event, not the ambient task
+            // state: `URLSession` reports a request killed by its task's
+            // cancellation this way, and app quit killing an in-flight notify
+            // is the ordinary producer. As typed as `CancellationError`, and it
+            // cannot swallow a device fault — those arrive as
+            // `AwtrixError.http`, never as a `URLError`.
             return .cancelled
         } catch {
             return .failed(String(describing: error))

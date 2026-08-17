@@ -58,13 +58,19 @@ private final class SpyAudio: AudioPlaying, @unchecked Sendable {
     }
 }
 
-/// Suspends inside `play` until the test lets it go, so two deliveries can be
-/// caught overlapping.
+/// A one-shot gate: callers park in `enter()` until the test calls `open()`.
+///
+/// A continuation rather than a sleep, and deliberately not cancellation-aware.
+/// A sleep throws `CancellationError`, which would answer the question these
+/// tests ask — is this classified as a cancellation? — before the code under
+/// test ever gets to. The shipped collaborators being stood in for here are the
+/// same: neither a blocking audio player nor the sidecar's synchronous read
+/// loop notices a cancelled task.
 ///
 /// Every waiter is kept, not just the newest. A single slot would drop a
 /// continuation the moment the behaviour under test broke — leaking it instead
 /// of failing an assertion, which reports the defect as a crash in the harness.
-private final class GatedAudio: AudioPlaying, @unchecked Sendable {
+private final class Gate: @unchecked Sendable {
     private let lock = NSLock()
     private var waiting: [CheckedContinuation<Void, Never>] = []
     private var opened = false
@@ -82,7 +88,7 @@ private final class GatedAudio: AudioPlaying, @unchecked Sendable {
         held.forEach { $0.resume() }
     }
 
-    func play(_ clips: [SpokenClip]) async {
+    func enter() async {
         lock.withLock { entered += 1 }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let alreadyOpen = lock.withLock { () -> Bool in
@@ -92,6 +98,34 @@ private final class GatedAudio: AudioPlaying, @unchecked Sendable {
             }
             if alreadyOpen { continuation.resume() }
         }
+    }
+}
+
+/// Parks inside `play`, so two deliveries can be caught overlapping.
+private final class GatedAudio: AudioPlaying, Sendable {
+    private let gate = Gate()
+
+    var enteredCount: Int { gate.enteredCount }
+    func open() { gate.open() }
+
+    func play(_ clips: [SpokenClip]) async { await gate.enter() }
+}
+
+/// Parks inside `produce`, so a run can be cancelled before it reaches the
+/// device rather than while it is already inside the audio.
+private final class GatedConnector: Connector, Sendable {
+    let id = "gated"
+    let displayName = "Gated"
+    let defaultInterval: TimeInterval = 300
+
+    private let gate = Gate()
+
+    var enteredCount: Int { gate.enteredCount }
+    func open() { gate.open() }
+
+    func produce() async throws -> ConnectorOutput {
+        await gate.enter()
+        return ConnectorOutput(text: "hi")
     }
 }
 
@@ -709,8 +743,54 @@ private func staysFalse(
     run.cancel()
     audio.open()
 
-    guard case .failed = await run.value else {
+    guard case let .failed(message) = await run.value else {
         Issue.record("a 500 on the dismiss is a fault, not a cancellation")
+        return
+    }
+    // Named, not merely "not cancelled". The whole non-masking claim is that a
+    // device fault arrives as `AwtrixError.http` and so cannot be confused with
+    // the transport's own cancellation, and this is where that is measured.
+    #expect(message.contains("HTTP 500"))
+}
+
+// The transport naming cancellation rather than the ambient task state. App
+// quit cancels the timer while a request is in flight and `URLSession` reports
+// that as `URLError(.cancelled)`; reporting it as a fault would back a
+// connector off for having been interrupted, which is the same defect as
+// counting cancellation as a failure.
+@Test func aRequestKilledByCancellationIsNotAFailedRun() async throws {
+    let transport = CancellationAwareTransport()
+    let connector = GatedConnector()
+    let host = makeHost(connector: connector, transport: transport)
+
+    let run = Task { await host.runOnce(connectorId: "gated") }
+    try await waitUntil { connector.enteredCount == 1 }
+    // Cancelled while producing, so the cancellation is already in force by the
+    // time the notify reaches the transport. Nothing throws `CancellationError`
+    // on this path — the gate does not notice cancellation, exactly as the
+    // shipped collaborators do not.
+    run.cancel()
+    connector.open()
+
+    #expect(await run.value == .cancelled)
+    #expect(transport.requests.isEmpty)
+}
+
+@Test func aBackgroundPassKilledByCancellationIsNotAFailure() async {
+    let connector = SpyMaintainingConnector(failure: URLError(.cancelled))
+    let host = makeHost(connector: connector)
+
+    #expect(await host.maintain(connectorId: "maintaining") == .cancelled)
+}
+
+// The other half of the same rule, on the same path: a feed that answers 503
+// during a restock is an outage, and must not be filed as an orderly stop.
+@Test func aBackgroundPassThatHitsARealTransportFaultStillFails() async {
+    let connector = SpyMaintainingConnector(failure: URLError(.timedOut))
+    let host = makeHost(connector: connector)
+
+    guard case .failed = await host.maintain(connectorId: "maintaining") else {
+        Issue.record("a timeout is an outage, not a cancellation")
         return
     }
 }

@@ -571,9 +571,41 @@ private func bodyString(_ request: URLRequest) -> String {
 
     let request = try #require(transport.requests.first)
     #expect(request.httpMethod == "DELETE")
-    let body = bodyString(request)
-    #expect(body.contains(#"name="path""#))
-    #expect(body.contains("/MELODIES/nokia.txt"))
+    // Exact bytes, not `contains`: a close delimiter that degrades to a bare CR
+    // is invisible to a substring assertion.
+    let contentType = try #require(request.value(forHTTPHeaderField: "Content-Type"))
+    let boundary = String(contentType.dropFirst("multipart/form-data; boundary=".count))
+    let expected =
+        "--\(boundary)\r\n"
+        + "Content-Disposition: form-data; name=\"path\"\r\n"
+        + "\r\n"
+        + "/MELODIES/nokia.txt\r\n"
+        + "--\(boundary)--\r\n"
+    #expect(String(decoding: try #require(request.httpBody), as: UTF8.self) == expected)
+}
+
+@Test func removeIconTargetsTheGifUnderIcons() async throws {
+    let transport = RecordingTransport()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    try await device.removeIcon(named: "laugh")
+
+    let request = try #require(transport.requests.first)
+    #expect(request.httpMethod == "DELETE")
+    #expect(bodyString(request).contains("/ICONS/laugh.gif"))
+}
+
+@Test func removeMelodyTargetsTheTextFileUnderMelodies() async throws {
+    let transport = RecordingTransport()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    try await device.removeMelody(named: "nokia")
+
+    let request = try #require(transport.requests.first)
+    #expect(request.httpMethod == "DELETE")
+    // The .txt is the contract, not a detail: the firmware resolves melodies as
+    // RTTTL text, and a .mp3 in that folder is invisible to the sound path.
+    #expect(bodyString(request).contains("/MELODIES/nokia.txt"))
 }
 
 @Test func installMelodyWritesRtttlAsATextFile() async throws {
@@ -654,16 +686,18 @@ extension AwtrixDevice {
         )
     }
 
+    /// Built by explicit append, like `upload` above. A multiline literal works
+    /// too, but its closing delimiter depends on a blank line that reads as
+    /// stray formatting — delete that line and the body degrades to a bare CR
+    /// while every `contains` assertion stays green.
     public func delete(_ remotePath: String) async throws {
         let boundary = UUID().uuidString
-        let body = Data("""
-        --\(boundary)\r
-        Content-Disposition: form-data; name="path"\r
-        \r
-        \(remotePath)\r
-        --\(boundary)--\r
-
-        """.utf8)
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"path\"\r\n".utf8))
+        body.append(Data("\r\n".utf8))
+        body.append(Data("\(remotePath)\r\n".utf8))
+        body.append(Data("--\(boundary)--\r\n".utf8))
         _ = try await perform(
             "DELETE", "/edit", body: body,
             contentType: "multipart/form-data; boundary=\(boundary)"
@@ -692,7 +726,7 @@ extension AwtrixDevice {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter AwtrixDeviceFlashTests`
-Expected: PASS, 5 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 

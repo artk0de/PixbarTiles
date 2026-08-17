@@ -38,6 +38,9 @@ public actor AnecdotePreparer {
     private let speech: any SpeechSynthesizing
     private let queue: AnecdoteQueue
     private let caster: VoiceCaster
+    /// The last refill to have claimed a place. Refills run one at a time by
+    /// waiting on it; see `refill(target:)` for why they must.
+    private var tail: Task<Void, Never>?
 
     public init(
         source: AnecdoteSource,
@@ -62,6 +65,31 @@ public actor AnecdotePreparer {
     /// tells whoever has to fix it nothing at all.
     @discardableResult
     public func refill(target: Int) async throws -> Int {
+        // Actors are reentrant, and this one suspends for the whole of a
+        // synthesis. A second refill entering during that window computes
+        // `unseen` against a `pending` the first has not written yet, gets the
+        // identical list, and queues every anecdote a second time — synthesized
+        // twice, played twice. Both entry points are shipped and Task 11 calls
+        // both, so the overlap is a design shape rather than an accident.
+        //
+        // Callers queue up behind each other rather than being turned away:
+        // `produce()` refills only when the queue is empty and has nothing to
+        // show if it comes back empty-handed. Each one then recomputes `unseen`
+        // against what its predecessor actually enqueued.
+        //
+        // Claiming a place is a single actor-isolated step — there is no
+        // suspension between reading `tail` and writing it — so no caller can
+        // slip between the two and take the same place twice.
+        let predecessor = tail
+        let work = Task { () -> Int in
+            await predecessor?.value
+            return try await self.performRefill(target: target)
+        }
+        tail = Task { _ = try? await work.value }
+        return try await work.value
+    }
+
+    private func performRefill(target: Int) async throws -> Int {
         var added = 0
         var outage: (any Error)?
 
@@ -126,7 +154,7 @@ public actor AnecdotePreparer {
 }
 
 public struct AnecdoteConnector: Connector {
-    public enum Failure: Error, Sendable { case nothingPrepared }
+    public enum Failure: Error, Sendable, Equatable { case nothingPrepared }
 
     /// A 55-frame grinning face. The catalogue's animated flag is unreliable —
     /// it marks single-frame icons animated — so the frames were counted.
@@ -165,13 +193,16 @@ public struct AnecdoteConnector: Connector {
     /// empty queue: with nothing to pop there is nothing else to show, so
     /// waiting for a batch buys the only anecdote there is.
     public func produce() async throws -> ConnectorOutput {
-        var anecdote = await queue.next()
+        var anecdote = await nextPlayable()
         if anecdote == nil {
-            try await preparer.refill(target: batchSize)
-            anecdote = await queue.next()
+            // One, not a batch. A cold first launch would otherwise pay the
+            // model load plus a whole batch of synthesis before the clock shows
+            // anything; the batch is `topUpIfNeeded`'s job, off this path.
+            try await preparer.refill(target: 1)
+            anecdote = await nextPlayable()
         }
         guard let anecdote else { throw Failure.nothingPrepared }
-        await queue.markPlayed(anecdote.id)
+        await queue.retire(anecdote)
 
         return ConnectorOutput(
             text: Self.banner,
@@ -181,6 +212,20 @@ public struct AnecdoteConnector: Connector {
             holdUntilAudioEnds: true,
             color: "#FFD200"
         )
+    }
+
+    /// Pops until an anecdote whose audio is still on disk turns up.
+    ///
+    /// A batch restored from an earlier launch may point at clips the system's
+    /// temporary directory no longer holds. Handing one of those out shows a
+    /// banner that waits for audio which never arrives, so the entry is dropped
+    /// and the next one taken. It is left unplayed: nothing was heard, so it
+    /// stays eligible to be prepared again.
+    private func nextPlayable() async -> PreparedAnecdote? {
+        while let anecdote = await queue.next() {
+            if anecdote.isPlayable { return anecdote }
+        }
+        return nil
     }
 
     /// Tops the queue up when it runs low. The host calls this away from the

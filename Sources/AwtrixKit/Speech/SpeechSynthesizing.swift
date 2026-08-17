@@ -25,6 +25,13 @@ public final class StubSpeechSynthesizer: SpeechSynthesizing, @unchecked Sendabl
     private var recorded: [VoicedTurn] = []
     private var recordedNamespaces: [String] = []
 
+    /// Where this instance's namespaced directories are written.
+    ///
+    /// Per instance rather than the bare temporary directory: two tests using
+    /// the same feed derive the same namespace, and one of them deleting a
+    /// directory to stage a missing-audio case would reach into the other.
+    public let root: URL
+
     /// Every turn handed to `synthesize`, in call order.
     public var received: [VoicedTurn] {
         lock.withLock { recorded }
@@ -35,7 +42,10 @@ public final class StubSpeechSynthesizer: SpeechSynthesizing, @unchecked Sendabl
         lock.withLock { recordedNamespaces }
     }
 
-    public init() {}
+    public init() {
+        self.root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("stub-speech-\(UUID().uuidString)")
+    }
 
     public func synthesize(_ turns: [VoicedTurn], namespace: String) async throws -> [URL] {
         lock.withLock {
@@ -46,8 +56,16 @@ public final class StubSpeechSynthesizer: SpeechSynthesizing, @unchecked Sendabl
         // The namespace reaches the returned paths. A double that ignored it
         // would reproduce the collision the namespace exists to prevent, and no
         // test above this line could ever catch the regression.
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent(namespace)
-        return turns.indices.map { directory.appendingPathComponent("stub-turn-\($0).wav") }
+        let directory = root.appendingPathComponent(namespace)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        return try turns.indices.map { index in
+            let url = directory.appendingPathComponent("stub-turn-\(index).wav")
+            // An empty file rather than none. A caller that checks whether the
+            // audio it was promised still exists has to get the same answer
+            // from the stub as it would from the sidecar.
+            try Data().write(to: url)
+            return url
+        }
     }
 }

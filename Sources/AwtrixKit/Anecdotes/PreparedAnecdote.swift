@@ -7,6 +7,20 @@ public struct PreparedAnecdote: Sendable, Codable, Equatable {
     public let clips: [SpokenClip]
     public let laughter: String
 
+    /// Whether the audio this anecdote promises is still on disk.
+    ///
+    /// A prepared batch outlives the run that made it, but its clips live in
+    /// the temporary directory and the queue's own reaper removes them once
+    /// played. Handing out an anecdote whose files are gone would put a banner
+    /// on the clock with `holdUntilAudioEnds` set and no audio to end it.
+    ///
+    /// An anecdote with no clips at all fails this for the same reason.
+    public var isPlayable: Bool {
+        !clips.isEmpty && clips.allSatisfy {
+            FileManager.default.fileExists(atPath: $0.url.path)
+        }
+    }
+
     /// A filename-safe key derived from the feed guid, which contains slashes.
     ///
     /// The tail is kept rather than the head: every anekdot.ru guid opens with

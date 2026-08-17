@@ -75,6 +75,34 @@ private final class FlakyTransport: Transport, @unchecked Sendable {
     }
 }
 
+/// Suspends inside `synthesize`, the way a real one does.
+///
+/// `StubSpeechSynthesizer` returns without ever suspending, so a preparer that
+/// is unsafe across a suspension point looks correct against it. Every test
+/// about overlapping work needs this one instead.
+private final class SuspendingSpeechSynthesizer: SpeechSynthesizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    private let root = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("suspending-speech-\(UUID().uuidString)")
+
+    var namespaces: [String] { lock.withLock { recorded } }
+
+    func synthesize(_ turns: [VoicedTurn], namespace: String) async throws -> [URL] {
+        lock.withLock { recorded.append(namespace) }
+        // Any suspension at all opens the window; a real synthesis suspends for
+        // fractions of a second per turn against an already-loaded model.
+        await Task.yield()
+        let directory = root.appendingPathComponent(namespace)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return try turns.indices.map { index in
+            let url = directory.appendingPathComponent("stub-turn-\(index).wav")
+            try Data().write(to: url)
+            return url
+        }
+    }
+}
+
 /// Deterministic, so the short-joke draw can be asserted.
 ///
 /// A counter rather than the constant it looks like it should be:
@@ -223,6 +251,27 @@ private struct SeededGenerator: RandomNumberGenerator {
     }
 }
 
+// Both refill entry points are shipped and Task 11 calls both: `produce()`
+// refills an empty queue, `topUpIfNeeded()` refills from the host's background
+// path. Overlapping them must not queue the same anecdote twice — actors are
+// reentrant, so the second refill would otherwise compute `unseen` against a
+// `pending` the first has not written yet and get the identical list.
+@Test func twoOverlappingRefillsDoNotQueueTheSameAnecdoteTwice() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: SuspendingSpeechSynthesizer(), queue: queue
+    )
+
+    async let first = preparer.refill(target: 10)
+    async let second = preparer.refill(target: 10)
+    _ = try await (first, second)
+
+    var queued: [String] = []
+    while let anecdote = await queue.next() { queued.append(anecdote.id) }
+
+    #expect(queued == ["https://www.anekdot.ru/id/1/", "https://www.anekdot.ru/id/2/"])
+}
+
 // MARK: - The connector
 
 @Test func connectorEmitsTheBannerNotTheJoke() async throws {
@@ -254,8 +303,8 @@ private struct SeededGenerator: RandomNumberGenerator {
 
     let output = try await connector.produce()
 
-    #expect(output.localAudio.first?.leadIn == 0)          // announcement leads
-    #expect(output.localAudio.last?.leadIn == 0.7)         // punchline beat
+    #expect(output.localAudio.first?.leadIn == 0)                             // announcement
+    #expect(output.localAudio.last?.leadIn == AnecdotePreparer.leadLaughter)  // punchline beat
     #expect(output.localAudio.count == 5)
 }
 
@@ -299,9 +348,64 @@ private struct SeededGenerator: RandomNumberGenerator {
     )
     let connector = AnecdoteConnector(queue: queue, preparer: preparer)
 
-    await #expect(throws: (any Error).self) {
+    // The specific case, not any error: a decode failure or a URL error would
+    // satisfy `(any Error).self` while meaning something entirely different.
+    await #expect(throws: AnecdoteConnector.Failure.nothingPrepared) {
         _ = try await connector.produce()
     }
+}
+
+// MARK: - Reclaiming the disk
+
+// Nothing else deletes these files. At roughly 72 anecdotes a day they would
+// otherwise accumulate on the user's Mac forever.
+@Test func producingAnAnecdoteReclaimsThePreviousOnesClips() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    _ = try await preparer.refill(target: 2)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    let first = try await connector.produce()
+    let firstDirectory = try #require(first.localAudio.first?.url.deletingLastPathComponent())
+    // Still there while it is the one playing.
+    #expect(FileManager.default.fileExists(atPath: firstDirectory.path))
+
+    let second = try await connector.produce()
+    let secondDirectory = try #require(second.localAudio.first?.url.deletingLastPathComponent())
+
+    // One behind: half an hour has passed, so the first has long finished.
+    #expect(FileManager.default.fileExists(atPath: firstDirectory.path) == false)
+    #expect(FileManager.default.fileExists(atPath: secondDirectory.path))
+}
+
+// A batch survives a restart; the temporary directory holding its audio may
+// not. Handing out an anecdote whose clips are gone shows a banner with
+// `holdUntilAudioEnds` set and no audio to end it — the clock sticks there.
+@Test func anAnecdoteWhoseClipsAreGoneIsSkipped() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let speech = StubSpeechSynthesizer()
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: speech, queue: queue
+    )
+    _ = try await preparer.refill(target: 2)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    try FileManager.default.removeItem(
+        at: speech.root.appendingPathComponent(
+            PreparedAnecdote.namespace(for: "https://www.anekdot.ru/id/1/")
+        )
+    )
+
+    let output = try await connector.produce()
+
+    #expect(output.localAudio.allSatisfy {
+        FileManager.default.fileExists(atPath: $0.url.path)
+    })
+    #expect(await queue.hasPlayed("https://www.anekdot.ru/id/2/"))
+    // Nothing was heard, so it stays eligible to be prepared again.
+    #expect(await queue.hasPlayed("https://www.anekdot.ru/id/1/") == false)
 }
 
 // MARK: - Where the batch is paid for
@@ -339,6 +443,23 @@ private struct SeededGenerator: RandomNumberGenerator {
 
     #expect(output.text == AnecdoteConnector.banner)
     #expect(output.localAudio.count == 5)
+}
+
+// A cold first launch shows the clock something after one synthesis, not after
+// a whole batch of them on top of the model load. The batch is
+// `topUpIfNeeded`'s job.
+@Test func anEmptyQueuePreparesOneAnecdoteNotAWholeBatch() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let speech = StubSpeechSynthesizer()
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: speech, queue: queue
+    )
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    _ = try await connector.produce()
+
+    #expect(speech.namespaces.count == 1)
+    #expect(await queue.ready() == 0)
 }
 
 @Test func topUpIfNeededFillsTheQueueOffThePlayPath() async throws {

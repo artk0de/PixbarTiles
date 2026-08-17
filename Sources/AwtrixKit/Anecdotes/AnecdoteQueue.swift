@@ -10,19 +10,50 @@ public actor AnecdoteQueue {
     private struct Store: Codable {
         var pending: [PreparedAnecdote] = []
         var played: Set<String> = []
+        /// The clip directory of the anecdote retired before the current one.
+        /// Persisted so a restart between two anecdotes reclaims it rather than
+        /// leaking it.
+        var spentClipDirectory: String?
+    }
+
+    /// The half that must never be lost, readable on its own.
+    ///
+    /// One non-optional field added to `PreparedAnecdote` — a prepared-at
+    /// timestamp is the obvious next one — makes every existing store fail to
+    /// decode. Read as a single unit, that failure takes the played history
+    /// with it and every anecdote the user has heard becomes unheard, silently,
+    /// on the first launch after an upgrade. A lost batch costs one model load;
+    /// a lost played set costs the requirement this type exists for.
+    private struct SalvagedPlayed: Codable {
+        var played: Set<String>?
     }
 
     private let storeURL: URL
     private var store: Store
 
+    /// Why the last write failed, or nil if it landed.
+    ///
+    /// The mutators do not throw. The in-memory change always succeeds and only
+    /// its durability is at risk, so an anecdote already handed out cannot be
+    /// un-handed because the disk was full — throwing there would report a
+    /// problem by creating a worse one. What a failed write actually costs is
+    /// the next launch: a played id that never reached disk comes back
+    /// unplayed and the anecdote repeats. The host reads this and says so.
+    public private(set) var lastPersistFailure: (any Error)?
+
     public init(storeURL: URL) {
         self.storeURL = storeURL
-        // A store we cannot read is treated as absent. Refusing to start because
-        // of a corrupt cache would be worse than losing the cache.
-        if let data = try? Data(contentsOf: storeURL),
-           let decoded = try? JSONDecoder().decode(Store.self, from: data) {
+        let data = try? Data(contentsOf: storeURL)
+
+        if let data, let decoded = try? JSONDecoder().decode(Store.self, from: data) {
             self.store = decoded
+        } else if let data,
+                  let salvaged = try? JSONDecoder().decode(SalvagedPlayed.self, from: data) {
+            // The pending batch could not be read; the played set could.
+            self.store = Store(played: salvaged.played ?? [])
         } else {
+            // A store we cannot read at all is treated as absent. Refusing to
+            // start because of a corrupt cache would be worse than losing it.
             self.store = Store()
         }
     }
@@ -46,6 +77,21 @@ public actor AnecdoteQueue {
         persist()
     }
 
+    /// Takes an anecdote out of service: records it played, and reclaims the
+    /// disk held by the one retired before it.
+    ///
+    /// One behind on purpose. `anecdote` is on its way to the player as this
+    /// returns, so its own files have to survive the call; by the time the next
+    /// one is due — half an hour later by default — it has long finished. That
+    /// lag is what lets the audio be reclaimed with no lifecycle callback from
+    /// the player and no coordination with the host.
+    public func retire(_ anecdote: PreparedAnecdote) {
+        store.played.insert(anecdote.id)
+        reclaimSpentClips()
+        store.spentClipDirectory = Self.clipDirectory(of: anecdote)?.path
+        persist()
+    }
+
     public func hasPlayed(_ id: String) -> Bool { store.played.contains(id) }
 
     /// Anecdotes neither played nor already waiting, each id at most once.
@@ -59,13 +105,45 @@ public actor AnecdoteQueue {
         return anecdotes.filter { excluded.insert($0.id).inserted }
     }
 
-    public func flush() { persist() }
+    /// Writes the store and reports whether it landed. The one call that turns
+    /// a durability failure into something the caller can act on directly.
+    public func flush() throws {
+        try writeStore()
+        lastPersistFailure = nil
+    }
+
+    private func reclaimSpentClips() {
+        guard let spent = store.spentClipDirectory else { return }
+        try? FileManager.default.removeItem(atPath: spent)
+        store.spentClipDirectory = nil
+    }
+
+    /// The one directory holding every clip of an anecdote, or nil when they do
+    /// not share one.
+    ///
+    /// Removing a directory that other anecdotes also write into would take
+    /// their audio with it, so anything but the namespaced shape the
+    /// synthesizer guarantees is left alone.
+    private static func clipDirectory(of anecdote: PreparedAnecdote) -> URL? {
+        let directories = Set(anecdote.clips.map { $0.url.deletingLastPathComponent() })
+        guard directories.count == 1 else { return nil }
+        return directories.first
+    }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(store) else { return }
-        try? FileManager.default.createDirectory(
+        do {
+            try writeStore()
+            lastPersistFailure = nil
+        } catch {
+            lastPersistFailure = error
+        }
+    }
+
+    private func writeStore() throws {
+        let data = try JSONEncoder().encode(store)
+        try FileManager.default.createDirectory(
             at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        try? data.write(to: storeURL, options: .atomic)
+        try data.write(to: storeURL, options: .atomic)
     }
 }

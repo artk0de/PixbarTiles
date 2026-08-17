@@ -1949,27 +1949,259 @@ git commit -m "feat: connector protocol, output shape and registry"
 
 ---
 
-### Task 10: Anecdote connector
+### Task 10: Anecdote queue, preparer and connector
 
 **Files:**
+
+- Create: `Sources/AwtrixKit/Anecdotes/PreparedAnecdote.swift`
+- Create: `Sources/AwtrixKit/Anecdotes/AnecdoteQueue.swift`
 - Create: `Sources/AwtrixKit/Connectors/AnecdoteConnector.swift`
+- Test: `Tests/AwtrixKitTests/AnecdoteQueueTests.swift`
 - Test: `Tests/AwtrixKitTests/AnecdoteConnectorTests.swift`
 
 **Interfaces:**
-- Consumes: Tasks 5–9 — `DialogueParser`, `VoiceCaster`, `AnecdoteSource`, `SpeechSynthesizing`, `Connector`
+
+- Consumes: Tasks 5–9 — `DialogueParser`, `VoiceCaster`, `AnecdoteSource`, `SpeechSynthesizing`, `SpeechText`, `Connector`, `ConnectorOutput`, `SpokenClip`
 - Produces:
-  - `struct AnecdoteConnector: Connector` with
-    `init(source: AnecdoteSource, speech: SpeechSynthesizing, caster: VoiceCaster = VoiceCaster(), picker: @Sendable ([Anecdote]) -> Anecdote? = { $0.randomElement() })`
-  - `static let laughIcon: IconRef` — `.catalogue(9039)`
-  - `static let nokiaJingle: String`
-  - `static let prefix = "ВНИМАНИЕ, АНЕКДОТ: "`
-  - `static let laughter = "АХАХАХАХАХА"`
+  - `struct PreparedAnecdote: Sendable, Codable, Equatable { let id: String; let text: String; let clips: [SpokenClip]; let laughter: String }`
+  - `actor AnecdoteQueue` with `init(storeURL: URL)`, `func ready() -> Int`, `func enqueue(_:)`, `func next() -> PreparedAnecdote?`, `func markPlayed(_ id: String)`, `func hasPlayed(_ id: String) -> Bool`, `func unseen(from: [Anecdote]) -> [Anecdote]`
+  - `actor AnecdotePreparer` with `init(source: AnecdoteSource, speech: SpeechSynthesizing, queue: AnecdoteQueue, caster: VoiceCaster = VoiceCaster())`, `func refill(target: Int) async throws -> Int`
+  - `struct AnecdoteConnector: Connector` with `init(queue: AnecdoteQueue, preparer: AnecdotePreparer, refillThreshold: Int = 3, batchSize: Int = 10)`
+  - `static let laughIcon = IconRef.catalogue(66558)`
+  - `static let nokiaJingle`, `static let banner`, `static let announcement`
+  - `enum Laughter { static func forAnecdote(_ text: String, using: RandomNumberGenerator) -> String }`
+  - EXTENDS Task 7's `AnecdoteSource` with `static let cascade: [URL]` and
+    `func fetch(from feed: URL) async throws -> [Anecdote]`. Task 7 shipped only
+    `fetch()` against the primary feed; the cascade is new here. Keep the
+    existing no-argument `fetch()` working — Task 7's tests call it.
 
-The picker is injected so tests are deterministic; production uses a random pick from the ranked feed.
+**Why this shape.** One model load costs 70 seconds; the synthesis on top of it
+costs fractions of a second. Generating an anecdote at the moment it is due pays
+the whole load for four seconds of speech, which is the worst possible trade. So
+the connector never synthesizes: a preparer fills a queue in batches through ONE
+sidecar session, and the connector pops an already-prepared anecdote when the
+timer fires. Both numbers are measured, not estimated.
 
-Constants come from the probe: `9039` is an animated laughing face verified present on the CDN, and the Nokia melody is the jingle chosen after auditioning eight candidates on the device.
+**Anecdotes must not repeat.** Played ids are remembered in the same store,
+which is why the feed `<guid>` is load-bearing. When every anecdote in the
+primary feed has been played, the preparer widens rather than resetting:
+`export_top.xml` (50, vote-ranked) → `export_bestday.xml` (12, best of past
+years) → `export_j.xml` (10, the fresh ten). Roughly 72 items, refreshed daily.
+Resetting instead brings repeats back inside a day at a half-hour interval.
 
-- [ ] **Step 1: Write the failing test**
+**The spoken shape**, established by demonstration against real hardware:
+
+1. Nokia jingle on the clock, and the banner `ВНИМАНИЕ, АНЕКДОТ!` — not the joke
+   itself, which is heard rather than read. The banner is held and dismissed when
+   the audio ends, so `holdUntilAudioEnds` is true.
+2. `Внимание! Анекдот!` spoken in the narrator's voice.
+3. The dialogue turns, each in its cast voice.
+4. A beat, then the laughter.
+
+Lead-ins, tuned by ear: 0 before the announcement, 0.7 s before the first line,
+0.25 s between dialogue lines, 0.7 s before the laughter — the last is a comic
+beat, not a separator.
+
+**Laughter scales with the joke.** A one-liner does not earn a fifteen-syllable
+cackle. Twelve words or fewer draw at random from three short variants so
+consecutive quick jokes do not laugh identically; longer jokes get `А` plus `ХА`
+repeated `min(4 + words / 8, 14)` times, and past nine repeats the laugh takes a
+breath — the last three `ХА` are separated by a space. The generator is injected
+so tests are deterministic.
+
+- [ ] **Step 1: Write the failing tests for the queue**
+
+```swift
+// Tests/AwtrixKitTests/AnecdoteQueueTests.swift
+import Foundation
+import Testing
+@testable import AwtrixKit
+
+private func temporaryStore() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("queue-\(UUID().uuidString).json")
+}
+
+private func prepared(_ id: String) -> PreparedAnecdote {
+    PreparedAnecdote(
+        id: id, text: "joke \(id)",
+        clips: [SpokenClip(url: URL(fileURLWithPath: "/tmp/\(id).wav"), leadIn: 0)],
+        laughter: "АХАХАХА"
+    )
+}
+
+@Test func anEmptyQueueHasNothingReady() async {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+
+    #expect(await queue.ready() == 0)
+    #expect(await queue.next() == nil)
+}
+
+@Test func nextReturnsInEnqueueOrderAndDrains() async {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    await queue.enqueue(prepared("a"))
+    await queue.enqueue(prepared("b"))
+
+    #expect(await queue.ready() == 2)
+    #expect(await queue.next()?.id == "a")
+    #expect(await queue.next()?.id == "b")
+    #expect(await queue.next() == nil)
+}
+
+@Test func aPlayedAnecdoteIsRememberedAcrossInstances() async {
+    let store = temporaryStore()
+    let first = AnecdoteQueue(storeURL: store)
+    await first.markPlayed("https://www.anekdot.ru/id/1/")
+    await first.flush()
+
+    let second = AnecdoteQueue(storeURL: store)
+
+    #expect(await second.hasPlayed("https://www.anekdot.ru/id/1/"))
+    #expect(await second.hasPlayed("https://www.anekdot.ru/id/2/") == false)
+}
+
+@Test func unseenFiltersOutWhatWasAlreadyPlayed() async {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    await queue.markPlayed("b")
+
+    let fresh = await queue.unseen(from: [
+        Anecdote(id: "a", text: "one"),
+        Anecdote(id: "b", text: "two"),
+        Anecdote(id: "c", text: "three"),
+    ])
+
+    #expect(fresh.map(\.id) == ["a", "c"])
+}
+
+@Test func unseenAlsoExcludesWhatIsAlreadyQueued() async {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    await queue.enqueue(prepared("b"))
+
+    let fresh = await queue.unseen(from: [
+        Anecdote(id: "a", text: "one"),
+        Anecdote(id: "b", text: "two"),
+    ])
+
+    // Queueing the same anecdote twice would play it twice — the whole point
+    // of the seen set is defeated if the pending queue is not consulted.
+    #expect(fresh.map(\.id) == ["a"])
+}
+
+@Test func aCorruptStoreStartsEmptyInsteadOfThrowing() async {
+    let store = temporaryStore()
+    try? Data("not json".utf8).write(to: store)
+
+    let queue = AnecdoteQueue(storeURL: store)
+
+    #expect(await queue.ready() == 0)
+    #expect(await queue.hasPlayed("anything") == false)
+}
+```
+
+- [ ] **Step 2: Run the queue tests and confirm they fail**
+
+Run: `swift test --filter AnecdoteQueueTests`
+Expected: FAIL — `PreparedAnecdote` and `AnecdoteQueue` are undefined.
+
+- [ ] **Step 3: Implement the queue**
+
+```swift
+// Sources/AwtrixKit/Anecdotes/PreparedAnecdote.swift
+import Foundation
+
+/// An anecdote whose audio already exists on disk, waiting for its turn.
+public struct PreparedAnecdote: Sendable, Codable, Equatable {
+    public let id: String
+    public let text: String
+    public let clips: [SpokenClip]
+    public let laughter: String
+
+    public init(id: String, text: String, clips: [SpokenClip], laughter: String) {
+        self.id = id
+        self.text = text
+        self.clips = clips
+        self.laughter = laughter
+    }
+}
+```
+
+```swift
+// Sources/AwtrixKit/Anecdotes/AnecdoteQueue.swift
+import Foundation
+
+/// Prepared anecdotes waiting to play, and the ids of those already played.
+///
+/// Both live in one file because they answer one question together: what may be
+/// played next. A played id is never forgotten — the requirement is that
+/// anecdotes do not repeat, and the feed's guid is the identity that makes that
+/// checkable.
+public actor AnecdoteQueue {
+    private struct Store: Codable {
+        var pending: [PreparedAnecdote] = []
+        var played: Set<String> = []
+    }
+
+    private let storeURL: URL
+    private var store: Store
+
+    public init(storeURL: URL) {
+        self.storeURL = storeURL
+        // A store we cannot read is treated as absent. Refusing to start because
+        // of a corrupt cache would be worse than losing the cache.
+        if let data = try? Data(contentsOf: storeURL),
+           let decoded = try? JSONDecoder().decode(Store.self, from: data) {
+            self.store = decoded
+        } else {
+            self.store = Store()
+        }
+    }
+
+    public func ready() -> Int { store.pending.count }
+
+    public func enqueue(_ anecdote: PreparedAnecdote) {
+        store.pending.append(anecdote)
+        persist()
+    }
+
+    public func next() -> PreparedAnecdote? {
+        guard !store.pending.isEmpty else { return nil }
+        let head = store.pending.removeFirst()
+        persist()
+        return head
+    }
+
+    public func markPlayed(_ id: String) {
+        store.played.insert(id)
+        persist()
+    }
+
+    public func hasPlayed(_ id: String) -> Bool { store.played.contains(id) }
+
+    /// Anecdotes neither played nor already waiting. Consulting the pending list
+    /// matters: an anecdote queued twice plays twice.
+    public func unseen(from anecdotes: [Anecdote]) -> [Anecdote] {
+        let queued = Set(store.pending.map(\.id))
+        return anecdotes.filter { !store.played.contains($0.id) && !queued.contains($0.id) }
+    }
+
+    public func flush() { persist() }
+
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(store) else { return }
+        try? FileManager.default.createDirectory(
+            at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try? data.write(to: storeURL, options: .atomic)
+    }
+}
+```
+
+- [ ] **Step 4: Run the queue tests and confirm they pass**
+
+Run: `swift test --filter AnecdoteQueueTests`
+Expected: PASS, 6 tests.
+
+- [ ] **Step 5: Write the failing tests for the preparer and connector**
 
 ```swift
 // Tests/AwtrixKitTests/AnecdoteConnectorTests.swift
@@ -1983,6 +2215,11 @@ private func makeSource(_ xml: String) -> AnecdoteSource {
     return AnecdoteSource(transport: transport)
 }
 
+private func temporaryStore() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("conn-\(UUID().uuidString).json")
+}
+
 private let dialogueFeed = """
 <rss><channel><item>
 <description><![CDATA[Звонок от курьера:<br>- Я подъехал...<br>- Но я вас не вижу...]]></description>
@@ -1990,157 +2227,305 @@ private let dialogueFeed = """
 </item></channel></rss>
 """
 
-@Test func producedTextIsPrefixedAndSuffixed() async throws {
-    let connector = AnecdoteConnector(
-        source: makeSource(dialogueFeed),
-        speech: StubSpeechSynthesizer(),
-        picker: { $0.first }
-    )
-
-    let output = try await connector.produce()
-
-    #expect(output.text.hasPrefix(AnecdoteConnector.prefix))
-    #expect(output.text.hasSuffix(AnecdoteConnector.laughter))
-    #expect(output.text.contains("Звонок от курьера"))
+/// Deterministic generator so the short-joke laughter draw can be asserted.
+private struct FixedGenerator: RandomNumberGenerator {
+    var value: UInt64 = 0
+    mutating func next() -> UInt64 { value }
 }
 
-@Test func producedOutputCarriesTheLaughingIconAndNokiaJingle() async throws {
-    let connector = AnecdoteConnector(
-        source: makeSource(dialogueFeed),
-        speech: StubSpeechSynthesizer(),
-        picker: { $0.first }
+@Test func laughterGrowsWithTheLengthOfTheJoke() {
+    var generator = FixedGenerator()
+    let short = Laughter.forAnecdote("Раз два три", using: &generator)
+    let long = Laughter.forAnecdote(
+        String(repeating: "слово ", count: 60), using: &generator
     )
+
+    #expect(short.count < long.count)
+    #expect(long.hasPrefix("А"))
+}
+
+@Test func aLongJokeLaughTakesABreath() {
+    var generator = FixedGenerator()
+    let laugh = Laughter.forAnecdote(String(repeating: "слово ", count: 100), using: &generator)
+
+    #expect(laugh.contains(" "))
+}
+
+@Test func aShortJokeDrawsFromTheShortVariants() {
+    var generator = FixedGenerator()
+    let laugh = Laughter.forAnecdote("Коротко", using: &generator)
+
+    #expect(Laughter.shortVariants.contains(laugh))
+}
+
+@Test func preparerFillsTheQueueAndSynthesizesEveryTurn() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let speech = StubSpeechSynthesizer()
+    let preparer = AnecdotePreparer(
+        source: makeSource(dialogueFeed), speech: speech, queue: queue
+    )
+
+    let added = try await preparer.refill(target: 5)
+
+    #expect(added == 1)                       // the fixture holds one anecdote
+    #expect(await queue.ready() == 1)
+    // announcement + narration + two dialogue lines + laughter
+    #expect(speech.received.count == 5)
+    #expect(speech.received.map(\.voice.id) == ["arthas", "arthas", "arthas", "peon", "arthas"])
+}
+
+@Test func preparerSkipsAnecdotesAlreadyPlayed() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    await queue.markPlayed("https://www.anekdot.ru/id/1/")
+    let speech = StubSpeechSynthesizer()
+    let preparer = AnecdotePreparer(
+        source: makeSource(dialogueFeed), speech: speech, queue: queue
+    )
+
+    let added = try await preparer.refill(target: 5)
+
+    #expect(added == 0)
+    #expect(speech.received.isEmpty)
+}
+
+@Test func connectorEmitsTheBannerNotTheJoke() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let speech = StubSpeechSynthesizer()
+    let preparer = AnecdotePreparer(
+        source: makeSource(dialogueFeed), speech: speech, queue: queue
+    )
+    _ = try await preparer.refill(target: 1)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
 
     let output = try await connector.produce()
 
-    #expect(output.icon == .catalogue(9039))
+    #expect(output.text == AnecdoteConnector.banner)
+    #expect(output.text.contains("курьера") == false)
+    #expect(output.holdUntilAudioEnds)
+    #expect(output.icon == .catalogue(66558))
     #expect(output.jingle == AnecdoteConnector.nokiaJingle)
 }
 
-@Test func everyTurnPlusLaughterIsSynthesized() async throws {
+@Test func connectorPacesTheClipsWithLeadIns() async throws {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
     let speech = StubSpeechSynthesizer()
-    let connector = AnecdoteConnector(
-        source: makeSource(dialogueFeed), speech: speech, picker: { $0.first }
+    let preparer = AnecdotePreparer(
+        source: makeSource(dialogueFeed), speech: speech, queue: queue
     )
-
-    _ = try await connector.produce()
-
-    // narration + two actor lines + laughter
-    #expect(speech.received.count == 4)
-    #expect(speech.received.map(\.voice.id) == ["arthas", "arthas", "peon", "arthas"])
-    #expect(speech.received.last?.text == AnecdoteConnector.laughter)
-}
-
-@Test func localAudioMatchesTheSynthesizedTurnOrder() async throws {
-    let connector = AnecdoteConnector(
-        source: makeSource(dialogueFeed),
-        speech: StubSpeechSynthesizer(),
-        picker: { $0.first }
-    )
+    _ = try await preparer.refill(target: 1)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
 
     let output = try await connector.produce()
 
-    #expect(output.localAudio.count == 4)
+    #expect(output.localAudio.first?.leadIn == 0)          // announcement leads
+    #expect(output.localAudio.last?.leadIn == 0.7)         // punchline beat
+    #expect(output.localAudio.count == 5)
 }
 
-@Test func anEmptyFeedThrowsRatherThanShowingNothing() async {
-    let connector = AnecdoteConnector(
-        source: makeSource("<rss><channel></channel></rss>"),
-        speech: StubSpeechSynthesizer()
+@Test func playingAnAnecdoteMarksItSoItNeverRepeats() async throws {
+    let store = temporaryStore()
+    let queue = AnecdoteQueue(storeURL: store)
+    let speech = StubSpeechSynthesizer()
+    let preparer = AnecdotePreparer(
+        source: makeSource(dialogueFeed), speech: speech, queue: queue
     )
+    _ = try await preparer.refill(target: 1)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    _ = try await connector.produce()
+
+    #expect(await queue.hasPlayed("https://www.anekdot.ru/id/1/"))
+}
+
+@Test func anEmptyQueueAndAnExhaustedFeedThrowsRatherThanShowingNothing() async {
+    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let preparer = AnecdotePreparer(
+        source: makeSource("<rss><channel></channel></rss>"),
+        speech: StubSpeechSynthesizer(), queue: queue
+    )
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
 
     await #expect(throws: (any Error).self) {
         _ = try await connector.produce()
     }
 }
-
-@Test func connectorIdentityAndDefaultInterval() {
-    let connector = AnecdoteConnector(
-        source: makeSource(dialogueFeed), speech: StubSpeechSynthesizer()
-    )
-
-    #expect(connector.id == "anecdotes")
-    #expect(connector.defaultInterval == 30 * 60)
-}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 6: Run them and confirm they fail**
 
 Run: `swift test --filter AnecdoteConnectorTests`
-Expected: FAIL — `AnecdoteConnector` is undefined.
+Expected: FAIL — `Laughter`, `AnecdotePreparer` and the new `AnecdoteConnector`
+shape are undefined.
 
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 7: Implement the laughter, preparer and connector**
 
 ```swift
 // Sources/AwtrixKit/Connectors/AnecdoteConnector.swift
 import Foundation
 
-public struct AnecdoteConnector: Connector {
-    public enum Failure: Error, Sendable {
-        case feedEmpty
+/// The laugh scales with the joke. A one-liner does not earn a long cackle, and
+/// a build-up deserves more than three syllables.
+public enum Laughter {
+    public static let shortVariants = ["АХАХАХА", "АХАХАХАХА", "АХАХАХАХАХ ХАХА"]
+    static let shortJokeWords = 12
+    static let maxRepeats = 14
+
+    public static func forAnecdote(
+        _ text: String, using generator: inout some RandomNumberGenerator
+    ) -> String {
+        let words = text.split(whereSeparator: \.isWhitespace).count
+        if words <= shortJokeWords {
+            // Random so a run of quick jokes does not laugh identically.
+            return shortVariants.randomElement(using: &generator) ?? shortVariants[0]
+        }
+        let repeats = min(4 + words / 8, maxRepeats)
+        guard repeats >= 9 else { return "А" + String(repeating: "ХА", count: repeats) }
+        // Past a certain length the laugh needs somewhere to breathe.
+        return "А" + String(repeating: "ХА", count: repeats - 3)
+            + " " + String(repeating: "ХА", count: 3)
+    }
+}
+
+/// Fills the queue in batches. One sidecar session per batch: loading the model
+/// is the entire cost of synthesis, so paying it per anecdote is the worst
+/// possible trade.
+public actor AnecdotePreparer {
+    public enum Failure: Error, Sendable { case feedExhausted }
+
+    static let leadFirstLine: TimeInterval = 0.7
+    static let leadBetweenLines: TimeInterval = 0.25
+    static let leadLaughter: TimeInterval = 0.7
+
+    private let source: AnecdoteSource
+    private let speech: any SpeechSynthesizing
+    private let queue: AnecdoteQueue
+    private let caster: VoiceCaster
+
+    public init(
+        source: AnecdoteSource,
+        speech: any SpeechSynthesizing,
+        queue: AnecdoteQueue,
+        caster: VoiceCaster = VoiceCaster()
+    ) {
+        self.source = source
+        self.speech = speech
+        self.queue = queue
+        self.caster = caster
     }
 
-    /// Animated laughing face, verified present on the LaMetric CDN.
-    public static let laughIcon = IconRef.catalogue(9039)
+    /// Prepare until the queue holds `target`, widening across the feed cascade
+    /// when the primary feed runs dry. Returns how many were added.
+    @discardableResult
+    public func refill(target: Int) async throws -> Int {
+        var added = 0
+        for feed in AnecdoteSource.cascade {
+            if await queue.ready() >= target { break }
+            let fetched = try await source.fetch(from: feed)
+            for anecdote in await queue.unseen(from: fetched) {
+                if await queue.ready() >= target { break }
+                await queue.enqueue(try await prepare(anecdote))
+                added += 1
+            }
+        }
+        return added
+    }
+
+    private func prepare(_ anecdote: Anecdote) async throws -> PreparedAnecdote {
+        var generator = SystemRandomNumberGenerator()
+        let laughter = Laughter.forAnecdote(anecdote.text, using: &generator)
+
+        // The announcement and the laughter are narration, so both land in the
+        // narrator's voice without being special-cased.
+        let body = DialogueParser.parse(anecdote.text)
+        let turns = [Turn(speaker: .narrator, text: AnecdoteConnector.announcement)]
+            + body
+            + [Turn(speaker: .narrator, text: laughter)]
+
+        let urls = try await speech.synthesize(caster.cast(turns))
+        var clips: [SpokenClip] = []
+        for (index, url) in urls.enumerated() {
+            let lead: TimeInterval
+            switch index {
+            case 0: lead = 0
+            case 1: lead = Self.leadFirstLine
+            case urls.count - 1: lead = Self.leadLaughter
+            default: lead = Self.leadBetweenLines
+            }
+            clips.append(SpokenClip(url: url, leadIn: lead))
+        }
+        return PreparedAnecdote(
+            id: anecdote.id, text: anecdote.text, clips: clips, laughter: laughter
+        )
+    }
+}
+
+public struct AnecdoteConnector: Connector {
+    public enum Failure: Error, Sendable { case nothingPrepared }
+
+    /// A 55-frame grinning face. The catalogue's animated flag is unreliable —
+    /// it marks single-frame icons animated — so the frames were counted.
+    public static let laughIcon = IconRef.catalogue(66558)
     public static let nokiaJingle =
         "nokia:d=4,o=5,b=225:8e6,8d6,f#,g#,8c#6,8b,d,e,8b,8a,c#,e,2a"
-    public static let prefix = "ВНИМАНИЕ, АНЕКДОТ: "
-    public static let laughter = "АХАХАХАХАХА"
+    /// The clock shows this, not the joke: the joke is heard, not read.
+    public static let banner = "ВНИМАНИЕ, АНЕКДОТ!"
+    public static let announcement = "Внимание! Анекдот!"
 
     public let id = "anecdotes"
     public let displayName = "Anecdotes"
     public let defaultInterval: TimeInterval = 30 * 60
 
-    private let source: AnecdoteSource
-    private let speech: any SpeechSynthesizing
-    private let caster: VoiceCaster
-    private let picker: @Sendable ([Anecdote]) -> Anecdote?
+    private let queue: AnecdoteQueue
+    private let preparer: AnecdotePreparer
+    private let refillThreshold: Int
+    private let batchSize: Int
 
     public init(
-        source: AnecdoteSource,
-        speech: any SpeechSynthesizing,
-        caster: VoiceCaster = VoiceCaster(),
-        picker: @escaping @Sendable ([Anecdote]) -> Anecdote? = { $0.randomElement() }
+        queue: AnecdoteQueue,
+        preparer: AnecdotePreparer,
+        refillThreshold: Int = 3,
+        batchSize: Int = 10
     ) {
-        self.source = source
-        self.speech = speech
-        self.caster = caster
-        self.picker = picker
+        self.queue = queue
+        self.preparer = preparer
+        self.refillThreshold = refillThreshold
+        self.batchSize = batchSize
     }
 
     public func produce() async throws -> ConnectorOutput {
-        let anecdotes = try await source.fetch()
-        guard let anecdote = picker(anecdotes) else { throw Failure.feedEmpty }
-
-        // The laughter rides as narration, which is what makes it Arthas.
-        let turns = DialogueParser.parse(anecdote.text)
-            + [Turn(speaker: .narrator, text: Self.laughter)]
-        let voiced = caster.cast(turns)
-        let audio = try await speech.synthesize(voiced)
+        if await queue.ready() <= refillThreshold {
+            try await preparer.refill(target: batchSize)
+        }
+        guard let anecdote = await queue.next() else { throw Failure.nothingPrepared }
+        await queue.markPlayed(anecdote.id)
 
         return ConnectorOutput(
-            text: Self.prefix + anecdote.text.replacingOccurrences(of: "\n", with: " ")
-                + " " + Self.laughter,
+            text: Self.banner,
             icon: Self.laughIcon,
             jingle: Self.nokiaJingle,
-            localAudio: audio,
-            duration: 15,
+            localAudio: anecdote.clips,
+            holdUntilAudioEnds: true,
             color: "#FFD200"
         )
     }
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 8: Run them and confirm they pass**
 
 Run: `swift test --filter AnecdoteConnectorTests`
-Expected: PASS, 6 tests.
+Expected: PASS, 9 tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 9: Run the full suite**
+
+Run: `swift test`
+Expected: PASS, everything from Tasks 1–9 plus the 15 added here.
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add Sources/AwtrixKit/Connectors/AnecdoteConnector.swift Tests/AwtrixKitTests/AnecdoteConnectorTests.swift
-git commit -m "feat: anecdote connector composing source, dialogue casting and speech"
+git add Sources/AwtrixKit/Anecdotes Sources/AwtrixKit/Connectors Tests/AwtrixKitTests
+git commit -m "feat: batch-prepared anecdote queue and connector"
 ```
 
 ---
@@ -2159,7 +2544,7 @@ git commit -m "feat: anecdote connector composing source, dialogue casting and s
   - `protocol SettingsStore: Sendable { func settings(for id: String) -> ConnectorSettings; func save(_ settings: ConnectorSettings, for id: String) }`
   - `final class UserDefaultsSettingsStore: SettingsStore`
   - `final class InMemorySettingsStore: SettingsStore` (tests)
-  - `protocol AudioPlaying: Sendable { func play(_ urls: [URL]) async }`
+  - `protocol AudioPlaying: Sendable { func play(_ clips: [SpokenClip]) async }`
   - `actor ConnectorHost` with `init(device: AwtrixDevice, registry: ConnectorRegistry, store: SettingsStore, audio: AudioPlaying, iconInstaller: IconInstalling)`
   - `func runOnce(connectorId: String) async -> RunResult`
   - `enum RunResult: Sendable, Equatable { case delivered; case skipped; case failed(String) }`
@@ -2193,8 +2578,8 @@ private struct StubConnector: Connector {
 private struct BoomError: Error {}
 
 private final class SpyAudio: AudioPlaying, @unchecked Sendable {
-    private(set) var played: [[URL]] = []
-    func play(_ urls: [URL]) async { played.append(urls) }
+    private(set) var played: [[SpokenClip]] = []
+    func play(_ clips: [SpokenClip]) async { played.append(clips) }
 }
 
 private struct StubIconInstaller: IconInstalling {
@@ -2386,7 +2771,7 @@ public final class UserDefaultsSettingsStore: SettingsStore, @unchecked Sendable
 import Foundation
 
 public protocol AudioPlaying: Sendable {
-    func play(_ urls: [URL]) async
+    func play(_ clips: [SpokenClip]) async
 }
 
 public protocol IconInstalling: Sendable {
@@ -2449,6 +2834,11 @@ public actor ConnectorHost {
             )
             if !output.localAudio.isEmpty {
                 await audio.play(output.localAudio)
+                // The banner was held so it would last exactly as long as the
+                // speech; nothing else knows when that is.
+                if output.holdUntilAudioEnds {
+                    try await device.dismissNotification()
+                }
             }
             return .delivered
         } catch {
@@ -2643,8 +3033,14 @@ public actor SequentialAudioPlayer: AudioPlaying {
 
     public init() {}
 
-    public func play(_ urls: [URL]) async {
-        for url in urls {
+    public func play(_ clips: [SpokenClip]) async {
+        for clip in clips {
+            // The producer set this; the player does not know or care whether it
+            // is separating two speakers or holding for a punchline.
+            if clip.leadIn > 0 {
+                try? await Task.sleep(for: .seconds(clip.leadIn))
+            }
+            let url = clip.url
             guard FileManager.default.isReadableFile(atPath: url.path) else { continue }
             guard let player = try? AVAudioPlayer(contentsOf: url) else { continue }
             self.player = player

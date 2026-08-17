@@ -47,6 +47,32 @@ ENTITIES = [("&quot;", '"'), ("&apos;", "'"), ("&lt;", "<"), ("&gt;", ">"),
             ("&nbsp;", " "), ("&mdash;", "—"), ("&ndash;", "–"), ("&amp;", "&")]
 
 
+def rtttl_duration(melody: str) -> float:
+    """Total play time of an RTTTL string, in seconds.
+
+    Computed rather than guessed so the speech lands the moment the jingle ends,
+    and keeps landing there if the jingle is ever changed.
+    """
+    _, defaults, notes = melody.split(":", 2)
+    spec = dict(part.split("=") for part in defaults.split(","))
+    default_len = int(spec.get("d", 4))
+    bpm = int(spec.get("b", 63))
+    whole = 4 * (60.0 / bpm)
+
+    total = 0.0
+    for note in notes.split(","):
+        note = note.strip()
+        if not note:
+            continue
+        digits = re.match(r"^\d+", note)
+        length = int(digits.group()) if digits else default_len
+        seconds = whole / length
+        if "." in note:  # dotted note is half again as long
+            seconds *= 1.5
+        total += seconds
+    return total
+
+
 def fetch_anecdotes() -> list[tuple[str, str]]:
     req = urllib.request.Request(FEED, headers={"User-Agent": "Mozilla/5.0"})
     raw = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "replace")
@@ -156,9 +182,17 @@ def main() -> None:
 
     scroll = PREFIX + text.replace("\n", " ") + " " + LAUGHTER
     print("\n=== jingle + scroll on the clock, speech on the Mac ===")
+    jingle = rtttl_duration(NOKIA)
+    started = time.monotonic()
     client.notify(scroll, icon=str(LAUGH_ICON), duration=25,
                   color="#FFD200", rtttl=NOKIA, push_icon=2)
-    time.sleep(3.2)  # let the Nokia jingle finish before the announcement
+    # Wait out exactly the jingle, minus the time the request itself took — the
+    # device starts playing when it receives the call, not when we return.
+    remaining = jingle - (time.monotonic() - started)
+    print(f"jingle {jingle:.2f}s, request took {time.monotonic() - started:.2f}s, "
+          f"waiting {max(remaining, 0):.2f}s")
+    if remaining > 0:
+        time.sleep(remaining)
 
     for (voice, line), path, lead in zip(voiced, files, leads):
         if lead:

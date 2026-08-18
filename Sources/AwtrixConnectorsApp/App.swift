@@ -110,7 +110,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
-    init(model: AppModel, budget: QuitBudget, discovery: DeviceBrowser = DeviceBrowser()) {
+    /// No default for `discovery`, deliberately. A default here is the real
+    /// factory, and one line — a test calling `applicationDidFinishLaunching`
+    /// on a delegate that took it — would put a live `NWBrowser` on the user's
+    /// LAN from inside `swift test`. Naming it is one argument; noticing it
+    /// afterwards is not.
+    init(model: AppModel, budget: QuitBudget, discovery: DeviceBrowser) {
         self.model = model
         self.discovery = discovery
         self.budget = budget

@@ -86,7 +86,9 @@ import Testing
 
     let budgetClock = Metronome()
     let delegate = AppDelegate(
-        model: subject, budget: QuitBudget(seconds: 600, sleep: budgetClock.sleep)
+        model: subject,
+        budget: QuitBudget(seconds: 600, sleep: budgetClock.sleep),
+        discovery: inertDiscovery()
     )
 
     #expect(delegate.applicationShouldTerminate(.shared) == .terminateLater)
@@ -110,7 +112,7 @@ import Testing
     metronome.tick()
     await waitUntil { gate.enteredCount == 1 }
 
-    let delegate = AppDelegate(model: subject, budget: QuitBudget(seconds: 5))
+    let delegate = AppDelegate(model: subject, budget: QuitBudget(seconds: 5), discovery: inertDiscovery())
     let replies = Replies()
     let answer = delegate.beginTermination { replies.record($0) }
 
@@ -136,7 +138,7 @@ import Testing
     metronome.tick()
     await waitUntil { gate.enteredCount == 1 }
 
-    let delegate = AppDelegate(model: subject, budget: QuitBudget(seconds: 0.01))
+    let delegate = AppDelegate(model: subject, budget: QuitBudget(seconds: 0.01), discovery: inertDiscovery())
     let replies = Replies()
     _ = delegate.beginTermination { replies.record($0) }
 

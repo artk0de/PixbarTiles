@@ -221,6 +221,18 @@ final class FakeBonjourBrowser: BonjourBrowsing {
     func emit(_ event: BonjourEvent) { handlers.forEach { $0(event) } }
 }
 
+/// A `DeviceBrowser` that cannot reach the network, for tests about something
+/// else.
+///
+/// Every `AppDelegate` in this target takes one. The initialiser has no default
+/// on purpose — the default would be the real factory, and a test that later
+/// called `applicationDidFinishLaunching` would browse the user's LAN from
+/// inside `swift test`.
+@MainActor
+func inertDiscovery() -> DeviceBrowser {
+    DeviceBrowser(browsing: { FakeBonjourBrowser() }, sleep: { _ in })
+}
+
 // MARK: - Device
 
 /// Answers every request the same way, and records what it was asked.
@@ -261,13 +273,14 @@ func testModel(
     transport: any Transport = StubTransport(),
     uploads: any UploadedIconStore = InMemoryUploadedIconStore(),
     sleep: @escaping AppModel.Sleeping = { _ in },
-    pollSleep: @escaping AppModel.Sleeping = { _ in }
+    pollSleep: @escaping AppModel.Sleeping = { _ in },
+    deviceHost: String = "10.0.0.5"
 ) -> AppModel {
     let registry = ConnectorRegistry()
     for connector in connectors { registry.register(connector) }
-    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+    let device = AwtrixDevice(host: deviceHost, transport: transport)
     return AppModel(
-        deviceHost: "10.0.0.5",
+        deviceHost: deviceHost,
         device: device,
         registry: registry,
         host: host,

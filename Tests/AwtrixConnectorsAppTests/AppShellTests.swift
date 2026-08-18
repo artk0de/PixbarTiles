@@ -236,7 +236,7 @@ import Testing
     #expect(line?.contains("awtrix_ff0102") == true)
     // And says how to choose between them, because the app talks to an address
     // and neither name is one.
-    #expect(line?.contains("deviceHost") == true)
+    #expect(line?.contains("the address below") == true)
 }
 
 // One device needs no such instruction: there is nothing to choose between.
@@ -246,22 +246,21 @@ import Testing
     ]))
 
     #expect(line?.contains("awtrix_a07f9c") == true)
-    #expect(line?.contains("deviceHost") == false)
+    #expect(line?.contains("the address below") == false)
 }
 
 // A clock can advertise itself over Bonjour and still not answer `/api/stats` —
 // a different subnet, firmware still booting, the web interface switched off.
-// Discovery reports the advertisement and never the reachability: which one the
-// app can actually talk to stays the monitor's answer about the address it was
-// pointed at.
-@Test func anAdvertisedDeviceIsNotAReachableOne() {
+// So the line reports the advertisement in the advertisement's own words, and
+// the question of whether the app can talk to the address it was pointed at
+// stays with the monitor, one line up.
+@Test func theDiscoveryLineReportsAnAdvertisementRatherThanAConnection() {
     let seen = DiscoveryStatusLine.text(for: .listed([
         DiscoveredDevice(instanceName: "awtrix_a07f9c"),
     ]))
 
+    #expect(seen?.hasPrefix("Seen on the network:") == true)
     #expect(seen?.contains("awtrix_a07f9c") == true)
-    #expect(seen?.contains(DeviceStatusLine.title(for: .unknown)) == false)
-    #expect(seen?.contains("Connected") == false)
 }
 
 // MARK: - Looking for the device on the network
@@ -316,12 +315,15 @@ import Testing
 // a quit that has nothing left to do.
 @Test @MainActor func quitAbandonsTheDiscoveryWindowRatherThanWaitingItOut() async {
     let window = Metronome()
+    let browsing = FakeBonjourBrowser()
     let delegate = AppDelegate(
         model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
         budget: QuitBudget(seconds: 0.01),
-        discovery: DeviceBrowser(browsing: { FakeBonjourBrowser() }, sleep: window.sleep)
+        discovery: DeviceBrowser(browsing: { browsing }, sleep: window.sleep)
     )
     delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    // The browse comes up, which is what opens the window in the first place.
+    browsing.emit(.ready)
     #expect(await waitUntil { window.parked == 1 })
 
     _ = delegate.beginTermination { _ in }
@@ -353,7 +355,10 @@ import Testing
 // The instance name is not a hostname: `awtrix.local` does not resolve, and
 // neither does `awtrix_a07f9c.local`. A discovery that quietly repointed the
 // app would repoint it at nothing at all.
-@Test @MainActor func aDiscoveredInstanceIsNeverUsedAsTheAddressTheAppTalksTo() {
+@Test @MainActor func aDiscoveredInstanceIsNeverWrittenAsTheAddressTheAppTalksTo() throws {
+    let suite = "discovery-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
     let browsing = FakeBonjourBrowser()
     let delegate = AppDelegate(
         model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
@@ -364,6 +369,86 @@ import Testing
 
     browsing.emit(.results(["awtrix_a07f9c"]))
 
-    #expect(delegate.model.deviceHost == "10.0.0.5")
     #expect(delegate.discovery.found.map(\.instanceName) == ["awtrix_a07f9c"])
+    // The address is the user's to set, through the field, and finding a clock
+    // is not the user saying anything. `awtrix_a07f9c` is not a hostname —
+    // written here it would point the next launch at nothing that resolves.
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == nil)
+    #expect(delegate.model.deviceHost == "10.0.0.5")
+}
+
+// MARK: - The address the next launch will use
+
+// The write half of the brief's step 5. The panel's discovery line names a
+// clock; this is how the user acts on that name without opening a terminal, and
+// it goes through the same defaults key `AppModel.live()` reads at launch.
+@Test @MainActor func theAddressTypedIntoThePanelIsWhatTheNextLaunchUses() throws {
+    let suite = "host-field-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    DeviceHostField.save("10.0.0.9", to: defaults)
+
+    // Read back the way the app reads it, not the way it was written: a field
+    // writing some other key would save happily and change nothing.
+    #expect(AppModel.live(defaults: defaults).deviceHost == "10.0.0.9")
+}
+
+// Nothing else in the app writes this key, so a blank entry saved would come up
+// at the next launch pointed at an empty host — and the panel that could fix it
+// sits behind a device that no longer answers.
+@Test @MainActor func aBlankAddressIsRefusedRatherThanSaved() throws {
+    let suite = "host-field-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set("10.0.0.9", forKey: AppModel.deviceHostKey)
+
+    #expect(DeviceHostField.save("   \n ", to: defaults) == nil)
+
+    // And the address that was there is still there.
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+}
+
+// A pasted address arrives with whatever was around it. `AwtrixDevice` builds
+// `http://<host>/api/...` by interpolation, so a stray space is a URL that
+// never resolves and a panel that says Disconnected for ever.
+@Test @MainActor func theAddressIsTrimmedBeforeItIsSaved() throws {
+    let suite = "host-field-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    DeviceHostField.save("  192.168.1.72\n", to: defaults)
+
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "192.168.1.72")
+}
+
+// What the panel says after a save. The address is read once at launch and
+// handed to the device, the monitor and the host; a confirmation that implied
+// the app had already moved would be wrong until the next launch.
+@Test @MainActor func savingSaysItTakesEffectAtTheNextLaunchRatherThanNow() throws {
+    let suite = "host-field-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let note = DeviceHostField.save("10.0.0.9", to: defaults)
+
+    #expect(note == DeviceHostField.takesEffectNextLaunch)
+    #expect(note?.lowercased().contains("next launch") == true)
+}
+
+// MARK: - A network the app cannot browse
+
+// The fourth answer folded into the third. With Wi-Fi off, no route, or a
+// VPN-only link, the browse is up and cannot run — and the panel used to wait
+// three seconds and then announce that nothing was advertising itself on a
+// network that was not there.
+@Test func aNetworkTheAppCannotBrowseIsNotReportedAsAnEmptyNetwork() {
+    let unavailable = DiscoveryStatusLine.text(for: .unavailable("Network is down"))
+
+    #expect(unavailable != DiscoveryStatusLine.text(for: .listed([])))
+    #expect(unavailable != DiscoveryStatusLine.text(for: .searching))
+    #expect(unavailable != DiscoveryStatusLine.text(for: .denied))
+    // And says which network problem, because "no network" has causes the user
+    // can tell apart.
+    #expect(unavailable?.contains("Network is down") == true)
 }

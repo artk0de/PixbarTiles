@@ -110,11 +110,14 @@ private func waitUntil(
     return condition()
 }
 
-/// A browser wired to a fake, with the settle window parked and waited for.
+/// A browser wired to a fake, brought up, with the settle window parked and
+/// waited for.
 ///
-/// The wait is not decoration: `start` opens the window on a task, and a test
-/// that ran `elapse()` before that task parked would run out a window nobody
-/// was waiting on and prove nothing.
+/// `.ready` is emitted because that is what opens the window — `start()` alone
+/// no longer does, since a browse that never comes up has said nothing about
+/// the network. The wait is not decoration either: the window opens on a task,
+/// and a test that ran `elapse()` before that task parked would run out a
+/// window nobody was waiting on and prove nothing.
 @MainActor
 private func startedBrowser(
     browsing: FakeBonjourBrowser, clock: SettleClock
@@ -123,6 +126,7 @@ private func startedBrowser(
     // then evidence about the constant this app actually browses with.
     let subject = DeviceBrowser(browsing: { browsing }, sleep: clock.sleep)
     subject.start()
+    browsing.emit(.ready)
     #expect(await waitUntil { clock.parked == 1 })
     return subject
 }
@@ -307,11 +311,17 @@ private let printer = "Brother HL-L2350DW"
 // empty — it is what arrives before every one of the cases above.
 @Test @MainActor func aReadyBrowserIsStillSearching() async {
     let browsing = FakeBonjourBrowser()
-    let subject = await startedBrowser(browsing: browsing, clock: SettleClock())
+    let clock = SettleClock()
+    let subject = await startedBrowser(browsing: browsing, clock: clock)
 
     browsing.emit(.ready)
 
     #expect(subject.state == .searching)
+    // And one deadline, not one per `.ready`. A browse that reports itself up
+    // more than once would otherwise stack windows, and the last one to land
+    // would overwrite whatever the browse had found in the meantime.
+    #expect(await waitUntil({ clock.parked > 1 }, limit: 0.05) == false)
+    #expect(clock.durations == [DeviceBrowser.settleWindow])
 }
 
 // MARK: - What gets listed
@@ -513,8 +523,184 @@ private let printer = "Brother HL-L2350DW"
     #expect(NetworkBonjourBrowser.instanceName(of: .hostPort(host: "10.0.0.5", port: 80)) == nil)
 }
 
-// The firmware advertises over HTTP, and the browse has to name the same
-// service type the probe found it under.
-@Test @MainActor func theBrowseLooksForTheServiceTypeTheFirmwareAdvertises() {
+
+// MARK: - What the shipped browser makes of a browser state
+
+// The seam that was missing. `DeviceDiscovery.failure(for:)` maps an `NWError`
+// and was well covered; nothing covered the step above it, where an
+// `NWBrowser.State` becomes a `BonjourEvent` — and that is where the `.denied`
+// decision is actually made for the browser this app ships. Deleting the
+// `.waiting`-carries-a-refusal branch used to change no test at all.
+
+@Test @MainActor func aBrowserThatCameUpIsReadyToTheApp() {
+    #expect(NetworkBonjourBrowser.event(for: .ready) == .ready)
+}
+
+@Test @MainActor func aRefusalThatArrivesAsAFailureIsDenied() {
+    let refused = NWBrowser.State.failed(.dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied)))
+
+    #expect(NetworkBonjourBrowser.event(for: refused) == .denied)
+}
+
+// The rule nobody can confirm against real hardware without revoking the
+// machine's permission, and the one the implementation is least sure of: on
+// some releases a refusal arrives as `.waiting` rather than `.failed`. It costs
+// one constructed state to hold it.
+@Test @MainActor func aRefusalThatArrivesAsWaitingIsDeniedToo() {
+    let refused = NWBrowser.State.waiting(.dns(DNSServiceErrorType(kDNSServiceErr_NotPermitted)))
+
+    #expect(NetworkBonjourBrowser.event(for: refused) == .denied)
+}
+
+// Waiting for a route is not a refusal and not an empty network: it is the
+// browse being up and unable to run, which is its own answer.
+@Test @MainActor func aBrowseWaitingOnANetworkIsUnavailableRatherThanDeniedOrEmpty() {
+    guard case let .unavailable(reason)? = NetworkBonjourBrowser.event(for: .waiting(.posix(.ENETDOWN)))
+    else {
+        Issue.record("expected unavailable, got \(String(describing: NetworkBonjourBrowser.event(for: .waiting(.posix(.ENETDOWN)))))")
+        return
+    }
+    #expect(reason.contains("Network is down"))
+}
+
+@Test @MainActor func aBrowserThatFailedForSomeOtherReasonCarriesIt() {
+    let broken = NWBrowser.State.failed(.dns(DNSServiceErrorType(kDNSServiceErr_Unknown)))
+
+    guard case let .failed(reason)? = NetworkBonjourBrowser.event(for: broken) else {
+        Issue.record("expected a failure, got \(String(describing: NetworkBonjourBrowser.event(for: broken)))")
+        return
+    }
+    #expect(reason.contains("65537"))
+}
+
+// Setting up and being cancelled say nothing about the network, and reporting
+// them would move the panel off whatever it is showing for no reason.
+@Test @MainActor func aBrowserSettingUpOrCancelledSaysNothing() {
+    #expect(NetworkBonjourBrowser.event(for: .setup) == nil)
+    #expect(NetworkBonjourBrowser.event(for: .cancelled) == nil)
+}
+
+// MARK: - What the shipped browse is built for
+
+// The constant was pinned and its USE was not. Pointing the browse itself at
+// `_awtrix._tcp` — a type nothing on earth advertises — left every test green,
+// and the panel would then have reported an empty network with confidence.
+// This reads the service type back off the browser that `start` builds.
+@Test @MainActor func theBrowseIsBuiltForTheServiceTypeTheFirmwareAdvertises() {
     #expect(NetworkBonjourBrowser.serviceType == "_http._tcp")
+
+    let built = String(describing: NetworkBonjourBrowser.makeBrowser().descriptor)
+
+    #expect(built.contains("_http._tcp"))
+    #expect(built.contains("bonjour"))
+}
+
+// MARK: - A browse that never comes up
+
+// The window is a deadline for SILENCE, and a browse that has not come up is
+// not silent about the network — it has not looked at one. Armed in `start()`
+// the deadline counted down through "not browsing yet" and then announced that
+// nothing was advertising, on a network that did not exist.
+@Test @MainActor func aBrowseThatHasNotComeUpOpensNoWindow() async {
+    let clock = SettleClock()
+    let subject = DeviceBrowser(browsing: { FakeBonjourBrowser() }, sleep: clock.sleep)
+
+    subject.start()
+
+    #expect(subject.state == .searching)
+    #expect(await waitUntil({ clock.parked > 0 }, limit: 0.05) == false)
+    #expect(clock.durations.isEmpty)
+}
+
+@Test @MainActor func aBrowseThatCannotRunSaysSoRatherThanReportingAnEmptyNetwork() async {
+    let browsing = FakeBonjourBrowser()
+    let clock = SettleClock()
+    let subject = await startedBrowser(browsing: browsing, clock: clock)
+
+    browsing.emit(.unavailable("Network is down"))
+
+    #expect(subject.state == .unavailable("Network is down"))
+    #expect(subject.state != .listed([]))
+}
+
+// And the window goes down with it. A deadline left counting through "no
+// network" lands on "nothing on this network", which is the same lie one layer
+// deeper.
+@Test @MainActor func aBrowseThatCannotRunTakesItsWindowDown() async {
+    let browsing = FakeBonjourBrowser()
+    let clock = SettleClock()
+    let subject = await startedBrowser(browsing: browsing, clock: clock)
+
+    browsing.emit(.unavailable("Network is down"))
+
+    #expect(await waitUntil { clock.parked == 0 })
+    clock.elapse()
+    #expect(await waitUntil({ subject.state == .listed([]) }, limit: 0.05) == false)
+}
+
+@Test @MainActor func aBrowseThatComesBackUpLooksAgain() async {
+    let browsing = FakeBonjourBrowser()
+    let clock = SettleClock()
+    let subject = await startedBrowser(browsing: browsing, clock: clock)
+    browsing.emit(.unavailable("Network is down"))
+
+    browsing.emit(.ready)
+
+    #expect(subject.state == .searching)
+    // And a fresh deadline, or the panel says "Looking" for ever.
+    #expect(await waitUntil { clock.parked == 1 })
+}
+
+// MARK: - Late reports
+
+/// A browser that goes on delivering after it is cancelled.
+///
+/// `FakeBonjourBrowser` drops its handlers on `cancel()`, which is the polite
+/// behaviour and therefore cannot show whether anything guards against the
+/// impolite one. Nothing promises `NWBrowser.cancel()` is the last word.
+@MainActor
+private final class LeakyBonjourBrowser: BonjourBrowsing {
+    private var handlers: [@MainActor (BonjourEvent) -> Void] = []
+
+    func start(onEvent: @escaping @MainActor (BonjourEvent) -> Void) { handlers.append(onEvent) }
+    func cancel() {}
+    /// Delivers to one browse in particular, by the order it was started, so a
+    /// test can speak as the browse that was dropped rather than as both.
+    func emit(_ event: BonjourEvent, from browse: Int) { handlers[browse](event) }
+}
+
+// A device arriving from a browse nobody is running any more would put it back
+// on a panel that has stopped looking.
+@Test @MainActor func aReportFromAStoppedBrowseIsIgnored() {
+    let browsing = LeakyBonjourBrowser()
+    let subject = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+    subject.start()
+    subject.stop()
+
+    browsing.emit(.results(["awtrix_a07f9c"]), from: 0)
+
+    #expect(subject.state == .idle)
+    #expect(subject.found.isEmpty)
+}
+
+// The same for a browse that has been replaced: the one that was dropped keeps
+// its own handler, and its reports are about a question nobody asked twice.
+@Test @MainActor func aReportFromAReplacedBrowseIsIgnored() {
+    let browsing = LeakyBonjourBrowser()
+    let subject = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+    subject.start()
+    subject.start()
+
+    // Spoken by the browse that was replaced, not by the one now running.
+    browsing.emit(.denied, from: 0)
+
+    #expect(subject.state == .searching)
+    #expect(subject.state != .denied)
+}
+
+// MARK: - What the app browses with when nobody says
+
+// The one thing the app is wired to and no test named: the shipped default.
+@Test @MainActor func theShippedDefaultBrowsesWithTheNetworkBrowser() {
+    #expect(DeviceBrowser.networkBrowsing() is NetworkBonjourBrowser)
 }

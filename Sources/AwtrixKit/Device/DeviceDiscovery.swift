@@ -21,12 +21,13 @@ public struct DiscoveredDevice: Sendable, Equatable {
 
 /// How far discovery has got, and what it actually knows.
 ///
-/// Five cases rather than a list that may be empty, because an empty list is
-/// the answer to three different questions and the user can only act on one of
+/// Six cases rather than a list that may be empty, because an empty list is the
+/// answer to five different questions and the user can only act on some of
 /// them. "You have not been asked yet", "we are still looking", "nothing is
-/// advertising here" and "you refused this app the local network" all render as
-/// zero devices, and a panel that says "no devices found" to somebody who
-/// declined the permission prompt is telling them the wrong thing to fix.
+/// advertising here", "there is no network to look on" and "you refused this
+/// app the local network" all render as zero devices, and a panel that says "no
+/// devices found" to somebody who declined the permission prompt — or to
+/// somebody whose Wi-Fi is off — is telling them the wrong thing to fix.
 public enum DiscoveryState: Sendable, Equatable {
     /// Never started, or stopped.
     case idle
@@ -35,6 +36,10 @@ public enum DiscoveryState: Sendable, Equatable {
     /// The browse answered. Empty means nothing on this network is ours — that
     /// is a finding, not a silence.
     case listed([DiscoveredDevice])
+    /// The browse is up but cannot run: no route, an interface down, a link the
+    /// system will not browse on. Distinct from an empty network, because there
+    /// is no network here to be empty.
+    case unavailable(String)
     /// Local Network access refused. Nothing will ever be found until that
     /// changes, and no amount of waiting is the fix.
     case denied
@@ -51,6 +56,8 @@ public enum BonjourEvent: Sendable, Equatable {
     case ready
     /// Instance names exactly as advertised, ours and everybody else's.
     case results([String])
+    /// The browse cannot run right now, in the system's own words.
+    case unavailable(String)
     case denied
     case failed(String)
 }
@@ -99,42 +106,76 @@ public enum DeviceDiscovery {
 /// The `NWBrowser` this app actually ships.
 ///
 /// Its own type, behind `BonjourBrowsing`, so that everything above it — the
-/// filtering, the settle window, the three answers — is exercised without a
-/// network, and what is left here is the framework call itself.
+/// filtering, the settle window, the answers — is exercised without a network,
+/// and what is left here is the framework call itself.
 @MainActor
 public final class NetworkBonjourBrowser: BonjourBrowsing {
     /// The firmware advertises its web interface, not a service of its own.
     public static let serviceType = "_http._tcp"
 
+    /// The browse this type performs, as one value.
+    ///
+    /// Hoisted so the service type above and the browse below are one
+    /// expression rather than two that can drift apart.
+    static let descriptor = NWBrowser.Descriptor.bonjour(type: serviceType, domain: nil)
+
     private var browser: NWBrowser?
 
     public init() {}
 
+    /// What a browser state means to the app, or nothing when it means nothing.
+    ///
+    /// Extracted from the handler below because this is where the `.denied`
+    /// decision is actually made for the shipped browser, and it is testable
+    /// today: `NWBrowser.State` takes a constructed `NWError`, refusal codes
+    /// included, with no network and no permission change. Left inline, the
+    /// rule that a refusal can arrive in `.waiting` — the one rule here nobody
+    /// can confirm against real hardware — had no coverage at all, and deleting
+    /// it changed no test.
+    static func event(for state: NWBrowser.State) -> BonjourEvent? {
+        switch state {
+        case .ready:
+            .ready
+        case let .failed(error):
+            DeviceDiscovery.failure(for: error)
+        case let .waiting(error):
+            // `.waiting` is the browse being up and unable to run — no route,
+            // an interface down. Often transient, so it is not a failure; but
+            // it is not silence about the network either, which is what it used
+            // to be folded into. A refusal is the exception: terminal, and it
+            // arrives here rather than in `.failed` on some releases.
+            DeviceDiscovery.failure(for: error) == .denied
+                ? .denied
+                : .unavailable(error.debugDescription)
+        default:
+            // `.setup` and `.cancelled` say nothing about the network.
+            nil
+        }
+    }
+
+    /// The browser this type starts, built and not started.
+    ///
+    /// Split out so a test can read back what the browse is actually built
+    /// with. `NWBrowser.Descriptor` is not `Equatable`, but `NWBrowser` carries
+    /// its own `descriptor` and it renders the service type, so this is
+    /// checkable — and constructing an `NWBrowser` reaches nothing, only
+    /// `start(queue:)` browses. Before this split the constant was pinned and
+    /// its USE was not: pointing the browse at `_awtrix._tcp`, which nothing on
+    /// earth advertises, left all 351 tests green while the panel would have
+    /// reported an empty network with confidence.
+    static func makeBrowser() -> NWBrowser {
+        NWBrowser(for: descriptor, using: .init())
+    }
+
     public func start(onEvent: @escaping @MainActor (BonjourEvent) -> Void) {
         cancel()
-        let browser = NWBrowser(
-            for: .bonjour(type: Self.serviceType, domain: nil), using: .init()
-        )
+        let browser = Self.makeBrowser()
         browser.stateUpdateHandler = { state in
-            // The handler queue below is `.main`, which is where this actor
+            // The handler queue below is `.main`, which is where this type
             // lives; the isolation is real, the compiler simply cannot see it
             // through NWBrowser's non-isolated callback.
             MainActor.assumeIsolated {
-                switch state {
-                case .ready:
-                    onEvent(.ready)
-                case let .failed(error):
-                    onEvent(DeviceDiscovery.failure(for: error))
-                case let .waiting(error):
-                    // `.waiting` is normally transient — no route yet, and the
-                    // browse recovers by itself — so it is not reported as a
-                    // failure. A refusal is the exception: it is terminal, and
-                    // it arrives here rather than in `.failed` on some
-                    // releases.
-                    if case .denied = DeviceDiscovery.failure(for: error) { onEvent(.denied) }
-                default:
-                    break
-                }
+                if let event = Self.event(for: state) { onEvent(event) }
             }
         }
         browser.browseResultsChangedHandler = { results, _ in
@@ -186,18 +227,34 @@ public final class DeviceBrowser: ObservableObject {
     /// only cost of being generous is how long the panel says "Looking".
     public static let settleWindow: TimeInterval = 3
 
+    /// How the shipped app obtains a browse.
+    ///
+    /// Named rather than written inline as a default argument so that a test
+    /// can check what the shipped default actually builds without starting it.
+    public static let networkBrowsing: @MainActor () -> any BonjourBrowsing = {
+        NetworkBonjourBrowser()
+    }
+
     @Published public private(set) var state: DiscoveryState = .idle
 
     /// How a browse is obtained, rather than a browse already obtained.
     ///
-    /// A factory because `NetworkBonjourBrowser` holds an `NWBrowser?`, and an
-    /// instance of that type sitting at rest in a process that also drives an
-    /// AppKit run loop deadlocks it: with one held by `AppDelegate` and never
-    /// started, sixteen unrelated main-actor tests stopped completing, every
-    /// time, at 0% CPU. Bisected to this and nothing else — the same object
-    /// behind a browser that names no `Network` type is green. Built when a
-    /// browse begins and dropped when it ends, no such object exists in a
-    /// process that never browses, which includes every test.
+    /// A factory so that no `NWBrowser` holder exists in a process that never
+    /// browses — which is every test, and every minute the app spends not
+    /// looking. It is dead weight otherwise, and keeping the real `Network`
+    /// stack out of code that did not ask for it is worth doing on its own.
+    ///
+    /// Historical note, and it is an observation rather than a diagnosis:
+    /// during this task (2026-08-17, Swift 6.3.3 / macOS 26.6.1) a
+    /// `NetworkBonjourBrowser` held at rest by `AppDelegate` coincided with
+    /// sixteen unrelated main-actor tests failing to complete, repeatably, at
+    /// 0% CPU, and moving to this factory coincided with the suite going green.
+    /// Review could not reproduce that in three separate reconstructions, so
+    /// the cause is unknown and this factory should not be assumed to be the
+    /// remedy for anything like it. Other candidates from the same session —
+    /// orphaned test-helper processes thrashing swap, and main-actor busy loops
+    /// from instant test clocks — were never ruled out. Diagnose before
+    /// reaching for this shape again.
     private let makeBrowsing: @MainActor () -> any BonjourBrowsing
     /// The browse currently running, if one is.
     private var browsing: (any BonjourBrowsing)?
@@ -206,9 +263,18 @@ public final class DeviceBrowser: ObservableObject {
     private var settleTask: Task<Void, Never>?
     /// Whether silence now means "nothing here" rather than "not yet".
     private var hasSettled = false
+    /// Whether the deadline for this browse has been opened.
+    private var windowArmed = false
+    /// Which browse the events arriving belong to.
+    ///
+    /// A browse that has been stopped or replaced may still deliver: nothing
+    /// promises that `cancel()` is the last word, and a late callback from a
+    /// browse nobody is running would put devices back on a panel that has
+    /// stopped looking for them.
+    private var generation = 0
 
     public init(
-        browsing: @escaping @MainActor () -> any BonjourBrowsing = { NetworkBonjourBrowser() },
+        browsing: @escaping @MainActor () -> any BonjourBrowsing = DeviceBrowser.networkBrowsing,
         settleWindow: TimeInterval = DeviceBrowser.settleWindow,
         sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
@@ -235,18 +301,12 @@ public final class DeviceBrowser: ObservableObject {
     public func start() {
         stop()
         hasSettled = false
+        windowArmed = false
         state = .searching
+        let generation = self.generation
         let browsing = makeBrowsing()
         self.browsing = browsing
-        browsing.start { [weak self] event in self?.handle(event) }
-        let sleep = self.sleep
-        let window = self.settleWindow
-        settleTask = Task { [weak self] in
-            // A cancelled window is a stopped browse, and returning here is
-            // what keeps it from overwriting the panel afterwards.
-            do { try await sleep(window) } catch { return }
-            self?.settle()
-        }
+        browsing.start { [weak self] event in self?.handle(event, from: generation) }
     }
 
     /// Stops browsing and abandons the window with it.
@@ -254,24 +314,57 @@ public final class DeviceBrowser: ObservableObject {
     /// Synchronous, and awaited by nobody: quit already has a budget to spend
     /// on a held banner, and a browse has nothing in flight worth adding to it.
     public func stop() {
+        generation += 1
         settleTask?.cancel()
         settleTask = nil
+        windowArmed = false
         browsing?.cancel()
         browsing = nil
         state = .idle
     }
 
-    private func handle(_ event: BonjourEvent) {
+    private func handle(_ event: BonjourEvent, from generation: Int) {
+        guard generation == self.generation else { return }
         switch event {
         case .ready:
-            // The browse is up. That is not yet an answer about the network.
-            break
+            armWindow()
         case let .results(names):
             report(names)
+        case let .unavailable(reason):
+            // The browse cannot run, so nothing it has not said is evidence
+            // about anything. The window is taken down with it: a deadline
+            // counting through "no network" would land on "nothing on this
+            // network", which is a claim about a network nobody looked at.
+            settleTask?.cancel()
+            settleTask = nil
+            windowArmed = false
+            hasSettled = false
+            state = .unavailable(reason)
         case .denied:
             state = .denied
         case let .failed(reason):
             state = .failed(reason)
+        }
+    }
+
+    /// Opens the deadline that turns silence into an answer.
+    ///
+    /// Armed when the browse says it is up, never when it is merely asked to
+    /// start. A window opened in `start()` counts down through "not browsing
+    /// yet" and then reports an empty network — so with Wi-Fi off the panel
+    /// announced that nothing was advertising on a network that did not exist.
+    private func armWindow() {
+        if case .unavailable = state { state = .searching }
+        guard !windowArmed else { return }
+        windowArmed = true
+        let sleep = self.sleep
+        let window = self.settleWindow
+        settleTask = Task { [weak self] in
+            // A cancelled window is a stopped or interrupted browse, and
+            // returning here is what keeps it from overwriting the panel
+            // afterwards.
+            do { try await sleep(window) } catch { return }
+            self?.settle()
         }
     }
 
@@ -292,10 +385,10 @@ public final class DeviceBrowser: ObservableObject {
 
     /// Turns silence into an answer, and only silence.
     ///
-    /// A browse that was refused, failed, or already reported has said
-    /// something more specific than "nothing here", and the window must not
-    /// overwrite it — a refusal above all, since it produces exactly the
-    /// silence this deadline exists to interpret.
+    /// A browse that was refused, failed, went unavailable, or already reported
+    /// has said something more specific than "nothing here", and the window
+    /// must not overwrite it — a refusal above all, since it produces exactly
+    /// the silence this deadline exists to interpret.
     private func settle() {
         hasSettled = true
         guard case .searching = state else { return }

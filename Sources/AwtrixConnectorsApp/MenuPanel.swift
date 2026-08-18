@@ -43,6 +43,8 @@ enum DiscoveryStatusLine {
             "Looking for AWTRIX devices…"
         case let .listed(devices):
             listing(devices)
+        case let .unavailable(reason):
+            "Waiting for a network to browse — \(reason)"
         case .denied:
             "Local Network access is off for this app — turn it on in System "
                 + "Settings › Privacy & Security › Local Network"
@@ -64,8 +66,39 @@ enum DiscoveryStatusLine {
         }
         let names = devices.map(\.instanceName).joined(separator: ", ")
         guard devices.count > 1 else { return "Seen on the network: \(names)" }
-        return "Seen on the network: \(names) — deviceHost decides which one this "
+        return "Seen on the network: \(names) — the address below decides which one this "
             + "app talks to"
+    }
+}
+
+/// Where the next launch will look for the clock.
+///
+/// The write half of what the discovery line tells the user. Its own type
+/// rather than a closure in the view, because the rule that makes it safe — a
+/// blank field is not saved — is behaviour, and a `TextField`'s action closure
+/// is not somewhere behaviour can be read back from.
+@MainActor
+enum DeviceHostField {
+    /// Said after a save, and deliberately not "connected".
+    ///
+    /// `AppModel` reads the address once at launch and hands it to the device,
+    /// the monitor and the host; nothing rebuilds those underneath a running
+    /// schedule, so a field that implied the app had moved to the new address
+    /// would be lying until the next launch.
+    static let takesEffectNextLaunch = "Saved — takes effect at next launch"
+
+    /// Stores a typed address for the next launch, and answers what to say.
+    ///
+    /// Nil when there is nothing to store. A blank or whitespace-only entry is
+    /// refused rather than written: the next launch would come up pointed at an
+    /// empty host, and the panel that could fix it is the one behind the device
+    /// that no longer answers.
+    @discardableResult
+    static func save(_ typed: String, to defaults: UserDefaults) -> String? {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+        defaults.set(trimmed, forKey: AppModel.deviceHostKey)
+        return takesEffectNextLaunch
     }
 }
 
@@ -78,11 +111,27 @@ struct MenuPanel: View {
     /// Observed separately for the same reason `monitor` is: a nested
     /// `ObservableObject` publishes nothing to whoever holds it.
     @ObservedObject var discovery: DeviceBrowser
+    /// What is in the address field. Seeded from the model rather than bound to
+    /// it: `deviceHost` is what THIS launch is using, and the field is what the
+    /// NEXT one will.
+    @State private var typedHost: String
+    @State private var hostNote: String?
+
+    /// Seeds the field at construction rather than in `onAppear`, so the
+    /// address is in it the first time the panel is drawn — and so what is
+    /// drawn can be read back by a test that never opens a window.
+    init(model: AppModel, monitor: DeviceMonitor, discovery: DeviceBrowser) {
+        self.model = model
+        self.monitor = monitor
+        self.discovery = discovery
+        _typedHost = State(initialValue: model.deviceHost)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             statusSection
             discoverySection
+            deviceHostSection
             Divider()
             ForEach(model.registry.all, id: \.id) { connector in
                 connectorRow(connector)
@@ -134,6 +183,30 @@ struct MenuPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The address the next launch will use.
+    ///
+    /// The other half of discovery: the line above names what is on the
+    /// network, and this is where that name's address gets written down. It
+    /// writes the same `UserDefaults` key `AppModel.live()` reads at launch —
+    /// the identical thing `defaults write dev.artk0re.awtrix-connectors
+    /// deviceHost …` does, without a terminal — and rebuilds nothing, which is
+    /// why it can exist beside a `deviceHost` that stays a `let`.
+    private var deviceHostSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                TextField("Device address", text: $typedHost)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .onSubmit { hostNote = DeviceHostField.save(typedHost, to: .standard) }
+                Button("Save") { hostNote = DeviceHostField.save(typedHost, to: .standard) }
+                    .controlSize(.small)
+            }
+            if let hostNote {
+                Text(hostNote).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
     }

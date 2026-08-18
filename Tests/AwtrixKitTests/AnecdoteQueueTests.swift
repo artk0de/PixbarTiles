@@ -2,6 +2,14 @@ import Foundation
 import Testing
 @testable import AwtrixKit
 
+/// Every fixture in these tests writes its clips somewhere under the temporary
+/// directory, so that is the root the reaper is contained by here. It is
+/// deliberately wide: a narrower one would answer the earlier guards' questions
+/// for them, and a name check that never runs because containment rejected
+/// first is a check nothing is testing. The tests that are ABOUT containment
+/// name their own root.
+private let anyTemporaryRoot = FileManager.default.temporaryDirectory
+
 private func temporaryStore() -> URL {
     FileManager.default.temporaryDirectory
         .appendingPathComponent("queue-\(UUID().uuidString).json")
@@ -16,14 +24,14 @@ private func prepared(_ id: String) -> PreparedAnecdote {
 }
 
 @Test func anEmptyQueueHasNothingReady() async {
-    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
 
     #expect(await queue.ready() == 0)
     #expect(await queue.next() == nil)
 }
 
 @Test func nextReturnsInEnqueueOrderAndDrains() async {
-    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
     await queue.enqueue(prepared("a"))
     await queue.enqueue(prepared("b"))
 
@@ -38,10 +46,10 @@ private func prepared(_ id: String) -> PreparedAnecdote {
 // pin the flush instead.
 @Test func aPlayedAnecdoteIsRememberedAcrossInstances() async {
     let store = temporaryStore()
-    let first = AnecdoteQueue(storeURL: store)
+    let first = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
     await first.markPlayed("https://www.anekdot.ru/id/1/")
 
-    let second = AnecdoteQueue(storeURL: store)
+    let second = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
 
     #expect(await second.hasPlayed("https://www.anekdot.ru/id/1/"))
     #expect(await second.hasPlayed("https://www.anekdot.ru/id/2/") == false)
@@ -52,11 +60,11 @@ private func prepared(_ id: String) -> PreparedAnecdote {
 // 70-second model load and a whole round of synthesis at every launch.
 @Test func aPreparedBatchSurvivesARestart() async {
     let store = temporaryStore()
-    let first = AnecdoteQueue(storeURL: store)
+    let first = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
     await first.enqueue(prepared("a"))
     await first.enqueue(prepared("b"))
 
-    let second = AnecdoteQueue(storeURL: store)
+    let second = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
 
     #expect(await second.ready() == 2)
     #expect(await second.next() == prepared("a"))
@@ -64,12 +72,12 @@ private func prepared(_ id: String) -> PreparedAnecdote {
 
 @Test func drainingTheQueueSurvivesARestart() async {
     let store = temporaryStore()
-    let first = AnecdoteQueue(storeURL: store)
+    let first = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
     await first.enqueue(prepared("a"))
     await first.enqueue(prepared("b"))
     _ = await first.next()
 
-    let second = AnecdoteQueue(storeURL: store)
+    let second = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
 
     // Without the pop reaching disk, a restart replays what was handed out.
     #expect(await second.ready() == 1)
@@ -86,7 +94,7 @@ private func prepared(_ id: String) -> PreparedAnecdote {
     {"pending":[{"unexpected":"shape"}],"played":["https://www.anekdot.ru/id/1/"]}
     """.utf8).write(to: store)
 
-    let queue = AnecdoteQueue(storeURL: store)
+    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
 
     #expect(await queue.ready() == 0)
     #expect(await queue.hasPlayed("https://www.anekdot.ru/id/1/"))
@@ -100,7 +108,7 @@ private func prepared(_ id: String) -> PreparedAnecdote {
     let blocker = FileManager.default.temporaryDirectory
         .appendingPathComponent("blocker-\(UUID().uuidString)")
     try Data("occupied".utf8).write(to: blocker)
-    let queue = AnecdoteQueue(storeURL: blocker.appendingPathComponent("store.json"))
+    let queue = AnecdoteQueue(storeURL: blocker.appendingPathComponent("store.json"), clipRoot: anyTemporaryRoot)
 
     await queue.markPlayed("https://www.anekdot.ru/id/1/")
 
@@ -109,7 +117,7 @@ private func prepared(_ id: String) -> PreparedAnecdote {
 }
 
 @Test func aStoreThatCanBeWrittenReportsNoFailure() async {
-    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
 
     await queue.markPlayed("https://www.anekdot.ru/id/1/")
 
@@ -117,7 +125,7 @@ private func prepared(_ id: String) -> PreparedAnecdote {
 }
 
 @Test func unseenFiltersOutWhatWasAlreadyPlayed() async {
-    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
     await queue.markPlayed("b")
 
     let fresh = await queue.unseen(from: [
@@ -130,7 +138,7 @@ private func prepared(_ id: String) -> PreparedAnecdote {
 }
 
 @Test func unseenAlsoExcludesWhatIsAlreadyQueued() async {
-    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
     await queue.enqueue(prepared("b"))
 
     let fresh = await queue.unseen(from: [
@@ -147,7 +155,7 @@ private func prepared(_ id: String) -> PreparedAnecdote {
 // twice would otherwise be prepared twice, synthesized twice and played twice,
 // with the pending list consulted faithfully and still no help.
 @Test func unseenReturnsARepeatedIdOnlyOnce() async {
-    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
 
     let fresh = await queue.unseen(from: [
         Anecdote(id: "a", text: "one"),
@@ -199,7 +207,7 @@ private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
         try Data().write(to: file)
     }
 
-    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
     await queue.retire(PreparedAnecdote(
         id: "split", text: "joke",
         clips: [SpokenClip(url: leftClip), SpokenClip(url: rightClip)],
@@ -233,7 +241,7 @@ private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
     let bystander = directory.appendingPathComponent("something-of-the-users.txt")
     for file in [clip, bystander] { try Data().write(to: file) }
 
-    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
     // Clips sitting directly in a directory that is not their namespace: what a
     // store restored from a bad copy looks like.
     await queue.retire(PreparedAnecdote(
@@ -251,7 +259,7 @@ private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
 // carry the namespace is still removed. Without this, disabling the reaper
 // outright would satisfy the test above.
 @Test func aClipDirectoryNamedForItsAnecdoteIsStillReclaimed() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore())
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
     let spent = try preparedOnDisk("https://www.anekdot.ru/id/1/")
     let spentDirectory = try #require(spent.clips.first?.url.deletingLastPathComponent())
 
@@ -266,8 +274,116 @@ private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
     let store = temporaryStore()
     try? Data("not json".utf8).write(to: store)
 
-    let queue = AnecdoteQueue(storeURL: store)
+    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
 
     #expect(await queue.ready() == 0)
     #expect(await queue.hasPlayed("anything") == false)
+}
+
+// MARK: - Containment
+
+// The naming rule above establishes that a directory is named for its anecdote.
+// It does not establish WHERE it is: `spentClipDirectory` is a path decoded with
+// `try?` from a file on the user's disk, and any directory anywhere whose last
+// component happens to be a 48-character sanitized guid satisfies the name. The
+// clip root is the second half of the answer — the reaper may only reclaim
+// inside the directory this app writes clips into, which is a fact the app
+// supplies rather than one the store can claim.
+@Test func aClipDirectoryOutsideTheClipRootIsNeverReclaimed() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("clip-root-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    // Named exactly as the synthesizer would name it, and a single directory —
+    // so it passes both of the earlier guards and only its location is wrong.
+    let elsewhere = FileManager.default.temporaryDirectory
+        .appendingPathComponent("elsewhere-\(UUID().uuidString)")
+        .appendingPathComponent(PreparedAnecdote.namespace(for: "https://www.anekdot.ru/id/1/"))
+    try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+    let clip = elsewhere.appendingPathComponent("turn-0.wav")
+    let bystander = elsewhere.appendingPathComponent("something-of-the-users.txt")
+    for file in [clip, bystander] { try Data().write(to: file) }
+
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: root)
+    await queue.retire(PreparedAnecdote(
+        id: "https://www.anekdot.ru/id/1/", text: "joke",
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+    ))
+    // The retire that reclaims whatever the previous one registered.
+    await queue.retire(try preparedOnDisk("https://www.anekdot.ru/id/2/"))
+
+    #expect(FileManager.default.fileExists(atPath: elsewhere.path))
+    #expect(FileManager.default.fileExists(atPath: bystander.path))
+}
+
+// The root is the boundary, not a directory to be reclaimed. A store naming the
+// root itself passes containment by any test written as "is it under the root,
+// or the root" — and reclaiming it takes every prepared batch with it, which is
+// the largest thing the reaper could possibly delete.
+@Test func theClipRootItselfIsNeverReclaimed() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("clip-root-\(UUID().uuidString)")
+        .appendingPathComponent(PreparedAnecdote.namespace(for: "https://www.anekdot.ru/id/1/"))
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let clip = root.appendingPathComponent("turn-0.wav")
+    try Data().write(to: clip)
+
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: root)
+    // Clips sitting directly in the root: the directory IS the root, and it is
+    // named for this anecdote, so both earlier guards let it through.
+    await queue.retire(PreparedAnecdote(
+        id: "https://www.anekdot.ru/id/1/", text: "joke",
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+    ))
+    await queue.retire(try preparedOnDisk("https://www.anekdot.ru/id/2/"))
+
+    #expect(FileManager.default.fileExists(atPath: root.path))
+}
+
+// A directory nested deeper than the synthesizer writes is still inside the
+// root, and still reclaimed. Without this, containment could be implemented as
+// "the parent is exactly the root" and nothing would say so — and the two tests
+// above would both still pass.
+@Test func aClipDirectoryNestedDeeperInsideTheClipRootIsStillReclaimed() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("clip-root-\(UUID().uuidString)")
+    let nested = root.appendingPathComponent("batch-7")
+        .appendingPathComponent(PreparedAnecdote.namespace(for: "https://www.anekdot.ru/id/1/"))
+    try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+    let clip = nested.appendingPathComponent("turn-0.wav")
+    try Data().write(to: clip)
+
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: root)
+    await queue.retire(PreparedAnecdote(
+        id: "https://www.anekdot.ru/id/1/", text: "joke",
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+    ))
+    await queue.retire(try preparedOnDisk("https://www.anekdot.ru/id/2/"))
+
+    #expect(FileManager.default.fileExists(atPath: nested.path) == false)
+}
+
+// A root whose name is a prefix of the directory's is not a root that contains
+// it. Compared as text rather than as path components, `clips-evil` sits
+// happily inside `clips` and the containment rule is decorative.
+@Test func aDirectoryWhoseRootIsOnlyANamePrefixIsNeverReclaimed() async throws {
+    let base = FileManager.default.temporaryDirectory
+        .appendingPathComponent("prefix-\(UUID().uuidString)")
+    let root = base.appendingPathComponent("clips")
+    let sibling = base.appendingPathComponent("clips-evil")
+        .appendingPathComponent(PreparedAnecdote.namespace(for: "https://www.anekdot.ru/id/1/"))
+    for directory in [root, sibling] {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    let clip = sibling.appendingPathComponent("turn-0.wav")
+    try Data().write(to: clip)
+
+    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: root)
+    await queue.retire(PreparedAnecdote(
+        id: "https://www.anekdot.ru/id/1/", text: "joke",
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+    ))
+    await queue.retire(try preparedOnDisk("https://www.anekdot.ru/id/2/"))
+
+    #expect(FileManager.default.fileExists(atPath: sibling.path))
 }

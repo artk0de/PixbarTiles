@@ -21,10 +21,17 @@ public struct CatalogueIconInstaller: IconInstalling {
 
     private let device: AwtrixDevice
     private let transport: any Transport
+    private let uploads: any UploadedIconStore
 
-    public init(device: AwtrixDevice, transport: any Transport) {
+    /// `uploads` is required rather than defaulted, because this type is the
+    /// only party that can tell an upload from a reuse: `ensureInstalled`
+    /// returns the same name either way. A default would let a construction
+    /// site opt out of recording without saying so, and the icons it then wrote
+    /// would be on the device's flash with nothing anywhere able to name them.
+    public init(device: AwtrixDevice, transport: any Transport, uploads: any UploadedIconStore) {
         self.device = device
         self.transport = transport
+        self.uploads = uploads
     }
 
     public func ensureInstalled(_ reference: IconReference) async throws -> String {
@@ -43,8 +50,33 @@ public struct CatalogueIconInstaller: IconInstalling {
                 return name
             }
             try await device.installIcon(download(id: id), named: name)
+            // After the upload, never before: an icon that failed to reach the
+            // flash is not one this app can be asked to take back off it.
+            uploads.record(name)
             return name
         }
+    }
+
+    /// Takes back off the flash exactly what this app put on it, and returns the
+    /// names removed.
+    ///
+    /// An explicit action rather than something teardown does, because the
+    /// icons are meant to survive quit and relaunch — removing them on the way
+    /// out would re-download the same bytes on the way back in, and would do it
+    /// while the user was not asking for anything.
+    ///
+    /// One name forgotten per successful delete, and the failure rethrown with
+    /// the rest still recorded. A device that is unreachable halfway through
+    /// leaves real files on real flash, and forgetting them here would strand
+    /// them: nothing in this app could ever name them again.
+    public func removeUploaded() async throws -> [String] {
+        var removed: [String] = []
+        for name in uploads.uploadedIcons() {
+            try await device.removeIcon(named: name)
+            uploads.forget(name)
+            removed.append(name)
+        }
+        return removed
     }
 
     private func download(id: Int) async throws -> Data {

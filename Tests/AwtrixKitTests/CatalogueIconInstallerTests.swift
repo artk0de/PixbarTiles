@@ -58,9 +58,14 @@ private func iconDirectory(holding names: String...) -> Route {
 /// signature is load-bearing — nothing in this package decodes the image.
 private let gifBytes = Data("GIF89a".utf8) + Data([0x01, 0x00, 0x01, 0x00])
 
-private func installer(_ transport: RoutingTransport) -> CatalogueIconInstaller {
+private func installer(
+    _ transport: RoutingTransport,
+    recordingInto uploads: any UploadedIconStore = InMemoryUploadedIconStore()
+) -> CatalogueIconInstaller {
     CatalogueIconInstaller(
-        device: AwtrixDevice(host: "10.0.0.5", transport: transport), transport: transport
+        device: AwtrixDevice(host: "10.0.0.5", transport: transport),
+        transport: transport,
+        uploads: uploads
     )
 }
 
@@ -215,4 +220,147 @@ private func catalogueFetches(_ transport: RoutingTransport) -> [URLRequest] {
         _ = try await subject.ensureInstalled(.catalogue(9039))
     }
     #expect(catalogueFetches(transport).isEmpty)
+}
+
+// MARK: - What this app put on the flash
+
+/// The paths named in `DELETE /edit` bodies, in call order. The device takes the
+/// path in a multipart field rather than in the URL, so this is where a removal
+/// is actually visible.
+private func deletions(_ transport: RoutingTransport) -> [String] {
+    transport.requests
+        .filter { $0.url?.path == "/edit" && $0.httpMethod == "DELETE" }
+        .compactMap { $0.httpBody }
+        .map { String(decoding: $0, as: UTF8.self) }
+}
+
+@Test func installingAnIconRecordsItAsUploaded() async throws {
+    let transport = RoutingTransport([
+        emptyIconDirectory,
+        Route(match: "icon_thumbs/9039.gif", status: 200, body: gifBytes),
+    ])
+    let uploads = InMemoryUploadedIconStore()
+
+    _ = try await installer(transport, recordingInto: uploads).ensureInstalled(.catalogue(9039))
+
+    #expect(uploads.uploadedIcons() == ["9039"])
+}
+
+// The one fact removal rests on. `<id>.gif` is the same name whether this app
+// wrote it or the user did — deliberately, because that is what lets the skip
+// below reuse an icon they already had — so an icon that was found rather than
+// uploaded can never be told apart afterwards. If it is not recorded at the
+// moment of the upload, it is not knowable at all.
+@Test func anIconAlreadyOnTheDeviceIsNeverRecordedAsUploaded() async throws {
+    let transport = RoutingTransport([
+        iconDirectory(holding: "9039.gif"),
+        Route(match: "icon_thumbs/9039.gif", status: 200, body: gifBytes),
+    ])
+    let uploads = InMemoryUploadedIconStore()
+
+    _ = try await installer(transport, recordingInto: uploads).ensureInstalled(.catalogue(9039))
+
+    #expect(uploads.uploadedIcons().isEmpty)
+}
+
+@Test func anIconNamedByTheUserIsNeverRecordedAsUploaded() async throws {
+    let transport = RoutingTransport([emptyIconDirectory])
+    let uploads = InMemoryUploadedIconStore()
+
+    _ = try await installer(transport, recordingInto: uploads).ensureInstalled(.installed("laugh"))
+
+    #expect(uploads.uploadedIcons().isEmpty)
+}
+
+@Test func aFailedInstallIsNeverRecordedAsUploaded() async {
+    let transport = RoutingTransport([
+        emptyIconDirectory,
+        Route(match: "icon_thumbs/1.gif", status: 200, body: Data("<!DOCTYPE html>".utf8)),
+    ])
+    let uploads = InMemoryUploadedIconStore()
+    let subject = installer(transport, recordingInto: uploads)
+
+    _ = try? await subject.ensureInstalled(.catalogue(1))
+
+    #expect(uploads.uploadedIcons().isEmpty)
+}
+
+@Test func removingUploadedIconsDeletesExactlyWhatThisAppUploaded() async throws {
+    let transport = RoutingTransport([emptyIconDirectory])
+    let uploads = InMemoryUploadedIconStore()
+    uploads.record("9039")
+    let subject = installer(transport, recordingInto: uploads)
+
+    let removed = try await subject.removeUploaded()
+
+    #expect(removed == ["9039"])
+    #expect(deletions(transport).count == 1)
+    #expect(deletions(transport).first?.contains("/ICONS/9039.gif") == true)
+}
+
+@Test func nothingUploadedMeansNothingRemoved() async throws {
+    let transport = RoutingTransport([emptyIconDirectory])
+    let subject = installer(transport, recordingInto: InMemoryUploadedIconStore())
+
+    let removed = try await subject.removeUploaded()
+
+    #expect(removed.isEmpty)
+    // Not "no deletions" but "no traffic at all": an empty record must not send
+    // the device a listing request either.
+    #expect(transport.requests.isEmpty)
+}
+
+@Test func aRemovedIconIsForgottenSoASecondRemovalDoesNothing() async throws {
+    let transport = RoutingTransport([emptyIconDirectory])
+    let uploads = InMemoryUploadedIconStore()
+    uploads.record("9039")
+    let subject = installer(transport, recordingInto: uploads)
+
+    _ = try await subject.removeUploaded()
+    let again = try await subject.removeUploaded()
+
+    #expect(again.isEmpty)
+    #expect(uploads.uploadedIcons().isEmpty)
+    #expect(deletions(transport).count == 1)
+}
+
+// The device is unreachable, or refuses. The icon is still on its flash, so
+// forgetting it here would strand it there for good — nothing else in this app
+// can ever name it again.
+@Test func anIconThatCannotBeDeletedStaysRecorded() async {
+    let transport = RoutingTransport([
+        Route(match: "/edit", status: 500, body: Data("boom".utf8)),
+    ])
+    let uploads = InMemoryUploadedIconStore()
+    uploads.record("9039")
+    let subject = installer(transport, recordingInto: uploads)
+
+    await #expect(throws: AwtrixError.self) { _ = try await subject.removeUploaded() }
+
+    #expect(uploads.uploadedIcons() == ["9039"])
+}
+
+@Test func whatWasUploadedSurvivesTheUserDefaultsStore() throws {
+    let suite = "uploaded-icons-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    UserDefaultsUploadedIconStore(defaults: defaults).record("9039")
+
+    // A second instance, because the point of this store is surviving a quit:
+    // an icon uploaded in one launch is removable in the next.
+    #expect(UserDefaultsUploadedIconStore(defaults: defaults).uploadedIcons() == ["9039"])
+
+    UserDefaultsUploadedIconStore(defaults: defaults).forget("9039")
+
+    #expect(UserDefaultsUploadedIconStore(defaults: defaults).uploadedIcons().isEmpty)
+}
+
+@Test func recordingTheSameIconTwiceRemovesItOnce() {
+    let uploads = InMemoryUploadedIconStore()
+
+    uploads.record("9039")
+    uploads.record("9039")
+
+    #expect(uploads.uploadedIcons() == ["9039"])
 }

@@ -29,6 +29,16 @@ public actor AnecdoteQueue {
     }
 
     private let storeURL: URL
+    /// The directory this app writes clips into, and the only tree the reaper
+    /// may reclaim inside.
+    ///
+    /// Required, with no default. A default would read as a guarantee while
+    /// supplying none: the value has to be the directory the synthesizer was
+    /// actually given, and only the composition root knows that. Whoever
+    /// constructs a queue against a different root gets a reaper that leaks,
+    /// which is visible; a queue that invented its own root would get one that
+    /// deletes somewhere nobody chose.
+    private let clipRoot: URL
     private var store: Store
 
     /// Why the last write failed, or nil if it landed.
@@ -47,8 +57,9 @@ public actor AnecdoteQueue {
     /// diagnostic for whoever is looking at a queue in a debugger.
     public private(set) var lastPersistFailure: (any Error)?
 
-    public init(storeURL: URL) {
+    public init(storeURL: URL, clipRoot: URL) {
         self.storeURL = storeURL
+        self.clipRoot = clipRoot
         let data = try? Data(contentsOf: storeURL)
 
         if let data, let decoded = try? JSONDecoder().decode(Store.self, from: data) {
@@ -118,10 +129,43 @@ public actor AnecdoteQueue {
         lastPersistFailure = nil
     }
 
+    /// Removes the directory registered by the previous retire, if this queue
+    /// is allowed to.
+    ///
+    /// The containment check is here rather than at registration because this
+    /// is where the untrusted value is spent: `spentClipDirectory` was written
+    /// by an earlier process and read back with `try?`, so the name check that
+    /// admitted it ran somewhere this code cannot vouch for. What it is checked
+    /// against is `clipRoot`, which came from the composition root in THIS
+    /// process and is the one part of the decision the store cannot influence.
+    ///
+    /// Forgotten either way. A path outside the root will never become inside
+    /// it, so keeping it would only mean re-deciding the same question at every
+    /// retire for the rest of the install.
     private func reclaimSpentClips() {
         guard let spent = store.spentClipDirectory else { return }
-        try? FileManager.default.removeItem(atPath: spent)
         store.spentClipDirectory = nil
+        guard Self.isContained(URL(fileURLWithPath: spent), in: clipRoot) else { return }
+        try? FileManager.default.removeItem(atPath: spent)
+    }
+
+    /// Whether `directory` lies strictly inside `root`.
+    ///
+    /// Compared as path components rather than as text, because `clips-evil` is
+    /// a string with `clips` as its prefix and is not inside it. Strictly, so
+    /// the root itself is never the thing removed — a store naming the root
+    /// would otherwise take every prepared batch with it in one call.
+    ///
+    /// Standardized but not symlink-resolved. Both sides are built from the
+    /// same value the composition root handed out, so they agree already;
+    /// resolving would introduce a disagreement of its own between a directory
+    /// that exists and one that does not, and its failure direction is a leak
+    /// rather than a deletion — which is the way round this has to fail.
+    private static func isContained(_ directory: URL, in root: URL) -> Bool {
+        let inside = directory.standardizedFileURL.pathComponents
+        let boundary = root.standardizedFileURL.pathComponents
+        guard inside.count > boundary.count else { return false }
+        return Array(inside.prefix(boundary.count)) == boundary
     }
 
     /// The directory holding an anecdote's clips, when it is named for that

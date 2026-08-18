@@ -946,3 +946,53 @@ private func staysFalse(
 
     #expect(store.settings(for: "b") == ConnectorSettings())
 }
+
+// MARK: - Stored settings
+
+// The distinction `settings(for:)` cannot make. It answers `ConnectorSettings()`
+// for a connector nobody ever configured, which reads as "the user chose thirty
+// minutes" — so a connector whose own default is five would be silently
+// rescheduled to half an hour by the store, and no caller could tell.
+@Test func aConnectorNobodyConfiguredHasNoStoredSettings() {
+    let store = InMemorySettingsStore()
+
+    #expect(store.storedSettings(for: "never-saved") == nil)
+    #expect(store.settings(for: "never-saved") == ConnectorSettings())
+}
+
+@Test func savingMakesSettingsStored() {
+    let store = InMemorySettingsStore()
+
+    store.save(ConnectorSettings(isEnabled: false, intervalPosition: 2), for: "stub")
+
+    #expect(store.storedSettings(for: "stub") == ConnectorSettings(isEnabled: false, intervalPosition: 2))
+    #expect(store.storedSettings(for: "other") == nil)
+}
+
+@Test func aConnectorNobodyConfiguredHasNothingStoredInUserDefaultsEither() throws {
+    let suite = "connector-host-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = UserDefaultsSettingsStore(defaults: defaults)
+
+    #expect(store.storedSettings(for: "never-saved") == nil)
+
+    store.save(ConnectorSettings(isEnabled: false, intervalPosition: 2), for: "never-saved")
+
+    #expect(store.storedSettings(for: "never-saved") != nil)
+}
+
+// A key holding something that is not a `ConnectorSettings` is not a choice the
+// user made, so it must read as "never configured" rather than as a decode
+// failure folded into the defaults — the two are the same value today, and
+// stop being the same value the moment a connector's own default is not thirty
+// minutes.
+@Test func anUndecodableKeyReadsAsNeverConfigured() throws {
+    let suite = "connector-host-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set(Data("not settings".utf8), forKey: "connector.stub")
+    let store = UserDefaultsSettingsStore(defaults: defaults)
+
+    #expect(store.storedSettings(for: "stub") == nil)
+}

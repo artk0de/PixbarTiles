@@ -143,8 +143,24 @@ private func decodeBody(_ request: URLRequest) throws -> [String: Any] {
 
     let stats = try await device.stats()
 
+    let request = try #require(transport.requests.first)
+    #expect(request.url?.absoluteString == "http://10.0.0.5/api/stats")
     #expect(stats.version == "0.98")
     #expect(stats.uid == "awtrix_a07f9c")
     #expect(stats.bat == 83)
     #expect(stats.ipAddress == "192.168.1.72")
+}
+
+@Test func anAwtrixErrorLocalisesToItsOwnDescription() {
+    // `DeviceState.offline` carries `localizedDescription`, which for an Error
+    // with no LocalizedError conformance is "The operation couldn't be
+    // completed. (AwtrixKit.AwtrixError error 0.)" — the endpoint, status and
+    // body all gone. The conformance routes it to `description` rather than
+    // repeating the text, so this asserts the two agree.
+    let failed = AwtrixError.http(status: 500, body: "boom", endpoint: "/api/stats")
+
+    #expect(failed.localizedDescription == "/api/stats -> HTTP 500: boom")
+    #expect(failed.localizedDescription == failed.description)
+    #expect(AwtrixError.invalidHost("not a host").localizedDescription
+        == "invalid device host: not a host")
 }

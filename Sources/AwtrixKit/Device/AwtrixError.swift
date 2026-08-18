@@ -15,3 +15,12 @@ extension AwtrixError: CustomStringConvertible {
         }
     }
 }
+
+extension AwtrixError: LocalizedError {
+    /// Routed to `description` rather than repeating the text, so the two
+    /// renderings cannot drift apart. Without this, `localizedDescription`
+    /// falls back to "The operation couldn't be completed. (AwtrixKit
+    /// .AwtrixError error 0.)" — and `localizedDescription` is what callers
+    /// reach for when they have to render an arbitrary `Error`.
+    public var errorDescription: String? { description }
+}

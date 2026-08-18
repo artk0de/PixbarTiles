@@ -1,3 +1,6 @@
+// `ObservableObject` and `@Published` are declared in Combine. Foundation
+// re-exports both as typealiases, so this import is not required to compile —
+// it names the framework that actually declares them.
 import Combine
 import Foundation
 
@@ -23,7 +26,7 @@ public final class DeviceMonitor: ObservableObject {
         do {
             state = .online(try await device.stats())
         } catch {
-            state = .offline(String(describing: error))
+            state = .offline(error.localizedDescription)
         }
     }
 

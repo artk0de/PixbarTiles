@@ -11,7 +11,11 @@ struct AwtrixConnectorsApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuPanel(model: delegate.model, monitor: delegate.model.monitor)
+            MenuPanel(
+                model: delegate.model,
+                monitor: delegate.model.monitor,
+                discovery: delegate.discovery
+            )
         } label: {
             MenuBarGlyph(model: delegate.model)
         }
@@ -88,16 +92,27 @@ enum AppGlyph {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: AppModel
+    /// Which AWTRIX clocks are advertising themselves on the network.
+    ///
+    /// Owned here rather than by `AppModel`, and that is a boundary rather than
+    /// a filing decision. `AppModel` is the schedule, the device and what the
+    /// user chose; a browse touches none of the three. Keeping it out means the
+    /// thing the quit budget waits on — `AppModel.teardown` — has no browse in
+    /// it to wait for, and the schedule cannot be disturbed by a device
+    /// appearing on the network because there is nothing between them.
+    let discovery: DeviceBrowser
     private let budget: QuitBudget
 
     override init() {
         self.model = .live()
+        self.discovery = DeviceBrowser()
         self.budget = QuitBudget()
         super.init()
     }
 
-    init(model: AppModel, budget: QuitBudget) {
+    init(model: AppModel, budget: QuitBudget, discovery: DeviceBrowser = DeviceBrowser()) {
         self.model = model
+        self.discovery = discovery
         self.budget = budget
         super.init()
     }
@@ -106,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// model reaches neither the network nor the clock.
     func applicationDidFinishLaunching(_ notification: Notification) {
         model.start()
+        discovery.start()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -125,6 +141,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func beginTermination(
         reply: @escaping @MainActor (Bool) -> Void
     ) -> NSApplication.TerminateReply {
+        // Stopped before the budget is taken, never inside it. Cancelling a
+        // browse is synchronous, puts nothing on the network and has nothing in
+        // flight; the budget exists for one collaborator — the dismiss that
+        // takes a held banner off the clock — and a settle window landing
+        // inside it would be three more seconds of a quit with nothing left to
+        // do.
+        discovery.stop()
         Task {
             _ = await budget.settle { await self.model.teardown() }
             reply(true)

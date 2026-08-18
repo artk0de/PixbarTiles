@@ -49,6 +49,14 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <!-- Menu bar only: no Dock icon, no main window. -->
   <key>LSUIElement</key><true/>
+  <!-- Shown in the Local Network prompt macOS raises the first time the app
+       browses for Bonjour services. Without this key the prompt still appears,
+       with generic wording and no clue why a clock app wants the network — and
+       a refusal is permanent until it is changed in System Settings, which is
+       exactly the answer the panel has to be able to tell apart from an empty
+       network. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>AwtrixConnectors looks for AWTRIX clocks advertising themselves on your network, so you do not have to find the address yourself.</string>
 </dict>
 </plist>
 PLIST

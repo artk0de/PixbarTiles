@@ -66,7 +66,10 @@ final class AppModel: ObservableObject {
     /// real interval. The shipped value is the only one that sleeps.
     typealias Sleeping = @Sendable (TimeInterval) async throws -> Void
 
-    static let deviceHostKey = "deviceHost"
+    /// The defaults key the address is read from, and the name the discovery
+    /// line tells the user to write. Not isolated: it is a constant string, and
+    /// the panel renders that line off the main actor.
+    nonisolated static let deviceHostKey = "deviceHost"
     static let defaultDeviceHost = "192.168.1.72"
     /// How often reachability is re-asked. Not a user setting: it costs one
     /// request and the answer drives a glyph, not a delivery.

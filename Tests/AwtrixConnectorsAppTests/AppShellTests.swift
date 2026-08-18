@@ -189,3 +189,181 @@ import Testing
     #expect(DeviceStatusLine.title(for: .online(stats)) == "Connected")
     #expect(DeviceStatusLine.colour(for: .online(stats)) == .green)
 }
+
+// MARK: - What the panel says about devices nobody has pointed the app at yet
+
+// The defect this whole state exists to prevent: every one of these renders as
+// zero devices, and three of the four are fixed by doing different things.
+@Test func aRefusedPermissionIsNotReportedAsAnEmptyNetwork() {
+    let refused = DiscoveryStatusLine.text(for: .denied)
+    let empty = DiscoveryStatusLine.text(for: .listed([]))
+    let searching = DiscoveryStatusLine.text(for: .searching)
+
+    #expect(refused != empty)
+    #expect(searching != empty)
+    #expect(refused != searching)
+    // Somebody who declined the prompt has to be told where to change their
+    // mind, not told the network is empty.
+    #expect(refused?.contains("Local Network") == true)
+}
+
+@Test func aBrowseNobodyHasFinishedIsNotReportedAsAnEmptyNetworkEither() {
+    #expect(DiscoveryStatusLine.text(for: .searching)?.contains("Looking") == true)
+    #expect(DiscoveryStatusLine.text(for: .searching)?.contains("No AWTRIX") == false)
+}
+
+// Discovery that was never started says nothing at all, rather than reporting
+// on a browse that has not happened.
+@Test func aDiscoveryNobodyStartedSaysNothing() {
+    #expect(DiscoveryStatusLine.text(for: .idle) == nil)
+}
+
+@Test func aFailedBrowseSaysWhatFailed() {
+    #expect(DiscoveryStatusLine.text(for: .failed("interface went away"))?
+        .contains("interface went away") == true)
+}
+
+// Two clocks on one network, and neither is more the device than the other.
+// A line that counted them — "2 devices found" — leaves the user with no way to
+// tell which name is which, and the name is the only thing discovery knows.
+@Test func everyDiscoveredInstanceIsNamedRatherThanCounted() {
+    let line = DiscoveryStatusLine.text(for: .listed([
+        DiscoveredDevice(instanceName: "awtrix_a07f9c"),
+        DiscoveredDevice(instanceName: "awtrix_ff0102"),
+    ]))
+
+    #expect(line?.contains("awtrix_a07f9c") == true)
+    #expect(line?.contains("awtrix_ff0102") == true)
+    // And says how to choose between them, because the app talks to an address
+    // and neither name is one.
+    #expect(line?.contains("deviceHost") == true)
+}
+
+// One device needs no such instruction: there is nothing to choose between.
+@Test func oneDeviceIsNamedWithoutAskingTheUserToChooseBetweenThings() {
+    let line = DiscoveryStatusLine.text(for: .listed([
+        DiscoveredDevice(instanceName: "awtrix_a07f9c"),
+    ]))
+
+    #expect(line?.contains("awtrix_a07f9c") == true)
+    #expect(line?.contains("deviceHost") == false)
+}
+
+// A clock can advertise itself over Bonjour and still not answer `/api/stats` —
+// a different subnet, firmware still booting, the web interface switched off.
+// Discovery reports the advertisement and never the reachability: which one the
+// app can actually talk to stays the monitor's answer about the address it was
+// pointed at.
+@Test func anAdvertisedDeviceIsNotAReachableOne() {
+    let seen = DiscoveryStatusLine.text(for: .listed([
+        DiscoveredDevice(instanceName: "awtrix_a07f9c"),
+    ]))
+
+    #expect(seen?.contains("awtrix_a07f9c") == true)
+    #expect(seen?.contains(DeviceStatusLine.title(for: .unknown)) == false)
+    #expect(seen?.contains("Connected") == false)
+}
+
+// MARK: - Looking for the device on the network
+
+// Building the delegate reaches neither the clock nor the network, and a browse
+// is network: the same rule `AppModel` already keeps about its own loops.
+@Test @MainActor func buildingTheDelegateDoesNotStartBrowsing() {
+    let browsing = FakeBonjourBrowser()
+
+    _ = AppDelegate(
+        model: testModel(),
+        budget: QuitBudget(),
+        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+    )
+
+    #expect(browsing.liveBrowses == 0)
+}
+
+@Test @MainActor func launchingTheAppLooksForTheDeviceOnTheNetwork() {
+    let browsing = FakeBonjourBrowser()
+    let delegate = AppDelegate(
+        model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
+        budget: QuitBudget(),
+        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+    )
+
+    delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+
+    #expect(browsing.liveBrowses == 1)
+}
+
+@Test @MainActor func quittingStopsTheBrowse() {
+    let browsing = FakeBonjourBrowser()
+    let delegate = AppDelegate(
+        model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
+        budget: QuitBudget(seconds: 0.01),
+        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+    )
+    delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    #expect(browsing.liveBrowses == 1)
+
+    _ = delegate.beginTermination { _ in }
+
+    // A browse left running holds an `NWBrowser` on an app whose every other
+    // loop is already cancelled.
+    #expect(browsing.liveBrowses == 0)
+}
+
+// The budget is fifteen seconds for one thing: the dismiss that takes a held
+// banner off the clock. The browse is stopped before the budget is taken, so
+// its settle window is abandoned rather than waited out — three more seconds of
+// a quit that has nothing left to do.
+@Test @MainActor func quitAbandonsTheDiscoveryWindowRatherThanWaitingItOut() async {
+    let window = Metronome()
+    let delegate = AppDelegate(
+        model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
+        budget: QuitBudget(seconds: 0.01),
+        discovery: DeviceBrowser(browsing: { FakeBonjourBrowser() }, sleep: window.sleep)
+    )
+    delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    #expect(await waitUntil { window.parked == 1 })
+
+    _ = delegate.beginTermination { _ in }
+
+    #expect(await waitUntil { window.parked == 0 })
+}
+
+// Discovery has a clock of its own and it is the schedule's beat it must not
+// steal: a device appearing on the network is not a reason to deliver anything.
+@Test @MainActor func aDiscoveryReportDoesNotDisturbTheSchedule() async {
+    let browsing = FakeBonjourBrowser()
+    let schedule = Metronome()
+    let host = SpyHost()
+    let delegate = AppDelegate(
+        model: testModel(host: host, sleep: schedule.sleep, pollSleep: Metronome().sleep),
+        budget: QuitBudget(),
+        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+    )
+    delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    browsing.emit(.results(["awtrix_a07f9c"]))
+
+    #expect(delegate.discovery.found.map(\.instanceName) == ["awtrix_a07f9c"])
+    #expect(host.calls.isEmpty)
+    #expect(schedule.parked == 1)
+}
+
+// The instance name is not a hostname: `awtrix.local` does not resolve, and
+// neither does `awtrix_a07f9c.local`. A discovery that quietly repointed the
+// app would repoint it at nothing at all.
+@Test @MainActor func aDiscoveredInstanceIsNeverUsedAsTheAddressTheAppTalksTo() {
+    let browsing = FakeBonjourBrowser()
+    let delegate = AppDelegate(
+        model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
+        budget: QuitBudget(),
+        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+    )
+    delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+
+    browsing.emit(.results(["awtrix_a07f9c"]))
+
+    #expect(delegate.model.deviceHost == "10.0.0.5")
+    #expect(delegate.discovery.found.map(\.instanceName) == ["awtrix_a07f9c"])
+}

@@ -197,6 +197,30 @@ func waitUntil(
     return condition()
 }
 
+// MARK: - Discovery
+
+/// A browser that reports whatever a test hands it.
+///
+/// A second copy of the kit's own double rather than a shared one: test targets
+/// do not import each other.
+@MainActor
+final class FakeBonjourBrowser: BonjourBrowsing {
+    private(set) var starts = 0
+    private var handlers: [@MainActor (BonjourEvent) -> Void] = []
+
+    /// Browses begun and not yet cancelled.
+    var liveBrowses: Int { handlers.count }
+
+    func start(onEvent: @escaping @MainActor (BonjourEvent) -> Void) {
+        starts += 1
+        handlers.append(onEvent)
+    }
+
+    func cancel() { handlers.removeAll() }
+
+    func emit(_ event: BonjourEvent) { handlers.forEach { $0(event) } }
+}
+
 // MARK: - Device
 
 /// Answers every request the same way, and records what it was asked.

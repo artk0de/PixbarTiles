@@ -97,6 +97,47 @@ import Testing
     await subject.teardown()
 }
 
+// The interval is what the host is ASKED about, not what the schedule then
+// waits. A connector that is failing is retried on the host's backoff, and a
+// loop that slept its own `interval` variable would be right in every test
+// where the two agree and never back anything off in the one place it matters.
+@Test @MainActor func theScheduleWaitsAsLongAsTheHostSays() async {
+    let connector = StubConnector(defaultInterval: 5 * 60)
+    let host = SpyHost(delay: 42)
+    let metronome = Metronome()
+    let subject = testModel(connectors: [connector], host: host, sleep: metronome.sleep)
+
+    subject.start()
+    await waitUntil { metronome.durations.contains(42) }
+
+    #expect(metronome.durations.contains(42))
+    // The other half: the interval is not ALSO slept. Only the monitor's own
+    // twenty seconds keeps it company.
+    #expect(metronome.durations.contains(5 * 60) == false)
+    await subject.teardown()
+}
+
+// Asked before every wait, not once when the schedule is built. A loop that
+// read it at the top would answer with the count as it stood before the first
+// run and never see a failure at all.
+@Test @MainActor func theScheduleAsksHowLongToWaitBeforeEveryRun() async {
+    let host = SpyHost()
+    let metronome = Metronome()
+    let subject = testModel(host: host, sleep: metronome.sleep)
+
+    subject.start()
+    // Both loops asleep — the monitor's and this connector's. `tick()` releases
+    // whatever is parked, so waiting for "something is parked" would let the
+    // monitor answer for the schedule and tick a connector that has not yet
+    // reached its sleep.
+    await waitUntil { metronome.parked == 2 }
+    metronome.tick()
+    await waitUntil { host.delayQueries == 2 }
+
+    #expect(host.delayQueries == 2)
+    await subject.teardown()
+}
+
 // The whole reason the background pass has its own entry point. `produce()`
 // only awaits a refill when the queue is empty, so a tick that never maintains
 // turns every firing into a 70-second model load on the play path.

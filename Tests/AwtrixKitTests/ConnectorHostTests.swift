@@ -4,7 +4,13 @@ import Testing
 
 // MARK: - Doubles
 
-private struct StubConnector: Connector {
+// Most of these are private, because a double nobody else needs is a detail of
+// this file. The four that are not — `StubConnector`, `BoomError`, `SpyAudio`
+// and `StubIconInstaller` — are the ones `RetryPolicyTests` builds a host out
+// of, and one shared declaration is better than a second copy drifting from
+// this one.
+
+struct StubConnector: Connector {
     let id: String
     let displayName = "Stub"
     let defaultInterval: TimeInterval = 300
@@ -19,7 +25,7 @@ private struct StubConnector: Connector {
     }
 }
 
-private struct BoomError: Error {}
+struct BoomError: Error {}
 
 /// Records what it was asked to play, and what the device had already been told
 /// at the moment it was asked.
@@ -32,7 +38,7 @@ private struct BoomError: Error {}
 /// the happens-before edge is a property of how the tests are written today,
 /// and relying on it means the next test that stops awaiting introduces a race
 /// with nothing to catch it.
-private final class SpyAudio: AudioPlaying, @unchecked Sendable {
+final class SpyAudio: AudioPlaying, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [[SpokenClip]] = []
     private var snapshots: [[String]] = []
@@ -129,7 +135,7 @@ private final class GatedConnector: Connector, Sendable {
     }
 }
 
-private struct StubIconInstaller: IconInstalling {
+struct StubIconInstaller: IconInstalling {
     func ensureInstalled(_ ref: IconReference) async throws -> String {
         switch ref {
         case let .installed(name): return name
@@ -738,6 +744,44 @@ private func staysFalse(
 
     #expect(await run.value == .cancelled)
     #expect(paths(transport) == ["/api/notify", "/api/notify/dismiss"])
+}
+
+// The third way a run ends up `.cancelled`, and the only one where "untouched"
+// is a decision rather than a consequence: this run reached the device and came
+// back, and was only then found to have been torn down. Resetting the count
+// here would clear a backoff on the strength of a run nobody waited for, which
+// is the mirror image of advancing it — so the outcome, not the path that
+// produced it, is what the count is read off. The rest of the backoff rules are
+// in `RetryPolicyTests.swift`; this one is here because the gated audio and the
+// cancellation-aware transport it needs are this file's doubles.
+@Test func aRunTornDownAfterItReachedTheDeviceLeavesTheFailureCountWhereItWas() async throws {
+    let registry = ConnectorRegistry()
+    var failing = StubConnector()
+    failing.error = BoomError()
+    registry.register(failing)
+    let audio = GatedAudio()
+    let host = ConnectorHost(
+        device: AwtrixDevice(host: "10.0.0.5", transport: CancellationAwareTransport()),
+        registry: registry,
+        store: InMemorySettingsStore(),
+        audio: audio,
+        iconInstaller: StubIconInstaller()
+    )
+    for _ in 0..<2 { _ = await host.runOnce(connectorId: "stub") }
+    #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
+
+    var delivering = StubConnector()
+    delivering.output = ConnectorOutput(
+        text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
+    )
+    registry.register(delivering)
+    let run = Task { await host.runOnce(connectorId: "stub") }
+    try await waitUntil { audio.enteredCount == 1 }
+    run.cancel()
+    audio.open()
+
+    #expect(await run.value == .cancelled)
+    #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
 }
 
 // A real fault raised while the run happens to be cancelled is still a fault.

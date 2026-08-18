@@ -4,14 +4,18 @@ import AwtrixKit
 import Combine
 import Foundation
 
-/// The two calls a schedule makes into the host.
+/// The calls a schedule makes into the host.
 ///
 /// Declared here rather than in the kit because scheduling is the app's job and
-/// this is the app's view of what it schedules — two entry points, no device, no
-/// registry. `ConnectorHost` satisfies it as written.
+/// this is the app's view of what it schedules — what to do, and how long to
+/// wait before doing it; no device, no registry. `ConnectorHost` satisfies it as
+/// written.
 protocol ConnectorRunning: Sendable {
     func maintain(connectorId: String) async -> MaintenanceResult
     func runOnce(connectorId: String) async -> RunResult
+    /// The host owns this rather than the schedule, because the answer is a
+    /// function of how the last runs went and the schedule does not watch them.
+    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval
 }
 
 extension ConnectorHost: ConnectorRunning {}
@@ -291,10 +295,21 @@ final class AppModel: ObservableObject {
         let sleep = self.sleep
         timers[id] = Task { [weak self] in
             while !Task.isCancelled {
+                // Asked every turn, not once when the schedule is built. The
+                // answer is the interval until this connector starts failing,
+                // and a loop that read it up front would never see the backoff
+                // it exists to apply. Optional-chained rather than unwrapped so
+                // a released model is not held alive across the sleep by its
+                // own timer.
+                guard
+                    let delay = await self?.host.nextDelay(
+                        connectorId: id, interval: interval
+                    )
+                else { return }
                 // The sleep comes first, so enabling a connector — or launching
                 // the app, which reschedules every one of them — does not fire a
                 // delivery on the spot.
-                do { try await sleep(interval) } catch { return }
+                do { try await sleep(delay) } catch { return }
                 // Returned on, not swallowed. A cancelled sleep is the quit
                 // path, and carrying on into the tick would start one more
                 // delivery while the app is being torn down.

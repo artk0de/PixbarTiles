@@ -56,23 +56,87 @@ public actor ConnectorHost {
     private let store: any SettingsStore
     private let audio: any AudioPlaying
     private let iconInstaller: any IconInstalling
+    private let retryPolicy: RetryPolicy
 
     /// The last delivery to have claimed a place. Deliveries run one at a time
     /// by waiting on it; see `runOnce(connectorId:)` for why they must.
     private var tail: Task<Void, Never>?
+
+    /// Deliveries failed in a row, per connector. An id that is not in here has
+    /// none. In memory only: a relaunch is a fresh start, and a connector that
+    /// is still down earns its backoff again within a couple of intervals.
+    private var failureCounts: [String: Int] = [:]
 
     public init(
         device: AwtrixDevice,
         registry: ConnectorRegistry,
         store: any SettingsStore,
         audio: any AudioPlaying,
-        iconInstaller: any IconInstalling
+        iconInstaller: any IconInstalling,
+        retryPolicy: RetryPolicy = RetryPolicy()
     ) {
         self.device = device
         self.registry = registry
         self.store = store
         self.audio = audio
         self.iconInstaller = iconInstaller
+        self.retryPolicy = retryPolicy
+    }
+
+    /// How many deliveries this connector has failed in a row.
+    public func consecutiveFailures(connectorId: String) -> Int {
+        failureCounts[connectorId] ?? 0
+    }
+
+    /// How long to wait before the next attempt: the cadence the user chose
+    /// while the connector is healthy, a growing backoff while it is failing,
+    /// and never longer than that cadence either way.
+    ///
+    /// Worth being plain about which direction this moves, because "backoff"
+    /// suggests the other one: the clip is to the connector's OWN interval, so
+    /// a failing connector is retried SOONER than its cadence and decays back
+    /// towards it, rather than ever being pushed past it. A blip on a
+    /// half-hourly feed is retried in thirty seconds instead of costing the
+    /// user half an hour of blank clock; a feed that is genuinely down doubles
+    /// its way back to the half hour and settles there. It is the retry
+    /// interval that is capped at the cadence, which is what the spec asks for.
+    public func nextDelay(connectorId: String, interval: TimeInterval) -> TimeInterval {
+        let failures = consecutiveFailures(connectorId: connectorId)
+        guard failures > 0 else { return interval }
+        return min(retryPolicy.delay(afterConsecutiveFailures: failures), interval)
+    }
+
+    /// Reads the count off the OUTCOME, not off the path that produced it.
+    ///
+    /// There are three ways a run ends up `.cancelled` and they arrive from
+    /// three different places — a connector throwing `CancellationError`, the
+    /// transport reporting `URLError(.cancelled)`, and a delivery that got all
+    /// the way through only to find the task torn down. Deciding here, on the
+    /// one value all three become, is what stops the next guard added to
+    /// `deliver` from quietly re-classifying one of them.
+    private func record(_ result: RunResult, for connectorId: String) {
+        switch result {
+        case .delivered:
+            failureCounts[connectorId] = 0
+        case .failed:
+            failureCounts[connectorId, default: 0] += 1
+        case .cancelled:
+            // Not evidence about the feed. The user quitting, a connector
+            // switched off mid-delivery, a schedule rebuilt — none of them say
+            // whether the source is up. Counting one would back a healthy
+            // connector off for having been interrupted; resetting on one would
+            // clear a real backoff for the same non-reason.
+            break
+        case .skipped:
+            // Never actually arrives. `runOnce` answers `.skipped` from its
+            // enablement guard, before there is a run to have an outcome, so
+            // this branch exists because the switch is exhaustive and not
+            // because it decides anything — a mutation of it changes nothing,
+            // and the rule it looks like it implements is pinned on that guard
+            // instead. The answer would be the same either way: a connector the
+            // user switched off has not failed, and has not recovered either.
+            break
+        }
     }
 
     /// Produces, delivers and speaks, one delivery at a time.
@@ -99,6 +163,12 @@ public actor ConnectorHost {
         // Enablement is therefore read when the run is asked for, not when it
         // reaches the front of the queue: a connector switched off while an
         // anecdote is still playing does not retract a run already queued.
+        //
+        // Neither guard below is recorded against the backoff. `.skipped` is
+        // not a failure at all, and an id nothing is registered under is a
+        // wiring mistake rather than a feed outage — nothing schedules it, so a
+        // count kept against it would grow on every "run now" against a stale
+        // id and never be read by anything.
         guard let connector = registry.connector(id: connectorId) else {
             return .failed("unknown connector \(connectorId)")
         }
@@ -118,11 +188,17 @@ public actor ConnectorHost {
         // `work` is unstructured, so it inherits neither the caller's
         // cancellation nor breaks on it when awaited. Forwarded by hand, or a
         // caller that gives up gets neither the work stopped nor itself back.
-        return await withTaskCancellationHandler {
+        let result = await withTaskCancellationHandler {
             await work.value
         } onCancel: {
             work.cancel()
         }
+        // Awaiting a task is not interrupted by cancellation, so this is
+        // reached even when the caller gave up — which is the point. A run torn
+        // down still has an outcome, and the backoff has to be told it was a
+        // cancellation rather than left reading the last failure.
+        record(result, for: connectorId)
+        return result
     }
 
     /// Runs a connector's background pass — restock, and confirm durability.

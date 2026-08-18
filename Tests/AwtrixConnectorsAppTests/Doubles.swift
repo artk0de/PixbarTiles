@@ -29,14 +29,32 @@ struct StubConnector: Connector {
 final class SpyHost: ConnectorRunning, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [String] = []
+    private var delayCalls = 0
     private let parkInRun: Gate?
+    private let delay: TimeInterval?
 
-    init(parkInRun: Gate? = nil) {
+    /// `delay` stands in for a connector that is failing: nil answers with the
+    /// interval it was asked about, which is what a healthy one gets.
+    init(parkInRun: Gate? = nil, delay: TimeInterval? = nil) {
         self.parkInRun = parkInRun
+        self.delay = delay
     }
 
     /// One entry per call, in call order: `maintain:<id>` / `run:<id>`.
+    ///
+    /// `nextDelay` is deliberately not in here. It is asked once per turn of
+    /// every schedule, including the turns that never run anything, and folding
+    /// it in would make the order of a tick unreadable in the tests that are
+    /// about that order. It is counted separately instead.
     var calls: [String] { lock.withLock { recorded } }
+
+    /// How many times the schedule asked how long to wait.
+    var delayQueries: Int { lock.withLock { delayCalls } }
+
+    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval {
+        lock.withLock { delayCalls += 1 }
+        return delay ?? interval
+    }
 
     func maintain(connectorId: String) async -> MaintenanceResult {
         lock.withLock { recorded.append("maintain:\(connectorId)") }

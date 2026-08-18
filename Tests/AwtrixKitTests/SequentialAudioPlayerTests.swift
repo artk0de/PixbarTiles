@@ -100,6 +100,21 @@ private final class FakeClip: ClipPlaying {
     }
 }
 
+/// Hands a task to code that runs inside it. The lock is load-bearing: the
+/// test's task writes, and the player's loader reads from the actor's thread.
+private final class TaskBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Task<Void, Never>?
+
+    var task: Task<Void, Never>? {
+        lock.withLock { stored }
+    }
+
+    func set(_ task: Task<Void, Never>) {
+        lock.withLock { stored = task }
+    }
+}
+
 private func clip(_ name: String, leadIn: TimeInterval = 0) -> SpokenClip {
     SpokenClip(url: URL(fileURLWithPath: "/dev/null/\(name)"), leadIn: leadIn)
 }
@@ -140,18 +155,31 @@ private func elapsed(_ body: () async -> Void) async -> Duration {
     #expect(began - start >= .seconds(0.3))
 }
 
-@Test func theProducersPacingIsObeyedPerClipNotAveraged() async {
+@Test func theProducersPacingIsObeyedPerClipNotAveraged() async throws {
     let card = SoundCard()
     let player = SequentialAudioPlayer(load: card.loader(["a": 0.01, "b": 0.01, "c": 0.01]))
 
-    let took = await elapsed {
-        await player.play([clip("a"), clip("b", leadIn: 0.15), clip("c", leadIn: 0.15)])
-    }
+    let start = ContinuousClock.now
+    await player.play([clip("a"), clip("b", leadIn: 0.1), clip("c", leadIn: 0.3)])
 
-    // 0 + 0.15 + 0.15 of silence: the player adds up what the producer set for
-    // each clip and never substitutes a rhythm of its own.
     #expect(card.startedNames == ["a", "b", "c"])
-    #expect(took >= .seconds(0.3))
+
+    // Three DIFFERENT silences, measured where each one falls. A total, however
+    // tight, says nothing about the distribution: a player that averaged the
+    // lead-ins, or gave every clip the longest one, spends the same seconds and
+    // flattens a 0.1 s beat between two lines into the 0.3 s beat that sets up
+    // the punchline. The rhythm was tuned by ear against real hardware; the
+    // shape of it is the thing worth pinning, not its sum.
+    let began = try (0..<3).map { try #require(card.startInstant(of: ["a", "b", "c"][$0])) }
+
+    // The announcement leads nothing and waits for nothing.
+    #expect(began[0] - start < .seconds(0.07))
+    // 0.1 s in front of the second clip, and nowhere near the third one's 0.3 s.
+    #expect(began[1] - began[0] >= .seconds(0.1))
+    #expect(began[1] - began[0] < .seconds(0.25))
+    // 0.3 s in front of the third, which no redistribution of 0.4 s reproduces
+    // while also leaving the first two gaps where they are.
+    #expect(began[2] - began[1] >= .seconds(0.3))
 }
 
 // MARK: - Clips that are no longer there
@@ -242,6 +270,32 @@ private func elapsed(_ body: () async -> Void) async -> Duration {
     #expect(card.startedNames.isEmpty)
 }
 
+@Test func cancellingBetweenLoadingAClipAndStartingItLeavesItUnstarted() async {
+    let card = SoundCard()
+    let box = TaskBox()
+    // The cancel is delivered from inside the loader, which is the only place
+    // that IS the window under test: a clip with no lead-in has no wait between
+    // being loaded and being started, so there is nothing to sleep on and race.
+    let player = SequentialAudioPlayer(load: { [inner = card.loader(["a": 5])] url in
+        let clip = try inner(url)
+        box.task?.cancel()
+        return clip
+    })
+
+    let running = Task {
+        // The box is filled by the line below, and the loader reads it. Waiting
+        // for it here is what makes the cancel land inside the loader every
+        // time rather than most of the time.
+        while box.task == nil { await Task.yield() }
+        await player.play([clip("a")])
+    }
+    box.set(running)
+    await running.value
+
+    #expect(card.loadedNames == ["a"])
+    #expect(card.startedNames.isEmpty)
+}
+
 @Test func aPlayThatIsCancelledBeforeItStartsTouchesNothing() async {
     let card = SoundCard()
     let player = SequentialAudioPlayer(load: card.loader(["a": 5]))
@@ -284,20 +338,33 @@ private func silentWave(seconds: Double, sampleRate: Int = 8000) -> Data {
     return wave
 }
 
-@Test func theShippedPlayerWaitsOutRealAudio() async throws {
+@Test func theShippedPlayerWaitsOutRealAudioForAsLongAsItLasts() async throws {
     let directory = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("awtrix-player-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let file = directory.appendingPathComponent("silence.wav")
-    try silentWave(seconds: 0.2).write(to: file)
+    let brief = directory.appendingPathComponent("brief.wav")
+    let long = directory.appendingPathComponent("long.wav")
+    try silentWave(seconds: 0.1).write(to: brief)
+    try silentWave(seconds: 0.6).write(to: long)
 
-    // The one test that goes through AVAudioPlayer rather than a double: it is
-    // what pins the default loader and the `ClipPlaying` conformance to the
-    // real thing, both of which the doubles above route around entirely.
-    let took = await elapsed {
-        await SequentialAudioPlayer().play([SpokenClip(url: file, leadIn: 0.05)])
-    }
+    // The one test that goes through AVAudioPlayer rather than a double, so it
+    // is the only thing holding the default loader and the `ClipPlaying`
+    // conformance to the real type.
+    //
+    // Untimed, and first: building the first AVAudioPlayer in a process and
+    // starting the audio HAL costs ~58 ms of one-off warm-up, which is enough
+    // to satisfy any absolute lower bound on its own. A bound met by warm-up is
+    // a bound that still passes when no audio plays at all.
+    await SequentialAudioPlayer().play([SpokenClip(url: brief)])
 
-    #expect(took >= .seconds(0.25))
+    let short = await elapsed { await SequentialAudioPlayer().play([SpokenClip(url: brief)]) }
+    let full = await elapsed { await SequentialAudioPlayer().play([SpokenClip(url: long)]) }
+
+    // A difference, not a duration: whatever is fixed about reaching the sound
+    // card falls out of it, and what is left is the half-second of audio. A
+    // player that skipped the wait — which is exactly what a Mac with no output
+    // route produces, since `play()` answers false there — measures the same
+    // for both and lands at zero.
+    #expect(full - short >= .seconds(0.4))
 }

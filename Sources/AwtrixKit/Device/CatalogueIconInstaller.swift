@@ -11,9 +11,10 @@ public struct CatalogueIconInstaller: IconInstalling {
         case notAnImage(Int)
     }
 
-    /// Every GIF ever written starts with one of these two, and nothing else
-    /// does. Three bytes of "GIF" would also match the word in an error page's
-    /// title, which is exactly the body this check exists to reject.
+    /// The format has exactly these two signatures and no others. Six bytes
+    /// rather than three because "GIF" alone is not a signature: it is the
+    /// prefix of every truncated download that got that far, and of any text
+    /// that happens to open with the word.
     private static let signatures = [Data("GIF87a".utf8), Data("GIF89a".utf8)]
 
     private static let catalogue = "https://developer.lametric.com/content/apps/icon_thumbs"
@@ -50,15 +51,27 @@ public struct CatalogueIconInstaller: IconInstalling {
         // Interpolating an `Int` into a constant that is already a valid URL
         // cannot produce one that is not.
         var request = URLRequest(url: URL(string: "\(Self.catalogue)/\(id).gif")!)
-        // The CDN answers a default `URLSession` user agent with a challenge
-        // page, which would then be rejected below for the wrong reason.
+        // Not a reproduced requirement: checked on 2026-08-18, this CDN serves
+        // the icon identically under a browser agent, a default client agent
+        // and none at all. Sent because gating on a default agent is a common
+        // thing for a CDN to start doing and this costs nothing, and asserted
+        // in the tests so that removing it is a decision rather than a drift.
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         let (data, _) = try await transport.send(request)
 
-        // The status is read by nobody, deliberately. A missing id answers with
-        // a rendered error page under a 200, so the status line does not track
-        // whether the body is an icon — and a body that opens with a GIF
-        // signature is one whatever the status says about it.
+        // The status is read by nobody, deliberately — though not for the
+        // reason the plan gave. Checked on 2026-08-18, a bogus id answers 404
+        // with an HTML page, so the status IS honest about that particular
+        // case. The bytes are still the authority because they are the stricter
+        // test: they reject the same 404 page, and they also reject a 200
+        // carrying HTML, which is what a WAF, a captive portal or a CDN error
+        // page serves and what a status check would happily install.
+        //
+        // What this trades away: a non-2xx carrying a real GIF — a placeholder
+        // image, say — would be installed, and the skip-by-name check above
+        // would then leave it on the flash for good, since nothing revisits an
+        // icon that is already there. No such body exists on this CDN today;
+        // its error bodies are HTML.
         guard Self.signatures.contains(where: data.starts(with:)) else {
             throw Failure.notAnImage(id)
         }

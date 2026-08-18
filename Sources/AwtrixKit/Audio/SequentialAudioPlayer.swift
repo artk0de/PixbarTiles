@@ -59,7 +59,16 @@ public actor SequentialAudioPlayer: AudioPlaying {
             // speakers or holding for a punchline. The player never learns.
             // After the load, so a clip that is no longer there costs neither
             // its audio nor the silence in front of it.
-            if clip.leadIn > 0, await cancelled(waiting: clip.leadIn) { return }
+            //
+            // Waited unconditionally, including the zero that `ClipPacing`
+            // gives the announcement. A zero-length sleep still throws on a
+            // cancelled task, so this doubles as the cancellation checkpoint
+            // between loading a clip and starting it — a window worth about
+            // 58 ms on the first load of a process, and one a quit would
+            // otherwise cross to put the announcement on the speakers and take
+            // it off again a moment later. Guarding it with `leadIn > 0` would
+            // leave exactly the first clip of every anecdote uncovered.
+            if await cancelled(waiting: clip.leadIn) { return }
 
             // Not waited out when it never started. The banner on the clock is
             // held for exactly as long as this call takes, so waiting here

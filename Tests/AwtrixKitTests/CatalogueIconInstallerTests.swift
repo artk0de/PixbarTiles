@@ -104,8 +104,9 @@ private func catalogueFetches(_ transport: RoutingTransport) -> [URLRequest] {
         fetches.first?.url?.absoluteString
             == "https://developer.lametric.com/content/apps/icon_thumbs/9039.gif"
     )
-    // The CDN answers a default URLSession user agent with a challenge page,
-    // which would then be rejected as "not an image" for the wrong reason.
+    // Pinned so that dropping the header is a decision. The CDN does not
+    // currently gate on the agent — checked 2026-08-18 under a browser agent, a
+    // default one and none — so this asserts an intent, not an observed need.
     #expect(fetches.first?.value(forHTTPHeaderField: "User-Agent") == "Mozilla/5.0")
 
     // "Once" is the claim in the name of this test, so it is the assertion:
@@ -150,8 +151,11 @@ private func catalogueFetches(_ transport: RoutingTransport) -> [URLRequest] {
 @Test func anHtmlErrorPageIsRejectedRatherThanInstalled() async {
     let transport = RoutingTransport([
         emptyIconDirectory,
-        // The load-bearing case: the catalogue has no id 1, and says so with a
-        // rendered page under a 200 rather than a 404.
+        // The harder of the two error shapes, and the one a status check would
+        // install. The CDN's own answer for a bogus id is a 404 carrying HTML
+        // (checked 2026-08-18), which this same guard rejects on the same
+        // grounds; a 200 carrying HTML is what a WAF, a captive portal or a CDN
+        // error page serves, and only the bytes catch that one.
         Route(
             match: "icon_thumbs/1.gif", status: 200,
             body: Data("<!DOCTYPE html><html>not found</html>".utf8)
@@ -188,9 +192,10 @@ private func catalogueFetches(_ transport: RoutingTransport) -> [URLRequest] {
         Route(match: "icon_thumbs/9039.gif", status: 404, body: gifBytes),
     ])
 
-    // The mirror of the HTML case, and the reason the status is read by nobody
-    // on this path: this CDN's status line does not track whether the body is
-    // an icon, in either direction. The bytes are the only authority.
+    // The mirror of the HTML case. Not a shape this CDN produces — its error
+    // bodies are HTML — but the rule it pins is the one that makes bytes-first
+    // strictly safer than a status check, and it is here so that "harden this
+    // by reading the status" fails a test instead of passing review.
     let name = try await installer(transport).ensureInstalled(.catalogue(9039))
 
     #expect(name == "9039")

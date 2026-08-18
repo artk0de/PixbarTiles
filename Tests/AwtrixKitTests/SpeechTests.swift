@@ -196,6 +196,224 @@ private func fakeSidecar(recordingStartsTo marker: String, in directory: URL) th
     })
 }
 
+// MARK: - The environment the sidecar is given
+
+// The PATH an app launched from Finder actually runs with. `launchctl getenv
+// PATH` is empty on this machine, so the process gets launchd's default — and
+// homebrew, where ffmpeg lives, is not on it.
+private let launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+// The defect this whole section exists for: `speak.py` shells out to ffmpeg,
+// the bundled app could not reach it, and every "Run now" came back as
+// `synthesisFailed("[Errno 2] No such file or directory: 'ffmpeg'")`.
+@Test func theSidecarIsGivenAPathThatIncludesTheToolsItShellsOutTo() {
+    let environment = SidecarSpeechSynthesizer.childEnvironment(inheriting: ["PATH": launchdPath])
+
+    let entries = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+    #expect(entries.contains("/opt/homebrew/bin"))
+    #expect(entries.contains("/usr/local/bin"))
+}
+
+// Extended, never replaced: a developer running from a shell has a python, a
+// node and an asdf shim on their PATH, and handing the child a manufactured
+// environment would take all of them away.
+@Test func theSidecarKeepsTheDevelopersOwnPathEntries() {
+    let environment = SidecarSpeechSynthesizer.childEnvironment(
+        inheriting: ["PATH": "/Users/dev/.asdf/shims:\(launchdPath)"]
+    )
+
+    let entries = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+    #expect(entries.contains("/Users/dev/.asdf/shims"))
+    for inherited in launchdPath.split(separator: ":") {
+        #expect(entries.contains(String(inherited)))
+    }
+}
+
+// In front of the inherited entries, not behind them: an older ffmpeg earlier
+// on a developer's PATH would otherwise decide what the sidecar runs, and the
+// clips would be normalised by a binary nobody chose.
+@Test func theToolDirectoriesComeBeforeWhateverWasInherited() {
+    let environment = SidecarSpeechSynthesizer.childEnvironment(
+        inheriting: ["PATH": "/Users/dev/stale-bin:\(launchdPath)"]
+    )
+
+    #expect(
+        environment["PATH"]
+            == "/opt/homebrew/bin:/usr/local/bin:/Users/dev/stale-bin:\(launchdPath)"
+    )
+}
+
+// PATH is the only key this touches. The sidecar reads HOME to find its model
+// cache and COQUI_TOS_AGREED to start at all, and neither is ours to edit.
+@Test func theSidecarInheritsTheRestOfTheEnvironmentUnchanged() {
+    let inherited = ["PATH": launchdPath, "HOME": "/Users/dev", "COQUI_TOS_AGREED": "1"]
+
+    let environment = SidecarSpeechSynthesizer.childEnvironment(inheriting: inherited)
+
+    #expect(environment["HOME"] == "/Users/dev")
+    #expect(environment["COQUI_TOS_AGREED"] == "1")
+    #expect(Set(environment.keys) == Set(inherited.keys))
+}
+
+// A missing PATH is not the same as an empty one, and neither may produce an
+// empty entry: an empty entry in PATH means the current directory, which is
+// where the sidecar's own working directory would then be searched for tools.
+@Test func anAbsentInheritedPathStillYieldsTheToolDirectoriesAlone() {
+    let environment = SidecarSpeechSynthesizer.childEnvironment(inheriting: ["HOME": "/Users/dev"])
+
+    #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/local/bin")
+}
+
+// What the app ships with. Nothing above this line proves the composition root
+// gets the built environment rather than this process's raw one, because every
+// other test hands one in.
+@Test func theDefaultEnvironmentIsTheBuiltOneRatherThanThisProcessOwn() {
+    let synthesizer = SidecarSpeechSynthesizer(
+        pythonPath: "/usr/bin/false",
+        scriptPath: "/nonexistent/speak.py",
+        workingDirectory: NSTemporaryDirectory(),
+        outputDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
+    )
+
+    #expect(synthesizer.environment == SidecarSpeechSynthesizer.childEnvironment())
+    // Machine-independent, because the tool directories are prepended without
+    // de-duplication: the built PATH differs from the inherited one even on a
+    // shell that already had both directories on it.
+    #expect(synthesizer.environment["PATH"] != ProcessInfo.processInfo.environment["PATH"])
+}
+
+/// Writes a stand-in for `speak.py` that reports the environment it was given.
+///
+/// A real child rather than a spy, because the claim is about what `Process`
+/// hands over, and only the child can answer that. `/usr/bin/env` is addressed
+/// absolutely so the report does not depend on the PATH under test.
+private func environmentReportingSidecar(reportingTo report: String, in directory: URL) throws
+    -> String
+{
+    let script = directory.appendingPathComponent("env_sidecar.sh").path
+    try """
+    /usr/bin/env > \(report)
+    while IFS= read -r line; do
+      printf '{"ok":true,"out":"%s/turn-0.wav"}\\n' "\(directory.path)"
+    done
+    """.write(toFile: script, atomically: true, encoding: .utf8)
+    return script
+}
+
+/// A directory holding an executable named `ffmpeg` and nothing else.
+private func directoryWithAStubFfmpeg(in directory: URL) throws -> String {
+    let bin = directory.appendingPathComponent("bin")
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    let tool = bin.appendingPathComponent("ffmpeg")
+    try "#!/bin/sh\nexit 0\n".write(to: tool, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+    return bin.path
+}
+
+/// Reads back a `/usr/bin/env` dump.
+private func reportedEnvironment(from path: String) throws -> [String: String] {
+    var environment: [String: String] = [:]
+    for line in try String(contentsOfFile: path, encoding: .utf8).split(whereSeparator: \.isNewline)
+    {
+        guard let separator = line.firstIndex(of: "=") else { continue }
+        environment[String(line[line.startIndex..<separator])] =
+            String(line[line.index(after: separator)...])
+    }
+    return environment
+}
+
+// The one that would have caught the shipped defect. Building the environment
+// and never handing it over looks identical from inside this process, and every
+// test that merely synthesizes something passes either way because the suite
+// runs from a terminal whose PATH already works.
+@Test func theEnvironmentTheSidecarIsGivenReachesTheChildProcess() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("sidecar-env-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let report = root.appendingPathComponent("child-env.txt").path
+    let toolDirectory = try directoryWithAStubFfmpeg(in: root)
+    let synthesizer = SidecarSpeechSynthesizer(
+        pythonPath: "/bin/sh",
+        scriptPath: try environmentReportingSidecar(reportingTo: report, in: root),
+        workingDirectory: root.path,
+        outputDirectory: root,
+        environment: ["PATH": toolDirectory, "AWTRIX_SIDECAR_MARKER": "handed over"]
+    )
+
+    _ = try await synthesizer.synthesize(
+        [VoicedTurn(voice: .peon, text: "раз")], namespace: "batch"
+    )
+
+    let observed = try reportedEnvironment(from: report)
+    #expect(observed["PATH"] == toolDirectory)
+    #expect(observed["AWTRIX_SIDECAR_MARKER"] == "handed over")
+}
+
+// Named at startup rather than left to surface as an opaque errno on the first
+// clip — after a 70-second model load has already been paid for a batch that
+// cannot produce anything.
+@Test func anUnresolvableFfmpegFailsAtStartupWithItsOwnName() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("sidecar-noffmpeg-\(UUID().uuidString)")
+    let emptyBin = root.appendingPathComponent("empty-bin")
+    try FileManager.default.createDirectory(at: emptyBin, withIntermediateDirectories: true)
+    let marker = root.appendingPathComponent("starts.log").path
+    let synthesizer = SidecarSpeechSynthesizer(
+        pythonPath: "/bin/sh",
+        scriptPath: try fakeSidecar(recordingStartsTo: marker, in: root),
+        workingDirectory: root.path,
+        outputDirectory: root,
+        environment: ["PATH": emptyBin.path]
+    )
+
+    let failure = await #expect(throws: SpeechError.self) {
+        _ = try await synthesizer.synthesize(
+            [VoicedTurn(voice: .peon, text: "раз")], namespace: "batch"
+        )
+    }
+
+    guard case .sidecarUnavailable(let reason) = failure else {
+        Issue.record("expected sidecarUnavailable, got \(String(describing: failure))")
+        return
+    }
+    #expect(reason == "ffmpeg not found on PATH")
+    // At startup means before the process: an otherwise working sidecar, which
+    // would have recorded a start, was never launched.
+    #expect(!FileManager.default.fileExists(atPath: marker))
+}
+
+// The guard above sits beside this one, and a new check can swallow an older
+// one's purpose. This states the script rule by itself: `#expect(throws:)` on
+// the error type alone would also accept the `synthesisFailed` a missing check
+// produces one step later, when the child dies without saying anything.
+@Test func aMissingScriptIsNamedRatherThanLeftToTheChild() async throws {
+    // A PATH on which ffmpeg does resolve, so this states the script rule
+    // whatever the machine has installed and whichever order the two checks
+    // are written in.
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("sidecar-noscript-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let synthesizer = SidecarSpeechSynthesizer(
+        pythonPath: "/usr/bin/false",
+        scriptPath: "/nonexistent/speak.py",
+        workingDirectory: NSTemporaryDirectory(),
+        outputDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+        environment: ["PATH": try directoryWithAStubFfmpeg(in: root)]
+    )
+
+    let failure = await #expect(throws: SpeechError.self) {
+        _ = try await synthesizer.synthesize(
+            [VoicedTurn(voice: .arthas, text: "hi")], namespace: "batch"
+        )
+    }
+
+    guard case .sidecarUnavailable(let reason) = failure else {
+        Issue.record("expected sidecarUnavailable, got \(String(describing: failure))")
+        return
+    }
+    #expect(reason.contains("/nonexistent/speak.py"))
+}
+
 // MARK: - Normalisation. Every rule below fixes a defect that was heard.
 
 @Test func quotationMarksAreRemovedBecauseXttsSpeaksThem() {

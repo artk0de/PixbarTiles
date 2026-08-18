@@ -15,6 +15,10 @@ public actor SidecarSpeechSynthesizer: SpeechSynthesizing {
     /// this same directory, and nothing can check that the two agree unless both
     /// ends can be asked.
     public nonisolated let outputDirectory: URL
+    /// The environment handed to the sidecar. Readable for the same reason
+    /// `outputDirectory` is: what a child process was given cannot be read back
+    /// off the process afterwards, and this one is the whole point of `start`.
+    public nonisolated let environment: [String: String]
 
     private var process: Process?
     private var input: FileHandle?
@@ -25,12 +29,62 @@ public actor SidecarSpeechSynthesizer: SpeechSynthesizing {
         pythonPath: String,
         scriptPath: String,
         workingDirectory: String,
-        outputDirectory: URL
+        outputDirectory: URL,
+        environment: [String: String] = SidecarSpeechSynthesizer.childEnvironment()
     ) {
         self.pythonPath = pythonPath
         self.scriptPath = scriptPath
         self.workingDirectory = workingDirectory
         self.outputDirectory = outputDirectory
+        self.environment = environment
+    }
+
+    /// Where the sidecar's own tools live.
+    ///
+    /// `speak.py` shells out to `ffmpeg` to normalise every clip, and to
+    /// `ffprobe` on the fallback path where `wave` cannot read the result.
+    /// Homebrew installs both here: `/opt/homebrew/bin` on Apple silicon,
+    /// `/usr/local/bin` on Intel.
+    static let toolDirectories = ["/opt/homebrew/bin", "/usr/local/bin"]
+
+    /// The environment to hand the sidecar: the caller's own, with the tool
+    /// directories in front of its `PATH`.
+    ///
+    /// An app launched from Finder inherits its environment from launchd, and
+    /// `launchctl getenv PATH` is empty on a stock machine — so it runs with
+    /// `/usr/bin:/bin:/usr/sbin:/sbin`, which has no homebrew on it. The Python
+    /// child inherited that, `subprocess.run(["ffmpeg", …])` raised
+    /// `FileNotFoundError`, and every "Run now" came back as
+    /// `synthesisFailed("[Errno 2] No such file or directory: 'ffmpeg'")`.
+    ///
+    /// Extended rather than replaced, so a developer running from a shell keeps
+    /// everything they had. Prepended rather than appended, so an older ffmpeg
+    /// earlier on that shell's `PATH` does not decide what normalises the clips.
+    /// Duplicates are left in: a repeated entry costs one failed stat, and
+    /// removing them would make the result depend on what the caller happened
+    /// to have.
+    public static func childEnvironment(
+        inheriting inherited: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        var environment = inherited
+        // `split` drops empty subsequences, so a `PATH` that is absent, empty
+        // or carries a stray colon cannot yield an empty entry here — and an
+        // empty entry means the current directory, which for this child is a
+        // directory of downloaded voice packs.
+        let inheritedEntries = (inherited["PATH"] ?? "").split(separator: ":").map(String.init)
+        environment["PATH"] = (toolDirectories + inheritedEntries).joined(separator: ":")
+        return environment
+    }
+
+    /// Whether `tool` resolves to an executable on `path`, the way `execvp`
+    /// resolves it — which is how the Python child will go looking.
+    static func resolves(_ tool: String, on path: String) -> Bool {
+        path.split(separator: ":").contains { directory in
+            FileManager.default.isExecutableFile(
+                atPath: URL(fileURLWithPath: String(directory))
+                    .appendingPathComponent(tool).path
+            )
+        }
     }
 
     /// One request per line: the sidecar reads stdin line by line.
@@ -114,12 +168,29 @@ public actor SidecarSpeechSynthesizer: SpeechSynthesizing {
             throw SpeechError.sidecarUnavailable("script not found at \(scriptPath)")
         }
 
+        // Settled here rather than left to the child. A missing ffmpeg reaches
+        // Swift as `[Errno 2] No such file or directory: 'ffmpeg'` on the first
+        // clip of the batch — an opaque errno charged to synthesis, after the
+        // model load has already been paid for a batch that cannot produce
+        // anything. An unresolvable tool is a fact about the installation.
+        //
+        // ffprobe is deliberately not checked: `duration()` reaches for it only
+        // when `wave` cannot open the clip, which the normalised output never
+        // is, so demanding it would refuse a sidecar that works. It is on the
+        // PATH above regardless, since Homebrew ships it beside ffmpeg.
+        guard Self.resolves("ffmpeg", on: environment["PATH"] ?? "") else {
+            throw SpeechError.sidecarUnavailable("ffmpeg not found on PATH")
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonPath)
         process.arguments = [scriptPath, "--serve"]
         // A working directory holding a `coverage/` directory shadows the PyPI
         // package, and the failure surfaces as an unrelated numba error.
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        // Set explicitly, because the default is to inherit this process's own
+        // — which under launchd is not one the sidecar's tools can be found on.
+        process.environment = environment
 
         let stdin = Pipe()
         let stdout = Pipe()

@@ -81,7 +81,11 @@ import Testing
 
     // Launching the app reschedules every connector. Firing on the spot would
     // put an anecdote on the clock at every launch, which nobody asked for.
-    #expect(host.calls.isEmpty)
+    //
+    // No RUN, rather than nothing at all: the launch does top the queue up, and
+    // that is the point of it — the restock is what stops the first delivery of
+    // the session from waiting on a model load.
+    #expect(host.calls.contains("run:stub") == false)
     await subject.teardown()
 }
 
@@ -148,11 +152,15 @@ import Testing
     let subject = testModel(host: host, sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { schedule.parked > 0 }
+    // The launch top-up first, waited out so what follows is the tick's own.
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
+    #expect(await waitUntil { schedule.parked == 1 })
     schedule.tick()
-    await waitUntil { host.calls.count >= 2 }
+    await waitUntil { host.calls.count >= 3 }
 
-    #expect(host.calls == ["maintain:stub", "run:stub"])
+    // The tick's own two, in order. What comes after the run is the post-run
+    // restock, which `aScheduledRunRestocksAfterItFinishesAsWellAsBefore` owns.
+    #expect(Array(host.calls.dropFirst().prefix(2)) == ["maintain:stub", "run:stub"])
     await subject.teardown()
 }
 
@@ -162,6 +170,10 @@ import Testing
     let subject = testModel(host: host, sleep: schedule.sleep)
 
     subject.start()
+    // The launch's own restock races the first tick, and this test reads the
+    // calls as a sequence — so it is waited out first, and everything after it
+    // belongs to a beat.
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
     for _ in 0..<2 {
         // Parked, then released, then parked again — all on the schedule's
         // clock, so each beat is this connector's and no other loop can spend
@@ -169,9 +181,17 @@ import Testing
         #expect(await waitUntil { schedule.parked == 1 })
         schedule.tick()
     }
-    await waitUntil { host.calls.count >= 4 }
+    // Waited on the FULL count, not on the second delivery. A beat is three
+    // calls and the run is the middle one, so a wait that stopped at the second
+    // run would read the sequence with the last restock still in flight.
+    await waitUntil { host.calls.count >= 7 }
 
-    #expect(host.calls == ["maintain:stub", "run:stub", "maintain:stub", "run:stub"])
+    // Two deliveries, each bracketed by a restock, after the launch's own.
+    #expect(host.calls == [
+        "maintain:stub",
+        "maintain:stub", "run:stub", "maintain:stub",
+        "maintain:stub", "run:stub", "maintain:stub",
+    ])
     await subject.teardown()
 }
 
@@ -194,7 +214,11 @@ import Testing
     #expect(await waitUntil { schedule.durations.contains(10 * 60) })
 
     #expect(schedule.durations == [10 * 60])
-    #expect(host.calls.isEmpty)
+    // Neither a schedule nor a launch restock: topping up a connector the user
+    // switched off would be a model load and a batch of synthesis for output
+    // nobody will hear.
+    #expect(host.calls.contains("maintain:off") == false)
+    #expect(host.calls.contains { $0.hasPrefix("run:") } == false)
     await subject.teardown()
 }
 
@@ -210,9 +234,9 @@ import Testing
     // The schedule is gone, so releasing whatever was parked releases a sleep
     // nobody is looping on any more.
     schedule.tick()
-    #expect(await waitUntil({ host.calls.isEmpty == false }, limit: 0.05) == false)
+    #expect(await waitUntil({ host.calls.contains("run:stub") }, limit: 0.05) == false)
 
-    #expect(host.calls.isEmpty)
+    #expect(host.calls.contains("run:stub") == false)
     await subject.teardown()
 }
 
@@ -226,15 +250,25 @@ import Testing
     let subject = testModel(connectors: [connector], host: host, sleep: schedule.sleep)
 
     subject.start()
+    // Waited out before the schedule is touched, for the reason
+    // `theScheduleKeepsFiring` spells out: the launch restock is concurrent
+    // with the first turn of the schedule, and the assertion below is on a
+    // sequence.
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
     await waitUntil { schedule.parked > 0 }
     subject.setIntervalPosition(1, for: connector)
     await waitUntil { schedule.durations.contains(10 * 60) }
     schedule.tick()
-    await waitUntil { host.calls.count >= 2 }
+    // The whole beat, restock included — see `theScheduleKeepsFiring`.
+    await waitUntil { host.calls.count >= 4 }
 
     // One tick, not two: the schedule that was sleeping five minutes is gone.
-    #expect(await waitUntil({ host.calls.count > 2 }, limit: 0.05) == false)
-    #expect(host.calls == ["maintain:stub", "run:stub"])
+    #expect(await waitUntil(
+        { host.calls.filter { $0 == "run:stub" }.count > 1 }, limit: 0.05
+    ) == false)
+    #expect(host.calls == [
+        "maintain:stub", "maintain:stub", "run:stub", "maintain:stub",
+    ])
     #expect(schedule.durations.contains(10 * 60))
     await subject.teardown()
 }
@@ -251,7 +285,7 @@ import Testing
     await waitUntil { schedule.parked > 0 }
     await subject.teardown()
 
-    #expect(host.calls.isEmpty)
+    #expect(host.calls.contains("run:stub") == false)
 }
 
 // MARK: - Quit
@@ -286,7 +320,10 @@ import Testing
     subject.runNow("stub")
     await waitUntil { subject.lastResults["stub"] == "delivered" }
 
-    #expect(host.calls == ["run:stub"])
+    // Nothing before the run on the manual path: the restock that follows it is
+    // `aManualRunRefillsWithoutWaitingForTheTimer`'s claim, and a pre-run one
+    // would make pressing the button wait out a batch of synthesis.
+    #expect(host.calls.first == "run:stub")
     #expect(subject.lastResults["stub"] == "delivered")
 }
 
@@ -346,6 +383,38 @@ import Testing
 
     gate.open()
     #expect(await waitUntil { finished.isSent })
+}
+
+// The launch restock is a minute of synthesis and a whole batch of clips on a
+// cold start. A quit that does not wait for it kills the process part-way
+// through writing them, which is the same failure the delivery path's own
+// teardown test exists for — and the launch is the one pass nobody presses a
+// button to start, so nobody is watching for it either.
+// Measured rather than raced. The idiom used by the two teardown tests above —
+// start the teardown in a task, then assert nothing finished inside a 50 ms
+// window — is only as sharp as the MainActor is idle, and with the suite run in
+// parallel a teardown that returned at once could simply not be scheduled
+// inside the window. This one awaits the teardown directly and times it against
+// a release it did not control: a teardown that does not wait comes back before
+// the release, and no amount of load can make it come back after.
+@Test @MainActor func teardownWaitsForTheRestockTheLaunchStarted() async {
+    let restock = Gate()
+    let schedule = Metronome()
+    let subject = testModel(host: SpyHost(parkInMaintain: restock), sleep: schedule.sleep)
+
+    subject.start()
+    #expect(await waitUntil { restock.enteredCount == 1 })
+
+    let started = ContinuousClock.now
+    // Detached, so releasing the gate does not need the MainActor the teardown
+    // is about to occupy.
+    Task.detached {
+        try? await Task.sleep(for: .milliseconds(200))
+        restock.open()
+    }
+    await subject.teardown()
+
+    #expect(ContinuousClock.now - started >= .milliseconds(150))
 }
 
 // MARK: - Reachability
@@ -505,10 +574,13 @@ final class Signal: @unchecked Sendable {
     subject.runNow("stub")
     #expect(await waitUntil { subject.lastResults["stub"] == "delivered" })
 
+    // Two restocks park in this same gate before the tick's does: the one the
+    // manual run above fires when it finishes, and the one the launch fires.
+    // Both are waited out, so the third arrival can only be the tick's.
     subject.start()
-    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(await waitUntil { schedule.parked == 1 && refill.enteredCount == 2 })
     schedule.tick()
-    await waitUntil { refill.enteredCount == 1 }
+    #expect(await waitUntil { refill.enteredCount == 3 })
 
     #expect(subject.lastResults["stub"] == "running…")
     refill.open()
@@ -760,4 +832,204 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
         NextRunLine.text(for: .due(when))
             == "next \(when.formatted(date: .omitted, time: .shortened))"
     )
+}
+
+// MARK: - Ten ready before the first timer fires
+
+/// A model wired to a REAL anecdote connector and a real host, so the depth the
+/// launch reaches is the connector's own answer rather than a spy's.
+///
+/// The two collaborators a background pass never touches are stubbed, and only
+/// those: `maintain` goes queue → preparer → feed, and every step of that is
+/// the shipped one.
+@MainActor
+private func modelWithARealAnecdoteConnector(
+    feeding xml: String, schedule: Metronome
+) -> (model: AppModel, queue: AnecdoteQueue) {
+    let queue = AnecdoteQueue(
+        storeURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("launch-\(UUID().uuidString).json"),
+        clipRoot: FileManager.default.temporaryDirectory,
+        retention: 10 * 24 * 60 * 60
+    )
+    let connector = AnecdoteConnector(
+        queue: queue,
+        preparer: AnecdotePreparer(
+            source: AnecdoteSource(transport: StubTransport(body: Data(xml.utf8))),
+            speech: StubSpeechSynthesizer(),
+            queue: queue
+        )
+    )
+    let registry = ConnectorRegistry()
+    registry.register(connector)
+    let settings = InMemorySettingsStore()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: StubTransport())
+    let model = AppModel(
+        deviceHost: "10.0.0.5",
+        device: device,
+        registry: registry,
+        host: ConnectorHost(
+            device: device,
+            registry: registry,
+            store: settings,
+            audio: SilentAudioPlayer(),
+            iconInstaller: NoIconInstaller()
+        ),
+        store: settings,
+        installer: CatalogueIconInstaller(
+            device: device, transport: StubTransport(), uploads: InMemoryUploadedIconStore()
+        ),
+        defaults: UserDefaults(suiteName: "launch-\(UUID().uuidString)")!,
+        sleep: schedule.sleep,
+        pollSleep: parked
+    )
+    return (model, queue)
+}
+
+// Starting with an empty queue makes the first anecdote of the session wait on
+// a 70-second model load and a synthesis, on the play path — which is the whole
+// thing the queue exists to avoid. So the launch tops up before the first timer
+// has ever fired.
+//
+// Ten, and the number is the connector's: this goes through the real
+// `maintain()`, so a target of five or of one would show here.
+@Test @MainActor func theAppTopsUpToTenAtLaunch() async {
+    let schedule = Metronome()
+    let wiring = modelWithARealAnecdoteConnector(
+        feeding: anecdoteFeed(items: 12), schedule: schedule
+    )
+
+    wiring.model.start()
+
+    #expect(await waitForQueue(wiring.queue, toReach: 10) == 10)
+    // And nothing was played to get there: the schedule is still asleep on its
+    // first interval, and was never released.
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(await wiring.queue.hasPlayed("https://www.anekdot.ru/id/1/") == false)
+    await wiring.model.teardown()
+}
+
+// A "Run now" that drains the queue must not wait for the next timer to restock
+// it. `maintain` returns early above the threshold, so the extra call costs
+// nothing on the passes that do not need it.
+@Test @MainActor func aManualRunRefillsWithoutWaitingForTheTimer() async {
+    let host = SpyHost()
+    let subject = testModel(host: host)
+
+    subject.runNow("stub")
+
+    #expect(await waitUntil { host.calls == ["run:stub", "maintain:stub"] })
+}
+
+// And it happens AFTER the outcome is reported, not before it. A refill can be
+// a minute of synthesis; a panel that waited for it would sit on `running…`
+// long after the anecdote had finished playing.
+@Test @MainActor func theRefillDoesNotDelayTheRunsOwnCompletion() async {
+    let restock = Gate()
+    let subject = testModel(host: SpyHost(parkInMaintain: restock))
+
+    subject.runNow("stub")
+    #expect(await waitUntil { restock.enteredCount == 1 })
+
+    // The restock is parked and the panel already says how the run went.
+    #expect(subject.lastResults["stub"] == "delivered")
+
+    restock.open()
+    await subject.teardown()
+}
+
+// The scheduled path gets the same treatment, and keeps Task 14's call before
+// the run: a tick that only maintained afterwards would put the first firing of
+// every launch back on the play path.
+@Test @MainActor func aScheduledRunRestocksAfterItFinishesAsWellAsBefore() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(host: host, sleep: schedule.sleep)
+
+    subject.start()
+    // The launch top-up is a maintain of its own, and it is not the one this
+    // test is about — waited out so the tick's calls stand alone after it.
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+
+    #expect(await waitUntil {
+        host.calls == ["maintain:stub", "maintain:stub", "run:stub", "maintain:stub"]
+    })
+    await subject.teardown()
+}
+
+// MARK: - What a failed restock says
+
+// A refill that fails is invisible until a later RUN fails for the same reason,
+// which can be half an hour later — and if the queue still has something to
+// hand out, the run does not fail at all and the feed stays down in silence.
+@Test @MainActor func aFailedRestockIsSaidOnThePanelRatherThanWaitingForARunToFail() async {
+    let host = RestockReportingHost(reporting: .failed("the feed is down"))
+    let subject = testModel(host: host)
+
+    subject.runNow("stub")
+
+    #expect(await waitUntil { subject.lastMaintenanceFailure["stub"] != nil })
+    #expect(subject.lastMaintenanceFailure["stub"]?.contains("the feed is down") == true)
+    // And the run's own line is untouched: two answers, two slots.
+    #expect(subject.lastResults["stub"] == "delivered")
+}
+
+// The complaint has to go away again, or one bad half hour leaves the panel
+// claiming a broken feed for the rest of the session.
+@Test @MainActor func aRestockThatRecoversTakesTheComplaintBackDown() async {
+    let host = RestockReportingHost(reporting: .failed("the feed is down"))
+    let subject = testModel(host: host)
+
+    subject.runNow("stub")
+    #expect(await waitUntil { subject.lastMaintenanceFailure["stub"] != nil })
+
+    host.nowReports(.completed)
+    subject.runNow("stub")
+
+    #expect(await waitUntil { subject.lastMaintenanceFailure["stub"] == nil })
+}
+
+// A connector the user switched off is not restocking, so it has nothing to
+// complain about — and a complaint left over from when it was on describes work
+// that is no longer being attempted.
+@Test @MainActor func aConnectorThatIsNoLongerRestockingHasNoComplaintToMake() async {
+    let host = RestockReportingHost(reporting: .failed("the feed is down"))
+    let subject = testModel(host: host)
+
+    subject.runNow("stub")
+    #expect(await waitUntil { subject.lastMaintenanceFailure["stub"] != nil })
+
+    host.nowReports(.skipped)
+    subject.runNow("stub")
+
+    #expect(await waitUntil { subject.lastMaintenanceFailure["stub"] == nil })
+}
+
+// Cancellation is the one answer that changes nothing. Its ordinary producer is
+// a quit part-way through a fetch, which says nothing about whether the feed is
+// up — clearing a real outage on the strength of having been interrupted is the
+// same mistake as recording one because of it.
+@Test @MainActor func aRestockCutOffByAQuitLeavesTheComplaintWhereItWas() async {
+    let host = RestockReportingHost(reporting: .failed("the feed is down"))
+    let subject = testModel(host: host)
+
+    subject.runNow("stub")
+    #expect(await waitUntil { subject.lastMaintenanceFailure["stub"] != nil })
+
+    host.nowReports(.cancelled)
+    subject.runNow("stub")
+    // Teardown is both the rendezvous and the scenario: it waits for the run it
+    // is cutting short, so by the time it returns the cancelled pass has
+    // certainly been recorded.
+    //
+    // Waiting on a call counter in the double does NOT do, and this test passed
+    // for that reason before a mutation caught it. The counter moves inside
+    // `maintain`, one continuation before the answer is written down, and a
+    // check that raced into that gap read the previous pass's line and called
+    // it survival — green against an implementation that cleared it.
+    await subject.teardown()
+
+    #expect(subject.lastMaintenanceFailure["stub"]?.contains("the feed is down") == true)
 }

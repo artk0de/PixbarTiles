@@ -406,7 +406,9 @@ private func scratchStore() -> URL {
     browsing.emit(.results(["awtrix_a07f9c"]))
 
     #expect(delegate.discovery.found.map(\.instanceName) == ["awtrix_a07f9c"])
-    #expect(host.calls.isEmpty)
+    // No delivery, rather than nothing at all: the launch's own restock is on
+    // the list and is not something a discovery report caused.
+    #expect(host.calls.contains { $0.hasPrefix("run:") } == false)
     #expect(schedule.parked == 1)
 }
 

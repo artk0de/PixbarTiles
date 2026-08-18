@@ -371,3 +371,72 @@ final class CancellingHost: ConnectorRunning, @unchecked Sendable {
         return .cancelled
     }
 }
+
+// MARK: - A real host, with the two collaborators a background pass never uses
+
+/// Plays nothing. `ConnectorHost.maintain` never reaches the audio path, and a
+/// test that wired the shipped player in would have `swift test` speaking.
+struct SilentAudioPlayer: AudioPlaying {
+    func play(_ clips: [SpokenClip]) async {}
+}
+
+/// Installs nothing. Same reason: a background pass never reaches the icon
+/// path, and the real installer would put this test on the network.
+struct NoIconInstaller: IconInstalling {
+    func ensureInstalled(_ ref: IconReference) async throws -> String { "stub" }
+}
+
+/// A feed of `count` distinct anecdotes, most popular first.
+func anecdoteFeed(items count: Int) -> String {
+    let entries = (1...count).map { index in
+        """
+        <item>
+        <description><![CDATA[Анекдот номер \(index)]]></description>
+        <guid>https://www.anekdot.ru/id/\(index)/</guid>
+        </item>
+        """
+    }.joined(separator: "\n")
+    return "<rss><channel>\n\(entries)\n</channel></rss>"
+}
+
+/// Polls an actor-isolated answer until it holds or the wait runs out.
+///
+/// `waitUntil` takes a synchronous `@MainActor` condition, which cannot await
+/// `AnecdoteQueue`. Returns the last value read, so the expectation that names
+/// the rule is the thing that reports the failure.
+func waitForQueue(
+    _ queue: AnecdoteQueue, toReach depth: Int, limit: TimeInterval = 5
+) async -> Int {
+    let deadline = Date().addingTimeInterval(limit)
+    var ready = await queue.ready()
+    while Date() < deadline, ready != depth {
+        try? await Task.sleep(for: .milliseconds(5))
+        ready = await queue.ready()
+    }
+    return ready
+}
+
+/// Answers whatever a test tells it to for a background pass, and delivers
+/// every run.
+///
+/// Both halves matter. The failure this stands for is a refill that cannot
+/// reach the feed while the queue still has something to hand out: the runs go
+/// on succeeding, so nothing else on the panel would ever say the feed is down.
+final class RestockReportingHost: ConnectorRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var outcome: MaintenanceResult
+
+    init(reporting outcome: MaintenanceResult) { self.outcome = outcome }
+
+    func nowReports(_ outcome: MaintenanceResult) {
+        lock.withLock { self.outcome = outcome }
+    }
+
+    func maintain(connectorId: String) async -> MaintenanceResult {
+        lock.withLock { outcome }
+    }
+
+    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
+
+    func runOnce(connectorId: String) async -> RunResult { .delivered }
+}

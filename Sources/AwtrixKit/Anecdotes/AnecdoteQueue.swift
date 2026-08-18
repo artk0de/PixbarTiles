@@ -172,14 +172,36 @@ public actor AnecdoteQueue {
 
     public func ready() -> Int { store.pending.count }
 
+    /// Whether anything still waiting was prepared on the calendar day that
+    /// `moment` falls in.
+    ///
+    /// A calendar day, not a span of hours, and the difference is the whole
+    /// point: what the daily refresh is for is having jokes from TODAY, so an
+    /// anecdote prepared at half past eleven last night does not count as
+    /// today's because it is only an hour old. The comparison lives here rather
+    /// than in the connector because `pending` does, and a caller that had to
+    /// fetch the batch to date it would be free to date it a second way.
+    public func hasAnythingPrepared(onTheDayOf moment: Date) -> Bool {
+        let day = Self.calendar.startOfDay(for: moment)
+        return store.pending.contains { Self.generation(of: $0) == day }
+    }
+
     public func enqueue(_ anecdote: PreparedAnecdote) {
         store.pending.append(anecdote)
         persist()
     }
 
+    /// The anecdote that plays next: newest generation first, and within a
+    /// generation the one the feed ranked highest.
+    ///
+    /// Both keys, and neither is optional. Rank alone lets a high-ranked
+    /// leftover from last week outrank everything prepared since, for ever —
+    /// it wins every comparison it is ever in. Generation alone plays today's
+    /// batch in whatever order it happened to be synthesized, which throws away
+    /// the only measure of popularity the feed gives.
     public func next() -> PreparedAnecdote? {
-        guard !store.pending.isEmpty else { return nil }
-        let head = store.pending.removeFirst()
+        guard let best = Self.indexOfNext(in: store.pending) else { return nil }
+        let head = store.pending.remove(at: best)
         persist()
         return head
     }
@@ -225,16 +247,16 @@ public actor AnecdoteQueue {
     /// tests use, where a parameter does the same thing in a signature the
     /// reader can see through. A test cannot wait ten days either way.
     ///
-    /// Nothing in the app calls this yet. The pass that does belongs with the
-    /// History view that reads what it leaves behind, and that view is not
-    /// built — so until it is, clips are kept rather than reaped, which is the
-    /// direction this has to fail in.
+    /// `AnecdoteConnector.maintain()` is the caller: it already runs off the
+    /// play path, and it is the one pass that happens both before and after
+    /// every run, so the window is enforced at the same cadence the queue is
+    /// restocked at.
     ///
     /// Pending is bounded by the same window as history, and it has to be:
-    /// anecdotes prepared but never played accumulate across days, so history's
-    /// window alone would leave the batch nobody heard growing until the disk
-    /// did. A pending entry has no timestamp of its own, so its age is the age
-    /// of the clips on disk — which is the thing being bounded anyway.
+    /// anecdotes prepared but never played accumulate across days — the daily
+    /// refresh keeps yesterday's leftovers rather than discarding them — so
+    /// history's window alone would leave the batch nobody heard growing until
+    /// the disk did.
     ///
     /// A record whose directory the reaper is not allowed to touch is still
     /// dropped. The record is ours to forget; the directory may not be ours to
@@ -252,7 +274,7 @@ public actor AnecdoteQueue {
 
         var keptPending: [PreparedAnecdote] = []
         for anecdote in store.pending {
-            guard let written = Self.lastWrite(of: anecdote), hasExpired(written, at: now) else {
+            guard let prepared = Self.age(of: anecdote), hasExpired(prepared, at: now) else {
                 keptPending.append(anecdote)
                 continue
             }
@@ -277,6 +299,19 @@ public actor AnecdoteQueue {
         now.timeIntervalSince(moment) > retention
     }
 
+    /// The moment a pending anecdote's age is measured from, or nil when there
+    /// is nothing to measure.
+    ///
+    /// The record's own `preparedAt` wherever there is one, and only the file
+    /// system for a record written before that field existed. A modification
+    /// date is not the age of the batch — it is the age of the last write to
+    /// the file, which a backup pass, a sync client or a `touch` resets — and a
+    /// batch whose clips are touched every week under a ten-day window is a
+    /// batch that never expires.
+    private static func age(of anecdote: PreparedAnecdote) -> Date? {
+        anecdote.preparedAt ?? lastWrite(of: anecdote)
+    }
+
     /// When this anecdote's clips were last written, or nil if none of them is
     /// on disk any more.
     ///
@@ -291,6 +326,63 @@ public actor AnecdoteQueue {
             let attributes = try? FileManager.default.attributesOfItem(atPath: clip.url.path)
             return attributes?[.modificationDate] as? Date
         }.max()
+    }
+
+    // MARK: play order
+
+    /// Read once rather than at every comparison. `Calendar.current` rebuilds
+    /// its answer from the user's current locale each time it is asked, and one
+    /// launch does not need two of them.
+    private static let calendar = Calendar.current
+
+    /// Where the next anecdote to play sits, or nil when nothing is waiting.
+    ///
+    /// A scan keeping the FIRST of any tie, rather than a sort. Ties are the
+    /// ordinary case — a whole batch shares a generation, and a store written
+    /// before this task has neither key on anything — and `sort` is not stable,
+    /// so an equal pair could come back either way round and the queue would
+    /// hand out a different anecdote on a rerun of the same state. The tie is
+    /// broken by the order they were enqueued in, which is the order they were
+    /// prepared in.
+    private static func indexOfNext(in pending: [PreparedAnecdote]) -> Int? {
+        guard var best = pending.indices.first else { return nil }
+        for index in pending.indices.dropFirst()
+        where playsBefore(pending[index], pending[best]) {
+            best = index
+        }
+        return best
+    }
+
+    /// Whether `left` plays before `right`.
+    private static func playsBefore(_ left: PreparedAnecdote, _ right: PreparedAnecdote) -> Bool {
+        let leftDay = generation(of: left)
+        let rightDay = generation(of: right)
+        // Newest generation first: today's batch outranks yesterday's leftovers
+        // entirely, whatever the feed thought of either.
+        guard leftDay == rightDay else { return leftDay > rightDay }
+        // Then the feed's own order, ascending — position zero was the most
+        // voted for.
+        return rank(of: left) < rank(of: right)
+    }
+
+    /// The calendar day an anecdote belongs to, or the distant past for one
+    /// prepared before the field existed.
+    ///
+    /// Distant past rather than the present: a record restored from an older
+    /// store plays after everything that has a generation. Read as "now" it
+    /// would join today's batch instead of queueing behind it, which is the
+    /// wrong way for this to fail — the whole point of the key is that stale
+    /// material sinks.
+    private static func generation(of anecdote: PreparedAnecdote) -> Date {
+        guard let preparedAt = anecdote.preparedAt else { return .distantPast }
+        return calendar.startOfDay(for: preparedAt)
+    }
+
+    /// The feed position an anecdote sorts on, or the worst possible one for a
+    /// record that predates the field. Absent is worst, for the same reason an
+    /// absent generation is oldest.
+    private static func rank(of anecdote: PreparedAnecdote) -> Int {
+        anecdote.rank ?? .max
     }
 
     /// Anecdotes neither played nor already waiting, each id at most once.

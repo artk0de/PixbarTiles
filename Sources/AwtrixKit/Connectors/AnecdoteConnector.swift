@@ -185,8 +185,13 @@ public actor AnecdotePreparer {
         let clips = urls.enumerated().map { index, url in
             SpokenClip(url: url, leadIn: Self.pacing.leadIn(forClipAt: index, of: urls.count))
         }
+        // The moment is taken here rather than passed in, for the reason
+        // `AnecdoteQueue.retire` takes its own: this call IS the preparing, so
+        // a caller supplying an instant could only be reporting one that did
+        // not happen.
         return PreparedAnecdote(
-            id: anecdote.id, text: anecdote.text, clips: clips, laughter: laughter
+            id: anecdote.id, text: anecdote.text, clips: clips, laughter: laughter,
+            preparedAt: Date(), rank: anecdote.rank
         )
     }
 }
@@ -207,21 +212,41 @@ public struct AnecdoteConnector: Connector {
     public let displayName = "Anecdotes"
     public let defaultInterval: TimeInterval = 30 * 60
 
+    /// How many prepared anecdotes a restock leaves waiting.
+    public static let readyTarget = 10
+    /// The depth at or below which a background pass restocks.
+    ///
+    /// Five rather than eight or three: a run that leaves five triggers a
+    /// refill of five at a time rather than of two, and it is cheap either way
+    /// because `SidecarSpeechSynthesizer` keeps the model loaded in a long-lived
+    /// `--serve` process. The 70-second load is paid once per process, not once
+    /// per refill, so the only thing a smaller batch buys is more of them.
+    public static let lowWaterMark = 5
+
     private let queue: AnecdoteQueue
     private let preparer: AnecdotePreparer
     private let refillThreshold: Int
     private let batchSize: Int
+    /// What the daily refresh calls today.
+    ///
+    /// Injected rather than read inline, because `maintain()` is declared by a
+    /// protocol and cannot take an instant the way `reapExpired(now:)` does —
+    /// and a rule about calendar days needs a test that can stand either side
+    /// of a midnight. The shipped value is the only one that reads the clock.
+    private let now: @Sendable () -> Date
 
     public init(
         queue: AnecdoteQueue,
         preparer: AnecdotePreparer,
-        refillThreshold: Int = 3,
-        batchSize: Int = 10
+        refillThreshold: Int = AnecdoteConnector.lowWaterMark,
+        batchSize: Int = AnecdoteConnector.readyTarget,
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.queue = queue
         self.preparer = preparer
         self.refillThreshold = refillThreshold
         self.batchSize = batchSize
+        self.now = now
     }
 
     /// Pops an anecdote that was prepared earlier.
@@ -266,11 +291,32 @@ public struct AnecdoteConnector: Connector {
         return nil
     }
 
-    /// Tops the queue up when it runs low. The host calls this away from the
-    /// play path, because a refill loads a 1.8 GB model and synthesizes a whole
-    /// batch — a minute or more of work that must never sit inside `produce()`.
+    /// Tops the queue up when it runs low, and once a day whether it is low or
+    /// not. The host calls this away from the play path, because a refill loads
+    /// a 1.8 GB model and synthesizes a whole batch — a minute or more of work
+    /// that must never sit inside `produce()`.
+    ///
+    /// Two reasons to restock, and the daily one is not a special case of the
+    /// other. A queue holding ten of yesterday's anecdotes is full by every
+    /// measure of depth and still has nothing from today, which is the thing
+    /// the user actually opened the app for. Yesterday's are kept rather than
+    /// discarded — they simply rank below everything new — so the fresh batch
+    /// is asked for ON TOP of what is there, not up to a target the leftovers
+    /// have already met.
+    ///
+    /// It needs no timer of its own. `maintain()` runs before and after every
+    /// run, so the first pass on any day finds nothing prepared that day and
+    /// the ones after it find the batch this one made.
     public func topUpIfNeeded() async throws {
-        guard await queue.ready() <= refillThreshold else { return }
+        let today = now()
+        let ready = await queue.ready()
+
+        guard await queue.hasAnythingPrepared(onTheDayOf: today) else {
+            try await preparer.refill(target: ready + batchSize)
+            return
+        }
+
+        guard ready <= refillThreshold else { return }
         try await preparer.refill(target: batchSize)
     }
 }
@@ -287,8 +333,17 @@ extension AnecdoteConnector: ConnectorMaintaining {
     /// is nothing left to undo. And a store that cannot be written cannot hold
     /// a restocked batch either, so synthesizing ten anecdotes into it would
     /// spend a minute of model time on a queue the next launch will not see.
+    ///
+    /// The reap sits between the two, and the order is the argument for putting
+    /// it here at all. After the flush, because a store that cannot be written
+    /// cannot record what the reap removed either, and a reap whose result is
+    /// lost deletes clips the next launch still believes in. Before the
+    /// restock, because reaping is what frees the depth the restock then reads:
+    /// a queue whose whole batch has just aged out is refilled in the same pass
+    /// rather than one run later.
     public func maintain() async throws {
         try await queue.flush()
+        _ = await queue.reapExpired(now: now())
         try await topUpIfNeeded()
     }
 }

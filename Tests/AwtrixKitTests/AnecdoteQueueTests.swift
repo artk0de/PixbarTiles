@@ -21,11 +21,21 @@ private func temporaryStore() -> URL {
         .appendingPathComponent("queue-\(UUID().uuidString).json")
 }
 
-private func prepared(_ id: String) -> PreparedAnecdote {
+/// An anecdote with no clips on disk, and — unless a test says otherwise — no
+/// generation and no rank.
+///
+/// Both keys default to nil rather than to today, because that is what a record
+/// restored from a store written before Task 18 carries, and it is the shape
+/// every test that is NOT about play order wants: two of these tie on both
+/// keys, so they come back in the order they went in and nothing about the
+/// ordering can answer a question the test did not ask.
+private func prepared(
+    _ id: String, preparedAt: Date? = nil, rank: Int? = nil
+) -> PreparedAnecdote {
     PreparedAnecdote(
         id: id, text: "joke \(id)",
         clips: [SpokenClip(url: URL(fileURLWithPath: "/tmp/\(id).wav"), leadIn: 0)],
-        laughter: "АХАХАХА"
+        laughter: "АХАХАХА", preparedAt: preparedAt, rank: rank
     )
 }
 
@@ -190,7 +200,9 @@ private func prepared(_ id: String) -> PreparedAnecdote {
 /// An anecdote whose single clip really exists, in a directory named the way
 /// the synthesizer names one — so retiring it registers a directory the reaper
 /// will accept as its own.
-private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
+private func preparedOnDisk(
+    _ id: String, preparedAt: Date? = nil, rank: Int? = nil
+) throws -> PreparedAnecdote {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("clips-\(UUID().uuidString)")
         .appendingPathComponent(PreparedAnecdote.namespace(for: id))
@@ -198,7 +210,8 @@ private func preparedOnDisk(_ id: String) throws -> PreparedAnecdote {
     let clip = directory.appendingPathComponent("turn-0.wav")
     try Data().write(to: clip)
     return PreparedAnecdote(
-        id: id, text: "joke \(id)", clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+        id: id, text: "joke \(id)", clips: [SpokenClip(url: clip)], laughter: "АХАХАХА",
+        preparedAt: preparedAt, rank: rank
     )
 }
 
@@ -413,7 +426,7 @@ private func reapEverything(in queue: AnecdoteQueue) async -> Int {
     await queue.retire(PreparedAnecdote(
         id: "split", text: "joke",
         clips: [SpokenClip(url: leftClip), SpokenClip(url: rightClip)],
-        laughter: "АХАХАХА"
+        laughter: "АХАХАХА", preparedAt: nil, rank: nil
     ))
 
     #expect(await reapEverything(in: queue) == 1)
@@ -455,7 +468,7 @@ private func reapEverything(in queue: AnecdoteQueue) async -> Int {
     // admits it and only the name is wrong.
     await queue.retire(PreparedAnecdote(
         id: "https://www.anekdot.ru/id/1/", text: "joke",
-        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА", preparedAt: nil, rank: nil
     ))
 
     #expect(await reapEverything(in: queue) == 1)
@@ -492,7 +505,7 @@ private func reapEverything(in queue: AnecdoteQueue) async -> Int {
     let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: root, retention: anyRetention)
     await queue.retire(PreparedAnecdote(
         id: "https://www.anekdot.ru/id/1/", text: "joke",
-        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА", preparedAt: nil, rank: nil
     ))
 
     #expect(await reapEverything(in: queue) == 1)
@@ -519,7 +532,7 @@ private func reapEverything(in queue: AnecdoteQueue) async -> Int {
     // named for this anecdote, so both earlier guards let it through.
     await queue.retire(PreparedAnecdote(
         id: "https://www.anekdot.ru/id/1/", text: "joke",
-        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА", preparedAt: nil, rank: nil
     ))
 
     #expect(await reapEverything(in: queue) == 1)
@@ -543,7 +556,7 @@ private func reapEverything(in queue: AnecdoteQueue) async -> Int {
     let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: root, retention: anyRetention)
     await queue.retire(PreparedAnecdote(
         id: "https://www.anekdot.ru/id/1/", text: "joke",
-        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА", preparedAt: nil, rank: nil
     ))
 
     #expect(await reapEverything(in: queue) == 1)
@@ -569,7 +582,7 @@ private func reapEverything(in queue: AnecdoteQueue) async -> Int {
     let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: root, retention: anyRetention)
     await queue.retire(PreparedAnecdote(
         id: "https://www.anekdot.ru/id/1/", text: "joke",
-        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА"
+        clips: [SpokenClip(url: clip)], laughter: "АХАХАХА", preparedAt: nil, rank: nil
     ))
 
     #expect(await reapEverything(in: queue) == 1)
@@ -639,7 +652,8 @@ private func reapEverything(in queue: AnecdoteQueue) async -> Int {
     )
     await queue.enqueue(PreparedAnecdote(
         id: id, text: "joke",
-        clips: [SpokenClip(url: old), SpokenClip(url: fresh)], laughter: "АХАХАХА"
+        clips: [SpokenClip(url: old), SpokenClip(url: fresh)], laughter: "АХАХАХА",
+        preparedAt: nil, rank: nil
     ))
 
     #expect(await queue.reapExpired(now: Date()) == 0)
@@ -762,4 +776,168 @@ private func writeLegacyStore(_ legacy: LegacyStore, to url: URL) throws {
 
     #expect(await queue.ready() == 0)
     #expect(await queue.hasPlayed("anything") == false)
+}
+
+// MARK: - Play order: generation first, then the feed's own ranking
+
+/// A moment on the calendar day `dayOffset` days from today, at a stated local
+/// hour and minute.
+///
+/// Built through `Calendar` rather than by subtracting seconds, because the rule
+/// under test is about calendar days and a fixture assembled from elapsed hours
+/// would only ever be able to observe elapsed hours.
+private func moment(dayOffset: Int, hour: Int, minute: Int = 0) -> Date {
+    let calendar = Calendar.current
+    let day = calendar.date(byAdding: .day, value: dayOffset, to: Date()) ?? Date()
+    return calendar.date(
+        bySettingHour: hour, minute: minute, second: 0, of: day
+    ) ?? day
+}
+
+// Generation is the first key, and it is the one that stops a leftover from
+// aging into the head of the queue.
+//
+// Both ranks are the same, so ranking cannot answer this — and yesterday's went
+// in first, so insertion order answers it the wrong way round. Only the
+// generation key puts today's in front.
+@Test func todaysBatchPlaysBeforeYesterdaysLeftovers() async {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    await queue.enqueue(prepared("yesterday", preparedAt: moment(dayOffset: -1, hour: 9), rank: 3))
+    await queue.enqueue(prepared("today", preparedAt: moment(dayOffset: 0, hour: 9), rank: 3))
+
+    #expect(await queue.next()?.id == "today")
+    #expect(await queue.next()?.id == "yesterday")
+}
+
+// The second key, exercised inside ONE generation so the first key cannot
+// answer for it: all three were prepared on the same day, and they go in in an
+// order that is neither the answer nor its reverse.
+@Test func withinOneGenerationTheBestRankedPlaysFirst() async {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let today = moment(dayOffset: 0, hour: 9)
+    await queue.enqueue(prepared("middling", preparedAt: today, rank: 1))
+    await queue.enqueue(prepared("worst", preparedAt: today, rank: 2))
+    await queue.enqueue(prepared("best", preparedAt: today, rank: 0))
+
+    #expect(await queue.next()?.id == "best")
+    #expect(await queue.next()?.id == "middling")
+    #expect(await queue.next()?.id == "worst")
+}
+
+// Why both keys are needed rather than either one. The leftover is the
+// best-ranked anecdote in the queue by a distance, so ranking first and
+// generation second — the two keys in the other order — plays it ahead of
+// everything prepared today, for as long as it survives. Which is for ever: it
+// wins every comparison it is ever in.
+@Test func aHighRankedLeftoverDoesNotOutrankAnythingPreparedToday() async {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    await queue.enqueue(prepared("leftover", preparedAt: moment(dayOffset: -1, hour: 9), rank: 0))
+    await queue.enqueue(prepared("fresh", preparedAt: moment(dayOffset: 0, hour: 9), rank: 40))
+
+    #expect(await queue.next()?.id == "fresh")
+}
+
+// A store written before this task has neither key. Absent has to read as
+// WORST — a record that predates the fields plays after everything that has
+// them — and the failure direction matters: read as best, every anecdote
+// prepared before the upgrade jumps the whole queue and plays first for ever.
+//
+// Enqueued first, so insertion order would also put it in front.
+@Test func aStoredAnecdoteWithoutARankSortsLastRatherThanFirst() async {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let today = moment(dayOffset: 0, hour: 9)
+    await queue.enqueue(prepared("unranked", preparedAt: today, rank: nil))
+    await queue.enqueue(prepared("ranked", preparedAt: today, rank: 5))
+
+    #expect(await queue.next()?.id == "ranked")
+    #expect(await queue.next()?.id == "unranked")
+}
+
+// The same rule on the other key, and it needs saying separately: a missing
+// generation read as "now" would put every pre-upgrade record in today's batch
+// rather than behind it.
+@Test func aStoredAnecdoteWithoutAPreparedMomentSortsLastRatherThanFirst() async {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    await queue.enqueue(prepared("undated", preparedAt: nil, rank: 0))
+    await queue.enqueue(prepared("dated", preparedAt: moment(dayOffset: 0, hour: 9), rank: 9))
+
+    #expect(await queue.next()?.id == "dated")
+    #expect(await queue.next()?.id == "undated")
+}
+
+// And that a real store written before the fields existed decodes at all. The
+// JSON is spelled out rather than encoded through the current type, because a
+// record encoded now carries the new keys and could not show what happens when
+// they are missing.
+@Test func aStoreWrittenBeforeTheseKeysExistedStillDecodesAndPlaysLast() async throws {
+    let store = temporaryStore()
+    try Data("""
+    {"pending":[{"id":"old","text":"joke","laughter":"АХАХАХА",
+    "clips":[{"url":"file:///tmp/old.wav","leadIn":0}]}],"played":[],"history":[]}
+    """.utf8).write(to: store)
+
+    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot, retention: anyRetention)
+    await queue.enqueue(prepared("new", preparedAt: moment(dayOffset: 0, hour: 9), rank: 7))
+
+    #expect(await queue.ready() == 2)
+    #expect(await queue.next()?.id == "new")
+    #expect(await queue.next()?.id == "old")
+}
+
+// MARK: - Pending age comes from the record, not from the file system
+
+// The clips are written NOW and the record says it was prepared eleven days
+// ago, so only the record can explain the reap. Until this task the age came
+// off `.modificationDate`, which any `touch` — a backup tool, a sync client,
+// an editor saving over the directory — resets, leaving a batch immortal.
+@Test func aPendingEntryIsAgedByWhenItWasPreparedRatherThanByItsClipsTimestamps() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let stale = try preparedOnDisk(
+        "https://www.anekdot.ru/id/1/",
+        preparedAt: Date().addingTimeInterval(-(anyRetention + 60)), rank: 0
+    )
+    let directory = try #require(stale.clips.first?.url.deletingLastPathComponent())
+    await queue.enqueue(stale)
+
+    #expect(await queue.reapExpired(now: Date()) == 1)
+
+    #expect(FileManager.default.fileExists(atPath: directory.path) == false)
+    #expect(await queue.ready() == 0)
+}
+
+// The other way round, which is what stops the record from being consulted only
+// when the file system agrees with it: the clips look eleven days old and the
+// record says the batch was prepared a moment ago, and the batch stays.
+@Test func aPendingEntryPreparedRecentlySurvivesClipsThatLookOlderThanItIs() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let fresh = try preparedOnDisk(
+        "https://www.anekdot.ru/id/1/", preparedAt: Date(), rank: 0
+    )
+    let directory = try #require(fresh.clips.first?.url.deletingLastPathComponent())
+    for clip in fresh.clips {
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-(anyRetention + 60))],
+            ofItemAtPath: clip.url.path
+        )
+    }
+    await queue.enqueue(fresh)
+
+    #expect(await queue.reapExpired(now: Date()) == 0)
+
+    #expect(FileManager.default.fileExists(atPath: directory.path))
+    #expect(await queue.ready() == 1)
 }

@@ -247,6 +247,18 @@ struct MenuPanel: View {
                     Text(result).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
+            // Under the run's own line rather than beside it, and only when
+            // there is something wrong. The two answer different questions —
+            // how the last delivery went, and whether there will be anything to
+            // deliver next time — and a restock that is working has nothing to
+            // say about either.
+            if let trouble = model.lastMaintenanceFailure[connector.id] {
+                Text(trouble)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

@@ -135,3 +135,40 @@ private func feed(item: String) -> Data {
         _ = try await source.fetch()
     }
 }
+
+// MARK: - Popularity, which the feed gives away as position
+
+// The feed carries no rating, no vote count and no score — checked against the
+// live document, whose item elements are `title`, `pubDate`, `link`,
+// `description` and `guid`. What it IS, by its own definition, is ranked by
+// reader votes, so the ordering IS the popularity and there is nothing else to
+// read. Fetching each anecdote's HTML page to recover a number would be one
+// request per anecdote, against markup nobody controls, for an ordering that
+// already arrived.
+//
+// Three items rather than two: with two, "ascending from zero" and "descending
+// from the last index" agree on nothing but the count, and reversing the
+// assignment would still put the first item at a different number from the
+// second. The middle one is what makes the direction observable.
+@Test func theFeedsOrderIsCarriedThroughAsRank() {
+    let anecdotes = AnecdoteSource.parse(Data("""
+    <rss><channel>
+    <item><description><![CDATA[самый популярный]]></description>
+    <guid>https://www.anekdot.ru/id/1/</guid></item>
+    <item><description><![CDATA[второй]]></description>
+    <guid>https://www.anekdot.ru/id/2/</guid></item>
+    <item><description><![CDATA[третий]]></description>
+    <guid>https://www.anekdot.ru/id/3/</guid></item>
+    </channel></rss>
+    """.utf8))
+
+    #expect(anecdotes.map(\.id) == [
+        "https://www.anekdot.ru/id/1/",
+        "https://www.anekdot.ru/id/2/",
+        "https://www.anekdot.ru/id/3/",
+    ])
+    // Ascending, and from the top of the feed: the most-voted anecdote is the
+    // one the queue will play first, and the number it sorts on has to be the
+    // smallest rather than the largest.
+    #expect(anecdotes.map(\.rank) == [0, 1, 2])
+}

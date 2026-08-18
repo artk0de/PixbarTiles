@@ -3,10 +3,25 @@ import Foundation
 public struct Anecdote: Sendable, Equatable {
     public let id: String
     public let text: String
+    /// Where this anecdote sat in the feed it came from, counting from zero.
+    ///
+    /// The feed carries no rating, no vote count and no score — its elements are
+    /// `title`, `pubDate`, `link`, `description` and `guid`, and that was checked
+    /// against the live document rather than assumed. What the feed IS, by its
+    /// own definition, is ranked by reader votes. So popularity is available for
+    /// free as position and only as position, and recovering a number would mean
+    /// one request per anecdote against a page nobody controls to obtain an
+    /// ordering that arrived with the feed.
+    ///
+    /// Defaulted, because the only producer that has a position to give is
+    /// `parse`, and the callers that build one by hand — the `unseen` filter
+    /// reads nothing but the id — have no feed to be positioned in.
+    public let rank: Int
 
-    public init(id: String, text: String) {
+    public init(id: String, text: String, rank: Int = 0) {
         self.id = id
         self.text = text
+        self.rank = rank
     }
 }
 
@@ -60,7 +75,12 @@ public struct AnecdoteSource: Sendable {
 
     public static func parse(_ xml: Data) -> [Anecdote] {
         let document = String(decoding: xml, as: UTF8.self)
-        return items(in: document).compactMap { item in
+        // Enumerated over the items as the document lists them, before the
+        // dropping below: the rank is where the anecdote sat in the feed, and an
+        // item discarded for having no text really did occupy the place it left.
+        // The numbers may therefore have gaps, which costs nothing — only their
+        // order is ever read.
+        return items(in: document).enumerated().compactMap { position, item in
             guard
                 let guid = value(of: "guid", in: item),
                 let description = value(of: "description", in: item)
@@ -69,7 +89,7 @@ public struct AnecdoteSource: Sendable {
             // The caller picks one of these blind, so an item with no identity
             // or nothing to say is dropped rather than shown as a blank frame.
             guard !guid.isEmpty, !text.isEmpty else { return nil }
-            return Anecdote(id: guid, text: text)
+            return Anecdote(id: guid, text: text, rank: position)
         }
     }
 

@@ -392,3 +392,27 @@ private func scheduledModel(dueIn delay: TimeInterval) async -> AppModel {
     await soon.teardown()
     await later.teardown()
 }
+
+// MARK: - What a failed restock looks like
+
+// The complaint reaches the panel rather than only the model. Two panels alike
+// in everything — same connector, same address, neither started, so neither has
+// polled and both draw the same device line — except that one of them has a
+// restock failure to report. Deleting the line makes them identical.
+@Test @MainActor func thePanelSaysWhenARestockFailed() async {
+    let quiet = testModel(host: SpyHost())
+    let complaining = testModel(host: RestockReportingHost(reporting: .failed("the feed is down")))
+
+    // BOTH are run, and both runs deliver, so the run line reads `delivered` on
+    // each and cannot account for any difference. What is left over is the
+    // restock, which failed on one of them and not on the other.
+    quiet.runNow("stub")
+    complaining.runNow("stub")
+    #expect(await waitUntil { quiet.lastResults["stub"] == "delivered" })
+    #expect(await waitUntil { complaining.lastResults["stub"] == "delivered" })
+    #expect(await waitUntil { complaining.lastMaintenanceFailure["stub"] != nil })
+    #expect(quiet.lastMaintenanceFailure["stub"] == nil)
+
+    #expect(drawn(complaining) != nil)
+    #expect(drawn(complaining) != drawn(quiet))
+}

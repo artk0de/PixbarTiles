@@ -112,6 +112,9 @@ final class AppModel: ObservableObject {
     let monitor: DeviceMonitor
 
     @Published private(set) var lastResults: [String: String] = [:]
+    /// What the last background pass had to complain about, per connector, and
+    /// nothing at all when it went fine.
+    @Published private(set) var lastMaintenanceFailure: [String: String] = [:]
     /// When each connector is next due, or what is holding it.
     @Published private(set) var nextRun: [String: NextRun] = [:]
     /// What is in the address field: what the NEXT launch will use, where
@@ -160,6 +163,12 @@ final class AppModel: ObservableObject {
     /// each other rather than one replacing the other.
     private var manualRuns: [Int: Task<Void, Never>] = [:]
     private var nextRunKey = 0
+    /// The restock the launch fires, still going.
+    ///
+    /// Owned rather than detached, for the reason every other loop here is:
+    /// teardown can only wait for a task it holds, and this one is a minute of
+    /// synthesis that a quit would otherwise kill halfway through a batch.
+    private var launchRestock: Task<Void, Never>?
     /// Runs still going, per connector.
     ///
     /// A count rather than a flag because two presses are two runs: 37 seconds
@@ -332,11 +341,46 @@ final class AppModel: ObservableObject {
 
     // MARK: - Running
 
-    /// Starts the poll and the schedules. Separate from `init` so that
+    /// Starts the poll, the schedules, and the restock that fills the queue
+    /// before the first of them fires. Separate from `init` so that
     /// constructing this type reaches neither the network nor the clock.
     func start() {
         startMonitoring()
         for connector in registry.all { reschedule(connector) }
+        restockAtLaunch()
+    }
+
+    /// Fills every enabled connector's queue, once, at launch.
+    ///
+    /// The schedule sleeps before its first tick — deliberately, so launching
+    /// the app does not put a banner on the clock — which on a cold start leaves
+    /// the first anecdote of the session waiting on a model load and a
+    /// synthesis, on the play path. That is the exact cost the queue exists to
+    /// avoid, and it was being paid at every launch.
+    ///
+    /// One task walking the connectors rather than one per connector: the
+    /// background pass is not on the host's serialisation chain, so two of them
+    /// would load the model twice at once.
+    ///
+    /// Switched-off connectors are left out rather than left to the host's own
+    /// guard. The host answers `.skipped` for them either way, so nothing would
+    /// break — but a connector the user turned off is not one this app should
+    /// be asking about at all.
+    ///
+    /// Nothing here guards against a second entry, and nothing clears the handle
+    /// when the pass is done. `start()` is called once, from
+    /// `applicationDidFinishLaunching`, so a re-entry guard would be defending
+    /// against a call that does not exist — and teardown awaiting a task that
+    /// has already finished costs nothing, where a handle that nils itself is
+    /// one more thing to be wrong about.
+    private func restockAtLaunch() {
+        let due = registry.all.filter { settings(for: $0).isEnabled }.map(\.id)
+        launchRestock = Task { [weak self] in
+            for id in due {
+                guard let self else { return }
+                await self.restock(id)
+            }
+        }
     }
 
     /// Runs one connector now, because the user asked.
@@ -399,10 +443,11 @@ final class AppModel: ObservableObject {
         monitorLoop?.cancel()
         monitorLoop = nil
         let running = Array(timers.values) + Array(manualRuns.values)
-            + [iconRemoval].compactMap { $0 }
+            + [iconRemoval, launchRestock].compactMap { $0 }
         timers.removeAll()
         manualRuns.removeAll()
         iconRemoval = nil
+        launchRestock = nil
         for task in running { task.cancel() }
         for task in running { await task.value }
     }
@@ -479,8 +524,11 @@ final class AppModel: ObservableObject {
         // refill when the queue is empty, so a timer that never maintains turns
         // every firing into a 70-second model load on the play path — the whole
         // reason the queue exists.
-        _ = await host.maintain(connectorId: id)
+        await restock(id)
         reportOutcome(await host.runOnce(connectorId: id), for: id)
+        // And again after it, because the run is what emptied the queue. See
+        // `restock(_:)`.
+        await restock(id)
     }
 
     /// The manual path. The bracket is spelled out here as well as in `tick`
@@ -490,6 +538,29 @@ final class AppModel: ObservableObject {
     private func runAndReport(_ id: String) async {
         markUnderWay(id)
         reportOutcome(await host.runOnce(connectorId: id), for: id)
+        await restock(id)
+    }
+
+    /// Runs a connector's background pass and keeps whatever it had to say.
+    ///
+    /// Called after every completed run as well as before every scheduled one,
+    /// and the post-run call is the one worth arguing for: a "Run now" that
+    /// drains the queue would otherwise leave it drained until the next timer,
+    /// which on the shipped half-hourly cadence is half an hour of a queue one
+    /// press away from empty. `maintain` returns early above the threshold, so
+    /// on the passes that do not need it the extra call costs a queue read.
+    ///
+    /// Strictly AFTER the outcome is reported, never before or around it. A
+    /// refill can be a minute of synthesis, and a run whose completion waited
+    /// on it would leave the panel saying `running…` long after the anecdote
+    /// had finished playing — which is the lie `markUnderWay` exists to stop.
+    ///
+    /// Unconditional on how the run went. A run that failed for want of
+    /// anything to hand out is exactly the one that needs restocking, and
+    /// `ConnectorHost` already answers `.skipped` for a connector the user
+    /// switched off.
+    private func restock(_ id: String) async {
+        note(await host.maintain(connectorId: id), for: id)
     }
 
     /// Says a delivery is under way before it says how it went.
@@ -523,6 +594,28 @@ final class AppModel: ObservableObject {
         outstanding[id, default: 1] -= 1
         guard outstanding[id, default: 0] <= 0 else { return }
         record(result, for: id)
+    }
+
+    /// Keeps what a background pass complained about, and drops it when there is
+    /// nothing left to complain about.
+    ///
+    /// A refill that cannot reach the feed is invisible otherwise: the run that
+    /// follows it only fails once the queue has run dry as well, which on a
+    /// stocked queue is hours later and on a well-stocked one is never. One
+    /// line, deliberately — the run's own outcome keeps its slot, and this says
+    /// what the restocking behind it is doing.
+    ///
+    /// `.cancelled` leaves whatever was there. It is not evidence: the ordinary
+    /// producer is a quit part-way through a fetch, and clearing a real outage
+    /// on the strength of having been interrupted is the same mistake as
+    /// counting one as a failure.
+    private func note(_ result: MaintenanceResult, for id: String) {
+        switch result {
+        case .completed, .skipped: lastMaintenanceFailure[id] = nil
+        case .cancelled: break
+        case let .failed(message):
+            lastMaintenanceFailure[id] = "restock failed: \(message.prefix(60))"
+        }
     }
 
     private func record(_ result: RunResult, for id: String) {

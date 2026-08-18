@@ -835,3 +835,284 @@ private struct SeededGenerator: RandomNumberGenerator {
     #expect(await queue.ready() == 2)
     #expect(transport.requests.count == fetchesToFill)
 }
+
+// MARK: - Ten ready, refreshed daily, played best-first
+
+/// A feed of `count` distinct anecdotes, most popular first — the shape the
+/// live one has, at whatever size a test needs.
+private func feed(items count: Int) -> String {
+    let entries = (1...count).map { index in
+        """
+        <item>
+        <description><![CDATA[Анекдот номер \(index)]]></description>
+        <guid>https://www.anekdot.ru/id/\(index)/</guid>
+        </item>
+        """
+    }.joined(separator: "\n")
+    return "<rss><channel>\n\(entries)\n</channel></rss>"
+}
+
+/// The first moment of today, local.
+///
+/// Everything below is measured from it rather than from `Date()`, because the
+/// rule under test is about calendar days: a fixture built out of elapsed hours
+/// can only ever observe elapsed hours, and would pass just as well against an
+/// implementation that measured them.
+private func startOfToday() -> Date { Calendar.current.startOfDay(for: Date()) }
+
+/// A prepared anecdote with nothing on disk, for the tests that never play one.
+private func pending(_ id: String, preparedAt: Date?, rank: Int?) -> PreparedAnecdote {
+    PreparedAnecdote(
+        id: id, text: "joke \(id)",
+        clips: [SpokenClip(url: URL(fileURLWithPath: "/tmp/\(id).wav"))],
+        laughter: "АХАХАХА", preparedAt: preparedAt, rank: rank
+    )
+}
+
+/// A prepared anecdote whose single clip really exists, in a directory named
+/// the way the synthesizer names one — so the reaper will accept it as its own.
+private func pendingOnDisk(
+    _ id: String, preparedAt: Date?, rank: Int?
+) throws -> PreparedAnecdote {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("clips-\(UUID().uuidString)")
+        .appendingPathComponent(PreparedAnecdote.namespace(for: id))
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let clip = directory.appendingPathComponent("turn-0.wav")
+    try Data().write(to: clip)
+    return PreparedAnecdote(
+        id: id, text: "joke \(id)", clips: [SpokenClip(url: clip)],
+        laughter: "АХАХАХА", preparedAt: preparedAt, rank: rank
+    )
+}
+
+// What the preparer writes down, and the only place the two sort keys enter the
+// system on the production path. The queue's own ordering tests build their
+// fixtures by hand, so nothing else would notice a preparer that stamped
+// neither — every anecdote would land in the same nil generation at the same
+// nil rank and play in whatever order it was synthesized.
+@Test func theFeedsRankAndTheMomentOfPreparingReachThePreparedAnecdote() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
+    )
+
+    let before = Date()
+    _ = try await preparer.refill(target: 2)
+    let after = Date()
+
+    let first = try #require(await queue.next())
+    let second = try #require(await queue.next())
+    #expect(first.id == "https://www.anekdot.ru/id/1/")
+    #expect(first.rank == 0)
+    #expect(second.rank == 1)
+    let stamped = try #require(first.preparedAt)
+    #expect(stamped >= before)
+    #expect(stamped <= after)
+}
+
+// MARK: Depth — target ten, threshold five
+
+// Five is the number the user chose over eight: a run that leaves five prepared
+// restocks five at a time rather than two. It is cheap either way, because the
+// sidecar keeps the model loaded in a `--serve` process and the 70-second load
+// is paid once per process rather than once per refill.
+//
+// Driven through a real `produce()` rather than by enqueueing five, so the
+// "run that leaves five" in the name is a run.
+@Test func aRunThatLeavesFivePreparedTriggersARefill() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let preparer = AnecdotePreparer(
+        source: makeSource(feed(items: 12)), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    _ = try await preparer.refill(target: 6)
+    // The shipped numbers, not a test's own: an explicit threshold here would
+    // pin whatever this line said rather than what the app ships with.
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    _ = try await connector.produce()
+    #expect(await queue.ready() == 5)
+
+    try await connector.maintain()
+
+    #expect(await queue.ready() == 10)
+}
+
+// One more in the queue and the same pass does nothing. Without this, a
+// threshold of six — or of ten, or "always refill" — passes the test above.
+@Test func aRunThatLeavesSixPreparedDoesNotRefill() async throws {
+    let transport = RecordingTransport()
+    transport.body = Data(feed(items: 12).utf8)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let preparer = AnecdotePreparer(
+        source: AnecdoteSource(transport: transport),
+        speech: StubSpeechSynthesizer(), queue: queue
+    )
+    _ = try await preparer.refill(target: 7)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    _ = try await connector.produce()
+    #expect(await queue.ready() == 6)
+    let fetchesSoFar = transport.requests.count
+
+    try await connector.maintain()
+
+    #expect(await queue.ready() == 6)
+    #expect(transport.requests.count == fetchesSoFar)
+}
+
+// The target and the threshold are two numbers, and a refill that stopped at
+// the threshold would satisfy "it restocked" while leaving the queue one run
+// away from doing it again.
+@Test func theRefillTopsUpToTenNotToTheThreshold() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let preparer = AnecdotePreparer(
+        source: makeSource(feed(items: 12)), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    _ = try await preparer.refill(target: 5)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    try await connector.topUpIfNeeded()
+
+    // Not five, and not the twelve the feed could supply.
+    #expect(await queue.ready() == 10)
+}
+
+// MARK: The daily refresh
+
+// A queue that is full of yesterday still has nothing from today, and the point
+// of the whole feature is today's jokes. So depth is not the only thing that
+// triggers a batch.
+//
+// The two moments are half an hour either side of midnight: one hour apart, and
+// on different calendar days. An implementation that asked how long ago the
+// newest anecdote was prepared would answer "an hour" and leave the queue as it
+// is — which is the mutation this fixture exists to kill.
+@Test func aQueueWithNothingPreparedTodayGetsAFreshBatchEvenWhenItIsFull() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let lastNight = startOfToday().addingTimeInterval(-30 * 60)
+    for index in 0..<10 {
+        await queue.enqueue(pending("leftover-\(index)", preparedAt: lastNight, rank: index))
+    }
+    let preparer = AnecdotePreparer(
+        source: makeSource(feed(items: 12)), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    let justAfterMidnight = startOfToday().addingTimeInterval(30 * 60)
+    let connector = AnecdoteConnector(
+        queue: queue, preparer: preparer, now: { justAfterMidnight }
+    )
+
+    try await connector.topUpIfNeeded()
+
+    // Ten fresh ones, and yesterday's ten still there: leftovers are kept and
+    // simply rank below everything new.
+    #expect(await queue.ready() == 20)
+    let head = try #require(await queue.next())
+    #expect(head.id.hasPrefix("leftover") == false)
+}
+
+// The other side of the same rule, and the reason the first one cannot stand
+// alone: a pass that refreshed unconditionally would satisfy it. Nearly twenty
+// hours apart, and the same calendar day — an implementation measuring elapsed
+// time with any window short enough to fire on the test above would fire here
+// too.
+//
+// Six prepared, so the depth rule is not what is answering: the threshold is
+// five, and six is above it.
+@Test func aQueueAlreadyRefreshedTodayIsNotRefreshedAgain() async throws {
+    let transport = RecordingTransport()
+    transport.body = Data(feed(items: 12).utf8)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let firstThingThisMorning = startOfToday().addingTimeInterval(5 * 60)
+    for index in 0..<6 {
+        await queue.enqueue(
+            pending("today-\(index)", preparedAt: firstThingThisMorning, rank: index)
+        )
+    }
+    let preparer = AnecdotePreparer(
+        source: AnecdoteSource(transport: transport),
+        speech: StubSpeechSynthesizer(), queue: queue
+    )
+    let thisEvening = startOfToday().addingTimeInterval(20 * 60 * 60)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer, now: { thisEvening })
+
+    try await connector.topUpIfNeeded()
+
+    #expect(await queue.ready() == 6)
+    #expect(transport.requests.isEmpty)
+}
+
+// MARK: The reaper has a caller
+
+// Task 17 built the ten-day reaper and nothing called it, so the retention the
+// user asked for was not in force and clips lived for ever. `maintain()` is the
+// host: it already runs off the play path, and it is the one pass that happens
+// both before and after every run.
+@Test func maintenanceReapsWhatHasOutlivedTheRetentionWindow() async throws {
+    let retention: TimeInterval = 60 * 60
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: retention
+    )
+    let stale = try pendingOnDisk(
+        "https://www.anekdot.ru/id/9/",
+        preparedAt: Date().addingTimeInterval(-(retention + 60)), rank: 0
+    )
+    let directory = try #require(stale.clips.first?.url.deletingLastPathComponent())
+    await queue.enqueue(stale)
+    // An empty feed, so the restock that follows the reap cannot put anything
+    // back and confuse what the count below is measuring.
+    let preparer = AnecdotePreparer(
+        source: makeSource("<rss><channel></channel></rss>"),
+        speech: StubSpeechSynthesizer(), queue: queue
+    )
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    try await connector.maintain()
+
+    #expect(await queue.ready() == 0)
+    #expect(FileManager.default.fileExists(atPath: directory.path) == false)
+}
+
+// The reap runs BEFORE the restock, and this is what the order buys: a batch
+// that has just aged out is replaced in the same pass rather than one run
+// later. Reaped afterwards, the depth the restock reads is the depth including
+// everything about to be deleted, so the pass looks at a stocked queue, does
+// nothing, and then empties it.
+//
+// Both moments are anchored to the start of today rather than to `Date()`, so
+// the batch is stale AND prepared today whatever hour the suite runs at — an
+// hour that decided which of those it was would decide which rule this test
+// measures.
+@Test func aBatchThatHasJustExpiredIsRestockedInTheSamePass() async throws {
+    let retention: TimeInterval = 60 * 60
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: retention
+    )
+    let thisMorning = startOfToday().addingTimeInterval(3 * 60 * 60)
+    for index in 0..<6 {
+        await queue.enqueue(pending("stale-\(index)", preparedAt: thisMorning, rank: index))
+    }
+    let preparer = AnecdotePreparer(
+        source: makeSource(feed(items: 12)), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    // Two hours after the batch was prepared, and on the same day: it is an
+    // hour past the window, and it is not what the daily refresh is looking for.
+    let twoHoursLater = thisMorning.addingTimeInterval(2 * 60 * 60)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer, now: { twoHoursLater })
+
+    try await connector.maintain()
+
+    #expect(await queue.ready() == 10)
+}

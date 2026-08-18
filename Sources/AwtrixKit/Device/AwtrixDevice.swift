@@ -61,7 +61,7 @@ public struct NotifyPayload: Sendable {
     }
 }
 
-public struct DeviceStats: Sendable, Decodable {
+public struct DeviceStats: Sendable, Decodable, Equatable {
     public let version: String
     public let uid: String
     public let bat: Int

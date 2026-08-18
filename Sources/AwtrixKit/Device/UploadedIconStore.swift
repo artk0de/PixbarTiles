@@ -55,18 +55,24 @@ public final class UserDefaultsUploadedIconStore: UploadedIconStore, @unchecked 
     /// other's list back and lose a record — an icon left on the flash that
     /// nothing in this app can name again. Its in-memory sibling has always
     /// locked; the asymmetry was the tell.
-    private let lock = NSLock()
+    ///
+    /// Static, not per instance. What is being guarded is a key in a defaults
+    /// domain, and two instances over one domain are two locks over one file —
+    /// which measured at 95 lost records in 200 while a single instance lost
+    /// none. The thing that can be shared is the only thing worth locking on,
+    /// and there is one connector's worth of traffic through it.
+    private static let lock = NSLock()
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
     public func uploadedIcons() -> [String] {
-        lock.withLock { stored() }
+        Self.lock.withLock { stored() }
     }
 
     public func record(_ name: String) {
-        lock.withLock {
+        Self.lock.withLock {
             var names = stored()
             guard !names.contains(name) else { return }
             names.append(name)
@@ -75,7 +81,7 @@ public final class UserDefaultsUploadedIconStore: UploadedIconStore, @unchecked 
     }
 
     public func forget(_ name: String) {
-        lock.withLock {
+        Self.lock.withLock {
             defaults.set(stored().filter { $0 != name }, forKey: Self.key)
         }
     }

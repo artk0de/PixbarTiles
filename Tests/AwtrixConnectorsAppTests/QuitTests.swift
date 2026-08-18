@@ -99,6 +99,11 @@ import Testing
     // termination sequence is not something to do to the process running the
     // tests. What this test owns is the question, not the answer — the answer is
     // `beginTermination`'s, three tests up.
+    //
+    // No `teardown()` either, for the same reason: the one this test started is
+    // already inside the budget's wait, and calling it again would be waiting on
+    // the gate this test is deliberately leaving shut. The loops it leaves are
+    // parked on the double's clock, not spinning.
 }
 
 // MARK: - The delegate

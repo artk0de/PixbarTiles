@@ -415,3 +415,52 @@ private final class RefusingTransport: Transport, @unchecked Sendable {
         return (Data("OK".utf8), response)
     }
 }
+
+// MARK: - Concurrent records
+
+// The durable store reads, modifies and writes, which `UserDefaults` does not
+// make atomic. Two installs finishing at once lose one of the two records — an
+// icon left on the flash that nothing in this app can ever name again.
+//
+// Sixteen concurrent records rather than two, because a lost update is a window
+// rather than a certainty. Sixteen and not two hundred: measured across five
+// runs each, an unlocked store keeps 2 of 16 and 22 of 200, so the smaller
+// burst is just as decisive — and two hundred tasks saturate the cooperative
+// pool hard enough to push `theProducersPacingIsObeyedPerClipNotAveraged`, a
+// timing test three files away, past its 70 ms budget in 6 runs out of 8. A
+// test that makes another one flaky is not a test, whatever it proves.
+@Test func concurrentRecordsAreNeverLost() async throws {
+    let suite = "uploaded-icons-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = UserDefaultsUploadedIconStore(defaults: defaults)
+
+    await withTaskGroup(of: Void.self) { group in
+        for index in 0..<16 {
+            group.addTask { store.record("icon-\(index)") }
+        }
+    }
+
+    #expect(store.uploadedIcons().count == 16)
+}
+
+// And the same through two instances over one domain, which is what the app
+// would have if the model and the host each built their own installer. The lock
+// guards the key, not the object, so this has to hold too — with a per-instance
+// lock it loses records at the same rate as no lock at all.
+@Test func concurrentRecordsThroughTwoInstancesAreNeverLostEither() async throws {
+    let suite = "uploaded-icons-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let first = UserDefaultsUploadedIconStore(defaults: defaults)
+    let second = UserDefaultsUploadedIconStore(defaults: defaults)
+
+    await withTaskGroup(of: Void.self) { group in
+        for index in 0..<16 {
+            let store = index.isMultiple(of: 2) ? first : second
+            group.addTask { store.record("icon-\(index)") }
+        }
+    }
+
+    #expect(first.uploadedIcons().count == 16)
+}

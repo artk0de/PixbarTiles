@@ -28,7 +28,10 @@ struct AwtrixConnectorsApp: App {
 /// A view of its own rather than an `Image` written inline, because a Scene does
 /// not observe anything: the glyph would be drawn once at launch and never
 /// change. A view does observe, so this is where the online state is read.
-private struct MenuBarGlyph: View {
+/// Internal rather than private so a test can draw it. What is worth drawing is
+/// the one thing `AppGlyph`'s own tests cannot say: that the view picks its
+/// image FROM the device state rather than from a constant.
+struct MenuBarGlyph: View {
     @ObservedObject var model: AppModel
 
     var body: some View {

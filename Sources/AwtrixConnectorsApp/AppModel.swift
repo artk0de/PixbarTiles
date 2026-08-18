@@ -20,6 +20,20 @@ protocol ConnectorRunning: Sendable {
 
 extension ConnectorHost: ConnectorRunning {}
 
+/// When a connector next runs, or what is stopping it.
+///
+/// The held reason is a `String` rather than a case per cause. Three more causes
+/// are already scheduled — a pause while the clock is unreachable, silence
+/// during a macOS Focus, a hold while a microphone is capturing — and each wants
+/// to say its own words without this type being edited to admit it. Today only
+/// one reason reaches it, and none of those three gates is built here.
+enum NextRun: Equatable, Sendable {
+    /// The schedule is asleep and will wake at this moment.
+    case due(Date)
+    /// Nothing is scheduled, and this is what is holding it.
+    case held(String)
+}
+
 /// Where this app writes.
 enum AppPaths {
     /// The directory the synthesizer writes clips into, and the root the
@@ -73,6 +87,8 @@ final class AppModel: ObservableObject {
     /// How often reachability is re-asked. Not a user setting: it costs one
     /// request and the answer drives a glyph, not a delivery.
     static let monitorInterval: TimeInterval = 20
+    /// What holds the schedule of a connector the user switched off.
+    static let switchedOff = "off"
 
     /// Read at launch and never written here — the panel has no editor for it.
     /// A different clock is pointed at with
@@ -85,6 +101,24 @@ final class AppModel: ObservableObject {
     let monitor: DeviceMonitor
 
     @Published private(set) var lastResults: [String: String] = [:]
+    /// When each connector is next due, or what is holding it.
+    @Published private(set) var nextRun: [String: NextRun] = [:]
+    /// What is in the address field: what the NEXT launch will use, where
+    /// `deviceHost` is what this one is using.
+    ///
+    /// Saved on every change rather than on submit. There is nothing to confirm
+    /// — the value only takes effect at the next launch — so a Save button would
+    /// be a step the user has to discover, and a field that looks saved and is
+    /// not is worse than one that never looked saved at all.
+    ///
+    /// `didSet` does not run during initialization, which is what keeps seeding
+    /// the field from writing this launch's address straight back to disk.
+    @Published var typedHost: String {
+        didSet { hostNote = DeviceHostField.save(typedHost, to: defaults) }
+    }
+    @Published private(set) var hostNote: String?
+    /// Whether the settings are showing instead of the panel.
+    @Published private(set) var settingsAreOpen = false
     @Published private(set) var iconStatus: String?
     /// Mirrored from `monitor` rather than read through it, because the poll
     /// below is what learns the answer and a view that wants only the glyph
@@ -98,6 +132,7 @@ final class AppModel: ObservableObject {
     private let host: any ConnectorRunning
     private let store: any SettingsStore
     private let installer: CatalogueIconInstaller
+    private let defaults: UserDefaults
     /// The delivery cadence, one sleeper per scheduled connector.
     private let scheduleSleep: Sleeping
     /// The reachability cadence, one sleeper for the whole app. Separate from
@@ -132,10 +167,13 @@ final class AppModel: ObservableObject {
         host: any ConnectorRunning,
         store: any SettingsStore,
         installer: CatalogueIconInstaller,
+        defaults: UserDefaults = .standard,
         sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
         self.deviceHost = deviceHost
+        self.typedHost = deviceHost
+        self.defaults = defaults
         self.registry = registry
         self.monitor = DeviceMonitor(device: device)
         self.host = host
@@ -183,7 +221,8 @@ final class AppModel: ObservableObject {
                 iconInstaller: installer
             ),
             store: store,
-            installer: installer
+            installer: installer,
+            defaults: defaults
         )
     }
 
@@ -267,6 +306,17 @@ final class AppModel: ObservableObject {
         store.save(settings, for: connector.id)
         reschedule(connector)
     }
+
+    // MARK: - Settings
+
+    /// Shows the settings in place of the panel.
+    ///
+    /// A view, not a mode. Nothing is stopped and nothing is paused: the
+    /// schedule, the reachability poll and any run in flight carry on behind it,
+    /// which is why this is a published flag and not a teardown.
+    func openSettings() { settingsAreOpen = true }
+
+    func closeSettings() { settingsAreOpen = false }
 
     // MARK: - Running
 
@@ -360,7 +410,10 @@ final class AppModel: ObservableObject {
     private func reschedule(_ connector: any Connector) {
         timers.removeValue(forKey: connector.id)?.cancel()
         let settings = settings(for: connector)
-        guard settings.isEnabled else { return }
+        guard settings.isEnabled else {
+            nextRun[connector.id] = .held(Self.switchedOff)
+            return
+        }
 
         let id = connector.id
         let interval = settings.interval
@@ -374,9 +427,7 @@ final class AppModel: ObservableObject {
                 // a released model is not held alive across the sleep by its
                 // own timer.
                 guard
-                    let delay = await self?.host.nextDelay(
-                        connectorId: id, interval: interval
-                    )
+                    let delay = await self?.noteNextRun(id, interval: interval)
                 else { return }
                 // The sleep comes first, so enabling a connector — or launching
                 // the app, which reschedules every one of them — does not fire a
@@ -389,6 +440,19 @@ final class AppModel: ObservableObject {
                 await self.tick(id)
             }
         }
+    }
+
+    /// Asks how long to wait, and writes down when that lands.
+    ///
+    /// One question, one answer, used for both sleeping and telling the user.
+    /// A label computed separately from `ConnectorSettings.interval` would agree
+    /// with the schedule right up until the retry policy shortened a wait — and
+    /// the occasions it then disagreed on are exactly the ones somebody opened
+    /// the panel to ask about.
+    private func noteNextRun(_ id: String, interval: TimeInterval) async -> TimeInterval {
+        let delay = await host.nextDelay(connectorId: id, interval: interval)
+        nextRun[id] = .due(Date().addingTimeInterval(delay))
+        return delay
     }
 
     private func tick(_ id: String) async {
@@ -431,11 +495,18 @@ final class AppModel: ObservableObject {
 
     /// Shows a result only when it is the last one outstanding.
     ///
-    /// An earlier run's outcome is dropped rather than shown, and that is the
-    /// point: the line describes what this connector is doing now, and what it
-    /// is doing now is still running. A dropped failure is not lost work —
-    /// deliveries are serialised, so the run still going meets whatever the
-    /// dropped one met, and reports it itself.
+    /// An earlier run's outcome is DISCARDED, not deferred: it is dropped here
+    /// and never shown, and the line goes on describing what this connector is
+    /// doing now, which is still running.
+    ///
+    /// That has a cost worth being plain about, because an earlier draft of this
+    /// comment claimed it did not. A run that fails while a second is in flight
+    /// loses its message for good, and the second one only reproduces it if it
+    /// takes the same path: run 1 `.failed("feed is down")` followed by run 2
+    /// `.skipped` leaves the panel reading `off`, with the outage never
+    /// mentioned. Showing both wants a second line per connector rather than a
+    /// word squeezed into this one, and that is a design decision nobody has
+    /// asked for yet.
     private func reportOutcome(_ result: RunResult, for id: String) {
         outstanding[id, default: 1] -= 1
         guard outstanding[id, default: 0] <= 0 else { return }

@@ -111,8 +111,8 @@ import Testing
     await waitUntil { schedule.durations.contains(42) }
 
     #expect(schedule.durations.contains(42))
-    // The other half: the interval is not ALSO slept. Only the monitor's own
-    // twenty seconds keeps it company.
+    // The other half: the interval is not ALSO slept. Nothing else is on this clock:
+    // the reachability poll sleeps on its own.
     #expect(schedule.durations.contains(5 * 60) == false)
     await subject.teardown()
 }
@@ -195,6 +195,7 @@ import Testing
 
     #expect(schedule.durations == [10 * 60])
     #expect(host.calls.isEmpty)
+    await subject.teardown()
 }
 
 @Test @MainActor func switchingAConnectorOffStopsItsSchedule() async {
@@ -212,6 +213,7 @@ import Testing
     #expect(await waitUntil({ host.calls.isEmpty == false }, limit: 0.05) == false)
 
     #expect(host.calls.isEmpty)
+    await subject.teardown()
 }
 
 // Changing the interval has to replace the schedule, not add to it. The
@@ -582,4 +584,180 @@ final class Signal: @unchecked Sendable {
     // one does not.
     poll.tick()
     #expect(await waitUntil({ poll.parked == 1 }, limit: 0.05) == false)
+}
+
+// MARK: - Behind the gear
+
+@MainActor
+private func scratchDefaults() throws -> (UserDefaults, String) {
+    let suite = "task28-\(UUID().uuidString)"
+    return (try #require(UserDefaults(suiteName: suite)), suite)
+}
+
+// The rule the move was most likely to lose. There is nothing to confirm — the
+// value only takes effect at the next launch — so a Save button or a submit
+// would be a step the user has to discover, on a control that used to need
+// neither.
+@Test @MainActor func theAddressSavesAsItIsTypedWithNothingToPress() throws {
+    let (defaults, suite) = try scratchDefaults()
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let subject = testModel(defaults: defaults, deviceHost: "192.168.1.72")
+
+    subject.typedHost = "10.0.0.9"
+
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+    #expect(subject.hostNote == DeviceHostField.takesEffectNextLaunch)
+}
+
+// Every keystroke, not just the last one: a field that saved only what it was
+// left holding would lose the address of anyone who types and then clicks away
+// without pressing anything.
+@Test @MainActor func everyChangeIsSavedRatherThanOnlyTheLast() throws {
+    let (defaults, suite) = try scratchDefaults()
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let subject = testModel(defaults: defaults, deviceHost: "192.168.1.72")
+
+    subject.typedHost = "10.0.0"
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0")
+    subject.typedHost = "10.0.0.9"
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+}
+
+// Seeding the field is not the user typing. `didSet` does not run during
+// initialization, and if it ever did, every launch would write this launch's
+// address back over whatever the user had queued for the next one.
+@Test @MainActor func seedingTheFieldSavesNothing() throws {
+    let (defaults, suite) = try scratchDefaults()
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let subject = testModel(defaults: defaults, deviceHost: "192.168.1.72")
+
+    #expect(subject.typedHost == "192.168.1.72")
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == nil)
+    #expect(subject.hostNote == nil)
+}
+
+// A blank entry is refused, and refusing it must not report a save either.
+@Test @MainActor func clearingTheFieldSavesNothingAndClaimsNothing() throws {
+    let (defaults, suite) = try scratchDefaults()
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let subject = testModel(defaults: defaults, deviceHost: "192.168.1.72")
+
+    subject.typedHost = "10.0.0.9"
+    subject.typedHost = "   "
+
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+    #expect(subject.hostNote == nil)
+}
+
+// Rule 3. A settings surface is a view, not a mode: the schedule keeps its
+// place, the poll keeps asking, and a delivery already under way is not
+// cancelled by somebody looking at a text field.
+@Test @MainActor func openingTheSettingsDoesNotDisturbAScheduledRun() async {
+    let gate = Gate()
+    let host = SpyHost(parkInRun: gate)
+    let schedule = Metronome()
+    let subject = testModel(host: host, sleep: schedule.sleep)
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { gate.enteredCount == 1 })
+
+    subject.openSettings()
+
+    // The run in flight still finishes, and the schedule takes its next turn.
+    #expect(subject.lastResults["stub"] == "running…")
+    gate.open()
+    #expect(await waitUntil { subject.lastResults["stub"] == "delivered" })
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(subject.settingsAreOpen)
+    await subject.teardown()
+}
+
+// MARK: - When the next one is due
+
+// The label reports the schedule's own next wake-up, read from the same answer
+// the schedule sleeps on.
+@Test @MainActor func theModelKnowsWhenTheNextRunIsDue() async {
+    let schedule = Metronome()
+    let subject = testModel(sleep: schedule.sleep)
+    let asked = Date()
+
+    subject.start()
+    #expect(await waitUntil { subject.nextRun["stub"] != nil })
+
+    guard case let .due(when) = subject.nextRun["stub"] else {
+        Issue.record("expected a due time, got \(String(describing: subject.nextRun["stub"]))")
+        return
+    }
+    // The stub's default interval is five minutes and nothing is failing.
+    #expect(abs(when.timeIntervalSince(asked) - 5 * 60) < 2)
+    await subject.teardown()
+}
+
+// The case a plausible implementation gets wrong, and the one the user most
+// wants right: a connector that has been failing is retried SOONER than its
+// interval — 30 s, then 60, then 120, capped at the interval it would otherwise
+// have waited. A label computed from `ConnectorSettings.interval` would read
+// five minutes while the schedule was thirty seconds away, and it would be
+// wrong on exactly the occasions somebody opened the panel to ask.
+@Test @MainActor func theDueTimeFollowsABackoffRatherThanTheNominalInterval() async {
+    let schedule = Metronome()
+    // The host answers 30 s, as it does for a connector whose last run failed.
+    let subject = testModel(host: SpyHost(delay: 30), sleep: schedule.sleep)
+    let asked = Date()
+
+    subject.start()
+    #expect(await waitUntil { subject.nextRun["stub"] != nil })
+
+    guard case let .due(when) = subject.nextRun["stub"] else {
+        Issue.record("expected a due time")
+        return
+    }
+    #expect(abs(when.timeIntervalSince(asked) - 30) < 2)
+    // And emphatically not the interval the settings name.
+    #expect(when.timeIntervalSince(asked) < 5 * 60)
+    await subject.teardown()
+}
+
+// A schedule that is held names what is holding it. Today only one thing can —
+// the user switching the connector off — and three more are coming; each will
+// supply its own words without this shape changing.
+@Test @MainActor func aHeldScheduleSaysWhatIsHoldingItInsteadOfNamingATime() {
+    let connector = StubConnector()
+    let store = InMemorySettingsStore()
+    store.save(ConnectorSettings(isEnabled: false, intervalPosition: 0), for: connector.id)
+    let subject = testModel(connectors: [connector], store: store)
+
+    subject.start()
+
+    #expect(subject.nextRun["stub"] == .held(AppModel.switchedOff))
+    #expect(NextRunLine.text(for: .held(AppModel.switchedOff)) == AppModel.switchedOff)
+}
+
+@Test @MainActor func aDisabledConnectorNamesNoNextTime() {
+    let connector = StubConnector()
+    let store = InMemorySettingsStore()
+    let subject = testModel(connectors: [connector], store: store)
+    subject.start()
+
+    subject.setEnabled(false, for: connector)
+
+    // No hour anywhere in what it says.
+    let line = NextRunLine.text(for: subject.nextRun["stub"]) ?? ""
+    #expect(line.contains(where: \.isNumber) == false)
+}
+
+@Test func nothingScheduledYetNamesNothing() {
+    #expect(NextRunLine.text(for: nil) == nil)
+}
+
+@Test func aDueTimeIsSaidAsAnHour() {
+    let when = Date(timeIntervalSince1970: 1_700_000_000)
+
+    #expect(
+        NextRunLine.text(for: .due(when))
+            == "next \(when.formatted(date: .omitted, time: .shortened))"
+    )
 }

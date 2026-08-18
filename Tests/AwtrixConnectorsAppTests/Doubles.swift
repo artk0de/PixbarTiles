@@ -265,6 +265,20 @@ let onlineStats = Data(#"{"version":"0.96","uid":"abc","bat":77,"ram":120,"ip_ad
 
 // MARK: - A model with nothing real behind it
 
+/// The clock a test did not inject: it parks rather than returning.
+///
+/// A no-op default turns the loop that was left uninjected into a spin — the
+/// reachability poll measured 9,876 requests in 200 ms, and a delivery loop
+/// 8,672 full ticks. Both awaited and yielded, so no harm was measurable, but a
+/// test profile where one loop runs ten thousand times is a bad place to look
+/// for a timing defect. Parking is what the real clock does between beats.
+///
+/// A long sleep rather than a continuation, because cancellation has to reach
+/// it: `teardown` cancels these loops and expects the sleep to throw.
+let parked: @Sendable (TimeInterval) async throws -> Void = { _ in
+    try await Task.sleep(for: .seconds(86_400))
+}
+
 @MainActor
 func testModel(
     connectors: [any Connector] = [StubConnector()],
@@ -272,8 +286,9 @@ func testModel(
     store: any SettingsStore = InMemorySettingsStore(),
     transport: any Transport = StubTransport(),
     uploads: any UploadedIconStore = InMemoryUploadedIconStore(),
-    sleep: @escaping AppModel.Sleeping = { _ in },
-    pollSleep: @escaping AppModel.Sleeping = { _ in },
+    defaults: UserDefaults = UserDefaults(suiteName: "testModel-\(UUID().uuidString)")!,
+    sleep: @escaping AppModel.Sleeping = parked,
+    pollSleep: @escaping AppModel.Sleeping = parked,
     deviceHost: String = "10.0.0.5"
 ) -> AppModel {
     let registry = ConnectorRegistry()
@@ -288,6 +303,7 @@ func testModel(
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: uploads
         ),
+        defaults: defaults,
         sleep: sleep,
         pollSleep: pollSleep
     )

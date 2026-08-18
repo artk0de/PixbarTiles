@@ -73,6 +73,16 @@ import Testing
     )
 }
 
+/// A store URL of this test's own.
+///
+/// `AnecdoteQueue.init` reads whatever file it is handed, and `AppPaths`
+/// resolves to the user's real `~/Library/Application Support`. A test has no
+/// business opening that, whatever it is asserting.
+private func scratchStore() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("live-\(UUID().uuidString).json")
+}
+
 // MARK: - The composition root
 
 @Test @MainActor func theAppIsWiredWithTheAnecdoteConnector() throws {
@@ -115,6 +125,37 @@ import Testing
 
     #expect(wiring.speech.outputDirectory == root)
     #expect(wiring.queue.clipRoot == root)
+}
+
+// The last line of debt 2 that was still a promise rather than a check: that
+// `live()` hands `anecdoteWiring` the app's own root, rather than an explicit
+// one of its own. Passing the whole temporary directory there left 304 tests
+// green.
+//
+// Read by reflection because `AnecdoteConnector.queue` is `private` and there is
+// no seam that returns it — `Mirror` reads stored properties regardless of
+// access control. Reflection to reach BEHAVIOUR would be wrong; this reads one
+// stored URL to check a wiring invariant, and the alternative was widening the
+// kit's API for a test. Not circular: `AppPaths.clipRoot` on the right is
+// separately pinned by `theClipRootIsADirectoryOfThisAppsOwn`, so moving the
+// constant fails there and overriding it at the call site fails here.
+@Test @MainActor func theAppHandsItsOwnClipRootToTheQueueItBuilds() throws {
+    let suite = "app-model-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let subject = AppModel.live(
+        defaults: defaults,
+        transport: StubTransport(),
+        anecdoteStore: FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-\(UUID().uuidString).json")
+    )
+
+    let connector = try #require(subject.registry.all.first)
+    let queue = try #require(
+        Mirror(reflecting: connector).children.compactMap { $0.value as? AnecdoteQueue }.first
+    )
+    #expect(queue.clipRoot == AppPaths.clipRoot)
 }
 
 // And that the root the app actually ships with is the one both ends get.
@@ -160,7 +201,7 @@ import Testing
     defer { defaults.removePersistentDomain(forName: suite) }
     defaults.set("10.0.0.9", forKey: AppModel.deviceHostKey)
 
-    #expect(AppModel.live(defaults: defaults).deviceHost == "10.0.0.9")
+    #expect(AppModel.live(defaults: defaults, anecdoteStore: scratchStore()).deviceHost == "10.0.0.9")
 }
 
 @Test @MainActor func theDeviceHostFallsBackToTheOneOnTheDesk() throws {
@@ -168,7 +209,10 @@ import Testing
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
 
-    #expect(AppModel.live(defaults: defaults).deviceHost == "192.168.1.72")
+    #expect(
+        AppModel.live(defaults: defaults, anecdoteStore: scratchStore()).deviceHost
+            == "192.168.1.72"
+    )
 }
 
 // MARK: - What the panel says about a device nobody has asked yet
@@ -391,7 +435,7 @@ import Testing
 
     // Read back the way the app reads it, not the way it was written: a field
     // writing some other key would save happily and change nothing.
-    #expect(AppModel.live(defaults: defaults).deviceHost == "10.0.0.9")
+    #expect(AppModel.live(defaults: defaults, anecdoteStore: scratchStore()).deviceHost == "10.0.0.9")
 }
 
 // Nothing else in the app writes this key, so a blank entry saved would come up

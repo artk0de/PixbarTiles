@@ -102,6 +102,21 @@ enum DeviceHostField {
     }
 }
 
+/// When the next run is due, or what is holding it.
+///
+/// A time and a reason are the same slot because they answer the same question,
+/// and only one of them is ever true. Naming an hour while something is holding
+/// the schedule is the failure worth avoiding: the user plans around it.
+enum NextRunLine {
+    static func text(for next: NextRun?) -> String? {
+        switch next {
+        case nil: nil
+        case let .due(date): "next \(date.formatted(date: .omitted, time: .shortened))"
+        case let .held(reason): reason
+        }
+    }
+}
+
 struct MenuPanel: View {
     @ObservedObject var model: AppModel
     /// Observed separately from `model`: a nested `ObservableObject` publishes
@@ -111,38 +126,49 @@ struct MenuPanel: View {
     /// Observed separately for the same reason `monitor` is: a nested
     /// `ObservableObject` publishes nothing to whoever holds it.
     @ObservedObject var discovery: DeviceBrowser
-    /// What is in the address field. Seeded from the model rather than bound to
-    /// it: `deviceHost` is what THIS launch is using, and the field is what the
-    /// NEXT one will.
-    @State private var typedHost: String
-    @State private var hostNote: String?
-
-    /// Seeds the field at construction rather than in `onAppear`, so the
-    /// address is in it the first time the panel is drawn — and so what is
-    /// drawn can be read back by a test that never opens a window.
-    init(model: AppModel, monitor: DeviceMonitor, discovery: DeviceBrowser) {
-        self.model = model
-        self.monitor = monitor
-        self.discovery = discovery
-        _typedHost = State(initialValue: model.deviceHost)
+    var body: some View {
+        if model.settingsAreOpen {
+            SettingsSheet(model: model)
+        } else {
+            panel
+        }
     }
 
-    var body: some View {
+    /// What a click opens: is the clock alive, and run something now.
+    ///
+    /// Everything set once and forgotten went behind the gear in the last row.
+    /// The address field and the icon action were each a row of a menu that
+    /// opens dozens of times a day and were each reached for about once.
+    private var panel: some View {
         VStack(alignment: .leading, spacing: 12) {
             statusSection
             discoverySection
-            deviceHostSection
             Divider()
             ForEach(model.registry.all, id: \.id) { connector in
                 connectorRow(connector)
             }
             Divider()
-            iconSection
-            Divider()
-            Button("Quit") { NSApplication.shared.terminate(nil) }
+            lastRow
         }
         .padding(14)
         .frame(width: 320)
+    }
+
+    /// Quit, and the gear.
+    ///
+    /// The gear shares the row rather than taking one of its own: it is a corner
+    /// of what is already there, and a panel that grew a row to hold a settings
+    /// button would have paid for the tidying with the space it was tidying.
+    private var lastRow: some View {
+        HStack {
+            Button("Quit") { NSApplication.shared.terminate(nil) }
+            Spacer()
+            Button { model.openSettings() } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Settings")
+        }
     }
 
     private var statusSection: some View {
@@ -187,46 +213,6 @@ struct MenuPanel: View {
         }
     }
 
-    /// The address the next launch will use.
-    ///
-    /// The other half of discovery: the line above names what is on the
-    /// network, and this is where that name's address gets written down. It
-    /// writes the same `UserDefaults` key `AppModel.live()` reads at launch —
-    /// the identical thing `defaults write dev.artk0re.awtrix-connectors
-    /// deviceHost …` does, without a terminal — and rebuilds nothing, which is
-    /// why it can exist beside a `deviceHost` that stays a `let`.
-    private var deviceHostSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                TextField("Device address", text: $typedHost)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.small)
-                    .onSubmit { hostNote = DeviceHostField.save(typedHost, to: .standard) }
-                Button("Save") { hostNote = DeviceHostField.save(typedHost, to: .standard) }
-                    .controlSize(.small)
-            }
-            if let hostNote {
-                Text(hostNote).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-        }
-    }
-
-    /// The only thing this app writes to the device's flash, and the only way to
-    /// take it back off.
-    ///
-    /// A menu item rather than something quit does: the icons are meant to
-    /// survive quit and relaunch, so removing them on the way out would
-    /// re-download the same bytes on the way back in.
-    private var iconSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button("Remove icons this app uploaded") { model.removeInstalledIcons() }
-            .controlSize(.small)
-            if let status = model.iconStatus {
-                Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-        }
-    }
-
     private func connectorRow(_ connector: any Connector) -> some View {
         let settings = model.settings(for: connector)
         return VStack(alignment: .leading, spacing: 6) {
@@ -250,6 +236,13 @@ struct MenuPanel: View {
             HStack {
                 Button("Run now") { model.runNow(connector.id) }
                     .controlSize(.small)
+                // Beside the button that overrides it, because the two answer
+                // the same question from opposite ends: when will this happen,
+                // and make it happen now.
+                if let due = NextRunLine.text(for: model.nextRun[connector.id]) {
+                    Text(due).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
                 if let result = model.lastResults[connector.id] {
                     Text(result).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }

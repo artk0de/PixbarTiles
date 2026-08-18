@@ -311,7 +311,10 @@ private struct SeededGenerator: RandomNumberGenerator {
     #expect(await queue.ready() == 1)
     // announcement + narration + two dialogue lines + laughter
     #expect(speech.received.count == 5)
-    #expect(speech.received.map(\.voice.id) == ["arthas", "arthas", "arthas", "peon", "arthas"])
+    // actor 0 says "Я подъехал" and lands male, so both actors draw from the
+    // pool: arthas opens it, acolyte follows.
+    #expect(speech.received.map(\.voice.id)
+        == ["arthas", "arthas", "arthas", "acolyte", "arthas"])
 }
 
 @Test func preparerSkipsAnecdotesAlreadyPlayed() async throws {

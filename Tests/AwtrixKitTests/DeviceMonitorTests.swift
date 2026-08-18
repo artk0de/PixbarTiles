@@ -106,6 +106,20 @@ private final class ChangeCounter: @unchecked Sendable {
     #expect(monitor.batteryPercent == 83)
 }
 
+@Test @MainActor func aDeviceThatDisappearsGoesOfflineAgain() async {
+    let transport = RecordingTransport()
+    transport.body = Data(statsJSON.utf8)
+    let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
+    await monitor.refresh()
+    #expect(monitor.isOnline)
+
+    transport.status = 500
+    await monitor.refresh()
+
+    #expect(!monitor.isOnline)
+    #expect(monitor.batteryPercent == nil)
+}
+
 @Test @MainActor func refreshAsksTheDeviceForItsStatsOnce() async throws {
     let transport = RecordingTransport()
     transport.body = Data(statsJSON.utf8)

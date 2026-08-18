@@ -50,6 +50,55 @@ import Testing
     #expect(Date().timeIntervalSince(started) < 1)
 }
 
+// A clock that cannot tell the time must expire the budget rather than remove
+// it. Swallowed, nothing is ever left to offer an answer and the wait this type
+// exists to bound becomes unbounded — a quit that hangs for ever.
+@Test func aClockThatFailsExpiresTheBudgetRatherThanRemovingIt() async {
+    struct BrokenClock: Error {}
+    let budget = QuitBudget(seconds: 0.01, sleep: { _ in throw BrokenClock() })
+
+    let settled = await budget.settle {
+        try? await Task.sleep(for: .milliseconds(400))
+    }
+
+    #expect(settled == false)
+}
+
+// MARK: - The line macOS actually calls
+
+// `applicationShouldTerminate` is the only thing connecting any of the above to
+// macOS. Returning a bare `.terminateNow` ends the process without taking the
+// budget, without tearing down and without waiting for the banner release — and
+// every test below this line still passes, because none of them go through it.
+//
+// Two claims, because the return value alone does not carry the second: macOS
+// is asked to wait, AND the budget is actually taken. The budget's own clock is
+// the witness for the second — `settle` starts its expiry racer by sleeping the
+// budget, so a duration appearing on that clock is proof the wait began.
+@Test @MainActor func quittingAsksMacOSToWaitAndTakesTheBudget() async {
+    let gate = Gate()
+    let schedule = Metronome()
+    let subject = testModel(host: SpyHost(parkInRun: gate), sleep: schedule.sleep)
+    subject.start()
+    await waitUntil { schedule.parked == 1 }
+    schedule.tick()
+    await waitUntil { gate.enteredCount == 1 }
+
+    let budgetClock = Metronome()
+    let delegate = AppDelegate(
+        model: subject, budget: QuitBudget(seconds: 600, sleep: budgetClock.sleep)
+    )
+
+    #expect(delegate.applicationShouldTerminate(.shared) == .terminateLater)
+    #expect(await waitUntil { budgetClock.durations == [600] })
+
+    // The gate stays shut on purpose. Opening it would let the reply reach the
+    // real `NSApplication`, and `reply(toApplicationShouldTerminate:)` outside a
+    // termination sequence is not something to do to the process running the
+    // tests. What this test owns is the question, not the answer — the answer is
+    // `beginTermination`'s, three tests up.
+}
+
 // MARK: - The delegate
 
 @Test @MainActor func quittingAsksForMoreTimeAndRepliesOnlyOnceTeardownHasSettled() async {

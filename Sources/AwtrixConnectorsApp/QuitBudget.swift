@@ -53,9 +53,18 @@ struct QuitBudget: Sendable {
             await first.offer(true)
         }
         let expiry = Task {
-            // A thrown sleep is this task being cancelled by the line below,
-            // which happens only once the answer is already in.
-            guard (try? await sleep(seconds)) != nil else { return }
+            do {
+                try await sleep(seconds)
+            } catch is CancellationError {
+                // This task, cancelled by the line below — which only runs once
+                // the answer is already in.
+                return
+            } catch {
+                // Any other failure is a clock that cannot tell the time, and
+                // the safe reading of that is an expired budget. Swallowed, it
+                // would leave nothing to ever offer `false`, and the wait this
+                // type exists to bound would be unbounded.
+            }
             await first.offer(false)
         }
 

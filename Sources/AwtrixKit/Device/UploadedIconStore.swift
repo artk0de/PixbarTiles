@@ -50,23 +50,39 @@ public final class UserDefaultsUploadedIconStore: UploadedIconStore, @unchecked 
     private static let key = "uploadedIcons"
 
     private let defaults: UserDefaults
+    /// Both mutators read, modify and write, which `UserDefaults` does not make
+    /// atomic for us. Two installs finishing at once would otherwise write each
+    /// other's list back and lose a record — an icon left on the flash that
+    /// nothing in this app can name again. Its in-memory sibling has always
+    /// locked; the asymmetry was the tell.
+    private let lock = NSLock()
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
     public func uploadedIcons() -> [String] {
-        defaults.stringArray(forKey: Self.key) ?? []
+        lock.withLock { stored() }
     }
 
     public func record(_ name: String) {
-        var names = uploadedIcons()
-        guard !names.contains(name) else { return }
-        names.append(name)
-        defaults.set(names, forKey: Self.key)
+        lock.withLock {
+            var names = stored()
+            guard !names.contains(name) else { return }
+            names.append(name)
+            defaults.set(names, forKey: Self.key)
+        }
     }
 
     public func forget(_ name: String) {
-        defaults.set(uploadedIcons().filter { $0 != name }, forKey: Self.key)
+        lock.withLock {
+            defaults.set(stored().filter { $0 != name }, forKey: Self.key)
+        }
+    }
+
+    /// Read under the lock by every caller above. A value of another type reads
+    /// as no record at all, which is the safe direction: nothing is removed.
+    private func stored() -> [String] {
+        defaults.stringArray(forKey: Self.key) ?? []
     }
 }

@@ -73,11 +73,11 @@ import Testing
 
 @Test @MainActor func aScheduledConnectorDoesNotFireOnTheSpot() async {
     let host = SpyHost()
-    let metronome = Metronome()
-    let subject = testModel(host: host, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(host: host, sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { metronome.durations.contains(5 * 60) }
+    await waitUntil { schedule.durations.contains(5 * 60) }
 
     // Launching the app reschedules every connector. Firing on the spot would
     // put an anecdote on the clock at every launch, which nobody asked for.
@@ -87,13 +87,13 @@ import Testing
 
 @Test @MainActor func aScheduleSleepsTheConnectorsOwnInterval() async {
     let connector = StubConnector(defaultInterval: 5 * 60)
-    let metronome = Metronome()
-    let subject = testModel(connectors: [connector], sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(connectors: [connector], sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { metronome.durations.contains(5 * 60) }
+    await waitUntil { schedule.durations.contains(5 * 60) }
 
-    #expect(metronome.durations.contains(5 * 60))
+    #expect(schedule.durations.contains(5 * 60))
     await subject.teardown()
 }
 
@@ -104,16 +104,16 @@ import Testing
 @Test @MainActor func theScheduleWaitsAsLongAsTheHostSays() async {
     let connector = StubConnector(defaultInterval: 5 * 60)
     let host = SpyHost(delay: 42)
-    let metronome = Metronome()
-    let subject = testModel(connectors: [connector], host: host, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(connectors: [connector], host: host, sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { metronome.durations.contains(42) }
+    await waitUntil { schedule.durations.contains(42) }
 
-    #expect(metronome.durations.contains(42))
+    #expect(schedule.durations.contains(42))
     // The other half: the interval is not ALSO slept. Only the monitor's own
     // twenty seconds keeps it company.
-    #expect(metronome.durations.contains(5 * 60) == false)
+    #expect(schedule.durations.contains(5 * 60) == false)
     await subject.teardown()
 }
 
@@ -122,16 +122,17 @@ import Testing
 // run and never see a failure at all.
 @Test @MainActor func theScheduleAsksHowLongToWaitBeforeEveryRun() async {
     let host = SpyHost()
-    let metronome = Metronome()
-    let subject = testModel(host: host, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(host: host, sleep: schedule.sleep)
 
     subject.start()
-    // Both loops asleep — the monitor's and this connector's. `tick()` releases
-    // whatever is parked, so waiting for "something is parked" would let the
-    // monitor answer for the schedule and tick a connector that has not yet
-    // reached its sleep.
-    await waitUntil { metronome.parked == 2 }
-    metronome.tick()
+    // The schedule's own clock, not an aggregate over both loops. `tick()`
+    // releases whatever is parked on the clock it is called on, so counting
+    // sleepers across the poll and the schedule together would let the poll
+    // answer for the schedule and tick a connector that has not yet reached
+    // its sleep.
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
     await waitUntil { host.delayQueries == 2 }
 
     #expect(host.delayQueries == 2)
@@ -143,12 +144,12 @@ import Testing
 // turns every firing into a 70-second model load on the play path.
 @Test @MainActor func everyTickMaintainsBeforeItRuns() async {
     let host = SpyHost()
-    let metronome = Metronome()
-    let subject = testModel(host: host, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(host: host, sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { metronome.parked > 0 }
-    metronome.tick()
+    await waitUntil { schedule.parked > 0 }
+    schedule.tick()
     await waitUntil { host.calls.count >= 2 }
 
     #expect(host.calls == ["maintain:stub", "run:stub"])
@@ -157,14 +158,16 @@ import Testing
 
 @Test @MainActor func theScheduleKeepsFiring() async {
     let host = SpyHost()
-    let metronome = Metronome()
-    let subject = testModel(host: host, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(host: host, sleep: schedule.sleep)
 
     subject.start()
     for _ in 0..<2 {
-        await waitUntil { metronome.parked > 0 }
-        metronome.tick()
-        await waitUntil { metronome.parked > 0 }
+        // Parked, then released, then parked again — all on the schedule's
+        // clock, so each beat is this connector's and no other loop can spend
+        // one for it.
+        #expect(await waitUntil { schedule.parked == 1 })
+        schedule.tick()
     }
     await waitUntil { host.calls.count >= 4 }
 
@@ -173,35 +176,39 @@ import Testing
 }
 
 @Test @MainActor func aDisabledConnectorIsNeverScheduled() async {
-    let connector = StubConnector()
+    let off = StubConnector(id: "off", defaultInterval: 5 * 60)
+    let on = StubConnector(id: "on", defaultInterval: 10 * 60)
     let store = InMemorySettingsStore()
-    store.save(ConnectorSettings(isEnabled: false, intervalPosition: 0), for: connector.id)
+    store.save(ConnectorSettings(isEnabled: false, intervalPosition: 0), for: off.id)
     let host = SpyHost()
-    let metronome = Metronome()
-    let subject = testModel(connectors: [connector], host: host, store: store, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [off, on], host: host, store: store, sleep: schedule.sleep
+    )
 
     subject.start()
-    // Nothing to wait for, so the assertion is that nothing ever starts one.
-    // The poll's own sleep is the only one there should be: a disabled
-    // connector does not even reach an interval.
-    #expect(await waitUntil({ metronome.durations.count > 1 }, limit: 0.05) == false)
+    // A second connector that IS on, so the negative claim has a witness. On
+    // its own, "the schedule clock was never asked" is satisfied just as well
+    // by a model that never got started at all — which is how this test used to
+    // pass on a run where nothing had reached a sleep yet.
+    #expect(await waitUntil { schedule.durations.contains(10 * 60) })
 
-    #expect(metronome.durations == [AppModel.monitorInterval])
+    #expect(schedule.durations == [10 * 60])
     #expect(host.calls.isEmpty)
 }
 
 @Test @MainActor func switchingAConnectorOffStopsItsSchedule() async {
     let connector = StubConnector()
     let host = SpyHost()
-    let metronome = Metronome()
-    let subject = testModel(connectors: [connector], host: host, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(connectors: [connector], host: host, sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { metronome.parked > 0 }
+    await waitUntil { schedule.parked > 0 }
     subject.setEnabled(false, for: connector)
     // The schedule is gone, so releasing whatever was parked releases a sleep
     // nobody is looping on any more.
-    metronome.tick()
+    schedule.tick()
     #expect(await waitUntil({ host.calls.isEmpty == false }, limit: 0.05) == false)
 
     #expect(host.calls.isEmpty)
@@ -213,20 +220,20 @@ import Testing
 @Test @MainActor func changingTheIntervalReplacesTheScheduleRatherThanAddingOne() async {
     let connector = StubConnector(defaultInterval: 5 * 60)
     let host = SpyHost()
-    let metronome = Metronome()
-    let subject = testModel(connectors: [connector], host: host, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(connectors: [connector], host: host, sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { metronome.parked > 0 }
+    await waitUntil { schedule.parked > 0 }
     subject.setIntervalPosition(1, for: connector)
-    await waitUntil { metronome.durations.contains(10 * 60) }
-    metronome.tick()
+    await waitUntil { schedule.durations.contains(10 * 60) }
+    schedule.tick()
     await waitUntil { host.calls.count >= 2 }
 
     // One tick, not two: the schedule that was sleeping five minutes is gone.
     #expect(await waitUntil({ host.calls.count > 2 }, limit: 0.05) == false)
     #expect(host.calls == ["maintain:stub", "run:stub"])
-    #expect(metronome.durations.contains(10 * 60))
+    #expect(schedule.durations.contains(10 * 60))
     await subject.teardown()
 }
 
@@ -235,11 +242,11 @@ import Testing
 // on the clock by the very act of quitting.
 @Test @MainActor func aCancelledScheduleDoesNotStartOneLastRun() async {
     let host = SpyHost()
-    let metronome = Metronome()
-    let subject = testModel(host: host, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(host: host, sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { metronome.parked > 0 }
+    await waitUntil { schedule.parked > 0 }
     await subject.teardown()
 
     #expect(host.calls.isEmpty)
@@ -254,12 +261,12 @@ import Testing
 @Test @MainActor func teardownWaitsForADeliveryThatIsAlreadyRunning() async {
     let gate = Gate()
     let host = SpyHost(parkInRun: gate)
-    let metronome = Metronome()
-    let subject = testModel(host: host, sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(host: host, sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { metronome.parked > 0 }
-    metronome.tick()
+    await waitUntil { schedule.parked > 0 }
+    schedule.tick()
     await waitUntil { gate.enteredCount == 1 }
 
     let finished = Signal()
@@ -306,16 +313,17 @@ import Testing
 // stale while a delivery is in progress.
 @Test @MainActor func aScheduledRunSaysItIsRunningToo() async {
     let gate = Gate()
-    let metronome = Metronome()
-    let subject = testModel(host: SpyHost(parkInRun: gate), sleep: metronome.sleep)
+    let schedule = Metronome()
+    let subject = testModel(host: SpyHost(parkInRun: gate), sleep: schedule.sleep)
 
     subject.start()
-    await waitUntil { metronome.parked > 0 }
-    metronome.tick()
+    await waitUntil { schedule.parked > 0 }
+    schedule.tick()
     await waitUntil { gate.enteredCount == 1 }
 
     #expect(subject.lastResults["stub"] == "running…")
     gate.open()
+    await subject.teardown()
 }
 
 // The run the user asked for puts the same held banner on the clock as a
@@ -341,8 +349,8 @@ import Testing
 // MARK: - Reachability
 
 @Test @MainActor func theGlyphsOnlineFlagFollowsTheMonitor() async {
-    let metronome = Metronome()
-    let subject = testModel(transport: StubTransport(body: onlineStats), sleep: metronome.sleep)
+    let poll = Metronome()
+    let subject = testModel(transport: StubTransport(body: onlineStats), pollSleep: poll.sleep)
 
     #expect(subject.isDeviceOnline == false)
     subject.start()
@@ -352,9 +360,9 @@ import Testing
 }
 
 @Test @MainActor func aDeviceThatCannotBeReachedLeavesTheGlyphUnlit() async {
-    let metronome = Metronome()
+    let poll = Metronome()
     let subject = testModel(
-        transport: StubTransport(failure: URLError(.cannotConnectToHost)), sleep: metronome.sleep
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)), pollSleep: poll.sleep
     )
 
     subject.start()
@@ -379,7 +387,8 @@ import Testing
     uploads.record("9039")
     let subject = testModel(transport: transport, uploads: uploads)
 
-    await subject.removeInstalledIcons()
+    subject.removeInstalledIcons()
+    #expect(await waitUntil { subject.iconStatus == "removed 9039" })
 
     let deletions = transport.requests.filter { $0.httpMethod == "DELETE" }
     #expect(deletions.count == 1)
@@ -392,10 +401,10 @@ import Testing
     let transport = StubTransport()
     let subject = testModel(transport: transport)
 
-    await subject.removeInstalledIcons()
+    subject.removeInstalledIcons()
+    #expect(await waitUntil { subject.iconStatus == "nothing this app uploaded" })
 
     #expect(transport.requests.isEmpty)
-    #expect(subject.iconStatus == "nothing this app uploaded")
 }
 
 @Test @MainActor func aRemovalTheDeviceRefusesIsReportedRatherThanSwallowed() async {
@@ -405,10 +414,9 @@ import Testing
         transport: StubTransport(status: 500, body: Data("boom".utf8)), uploads: uploads
     )
 
-    await subject.removeInstalledIcons()
+    subject.removeInstalledIcons()
+    #expect(await waitUntil { subject.iconStatus == "could not remove 9039" })
 
-    let status = subject.iconStatus ?? ""
-    #expect(status.hasPrefix("failed:"))
     // Still recorded, so the next attempt can take it off.
     #expect(uploads.uploadedIcons() == ["9039"])
 }
@@ -420,4 +428,158 @@ final class Signal: @unchecked Sendable {
 
     var isSent: Bool { lock.withLock { sent } }
     func send() { lock.withLock { sent = true } }
+}
+
+// The same silence the run button had, on the button one divider away:
+// `removeUploaded` sends one DELETE per recorded icon and each costs the
+// transport's full timeout against a device that has stopped answering.
+@Test @MainActor func removingIconsSaysSoBeforeItStarts() async {
+    let gate = Gate()
+    let uploads = InMemoryUploadedIconStore()
+    uploads.record("9039")
+    let subject = testModel(transport: GatedTransport(gate: gate), uploads: uploads)
+
+    subject.removeInstalledIcons()
+    await waitUntil { gate.enteredCount == 1 }
+
+    #expect(subject.iconStatus == "removing…")
+    gate.open()
+    #expect(await waitUntil { subject.iconStatus == "removed 9039" })
+}
+
+// The removal task belongs to the model for the same reason the run's does:
+// teardown can only wait for a task it holds. Lower stakes than a held banner —
+// a delete cut short leaves the record intact — but it is the identical shape,
+// and it was left in the view by the same commit that fixed it for runs.
+@Test @MainActor func teardownWaitsForAnIconRemoval() async {
+    let gate = Gate()
+    let uploads = InMemoryUploadedIconStore()
+    uploads.record("9039")
+    let subject = testModel(transport: GatedTransport(gate: gate), uploads: uploads)
+
+    subject.removeInstalledIcons()
+    await waitUntil { gate.enteredCount == 1 }
+
+    let finished = Signal()
+    Task { await subject.teardown(); finished.send() }
+    #expect(await waitUntil({ finished.isSent }, limit: 0.05) == false)
+
+    gate.open()
+    #expect(await waitUntil { finished.isSent })
+}
+
+@Test @MainActor func asecondRemovalPressWhileOneIsRunningIsIgnored() async {
+    let gate = Gate()
+    let uploads = InMemoryUploadedIconStore()
+    uploads.record("9039")
+    let subject = testModel(transport: GatedTransport(gate: gate), uploads: uploads)
+
+    subject.removeInstalledIcons()
+    await waitUntil { gate.enteredCount == 1 }
+    subject.removeInstalledIcons()
+
+    // One pass over the record, not two racing over the same names.
+    #expect(await waitUntil({ gate.enteredCount > 1 }, limit: 0.05) == false)
+    gate.open()
+    #expect(await waitUntil { subject.iconStatus == "removed 9039" })
+}
+
+// MARK: - What the panel says while work is happening
+
+// The scheduled tick's expensive half is `maintain`, not `runOnce`: a refill
+// loads the model and synthesizes a batch, and after it the run finds a full
+// queue and is quick. A marker written between the two lands exactly where the
+// wait is already over, and the panel shows the previous run's outcome for the
+// whole minute — which is the defect, not the fix for it.
+@Test @MainActor func theScheduledTickSaysItIsRunningBeforeTheRefillRatherThanAfterIt() async {
+    let refill = Gate()
+    let schedule = Metronome()
+    let subject = testModel(
+        host: SpyHost(parkInMaintain: refill), sleep: schedule.sleep
+    )
+
+    // A previous run's outcome on the panel, which is what the user is looking
+    // at when the next tick starts.
+    subject.runNow("stub")
+    #expect(await waitUntil { subject.lastResults["stub"] == "delivered" })
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    await waitUntil { refill.enteredCount == 1 }
+
+    #expect(subject.lastResults["stub"] == "running…")
+    refill.open()
+    await subject.teardown()
+}
+
+// What a person does after 37 seconds of silence is press it again. Run 1
+// finishing then writes `delivered` while run 2 is still going, and the panel
+// is back to claiming a finished delivery during a running one — the same lie,
+// provoked by the very behaviour the silence induces.
+@Test @MainActor func aFinishedRunDoesNotSpeakWhileALaterOneIsStillGoing() async {
+    let host = QueueingHost()
+    let subject = testModel(host: host)
+
+    subject.runNow("stub")
+    subject.runNow("stub")
+    #expect(await waitUntil { host.started == 2 })
+
+    host.finish(0)
+    // Run 1 is done and run 2 is not. Nothing may claim a delivery yet.
+    #expect(await waitUntil({ subject.lastResults["stub"] != "running…" }, limit: 0.05) == false)
+    #expect(subject.lastResults["stub"] == "running…")
+
+    host.finish(1)
+    #expect(await waitUntil { subject.lastResults["stub"] == "delivered" })
+}
+
+// The count has to come back down, or the panel is stuck on `running…` for the
+// rest of the session — the opposite failure, and the one a naive "only the
+// last one speaks" flag would introduce.
+@Test @MainActor func twoRunsOneAfterAnotherEachReportWhenTheyAreTheOnlyOneLeft() async {
+    let host = QueueingHost()
+    let subject = testModel(host: host)
+
+    subject.runNow("stub")
+    #expect(await waitUntil { host.started == 1 })
+    host.finish(0)
+    #expect(await waitUntil { subject.lastResults["stub"] == "delivered" })
+
+    subject.runNow("stub")
+    #expect(await waitUntil { host.started == 2 })
+    #expect(subject.lastResults["stub"] == "running…")
+    host.finish(1)
+    #expect(await waitUntil { subject.lastResults["stub"] == "delivered" })
+}
+
+// The `.cancelled` case of `record`, which nothing exercised. A quit during a
+// run must leave the panel saying what happened rather than stuck at `running…`.
+@Test @MainActor func aRunCancelledByQuittingSaysSoRatherThanStayingAtRunning() async {
+    let host = CancellingHost()
+    let subject = testModel(host: host)
+
+    subject.runNow("stub")
+    #expect(await waitUntil { host.entered == 1 })
+    await subject.teardown()
+
+    #expect(subject.lastResults["stub"] == "cancelled")
+}
+
+// Teardown's own docstring is about waiting for deliveries, and the poll is the
+// other loop it owns. Left running it would keep asking an unreachable device
+// for its battery while the app is trying to die.
+@Test @MainActor func teardownStopsTheReachabilityPollToo() async {
+    let poll = Metronome()
+    let subject = testModel(transport: StubTransport(body: onlineStats), pollSleep: poll.sleep)
+
+    subject.start()
+    #expect(await waitUntil { poll.parked == 1 })
+
+    await subject.teardown()
+
+    // Released after teardown: a loop that is still there re-parks, a cancelled
+    // one does not.
+    poll.tick()
+    #expect(await waitUntil({ poll.parked == 1 }, limit: 0.05) == false)
 }

@@ -31,12 +31,14 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     private var recorded: [String] = []
     private var delayCalls = 0
     private let parkInRun: Gate?
+    private let parkInMaintain: Gate?
     private let delay: TimeInterval?
 
     /// `delay` stands in for a connector that is failing: nil answers with the
     /// interval it was asked about, which is what a healthy one gets.
-    init(parkInRun: Gate? = nil, delay: TimeInterval? = nil) {
+    init(parkInRun: Gate? = nil, parkInMaintain: Gate? = nil, delay: TimeInterval? = nil) {
         self.parkInRun = parkInRun
+        self.parkInMaintain = parkInMaintain
         self.delay = delay
     }
 
@@ -58,6 +60,10 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
 
     func maintain(connectorId: String) async -> MaintenanceResult {
         lock.withLock { recorded.append("maintain:\(connectorId)") }
+        // The expensive half in the real host: a refill loads the model and
+        // synthesizes a batch. A double that returns instantly cannot show
+        // whether the panel says anything during it.
+        await parkInMaintain?.enter()
         return .completed
     }
 
@@ -106,12 +112,22 @@ final class Gate: @unchecked Sendable {
 
 // MARK: - Time
 
-/// Stands in for `Task.sleep` so a schedule can be driven a tick at a time.
+/// Stands in for `Task.sleep` so one cadence can be driven a tick at a time.
 ///
 /// Every sleeper parks until `tick()`, and a cancelled one throws exactly as the
 /// real sleep does — the schedule relies on that throw to tell a quit from an
 /// elapsed interval, so a fake that swallowed it would be testing a different
 /// loop from the one that ships.
+///
+/// One per clock, never one for both. `AppModel` sleeps in two places — the
+/// delivery schedule and the reachability poll — and a single metronome across
+/// the two can only answer "something is asleep", which is the question neither
+/// test is asking. Waiting on the aggregate let the poll answer for the
+/// schedule: `tick()` released whichever sleeper was parked, a wait for
+/// "something parked" returned on the poll re-parking after one `refresh()`
+/// while the connector was still inside `maintain` + `runOnce`, and the
+/// schedule silently lost a beat. Measured at 4 red runs in 25 before the
+/// clocks were separated.
 final class Metronome: @unchecked Sendable {
     private let lock = NSLock()
     private var sleepers: [Int: CheckedContinuation<Void, any Error>] = [:]
@@ -220,7 +236,8 @@ func testModel(
     store: any SettingsStore = InMemorySettingsStore(),
     transport: any Transport = StubTransport(),
     uploads: any UploadedIconStore = InMemoryUploadedIconStore(),
-    sleep: @escaping AppModel.Sleeping = { _ in }
+    sleep: @escaping AppModel.Sleeping = { _ in },
+    pollSleep: @escaping AppModel.Sleeping = { _ in }
 ) -> AppModel {
     let registry = ConnectorRegistry()
     for connector in connectors { registry.register(connector) }
@@ -234,6 +251,70 @@ func testModel(
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: uploads
         ),
-        sleep: sleep
+        sleep: sleep,
+        pollSleep: pollSleep
     )
+}
+
+/// Parks inside every request, so a button can be caught mid-flight.
+final class GatedTransport: Transport, @unchecked Sendable {
+    private let gate: Gate
+
+    init(gate: Gate) { self.gate = gate }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        await gate.enter()
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+        )!
+        return (Data("OK".utf8), response)
+    }
+}
+
+/// Parks each `runOnce` on a gate of its own, so two runs can be finished in
+/// whichever order the test needs.
+final class QueueingHost: ConnectorRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var gates: [Gate] = []
+
+    var started: Int { lock.withLock { gates.count } }
+
+    /// Lets the run that started `index`-th return.
+    func finish(_ index: Int) {
+        lock.withLock { gates[index] }.open()
+    }
+
+    func maintain(connectorId: String) async -> MaintenanceResult { .completed }
+
+    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
+
+    func runOnce(connectorId: String) async -> RunResult {
+        let gate = Gate()
+        lock.withLock { gates.append(gate) }
+        await gate.enter()
+        return .delivered
+    }
+}
+
+/// Answers `.cancelled` when its run is cancelled, as `ConnectorHost` does.
+final class CancellingHost: ConnectorRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var arrived = 0
+
+    var entered: Int { lock.withLock { arrived } }
+
+    func maintain(connectorId: String) async -> MaintenanceResult { .completed }
+
+    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
+
+    func runOnce(connectorId: String) async -> RunResult {
+        lock.withLock { arrived += 1 }
+        // Sleeps until cancelled, and reports the cancellation rather than
+        // throwing it — the shipped host catches `CancellationError` and turns
+        // it into this case.
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return .cancelled
+    }
 }

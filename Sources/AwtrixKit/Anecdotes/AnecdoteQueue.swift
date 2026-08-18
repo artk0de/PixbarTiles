@@ -38,7 +38,11 @@ public actor AnecdoteQueue {
     /// constructs a queue against a different root gets a reaper that leaks,
     /// which is visible; a queue that invented its own root would get one that
     /// deletes somewhere nobody chose.
-    private let clipRoot: URL
+    ///
+    /// Readable for the same reason the synthesizer's `outputDirectory` is: the
+    /// two being one value is this reaper's whole safety argument, and an
+    /// argument nothing can ask about is one nothing can check.
+    public nonisolated let clipRoot: URL
     private var store: Store
 
     /// Why the last write failed, or nil if it landed.

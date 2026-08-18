@@ -80,11 +80,78 @@ import Testing
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
 
-    let subject = AppModel.live(defaults: defaults)
+    // A store of its own, like the defaults suite: `AnecdoteQueue.init` reads
+    // whatever file it is given, and a test has no business opening the user's.
+    let subject = AppModel.live(
+        defaults: defaults,
+        transport: StubTransport(),
+        anecdoteStore: FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-\(UUID().uuidString).json")
+    )
 
     let connector = try #require(subject.registry.all.first)
     #expect(connector.id == "anecdotes")
-    #expect(subject.settings(for: connector).interval == connector.defaultInterval)
+    #expect(subject.registry.all.count == 1)
+    // Deliberately not asserting the interval here. `AnecdoteConnector`'s own
+    // default IS thirty minutes, so every such assertion holds equally through
+    // the store's fallback and proves nothing about debt 2. The
+    // `StubConnector(5 * 60)` tests are what carry that rule.
+}
+
+// The two ends of the reaper's safety argument, which is the file's own words:
+// containment means nothing if the synthesizer writes somewhere the queue is not
+// allowed to delete. Neither end could be read back before, so pointing them at
+// different roots — or rooting the queue at the whole temporary directory —
+// changed nothing any test could see.
+@Test @MainActor func theSynthesizerWritesWhereTheReaperIsAllowedToDelete() async {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("wiring-\(UUID().uuidString)")
+    let store = FileManager.default.temporaryDirectory
+        .appendingPathComponent("wiring-\(UUID().uuidString).json")
+
+    let wiring = AppModel.anecdoteWiring(
+        transport: StubTransport(), clipRoot: root, storeURL: store
+    )
+
+    #expect(wiring.speech.outputDirectory == root)
+    #expect(wiring.queue.clipRoot == root)
+}
+
+// And that the root the app actually ships with is the one both ends get.
+@Test @MainActor func theAppsOwnClipRootReachesBothEnds() async {
+    let store = FileManager.default.temporaryDirectory
+        .appendingPathComponent("wiring-\(UUID().uuidString).json")
+
+    let wiring = AppModel.anecdoteWiring(transport: StubTransport(), storeURL: store)
+
+    #expect(wiring.speech.outputDirectory == AppPaths.clipRoot)
+    #expect(wiring.queue.clipRoot == AppPaths.clipRoot)
+}
+
+// The record of what this app put on the flash has to outlive the process that
+// put it there — that is the single property the whole store exists for, and
+// swapping `live()` to an in-memory one changed nothing any test could see.
+@Test @MainActor func whatAnEarlierLaunchUploadedIsStillRemovableInThisOne() async throws {
+    let suite = "app-model-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    // Written by a previous launch, through the store `live()` is meant to use.
+    UserDefaultsUploadedIconStore(defaults: defaults).record("9039")
+    let transport = StubTransport()
+
+    let subject = AppModel.live(
+        defaults: defaults,
+        transport: transport,
+        anecdoteStore: FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-\(UUID().uuidString).json")
+    )
+    subject.removeInstalledIcons()
+    #expect(await waitUntil { subject.iconStatus == "removed 9039" })
+
+    let deletions = transport.requests.filter { $0.httpMethod == "DELETE" }
+    let body = String(decoding: deletions.first?.httpBody ?? Data(), as: UTF8.self)
+    #expect(deletions.count == 1)
+    #expect(body.contains("/ICONS/9039.gif"))
 }
 
 @Test @MainActor func theDeviceHostIsTakenFromDefaultsWhenOneIsSaved() throws {
@@ -102,4 +169,23 @@ import Testing
     defer { defaults.removePersistentDomain(forName: suite) }
 
     #expect(AppModel.live(defaults: defaults).deviceHost == "192.168.1.72")
+}
+
+// MARK: - What the panel says about a device nobody has asked yet
+
+// `isOnline` is false for `.unknown` exactly as it is for `.offline`, so the
+// panel announced a disconnection during the twenty seconds before the first
+// poll answers. Same conflation `DeviceState` exists to prevent, and the same
+// one this task fixed in a test and left in the view.
+@Test func aDeviceNobodyHasAskedYetIsNotReportedAsDisconnected() {
+    #expect(DeviceStatusLine.title(for: .unknown) == "Checking…")
+    #expect(DeviceStatusLine.title(for: .offline("boom")) == "Disconnected")
+    #expect(DeviceStatusLine.colour(for: .unknown) != DeviceStatusLine.colour(for: .offline("boom")))
+}
+
+@Test func aReachableDeviceIsReportedAsConnected() throws {
+    let stats = try JSONDecoder().decode(DeviceStats.self, from: onlineStats)
+
+    #expect(DeviceStatusLine.title(for: .online(stats)) == "Connected")
+    #expect(DeviceStatusLine.colour(for: .online(stats)) == .green)
 }

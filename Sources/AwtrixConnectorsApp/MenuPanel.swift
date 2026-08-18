@@ -2,6 +2,30 @@ import AppKit
 import AwtrixKit
 import SwiftUI
 
+/// What the dot and the line above it say about the device.
+///
+/// Three states, not two. `isOnline` is false for `.unknown` as much as for
+/// `.offline`, so a panel opened in the first twenty seconds after launch —
+/// before the first poll has answered — announced a disconnection it had no
+/// grounds for. That conflation is the same one `DeviceState` exists to prevent.
+enum DeviceStatusLine {
+    static func title(for state: DeviceState) -> String {
+        switch state {
+        case .unknown: "Checking…"
+        case .online: "Connected"
+        case .offline: "Disconnected"
+        }
+    }
+
+    static func colour(for state: DeviceState) -> Color {
+        switch state {
+        case .unknown: .secondary
+        case .online: .green
+        case .offline: .red
+        }
+    }
+}
+
 struct MenuPanel: View {
     @ObservedObject var model: AppModel
     /// Observed separately from `model`: a nested `ObservableObject` publishes
@@ -28,10 +52,10 @@ struct MenuPanel: View {
     private var statusSection: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(monitor.isOnline ? Color.green : Color.red)
+                .fill(DeviceStatusLine.colour(for: monitor.state))
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
-                Text(monitor.isOnline ? "Connected" : "Disconnected")
+                Text(DeviceStatusLine.title(for: monitor.state))
                     .font(.headline)
                 Text(model.deviceHost + (monitor.batteryPercent.map { " · \($0)%" } ?? ""))
                     .font(.caption)
@@ -48,9 +72,7 @@ struct MenuPanel: View {
     /// re-download the same bytes on the way back in.
     private var iconSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Button("Remove icons this app uploaded") {
-                Task { await model.removeInstalledIcons() }
-            }
+            Button("Remove icons this app uploaded") { model.removeInstalledIcons() }
             .controlSize(.small)
             if let status = model.iconStatus {
                 Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1)

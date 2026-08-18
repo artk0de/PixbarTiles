@@ -335,7 +335,9 @@ private func deletions(_ transport: RoutingTransport) -> [String] {
     uploads.record("9039")
     let subject = installer(transport, recordingInto: uploads)
 
-    await #expect(throws: AwtrixError.self) { _ = try await subject.removeUploaded() }
+    await #expect(throws: CatalogueIconInstaller.Failure.notRemoved(["9039"])) {
+        _ = try await subject.removeUploaded()
+    }
 
     #expect(uploads.uploadedIcons() == ["9039"])
 }
@@ -363,4 +365,53 @@ private func deletions(_ transport: RoutingTransport) -> [String] {
     uploads.record("9039")
 
     #expect(uploads.uploadedIcons() == ["9039"])
+}
+
+// One stale name the device answers 404 for must not block the icons behind it.
+// Stopping at the first refusal blocks them permanently, not just this time:
+// the refused name stays in the record and is met again next attempt, in the
+// same position, for ever.
+@Test func oneRefusalDoesNotBlockTheIconsBehindIt() async {
+    let transport = RefusingTransport(refusing: "/ICONS/9039.gif")
+    let uploads = InMemoryUploadedIconStore()
+    uploads.record("9039")
+    uploads.record("1234")
+    let subject = CatalogueIconInstaller(
+        device: AwtrixDevice(host: "10.0.0.5", transport: transport),
+        transport: transport,
+        uploads: uploads
+    )
+
+    await #expect(throws: CatalogueIconInstaller.Failure.notRemoved(["9039"])) {
+        _ = try await subject.removeUploaded()
+    }
+
+    // The one behind it came off, and only the refusal is still recorded.
+    #expect(uploads.uploadedIcons() == ["9039"])
+    #expect(transport.deletedPaths.contains("/ICONS/1234.gif"))
+}
+
+/// Refuses to delete one named path and accepts everything else.
+private final class RefusingTransport: Transport, @unchecked Sendable {
+    private let refusing: String
+    private let lock = NSLock()
+    private var deleted: [String] = []
+
+    init(refusing: String) { self.refusing = refusing }
+
+    var deletedPaths: [String] { lock.withLock { deleted } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let body = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
+        let refused = body.contains(refusing)
+        if !refused, request.httpMethod == "DELETE" {
+            lock.withLock {
+                deleted.append(body.contains("/ICONS/1234.gif") ? "/ICONS/1234.gif" : body)
+            }
+        }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: refused ? 500 : 200, httpVersion: nil, headerFields: nil
+        )!
+        return (Data("OK".utf8), response)
+    }
 }

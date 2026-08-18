@@ -96,7 +96,15 @@ final class AppModel: ObservableObject {
     private let host: any ConnectorRunning
     private let store: any SettingsStore
     private let installer: CatalogueIconInstaller
-    private let sleep: Sleeping
+    /// The delivery cadence, one sleeper per scheduled connector.
+    private let scheduleSleep: Sleeping
+    /// The reachability cadence, one sleeper for the whole app. Separate from
+    /// `scheduleSleep` because they are two clocks, not one: a fixed 20-second
+    /// poll and a per-connector interval the user chooses and the retry policy
+    /// bends. Kept apart so that whoever drives one can say which one they
+    /// meant — an aggregate cannot, and a test waiting on "something is asleep"
+    /// gets whichever loop won the race.
+    private let pollSleep: Sleeping
     private var timers: [String: Task<Void, Never>] = [:]
     private var monitorLoop: Task<Void, Never>?
     /// Runs the user asked for, still going. Keyed by nothing meaningful: two
@@ -104,6 +112,16 @@ final class AppModel: ObservableObject {
     /// each other rather than one replacing the other.
     private var manualRuns: [Int: Task<Void, Never>] = [:]
     private var nextRunKey = 0
+    /// Runs still going, per connector.
+    ///
+    /// A count rather than a flag because two presses are two runs: 37 seconds
+    /// of silence is exactly the thing that makes a person press again, and
+    /// `ConnectorHost` serialises the pair rather than merging them. With only
+    /// a flag, the first run finishing writes its outcome while the second is
+    /// still in flight — the panel claiming a finished delivery during a
+    /// running one, which is the lie this whole line of fixes is about.
+    private var outstanding: [String: Int] = [:]
+    private var iconRemoval: Task<Void, Never>?
 
     init(
         deviceHost: String,
@@ -112,7 +130,8 @@ final class AppModel: ObservableObject {
         host: any ConnectorRunning,
         store: any SettingsStore,
         installer: CatalogueIconInstaller,
-        sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
+        sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
+        pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
         self.deviceHost = deviceHost
         self.registry = registry
@@ -120,16 +139,24 @@ final class AppModel: ObservableObject {
         self.host = host
         self.store = store
         self.installer = installer
-        self.sleep = sleep
+        self.scheduleSleep = sleep
+        self.pollSleep = pollSleep
         for connector in registry.all {
             chosen[connector.id] = Self.resolved(connector, in: store)
         }
     }
 
     /// The composition root: one device host in, every collaborator wired.
-    static func live(defaults: UserDefaults = .standard) -> AppModel {
+    ///
+    /// `transport` is a parameter because it is this app's one door to the
+    /// outside: naming it here is what lets the wiring below be checked without
+    /// a clock on the network.
+    static func live(
+        defaults: UserDefaults = .standard,
+        transport: any Transport = URLSessionTransport(),
+        anecdoteStore: URL = AppPaths.anecdoteStore
+    ) -> AppModel {
         let deviceHost = defaults.string(forKey: deviceHostKey) ?? defaultDeviceHost
-        let transport = URLSessionTransport()
         let device = AwtrixDevice(host: deviceHost, transport: transport)
         let registry = ConnectorRegistry()
         let store = UserDefaultsSettingsStore(defaults: defaults)
@@ -139,26 +166,8 @@ final class AppModel: ObservableObject {
             uploads: UserDefaultsUploadedIconStore(defaults: defaults)
         )
 
-        // One root, handed to the synthesizer as the place to write and to the
-        // queue as the boundary its reaper may delete inside.
-        let speech = SidecarSpeechSynthesizer(
-            pythonPath: NSString(string: "~/.local/share/tts-voices/.venv/bin/python")
-                .expandingTildeInPath,
-            scriptPath: NSString(string: "~/.local/share/tts-voices/speak.py")
-                .expandingTildeInPath,
-            workingDirectory: NSString(string: "~/.local/share/tts-voices")
-                .expandingTildeInPath,
-            outputDirectory: AppPaths.clipRoot
-        )
-        let queue = AnecdoteQueue(storeURL: AppPaths.anecdoteStore, clipRoot: AppPaths.clipRoot)
-        registry.register(
-            AnecdoteConnector(
-                queue: queue,
-                preparer: AnecdotePreparer(
-                    source: AnecdoteSource(transport: transport), speech: speech, queue: queue
-                )
-            )
-        )
+        let anecdotes = anecdoteWiring(transport: transport, storeURL: anecdoteStore)
+        registry.register(anecdotes.connector)
 
         return AppModel(
             deviceHost: deviceHost,
@@ -173,6 +182,44 @@ final class AppModel: ObservableObject {
             ),
             store: store,
             installer: installer
+        )
+    }
+
+    /// The anecdote connector, and the two collaborators whose agreement is the
+    /// reaper's entire safety argument.
+    ///
+    /// Both of them are returned, not just the connector, because the invariant
+    /// this function exists to hold — the synthesizer writes clips exactly where
+    /// the queue is allowed to delete — is otherwise a fact about two arguments
+    /// nobody can read back. One `clipRoot` parameter reaches both.
+    ///
+    /// One queue, handed to the connector and to the preparer: `refill` enqueues
+    /// into the same queue `produce()` drains, so a second instance would
+    /// synthesize a batch nothing ever plays.
+    static func anecdoteWiring(
+        transport: any Transport,
+        clipRoot: URL = AppPaths.clipRoot,
+        storeURL: URL = AppPaths.anecdoteStore
+    ) -> (connector: AnecdoteConnector, queue: AnecdoteQueue, speech: SidecarSpeechSynthesizer) {
+        let speech = SidecarSpeechSynthesizer(
+            pythonPath: NSString(string: "~/.local/share/tts-voices/.venv/bin/python")
+                .expandingTildeInPath,
+            scriptPath: NSString(string: "~/.local/share/tts-voices/speak.py")
+                .expandingTildeInPath,
+            workingDirectory: NSString(string: "~/.local/share/tts-voices")
+                .expandingTildeInPath,
+            outputDirectory: clipRoot
+        )
+        let queue = AnecdoteQueue(storeURL: storeURL, clipRoot: clipRoot)
+        return (
+            AnecdoteConnector(
+                queue: queue,
+                preparer: AnecdotePreparer(
+                    source: AnecdoteSource(transport: transport), speech: speech, queue: queue
+                )
+            ),
+            queue,
+            speech
         )
     }
 
@@ -244,12 +291,33 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func removeInstalledIcons() async {
+    /// Takes this app's icons back off the flash, because the user asked.
+    ///
+    /// Owned here rather than by the button's action closure, for the same
+    /// reason `runNow` is: teardown can only wait for a task it holds. One at a
+    /// time — a second press while one is running would race two passes over
+    /// the same record.
+    func removeInstalledIcons() {
+        guard iconRemoval == nil else { return }
+        // Said before the work, not after it. `removeUploaded` sends one DELETE
+        // per recorded icon, and against a device that has stopped answering
+        // each one costs the transport's full 15 seconds — the same silence the
+        // run button had, on a button one divider away.
+        iconStatus = "removing…"
+        iconRemoval = Task { [weak self] in
+            await self?.reportIconRemoval()
+            self?.iconRemoval = nil
+        }
+    }
+
+    private func reportIconRemoval() async {
         do {
             let removed = try await installer.removeUploaded()
             iconStatus = removed.isEmpty
                 ? "nothing this app uploaded"
                 : "removed \(removed.joined(separator: ", "))"
+        } catch let CatalogueIconInstaller.Failure.notRemoved(names) {
+            iconStatus = "could not remove \(names.joined(separator: ", "))"
         } catch {
             iconStatus = "failed: \(String(describing: error).prefix(60))"
         }
@@ -267,8 +335,10 @@ final class AppModel: ObservableObject {
         monitorLoop?.cancel()
         monitorLoop = nil
         let running = Array(timers.values) + Array(manualRuns.values)
+            + [iconRemoval].compactMap { $0 }
         timers.removeAll()
         manualRuns.removeAll()
+        iconRemoval = nil
         for task in running { task.cancel() }
         for task in running { await task.value }
     }
@@ -280,7 +350,7 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 await self.monitor.refresh()
                 self.isDeviceOnline = self.monitor.isOnline
-                do { try await self.sleep(Self.monitorInterval) } catch { return }
+                do { try await self.pollSleep(Self.monitorInterval) } catch { return }
             }
         }
     }
@@ -292,7 +362,7 @@ final class AppModel: ObservableObject {
 
         let id = connector.id
         let interval = settings.interval
-        let sleep = self.sleep
+        let sleep = self.scheduleSleep
         timers[id] = Task { [weak self] in
             while !Task.isCancelled {
                 // Asked every turn, not once when the schedule is built. The
@@ -320,25 +390,54 @@ final class AppModel: ObservableObject {
     }
 
     private func tick(_ id: String) async {
+        // Marked before the maintain, not between it and the run. `maintain` IS
+        // the expensive half — a refill loads a 1.8 GB model and synthesizes a
+        // whole batch, a minute or more — and once it has run, `runOnce` finds a
+        // full queue and is quick. Written after it, the marker lands exactly
+        // where the wait is already over, and the panel shows the PREVIOUS run's
+        // outcome for the whole minute.
+        markUnderWay(id)
         // Top up BEFORE the run, never inside it. `produce()` only awaits a
         // refill when the queue is empty, so a timer that never maintains turns
         // every firing into a 70-second model load on the play path — the whole
         // reason the queue exists.
         _ = await host.maintain(connectorId: id)
-        await runAndReport(id)
+        reportOutcome(await host.runOnce(connectorId: id), for: id)
     }
 
-    /// Says that a delivery is under way before it says how it went.
+    /// The manual path. The bracket is spelled out here as well as in `tick`
+    /// rather than shared, because the shared version would be a call that
+    /// marks a second time — and a count that never returns to zero is a panel
+    /// stuck on `running…` for good.
+    private func runAndReport(_ id: String) async {
+        markUnderWay(id)
+        reportOutcome(await host.runOnce(connectorId: id), for: id)
+    }
+
+    /// Says a delivery is under way before it says how it went.
     ///
     /// Measured on the machine this was written on: a run against an empty
     /// queue takes 37.6 s, because `produce()` refills inline when it has
     /// nothing to hand out and the first refill of a process pays a 30-second
-    /// model load. Without this line the panel shows nothing for all of it —
-    /// the outcome is the only thing ever written, and it arrives at the end —
-    /// so a "Run now" reads as a button that does nothing.
-    private func runAndReport(_ id: String) async {
+    /// model load. Without this the panel shows nothing for all of it — the
+    /// outcome is the only thing ever written, and it arrives at the end — so a
+    /// "Run now" reads as a button that does nothing.
+    private func markUnderWay(_ id: String) {
+        outstanding[id, default: 0] += 1
         lastResults[id] = "running…"
-        record(await host.runOnce(connectorId: id), for: id)
+    }
+
+    /// Shows a result only when it is the last one outstanding.
+    ///
+    /// An earlier run's outcome is dropped rather than shown, and that is the
+    /// point: the line describes what this connector is doing now, and what it
+    /// is doing now is still running. A dropped failure is not lost work —
+    /// deliveries are serialised, so the run still going meets whatever the
+    /// dropped one met, and reports it itself.
+    private func reportOutcome(_ result: RunResult, for id: String) {
+        outstanding[id, default: 1] -= 1
+        guard outstanding[id, default: 0] <= 0 else { return }
+        record(result, for: id)
     }
 
     private func record(_ result: RunResult, for id: String) {

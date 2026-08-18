@@ -10,7 +10,11 @@ public actor SidecarSpeechSynthesizer: SpeechSynthesizing {
     private let pythonPath: String
     private let scriptPath: String
     private let workingDirectory: String
-    private let outputDirectory: URL
+    /// Where batches are written. Readable because it is half of an invariant
+    /// the composition root has to get right: the queue's reaper is contained by
+    /// this same directory, and nothing can check that the two agree unless both
+    /// ends can be asked.
+    public nonisolated let outputDirectory: URL
 
     private var process: Process?
     private var input: FileHandle?

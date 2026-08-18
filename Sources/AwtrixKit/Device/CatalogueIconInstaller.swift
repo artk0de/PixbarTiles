@@ -9,6 +9,8 @@ public struct CatalogueIconInstaller: IconInstalling {
     public enum Failure: Error, Sendable, Equatable {
         /// The catalogue answered for this id with something that is not a GIF.
         case notAnImage(Int)
+        /// The device refused to delete these, and they are still recorded.
+        case notRemoved([String])
     }
 
     /// The format has exactly these two signatures and no others. Six bytes
@@ -65,17 +67,28 @@ public struct CatalogueIconInstaller: IconInstalling {
     /// out would re-download the same bytes on the way back in, and would do it
     /// while the user was not asking for anything.
     ///
-    /// One name forgotten per successful delete, and the failure rethrown with
-    /// the rest still recorded. A device that is unreachable halfway through
-    /// leaves real files on real flash, and forgetting them here would strand
-    /// them: nothing in this app could ever name them again.
+    /// One name forgotten per successful delete, and the refusals reported at
+    /// the end with those names still recorded. A device that is unreachable
+    /// halfway through leaves real files on real flash, and forgetting them
+    /// here would strand them: nothing in this app could ever name them again.
+    ///
+    /// Every name is tried, rather than stopping at the first refusal. One
+    /// stale entry the device answers 404 for would otherwise block every icon
+    /// behind it — permanently, since a refused name stays in the record and is
+    /// met again on the next attempt, in the same position.
     public func removeUploaded() async throws -> [String] {
         var removed: [String] = []
+        var refused: [String] = []
         for name in uploads.uploadedIcons() {
-            try await device.removeIcon(named: name)
-            uploads.forget(name)
-            removed.append(name)
+            do {
+                try await device.removeIcon(named: name)
+                uploads.forget(name)
+                removed.append(name)
+            } catch {
+                refused.append(name)
+            }
         }
+        guard refused.isEmpty else { throw Failure.notRemoved(refused) }
         return removed
     }
 

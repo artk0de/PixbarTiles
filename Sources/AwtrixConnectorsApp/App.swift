@@ -29,6 +29,12 @@ private struct MenuBarGlyph: View {
 
     var body: some View {
         Image(nsImage: AppGlyph.menuBar(lit: model.isDeviceOnline))
+            // Belt and braces over `NSImage.isTemplate`. The flag is what
+            // AppKit reads and it is set and tested; this is the SwiftUI-side
+            // gate on the same question, and the failure it guards against —
+            // black art painted on a dark menu bar — is invisible rather than
+            // wrong-looking.
+            .renderingMode(.template)
     }
 }
 

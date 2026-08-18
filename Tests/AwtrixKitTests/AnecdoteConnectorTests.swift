@@ -10,6 +10,11 @@ import Testing
 /// name their own root.
 private let anyTemporaryRoot = FileManager.default.temporaryDirectory
 
+/// Nothing here reaps, so any window will do — but it has to be one no fixture
+/// could reach, or a test about the connector would start failing for the
+/// queue's reasons.
+private let anyRetention: TimeInterval = 10 * 24 * 60 * 60
+
 private func makeSource(_ xml: String) -> AnecdoteSource {
     let transport = RecordingTransport()
     transport.body = Data(xml.utf8)
@@ -274,7 +279,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // batch used to write ten sets of turn-0.wav into one directory, destroying
 // nine while the queue still reported ten ready.
 @Test func aBatchGivesEveryAnecdoteItsOwnClipFiles() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let speech = StubSpeechSynthesizer()
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: speech, queue: queue
@@ -299,7 +306,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // MARK: - The preparer
 
 @Test func preparerFillsTheQueueAndSynthesizesEveryTurn() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let speech = StubSpeechSynthesizer()
     let preparer = AnecdotePreparer(
         source: makeSource(dialogueFeed), speech: speech, queue: queue
@@ -318,7 +327,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 }
 
 @Test func preparerSkipsAnecdotesAlreadyPlayed() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     await queue.markPlayed("https://www.anekdot.ru/id/1/")
     let speech = StubSpeechSynthesizer()
     let preparer = AnecdotePreparer(
@@ -335,7 +346,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // too — a single 503 collapsing the refill costs the other two feeds' ~22
 // anecdotes, and the clock shows nothing for the next half hour.
 @Test func aFeedOutageWidensToTheNextFeedInsteadOfCollapsing() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: AnecdoteSource(
             transport: FlakyTransport(failing: 1, then: Data(dialogueFeed.utf8))
@@ -351,7 +364,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // Swallowing every feed error would report the outage as "nothing prepared"
 // and hide the reason from whoever has to fix it.
 @Test func aRefillThatReachedNoFeedAtAllReportsTheOutage() async {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: AnecdoteSource(transport: FlakyTransport(failing: 3, then: Data())),
         speech: StubSpeechSynthesizer(), queue: queue
@@ -368,7 +383,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // reentrant, so the second refill would otherwise compute `unseen` against a
 // `pending` the first has not written yet and get the identical list.
 @Test func twoOverlappingRefillsDoNotQueueTheSameAnecdoteTwice() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: SuspendingSpeechSynthesizer(), queue: queue
     )
@@ -389,7 +406,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // inside that task, so a host wrapping `produce()` in a timeout would neither
 // stop the work nor get its caller back.
 @Test func cancellingARefillStopsItRatherThanRunningItToCompletion() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let speech = BlockingSpeechSynthesizer()
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: speech, queue: queue
@@ -420,7 +439,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // It still cannot return before the refill ahead of it finishes — the wait
 // itself is not interruptible, by design. See `refill(target:)`.
 @Test func cancellingARefillThatIsWaitingItsTurnStopsItToo() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let transport = GatedTransport(body: Data(batchFeed.utf8))
     let preparer = AnecdotePreparer(
         source: AnecdoteSource(transport: transport),
@@ -455,7 +476,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // MARK: - The connector
 
 @Test func connectorEmitsTheBannerNotTheJoke() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let speech = StubSpeechSynthesizer()
     let preparer = AnecdotePreparer(
         source: makeSource(dialogueFeed), speech: speech, queue: queue
@@ -473,7 +496,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 }
 
 @Test func connectorPacesTheClipsWithLeadIns() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let speech = StubSpeechSynthesizer()
     let preparer = AnecdotePreparer(
         source: makeSource(dialogueFeed), speech: speech, queue: queue
@@ -493,7 +518,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // the laughter, so it takes the laughter's beat. Both lead-ins are 0.7 s today,
 // which is exactly what would let a retune of one silently move the other.
 @Test func aTwoClipAnecdoteGivesItsLastClipTheLaughterBeat() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: makeSource(markerOnlyFeed), speech: StubSpeechSynthesizer(), queue: queue
     )
@@ -507,7 +534,7 @@ private struct SeededGenerator: RandomNumberGenerator {
 
 @Test func playingAnAnecdoteMarksItSoItNeverRepeats() async throws {
     let store = temporaryStore()
-    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot, retention: anyRetention)
     let speech = StubSpeechSynthesizer()
     let preparer = AnecdotePreparer(
         source: makeSource(dialogueFeed), speech: speech, queue: queue
@@ -521,7 +548,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 }
 
 @Test func anEmptyQueueAndAnExhaustedFeedThrowsRatherThanShowingNothing() async {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: makeSource("<rss><channel></channel></rss>"),
         speech: StubSpeechSynthesizer(), queue: queue
@@ -537,10 +566,13 @@ private struct SeededGenerator: RandomNumberGenerator {
 
 // MARK: - Reclaiming the disk
 
-// Nothing else deletes these files. At roughly 72 anecdotes a day they would
-// otherwise accumulate on the user's Mac forever.
-@Test func producingAnAnecdoteReclaimsThePreviousOnesClips() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+// Played is not spent. The user can ask to hear an anecdote again, and History
+// has nothing to replay from if the audio went the moment the next one came
+// due. What removes these files now is age, and only `reapExpired` does it.
+@Test func producingAnAnecdoteKeepsThePreviousOnesClips() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
     )
@@ -555,8 +587,9 @@ private struct SeededGenerator: RandomNumberGenerator {
     let second = try await connector.produce()
     let secondDirectory = try #require(second.localAudio.first?.url.deletingLastPathComponent())
 
-    // One behind: half an hour has passed, so the first has long finished.
-    #expect(FileManager.default.fileExists(atPath: firstDirectory.path) == false)
+    // Both, half an hour after the first was heard and while the second is
+    // still playing.
+    #expect(FileManager.default.fileExists(atPath: firstDirectory.path))
     #expect(FileManager.default.fileExists(atPath: secondDirectory.path))
 }
 
@@ -565,25 +598,27 @@ private struct SeededGenerator: RandomNumberGenerator {
 // durability test that goes through `markPlayed` pins a method nothing calls.
 @Test func anAnecdotePlayedThroughProduceIsStillPlayedAfterARestart() async throws {
     let store = temporaryStore()
-    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot, retention: anyRetention)
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
     )
     _ = try await preparer.refill(target: 2)
     _ = try await AnecdoteConnector(queue: queue, preparer: preparer).produce()
 
-    let reopened = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
+    let reopened = AnecdoteQueue(
+        storeURL: store, clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
 
     #expect(await reopened.hasPlayed("https://www.anekdot.ru/id/1/"))
 }
 
-// The pointer to the spent clip directory has to reach disk too, or a restart
-// between two anecdotes leaks that directory forever — nothing else ever
-// looks at it again.
-@Test func aSpentClipDirectorySurvivesARestartAndIsStillReclaimed() async throws {
+// The record has to reach disk with the clips it names, or a restart loses what
+// the user replays from — and leaves the audio on disk with nothing pointing at
+// it, which is the same directory leaked for good either way.
+@Test func anAnecdotePlayedThroughProduceIsStillInHistoryAfterARestart() async throws {
     let store = temporaryStore()
     let speech = StubSpeechSynthesizer()
-    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot, retention: anyRetention)
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: speech, queue: queue
     )
@@ -592,20 +627,23 @@ private struct SeededGenerator: RandomNumberGenerator {
     let firstDirectory = try #require(first.localAudio.first?.url.deletingLastPathComponent())
 
     // Killed between two anecdotes, then relaunched onto the same store.
-    let reopened = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
-    let reopenedPreparer = AnecdotePreparer(
-        source: makeSource(batchFeed), speech: speech, queue: reopened
+    let reopened = AnecdoteQueue(
+        storeURL: store, clipRoot: anyTemporaryRoot, retention: anyRetention
     )
-    _ = try await AnecdoteConnector(queue: reopened, preparer: reopenedPreparer).produce()
 
-    #expect(FileManager.default.fileExists(atPath: firstDirectory.path) == false)
+    let history = await reopened.history()
+    #expect(history.map(\.anecdote.id) == ["https://www.anekdot.ru/id/1/"])
+    #expect(history.first?.anecdote.clips == first.localAudio)
+    #expect(FileManager.default.fileExists(atPath: firstDirectory.path))
 }
 
 // A batch survives a restart; the temporary directory holding its audio may
 // not. Handing out an anecdote whose clips are gone shows a banner with
 // `holdUntilAudioEnds` set and no audio to end it — the clock sticks there.
 @Test func anAnecdoteWhoseClipsAreGoneIsSkipped() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let speech = StubSpeechSynthesizer()
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: speech, queue: queue
@@ -637,7 +675,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 @Test func produceDoesNotReachTheNetworkWhenTheQueueHasSomethingToPop() async throws {
     let transport = RecordingTransport()
     transport.body = Data(dialogueFeed.utf8)
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: AnecdoteSource(transport: transport),
         speech: StubSpeechSynthesizer(), queue: queue
@@ -654,7 +694,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // The one case worth waiting for: nothing to pop means there is nothing else
 // to show, so the load buys the only anecdote there is.
 @Test func anEmptyQueueRefillsRatherThanShowingNothing() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: makeSource(dialogueFeed), speech: StubSpeechSynthesizer(), queue: queue
     )
@@ -670,7 +712,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // a whole batch of them on top of the model load. The batch is
 // `topUpIfNeeded`'s job.
 @Test func anEmptyQueuePreparesOneAnecdoteNotAWholeBatch() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let speech = StubSpeechSynthesizer()
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: speech, queue: queue
@@ -684,7 +728,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 }
 
 @Test func topUpIfNeededFillsTheQueueOffThePlayPath() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
     )
@@ -701,7 +747,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 // queues or batches. `maintain()` is the one door through which the restocking
 // the queue depends on actually gets called.
 @Test func maintenanceRestocksTheQueue() async throws {
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
     )
@@ -722,7 +770,7 @@ private struct SeededGenerator: RandomNumberGenerator {
 // a no-op and the re-written file can only have come from the flush.
 @Test func maintenanceRewritesTheStoreSoAPlayedAnecdoteStaysPlayed() async throws {
     let store = temporaryStore()
-    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot, retention: anyRetention)
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
     )
@@ -735,7 +783,9 @@ private struct SeededGenerator: RandomNumberGenerator {
     try await connector.maintain()
 
     #expect(FileManager.default.fileExists(atPath: store.path))
-    let reopened = AnecdoteQueue(storeURL: store, clipRoot: anyTemporaryRoot)
+    let reopened = AnecdoteQueue(
+        storeURL: store, clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     #expect(await reopened.ready() == 2)
 }
 
@@ -749,7 +799,10 @@ private struct SeededGenerator: RandomNumberGenerator {
     let blocker = FileManager.default.temporaryDirectory
         .appendingPathComponent("blocked-\(UUID().uuidString)")
     try Data().write(to: blocker)
-    let queue = AnecdoteQueue(storeURL: blocker.appendingPathComponent("store.json"), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: blocker.appendingPathComponent("store.json"),
+        clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
     )
@@ -764,7 +817,9 @@ private struct SeededGenerator: RandomNumberGenerator {
 @Test func topUpIfNeededLeavesAStockedQueueAlone() async throws {
     let transport = RecordingTransport()
     transport.body = Data(batchFeed.utf8)
-    let queue = AnecdoteQueue(storeURL: temporaryStore(), clipRoot: anyTemporaryRoot)
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
     let preparer = AnecdotePreparer(
         source: AnecdoteSource(transport: transport),
         speech: StubSpeechSynthesizer(), queue: queue

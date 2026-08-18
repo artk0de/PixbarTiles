@@ -49,6 +49,17 @@ enum AppPaths {
     static let clipRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("awtrix-speech")
 
+    /// How long a played anecdote's audio is kept before the queue's reaper may
+    /// take it.
+    ///
+    /// Ten days. Long enough that the History the user can replay from covers
+    /// more than the last evening, and short enough that a batch of clips is not
+    /// a permanent tenant of the temporary directory. The window is stated here
+    /// rather than inside the queue for the reason the clip root is: it is a
+    /// decision about the user's disk, and this is the only place that knows
+    /// what else is on it.
+    static let clipRetention: TimeInterval = 10 * 24 * 60 * 60
+
     /// The prepared batch and the played set.
     ///
     /// Application Support rather than the temporary directory: "an anecdote is
@@ -240,7 +251,8 @@ final class AppModel: ObservableObject {
     static func anecdoteWiring(
         transport: any Transport,
         clipRoot: URL = AppPaths.clipRoot,
-        storeURL: URL = AppPaths.anecdoteStore
+        storeURL: URL = AppPaths.anecdoteStore,
+        retention: TimeInterval = AppPaths.clipRetention
     ) -> (connector: AnecdoteConnector, queue: AnecdoteQueue, speech: SidecarSpeechSynthesizer) {
         let speech = SidecarSpeechSynthesizer(
             pythonPath: NSString(string: "~/.local/share/tts-voices/.venv/bin/python")
@@ -251,7 +263,7 @@ final class AppModel: ObservableObject {
                 .expandingTildeInPath,
             outputDirectory: clipRoot
         )
-        let queue = AnecdoteQueue(storeURL: storeURL, clipRoot: clipRoot)
+        let queue = AnecdoteQueue(storeURL: storeURL, clipRoot: clipRoot, retention: retention)
         return (
             AnecdoteConnector(
                 queue: queue,

@@ -169,6 +169,20 @@ private func scratchStore() -> URL {
     #expect(wiring.queue.clipRoot == AppPaths.clipRoot)
 }
 
+// The window the shipped app keeps played audio for, and the queue it reaches.
+// Nothing in the kit invents this number, so nothing in the kit would notice it
+// being zero — and zero deletes the audio behind every entry History offers to
+// replay, at the first reap after it was heard.
+@Test @MainActor func theAppKeepsPlayedClipsForTenDays() async {
+    let store = FileManager.default.temporaryDirectory
+        .appendingPathComponent("wiring-\(UUID().uuidString).json")
+
+    let wiring = AppModel.anecdoteWiring(transport: StubTransport(), storeURL: store)
+
+    #expect(AppPaths.clipRetention == 10 * 24 * 60 * 60)
+    #expect(wiring.queue.retention == AppPaths.clipRetention)
+}
+
 // The record of what this app put on the flash has to outlive the process that
 // put it there — that is the single property the whole store exists for, and
 // swapping `live()` to an in-memory one changed nothing any test could see.

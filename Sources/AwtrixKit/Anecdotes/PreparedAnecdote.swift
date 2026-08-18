@@ -10,9 +10,10 @@ public struct PreparedAnecdote: Sendable, Codable, Equatable {
     /// Whether the audio this anecdote promises is still on disk.
     ///
     /// A prepared batch outlives the run that made it, but its clips live in
-    /// the temporary directory and the queue's own reaper removes them once
-    /// played. Handing out an anecdote whose files are gone would put a banner
-    /// on the clock with `holdUntilAudioEnds` set and no audio to end it.
+    /// the temporary directory and the queue's reaper removes them once they
+    /// have outlived its retention window. Handing out an anecdote whose files
+    /// are gone would put a banner on the clock with `holdUntilAudioEnds` set
+    /// and no audio to end it.
     ///
     /// An anecdote with no clips at all fails this for the same reason.
     public var isPlayable: Bool {
@@ -38,5 +39,25 @@ public struct PreparedAnecdote: Sendable, Codable, Equatable {
         self.text = text
         self.clips = clips
         self.laughter = laughter
+    }
+}
+
+/// An anecdote that has been played, and when.
+///
+/// The whole anecdote rather than its id, because what this record is for is
+/// playing it again: the clips are the point, and an id would only name a
+/// pending entry that has already been popped.
+///
+/// The moment is what makes the record expire. Clips are large and the
+/// temporary directory is not endless, so a played anecdote is kept for a
+/// window and then reclaimed — `playedAt` is the only thing that says which
+/// side of that window it is on.
+public struct PlayedAnecdote: Sendable, Codable, Equatable {
+    public let anecdote: PreparedAnecdote
+    public let playedAt: Date
+
+    public init(anecdote: PreparedAnecdote, playedAt: Date) {
+        self.anecdote = anecdote
+        self.playedAt = playedAt
     }
 }

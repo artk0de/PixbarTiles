@@ -113,6 +113,18 @@ not in the noise.
 Anyone re-tuning these numbers: take a fresh series first. The clock's rate
 depends on its brightness, and `BRI` was 2–3 for every measurement above.
 
+**The readings survive the app.** Those windows are the cost of a signal smaller
+than its own noise, and nothing shortens them — but they only have to be paid
+once. The samples are written to `UserDefaults` under `batteryHistory` on every
+poll and the trajectory is rebuilt from them at launch, so a relaunch resumes
+the trend instead of spending twenty minutes earning it again. The restored
+series goes through the same three discard rules a live reading does — a
+different `uid`, uptime going backwards, a gap longer than the 90-minute window
+— so a series that no longer describes the clock in front of the app is thrown
+away and the launch starts cold, which is the honest answer. What is NOT stored
+is the verdict: it is recomputed from the samples, because a stored one could
+only be trusted or dropped.
+
 ## The icon
 
 AWTRIX 3 publishes **no square logo**. Its repository holds one wide AI-rendered
@@ -456,6 +468,24 @@ as much about whether it can be FOUND as about whether it works.
 26. **A connector that has never run still waits a full interval.** On a fresh
     install nothing is owed, so the first anecdote is one interval away and not
     immediate. Deliberate — verify it did not become eager.
+
+### Added by wave 4
+
+27. **The battery trend survives a relaunch.** Watch the panel until the row
+    carries a glyph, quit the app, reopen it: the glyph must be there on the
+    FIRST reading. This is the defect that was reported — 81 seconds after a
+    launch the row was still a bare percentage, because the samples lived in
+    memory and the window had to be earned again.
+28. **A true first launch marks the row rather than leaving a bare number.**
+    `defaults delete <bundle-id> batteryHistory`, or point the app at a clock
+    this Mac has never seen, then reopen: the row reads ⏳ and the percentage
+    until the trend lands. The hourglass is the one mark that claims nothing
+    about where the power is coming from.
+29. **The Focus caption says what the app actually does.** With Full Disk Access
+    granted the settings line under the hour pickers must name Do Not Disturb
+    and Sleep; revoke it and the same line must go back to naming any Focus.
+    The sentence describes the RULE, so turning a Work Focus on must not change
+    it — what changes is that the app keeps talking.
 
 ## The panel's width belongs to the content, not to the window
 

@@ -17,10 +17,16 @@ them on the clock on a user-set interval.
 
 ## State
 
-**Every planned task is implemented.** 29 tasks plus a whole-branch review and
-its fix round, on `feat/menu-bar-app`: 73 commits, **698 tests**, zero build
-warnings, and **zero red in 30 consecutive full runs on a quiet machine**.
-Nothing is merged and nothing is pushed.
+**Wave 3 shipped on top of a finished branch.** 52 tasks now, on
+`feat/menu-bar-app`: 122 commits, **879 tests**, zero build warnings on
+both targets. Nothing is merged and nothing is pushed.
+
+The three waves, so the shape is readable: wave 1 built the app and its anecdote
+connector; wave 2 made the weather ambient furniture with animated icons and a
+feels-like colour, moved it off the panel, and cut the clock's polling; wave 3
+was driven entirely by defects the user saw on live hardware — the History's
+first press, a discharge the app could not see, a quiet window the signing
+experiment silently disabled, and a battery that forgot itself on every launch.
 
 Under heavy load the suite is a different animal — 21 red in 25 runs against ten
 saturating processes — and always in the same four tests, all wall-clock budgets

@@ -14,3 +14,6 @@ prototype/cache/
 
 # Stray runtime logs from tooling, never part of the product.
 logs/
+
+# Reference art for choosing weather icons — not shipped, not committed.
+icons-candidates/

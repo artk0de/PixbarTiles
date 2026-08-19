@@ -4944,3 +4944,91 @@ whether the synthesized Russian is any good.
    produce a valid answer.
 3. Confirm the app cleaned up: `curl -s http://192.168.1.72/list?dir=/ICONS`
    should show only what the connector needs.
+
+---
+
+## Wave 2 — weather as ambient furniture, and a lighter touch on the clock
+
+Requested after the branch was first delivered. Three of the seven asks turned
+out to be already satisfied, and saying so is part of the record.
+
+### Already true when asked — verified, not assumed
+
+- **Nothing but the anecdotes is spoken.** `jingle:` and `localAudio:` are set in
+  exactly one place in `Sources/` (`AnecdoteConnector.swift:307-308`), and the
+  weather declares `isAudible = false`. Task 32 pins it so it stays true.
+- **The weather already behaves as an ordinary app.** Confirmed on the hardware
+  rather than from the source: `GET /api/loop` answers
+  `{"Time":0,"Temperature":1,"Humidity":2,"Battery":3,"weather":4}` — it sits in
+  the device's own rotation beside the built-ins.
+
+### Task 30 — one poll a minute, and an estimate the readings support
+
+`monitorInterval` 20s → 60s, with a refresh when the panel opens so the surface
+is never a minute stale. The estimate stopped dividing by an integer percent
+delta and now fits the rate to the whole window.
+
+**A wrong number was propagated from a code comment and is corrected here.** The
+tree claimed "seven raw steps buy one percent". That is `648/91` — a ratio, not
+a slope. The firmware maps `map(raw, 475, 665, 0, 100)`, which reproduces both
+91%@648 and 100%@665, so the real figure is **~1.9 raw steps per percent**. The
+accuracy this task buys therefore comes from fitting ~90 samples, not from raw
+being finer-grained.
+
+### Task 31 — the reading is coloured by how it feels
+
+The digits stay the AIR temperature; the colour is computed from
+`apparent_temperature`. Two quantities in one element, by explicit decision.
+
+The gradient must survive brightness 2, which is what the device is actually
+running at: cold is expressed as BLUE, never as DIM. `WeatherTheme.colour` was
+deleted once its last caller went.
+
+### Task 32 — the weather leaves the panel
+
+The row goes; the toggle moves into the settings sheet, and the copy that
+pointed at the panel is rewritten rather than left lying.
+
+### Task 33 — an animated icon per sky
+
+Ids below were each fetched and watched frame by frame. All are 8x8 animated
+GIFs.
+
+| theme | id | drawn |
+|---|---|---|
+| clearDay | 2282 | sun |
+| clearNight | 12181 | crescent moon with stars |
+| cloud | 53384 | a cloud drifting across |
+| fog | 17056 | horizontal grey bars |
+| rain | 2284 | cloud with blue drops |
+| thunder | 49299 | rain, lightning on frames 2 and 4 |
+| snow | 2289 | cloud with white flakes |
+| drizzle / frost / storm | shared | awaiting art of their own |
+
+**Two traps, both hit during selection.** The widely-copied Home Assistant
+mapping has 53384 and 53802 REVERSED — 53802 is the one with the sun behind the
+cloud. And 49299 is indistinguishable from plain rain on its first frame; it is
+only lightning from frame 2. Judging these icons by one frame mislabels them.
+
+The catalogue has no public search, so ids cost a download and a look. Sweeping
+2275-2300 found one designer's weather pack and no drizzle, frost or storm.
+
+The same task stops `CatalogueIconInstaller` listing the flash on every single
+delivery — with an icon on the weather that would have ADDED a request to a
+clock this wave exists to ask less of.
+
+### Open — the History opens only on the second try
+
+Reported live. One mechanism eliminated: `AnecdoteQueue.history()` is a
+synchronous actor method and synthesis runs outside the actor, so it cannot be
+blocked behind a restock.
+
+What remains suspect is `App.swift`'s observer of
+`NSWindow.didResignKeyNotification` with `object: nil` — every window in the
+process, justified by a comment claiming the app has exactly one. The test suite
+cannot catch this class of defect: `PanelRenderingTests` gives each test its own
+`NotificationCenter` precisely BECAUSE the observer is unfiltered, so production's
+shared `.default` is never exercised.
+
+Not yet proven, and it will not be proven by reading. It needs an instrumented
+build that records which window resigned, and one press of the button.

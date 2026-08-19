@@ -140,7 +140,7 @@ private func loadedHistory() async throws -> AppModel {
     }
     let model = testModel(anecdotes: StubAnecdotes(history: entries))
     model.openHistory()
-    #expect(await waitUntil { model.historyIsOpen && model.history.count == entries.count })
+    #expect(await waitUntil { model.historyIsOpen && model.history?.count == entries.count })
     return model
 }
 
@@ -232,7 +232,7 @@ private func showingOneEntry() async throws -> AppModel {
         PlayedAnecdote(anecdote: try playableAnecdote(id: "only"), playedAt: Date()),
     ]))
     model.openHistory()
-    #expect(await waitUntil { model.historyIsOpen && model.history.isEmpty == false })
+    #expect(await waitUntil { model.historyIsOpen && model.history?.isEmpty == false })
     return model
 }
 

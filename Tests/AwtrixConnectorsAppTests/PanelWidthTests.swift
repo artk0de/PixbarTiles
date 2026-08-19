@@ -188,8 +188,8 @@ private func hostedSettings(readingWidthFrom defaults: UserDefaults) -> NSHostin
     return host
 }
 
-/// The History, laid out. Nothing has played, which is beside the point: the
-/// width is the surface's, not the list's.
+/// The History, laid out. Nothing has been read into it, so there is no list at
+/// all — which is beside the point: the width is the surface's, not the list's.
 @MainActor
 private func hostedHistory(readingWidthFrom defaults: UserDefaults) -> NSHostingView<HistoryMenu> {
     let host = NSHostingView(rootView: HistoryMenu(model: testModel(), defaults: defaults))

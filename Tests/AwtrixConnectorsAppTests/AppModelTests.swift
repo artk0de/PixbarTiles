@@ -1397,8 +1397,8 @@ private func historyAfterReaping(
     let subject = testModel(anecdotes: wiring.connector)
     subject.openHistory()
 
-    #expect(await waitUntil { subject.history.isEmpty == false })
-    #expect(subject.history.map(\.anecdote.id) == ["newest", "middle"])
+    #expect(await waitUntil { subject.history?.isEmpty == false })
+    #expect(subject.history?.map(\.anecdote.id) == ["newest", "middle"])
 }
 
 // Rule three. The record survives its audio — it is still listed and still

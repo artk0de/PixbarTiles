@@ -104,12 +104,25 @@ struct HistoryMenu: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Divider()
-            if model.history.isEmpty {
-                Text("Nothing has played yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                entries
+            // Three states and not two, because two of them are not the same
+            // answer. A list nobody has read yet draws NEITHER the entries nor
+            // the sentence: the read is a hop to an actor, and filling that gap
+            // with "Nothing has played yet" is answering a question this surface
+            // has not heard back on — over a connector that may have plenty to
+            // list. Quiet for the fraction of a second it takes, and then the
+            // truth.
+            //
+            // A spinner was the alternative and it is worse: an actor hop is a
+            // frame or two, so it would flash rather than inform, and it would
+            // be the loudest thing on a surface opened to read old jokes.
+            if let played = model.history {
+                if played.isEmpty {
+                    Text("Nothing has played yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    entries(played)
+                }
             }
         }
         .padding(14)
@@ -120,12 +133,13 @@ struct HistoryMenu: View {
         //
         // And the second axis, which only this surface has — but only while
         // there is a list to resize. With nothing played yet the surface is one
-        // line of text, and a top or bottom edge would show a resize cursor and
-        // then move nothing, which is the same lie as a border that resizes
-        // silently told from the other side.
+        // line of text, and with nothing read yet it is not even that; a top or
+        // bottom edge on either would show a resize cursor and then move
+        // nothing, which is the same lie as a border that resizes silently told
+        // from the other side.
         .panelWidth(
             from: defaults,
-            alsoResizing: model.history.isEmpty ? nil : heightBinding
+            alsoResizing: model.history?.isEmpty == false ? heightBinding : nil
         ) {
             // The width's own save is `SharedPanelWidth`'s; this is the half it
             // cannot know about. Saved before the state is let go of, for the
@@ -173,10 +187,15 @@ struct HistoryMenu: View {
     ///
     /// Keyed by the anecdote's id, which is the feed's guid and is unique by the
     /// requirement that nothing is ever played twice.
-    private var entries: some View {
+    ///
+    /// Taking the list rather than reaching for `model.history`, so that the one
+    /// place that unwraps it is the one place that decides what to draw. Read
+    /// back off the model here, this would need a `?? []` — and an empty array
+    /// standing in for a missing one is the merge the whole change removes.
+    private func entries(_ played: [PlayedAnecdote]) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(model.history, id: \.anecdote.id) { entry in
+                ForEach(played, id: \.anecdote.id) { entry in
                     row(entry)
                 }
             }

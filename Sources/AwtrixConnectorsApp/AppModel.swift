@@ -220,14 +220,34 @@ final class AppModel: ObservableObject {
     @Published private(set) var settingsAreOpen = false
     /// Whether the History is showing instead of the panel.
     @Published private(set) var historyIsOpen = false
-    /// What has played recently, newest first, as of the last time the History
-    /// was opened.
+    /// What has played recently, newest first, as of the last read — and nil
+    /// until a read has answered.
+    ///
+    /// Optional rather than an empty array standing in for both, and the merge
+    /// is the reported defect rather than a nicety: "nobody has asked yet" and
+    /// "the queue holds nothing" are different states, and told apart by nothing
+    /// the surface says "Nothing has played yet" about a connector with plenty
+    /// to list — measured, byte-identical to the real thing. Reading earlier
+    /// narrows the window that is drawn in and cannot close it: it is a race,
+    /// and the answer it loses is a confident wrong one rather than a slow right
+    /// one.
+    ///
+    /// `Optional` rather than a `historyHasBeenRead` flag beside the array: one
+    /// value cannot disagree with itself, and two values answering one question
+    /// disagree the first time either moves. An enum of its own was the other
+    /// candidate and it says nothing `Optional` does not — this class already
+    /// spells "no answer yet" as nil three times over, in `replayResult`,
+    /// `iconStatus` and `locationNote`.
     ///
     /// Read on opening rather than kept in step with the queue: nothing else on
     /// the panel shows it, and a run that happens while the surface is closed
     /// has no reader to tell. The list is whatever the queue still holds — the
     /// retention window bounds it, and nothing here bounds it a second time.
-    @Published private(set) var history: [PlayedAnecdote] = []
+    ///
+    /// Never put back to nil once it holds an answer. A read that has happened
+    /// stays happened, so leaving the surface and returning to it draws the last
+    /// list at once instead of going quiet while the same answer arrives again.
+    @Published private(set) var history: [PlayedAnecdote]?
     /// How the last replay went, in the History's own words, and nil until one
     /// has been asked for.
     ///
@@ -690,12 +710,13 @@ final class AppModel: ObservableObject {
     ///
     /// Its own method because the History's own open is too late to be the only
     /// caller. The read is a round trip to an actor and the surface is drawn the
-    /// instant the button is pressed, so on the FIRST open `history` is still
-    /// the empty array it started as — and an empty array is what the surface
-    /// draws as "Nothing has played yet", which is a wrong answer rather than a
-    /// pending one. Every open after that draws the entries at once, off the
-    /// answer the first open eventually got, which is exactly the asymmetry that
-    /// was reported: the History showing what played only on the second press.
+    /// instant the button is pressed, so on the FIRST open there is no answer to
+    /// draw yet, while every open after that draws the entries at once off the
+    /// answer the first open eventually got — which is exactly the asymmetry
+    /// that was reported: the History showing what played only on the second
+    /// press. Asking when the PANEL opens is what buys the first open its
+    /// answer; `history` staying nil until one arrives is what keeps the gap
+    /// honest when it does not.
     ///
     /// Cancelling the load in flight is what keeps the last open's answer from
     /// landing after this one's — two reads racing to write the same list, and

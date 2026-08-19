@@ -487,7 +487,7 @@ private func scheduledModel(dueIn delay: TimeInterval) async -> AppModel {
 private func showingHistory(_ entries: [PlayedAnecdote]) async -> AppModel {
     let model = testModel(anecdotes: StubAnecdotes(history: entries))
     model.openHistory()
-    #expect(await waitUntil { model.historyIsOpen && model.history.count == entries.count })
+    #expect(await waitUntil { model.historyIsOpen && model.history?.count == entries.count })
     return model
 }
 
@@ -601,7 +601,7 @@ private func drawnEntry(
     let panel = await drawnAfterTheOpeningReading(model)
 
     model.openHistory()
-    #expect(await waitUntil { model.history.isEmpty == false })
+    #expect(await waitUntil { model.history?.isEmpty == false })
     let history = drawn(model)
 
     model.closeHistory()
@@ -720,13 +720,13 @@ private func redrawn(_ host: NSHostingView<MenuPanel>) -> Data? {
     let model = testModel(anecdotes: StubAnecdotes(history: [played]))
     let host = hostedPanel(model)
     _ = redrawn(host)
-    #expect(await waitUntil { model.history.isEmpty == false })
+    #expect(await waitUntil { model.history?.isEmpty == false })
 
     model.openHistory()
     let asItOpens = redrawn(host)
     // The same surface once the open's own read has landed: the state the old
     // behaviour only reached after the user had already looked at it.
-    #expect(await waitUntil { model.history.isEmpty == false })
+    #expect(await waitUntil { model.history?.isEmpty == false })
     let onceTheReadAnswered = redrawn(host)
 
     // Without this the equality below is satisfied by a surface that draws
@@ -738,11 +738,96 @@ private func redrawn(_ host: NSHostingView<MenuPanel>) -> Data? {
     let emptyHost = hostedPanel(nothingPlayed)
     _ = redrawn(emptyHost)
     nothingPlayed.openHistory()
-    #expect(await waitUntil { nothingPlayed.historyIsOpen })
+    // Waited on the READ rather than on the surface being open. Open is not
+    // enough any more: a History whose read has not landed draws nothing at all,
+    // and a control that draws nothing is exactly the one this control exists to
+    // rule out.
+    #expect(await waitUntil { nothingPlayed.history != nil })
 
     #expect(asItOpens != nil)
     #expect(asItOpens != redrawn(emptyHost))
     #expect(asItOpens == onceTheReadAnswered)
+}
+
+// The half of the defect that no amount of reading earlier can close: an
+// unread History and an empty one are the SAME pixels. `5e1ffdd` moved the read
+// forward to the panel's own opening, so the answer is usually there by the time
+// a hand reaches the button — but "usually" is a timing claim, and what the
+// surface says while it waits is a confident wrong answer rather than a pending
+// one. Measured with that fix in place and the states still merged: the History
+// drawn at the press is byte-identical to the History of a connector that has
+// never played anything, over a connector holding a joke it could have listed.
+//
+// Nothing is awaited between the panel being hosted and the History being drawn,
+// and that is not brevity — it IS the mechanism. The read is a `Task` on the main
+// actor, so it cannot run until this test suspends; holding the actor is the only
+// way to hold the surface in the state being measured, and it is exactly the
+// press that arrives before the answer.
+//
+// Three renders because two would not pin it. Compared only against the loaded
+// surface, a quiet History passes by drawing nothing; compared only against the
+// empty one, it passes by drawing the entries early. It has to differ from both.
+@Test @MainActor func aHistoryNobodyHasReadYetIsNotDrawnAsAnEmptyOne() async throws {
+    let played = PlayedAnecdote(
+        anecdote: try playableAnecdote(id: "a", text: "Заходит улитка в бар"),
+        playedAt: Date()
+    )
+    let model = testModel(anecdotes: StubAnecdotes(history: [played]))
+    let host = hostedPanel(model)
+    model.openHistory()
+    let beforeTheReadAnswers = redrawn(host)
+    let whileUnread = host.fittingSize.height
+
+    #expect(await waitUntil { model.history?.isEmpty == false })
+    let onceTheReadAnswered = redrawn(host)
+
+    // A connector that really has nothing to look back over, driven the same way
+    // and settled before it is read: the surface the unread one must not be.
+    let nothingPlayed = testModel(anecdotes: StubAnecdotes(history: []))
+    let emptyHost = hostedPanel(nothingPlayed)
+    nothingPlayed.openHistory()
+    #expect(await waitUntil { nothingPlayed.history != nil })
+    let genuinelyEmpty = redrawn(emptyHost)
+    let whileEmpty = emptyHost.fittingSize.height
+
+    #expect(beforeTheReadAnswers != nil)
+    // The defect itself, in one line: these two were the same bytes.
+    #expect(beforeTheReadAnswers != genuinelyEmpty)
+    #expect(beforeTheReadAnswers != onceTheReadAnswered)
+    #expect(genuinelyEmpty != onceTheReadAnswered)
+    // And different because it drew LESS, not because it drew something else of
+    // its own. A spinner or a placeholder would satisfy every inequality above
+    // and be exactly the flash this surface is not worth.
+    #expect(whileUnread < whileEmpty)
+}
+
+// Back and in again is not a fresh start. The list is the answer to a question
+// that has already been asked, and leaving the surface does not un-ask it — so
+// the second open draws what the first one learned, at the instant it opens,
+// while its own read repeats the answer behind it.
+//
+// Its own test because the obvious way to build the three states breaks it:
+// clearing the list on close, or on open, to "show the new read honestly" puts
+// every open after the first back in the quiet state. Drawn with nothing awaited
+// after the press, so a surface that had gone quiet would be caught here.
+@Test @MainActor func aSecondOpenOfTheHistoryDrawsWhatTheFirstOneRead() async throws {
+    let played = PlayedAnecdote(
+        anecdote: try playableAnecdote(id: "a", text: "Заходит улитка в бар"),
+        playedAt: Date()
+    )
+    let model = testModel(anecdotes: StubAnecdotes(history: [played]))
+    let host = hostedPanel(model)
+    model.openHistory()
+    #expect(await waitUntil { model.history?.isEmpty == false })
+    let firstOpen = redrawn(host)
+
+    model.closeHistory()
+    _ = redrawn(host)
+    model.openHistory()
+    let secondOpen = redrawn(host)
+
+    #expect(firstOpen != nil)
+    #expect(secondOpen == firstOpen)
 }
 
 // And the mechanism underneath it, where a render cannot reach: the panel
@@ -756,11 +841,14 @@ private func redrawn(_ host: NSHostingView<MenuPanel>) -> Data? {
         playedAt: Date()
     )
     let model = testModel(anecdotes: StubAnecdotes(history: [played]))
-    #expect(model.history.isEmpty)
+    // Nil rather than empty, and that is the precondition this test needs: an
+    // empty list would be an answer, and the claim below is that the PANEL is
+    // what asks for one.
+    #expect(model.history == nil)
 
     let panel = hostedPanel(model)
 
-    #expect(await waitUntil { model.history.isEmpty == false })
+    #expect(await waitUntil { model.history?.isEmpty == false })
     #expect(model.historyIsOpen == false)
     // Held to the end: a hosting view nobody references is torn down, and a
     // torn-down one has nothing to appear.
@@ -868,7 +956,7 @@ private func afterTheQueuedObserversHaveRun() async {
     let model = testModel(anecdotes: StubAnecdotes(history: [played]))
     let panel = await drawnAfterTheOpeningReading(model)
     model.openHistory()
-    #expect(await waitUntil { model.history.isEmpty == false })
+    #expect(await waitUntil { model.history?.isEmpty == false })
     let history = drawn(model)
 
     model.windowDidClose()
@@ -1011,7 +1099,7 @@ private func historyWithOneEntry(host: any ConnectorRunning) async throws
         anecdotes: StubAnecdotes(history: [PlayedAnecdote(anecdote: anecdote, playedAt: played)])
     )
     model.openHistory()
-    #expect(await waitUntil { model.history.isEmpty == false })
+    #expect(await waitUntil { model.history?.isEmpty == false })
     return (model, anecdote)
 }
 

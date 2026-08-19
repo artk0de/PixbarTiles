@@ -152,6 +152,106 @@ private func scratchStore() -> URL {
     // `StubConnector(5 * 60)` tests are what carry that rule.
 }
 
+// And of the two it registers, only the anecdotes are offered a row. The rule
+// is `PanelRows`, applied here to the connectors the app ACTUALLY ships rather
+// than to a pair made up for the test: `thePanelDrawsNoRowForAConnectorThat
+// SaysNothing` proves the rule reaches the screen, and this proves the shipped
+// weather is on the wrong side of it while the shipped anecdotes stay on the
+// right one.
+//
+// Both halves are asserted, because "no rows at all" satisfies the first on its
+// own — which is the whole panel gone and the test still green.
+@Test @MainActor func onlyTheAnecdotesAreOfferedARowOnThePanel() throws {
+    let suite = "app-model-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let subject = AppModel.live(
+        defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore()
+    )
+
+    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather"])
+    #expect(PanelRows.drawn(from: subject.registry.all).map(\.id) == ["anecdotes"])
+}
+
+/// Whether an output would put sound in the room.
+///
+/// Both channels, because they are two different noises made by two different
+/// machines: `localAudio` is this Mac speaking through its own speakers, and
+/// `jingle` is the clock's buzzer playing RTTTL. A guard watching one of them
+/// would wave the other straight through.
+private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
+    output.jingle != nil || output.localAudio.isEmpty == false
+}
+
+// Nothing but the anecdotes is ever spoken, and that is a rule rather than an
+// observation. It happens to hold today because `AnecdoteConnector` is the only
+// place in `Sources/` that sets either audio field — an accident nothing was
+// holding in place, and the next connector to want a jingle would have found
+// nothing in its way.
+//
+// Read off the SHIPPED registry rather than off a list written here, and that
+// is the point of putting it in this file: a hand-written roster is the same
+// accident with a test around it, green on the day it is written and silent
+// about the connector somebody registers next year. Every connector `live()`
+// composes is walked, and the anecdotes are excluded BY TYPE — a string id here
+// could stop matching after a rename and quietly excuse everything.
+//
+// What this does NOT cover, so nobody over-trusts it:
+//   - A connector registered somewhere other than `AppModel.live()`. Nothing
+//     enumerates conformers of a protocol in Swift, so the composition root is
+//     the widest net available.
+//   - `produce()` on the anecdote connector itself, which is the one allowed to
+//     speak. `theAnecdoteConnectorIsAudibleAndSpeaks` in the kit's own suite is
+//     what pins that it still does.
+//   - A connector whose `produce()` cannot run under this transport: it is
+//     covered by its DECLARATION only, which is a promise rather than a
+//     measurement. The count below is what says at least one real output was
+//     inspected.
+//   - Anything a connector hands to the device that is not carried on its
+//     output — this reads the value `produce()` returns, and `ConnectorHost` is
+//     what turns it into sound.
+@Test @MainActor func nothingButTheAnecdotesEverPutsSoundInTheRoom() async throws {
+    let suite = "app-model-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let subject = AppModel.live(
+        defaults: defaults, transport: SkyAndClockTransport(), anecdoteStore: scratchStore()
+    )
+    let others = subject.registry.all.filter { ($0 is AnecdoteConnector) == false }
+
+    // Or every expectation in the loop is unreached and the test is a
+    // decoration on an empty collection.
+    #expect(others.isEmpty == false)
+
+    var inspected = 0
+    for connector in others {
+        // The declaration first: it is the answer the schedule reads BEFORE
+        // `produce()` is called, and the only answer available for a connector
+        // that cannot be produced here.
+        #expect(connector.isAudible == false, "\(connector.id) declares itself audible")
+        guard let output = try? await connector.produce() else { continue }
+        inspected += 1
+        #expect(putsSoundInTheRoom(output) == false, "\(connector.id) produced audio")
+    }
+
+    // At least one connector was really produced, or the loop asserted nothing
+    // about any actual output — a transport answering nothing would leave every
+    // one of them unproducible and the test green.
+    #expect(inspected > 0)
+    // And the question being asked is one that can answer yes, or the loop
+    // passes for a connector singing through either channel.
+    #expect(putsSoundInTheRoom(ConnectorOutput(text: "x", jingle: AnecdoteConnector.nokiaJingle)))
+    #expect(
+        putsSoundInTheRoom(
+            ConnectorOutput(
+                text: "x", localAudio: [SpokenClip(url: URL(fileURLWithPath: "/tmp/x.wav"))]
+            )
+        )
+    )
+}
+
 // The two ends of the reaper's safety argument, which is the file's own words:
 // containment means nothing if the synthesizer writes somewhere the queue is not
 // allowed to delete. Neither end could be read back before, so pointing them at

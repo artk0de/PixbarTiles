@@ -200,11 +200,45 @@ struct WeatherSettings: View {
     /// item with nothing behind it — but it is not something a user should
     /// discover from the clock.
     static let weatherStartsSwitchedOn =
-        "Weather is on from the first launch. Switch it off on the main panel to "
-            + "stop it and hand the overlay back."
+        "Weather is on from the first launch. Switch it off here to stop it and "
+            + "hand the overlay back."
+
+    /// The connector this section is about, or none when nothing weather-shaped
+    /// is registered.
+    ///
+    /// Found by TYPE rather than by the id "weather". A string here is a lookup
+    /// that can silently stop matching — rename the connector's id and the
+    /// switch quietly disappears from a surface that still carries the sentence
+    /// telling you to use it — where a type is checked by the compiler. Read off
+    /// the registry rather than handed in, because that is where the panel reads
+    /// its own connectors from and a second route would be a second answer.
+    ///
+    /// Optional, and drawn only when it is there: no weather connector means no
+    /// weather switch, which is honest. The section's location field is not
+    /// conditional on it, because a location is a stored setting that outlives
+    /// whatever is reading it.
+    private var connector: (any Connector)? {
+        model.registry.all.first { $0 is WeatherConnector }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // Where the panel's weather row used to be. The panel is opened
+            // dozens of times a day to answer "is the clock alive, and run
+            // something now", and this connector answers neither — but it is
+            // still something that can be switched off, and a connector with
+            // nowhere to switch it off is one the user cannot stop.
+            //
+            // Labelled with the connector's own name, which is the label the
+            // row carried: the control moved surfaces and was not renamed on
+            // the way.
+            if let connector {
+                Toggle(connector.displayName, isOn: Binding(
+                    get: { model.settings(for: connector).isEnabled },
+                    set: { model.setEnabled($0, for: connector) }
+                ))
+                .controlSize(.small)
+            }
             Text("Weather location").font(.caption).foregroundStyle(.secondary)
             TextField("Latitude, longitude", text: $model.typedLocation)
                 .textFieldStyle(.roundedBorder)

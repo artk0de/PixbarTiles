@@ -117,6 +117,39 @@ enum DeviceHostField {
     }
 }
 
+/// Which of the registered connectors the panel offers a row.
+///
+/// Asked of the connector rather than matched against the id "weather". A view
+/// holding that string is a view that is wrong about the next connector, and
+/// wrong quietly: rename the id and the match stops matching, the row comes
+/// back, and nothing anywhere says so.
+///
+/// The question is `isAudible`, and it is the honest one rather than the
+/// convenient one. A row carries a switch and a "Run now", and both are about
+/// something that INTERRUPTS: a connector whose outputs can be heard is one you
+/// want to trigger on demand and to silence in a hurry. A connector that says
+/// nothing draws into the device's own loop and is on the matrix already — its
+/// "Run now" repaints a value that is on screen, and its switch is a setting,
+/// which is what the gear is for. That is the same split `isAudible` was
+/// declared for: the quiet rules exist to stop the app SPEAKING, and the thing
+/// they do not apply to is exactly the thing this panel is not for.
+///
+/// The rejected alternative was a second property — `showsOnThePanel`, or
+/// `isRunnableByHand` — declared beside `isAudible`. Two flags about one
+/// connector can disagree, and nothing would notice: a connector declaring
+/// itself silent and panel-worthy would get a row whose switch no quiet rule
+/// applies to. It would also put a menu bar's layout into `Connector`, which is
+/// a source of content in a kit that has never heard of a panel.
+///
+/// The default direction carries over unchanged: `isAudible` defaults to
+/// `true`, so a connector that declares nothing keeps its row. Only a connector
+/// that has said out loud that it cannot be heard loses one.
+enum PanelRows {
+    static func drawn(from connectors: [any Connector]) -> [any Connector] {
+        connectors.filter(\.isAudible)
+    }
+}
+
 /// When the next run is due, or what is holding it.
 ///
 /// A time and a reason are the same slot because they answer the same question,
@@ -258,7 +291,7 @@ struct MenuPanel: View {
             statusSection
             discoverySection
             Divider()
-            ForEach(model.registry.all, id: \.id) { connector in
+            ForEach(PanelRows.drawn(from: model.registry.all), id: \.id) { connector in
                 connectorRow(connector)
             }
             Divider()

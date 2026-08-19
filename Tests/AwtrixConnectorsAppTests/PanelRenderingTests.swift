@@ -528,6 +528,36 @@ private func drawnEntry(
     #expect(drawn(anecdotes) != drawn(somethingElse))
 }
 
+// MARK: - Which connectors get a row
+
+// The panel answers "is the clock alive, and run something now". A connector
+// that says nothing answers neither: it is already drawn in the device's own
+// loop, so "Run now" repaints a value that is on screen already, and there is
+// nothing to switch off in a hurry.
+//
+// Three models rather than two, and the third is what makes the first
+// comparison mean anything: without it, a panel that had stopped drawing
+// connector rows AT ALL would satisfy the equality. The two added connectors
+// are alike in everything the row draws — same displayed name, same interval,
+// so the same slider position and the same label — and differ only in whether
+// they declare themselves audible.
+@Test @MainActor func thePanelDrawsNoRowForAConnectorThatSaysNothing() {
+    let alone = testModel(connectors: [StubConnector()])
+    let andASilentOne = testModel(connectors: [StubConnector(), silentConnector])
+    let andAnAudibleOne = testModel(
+        connectors: [
+            StubConnector(),
+            StubConnector(id: "second", displayName: "Silent", defaultInterval: 900),
+        ]
+    )
+
+    let oneRow = drawn(alone)
+
+    #expect(oneRow != nil)
+    #expect(drawn(andASilentOne) == oneRow)
+    #expect(drawn(andAnAudibleOne) != oneRow)
+}
+
 // A menu bar window dismisses when it loses focus and takes any sheet over it
 // with it, so the History is shown in place of the panel exactly as the
 // settings are. And closing it goes back to the panel it replaced, pixel for
@@ -995,6 +1025,39 @@ private func drawnSettings(_ model: AppModel) -> Data? {
     #expect(said.contains("first launch"))
     // And where to go to stop it, or the warning is one a reader cannot act on.
     #expect(said.contains("Switch it off"))
+    // Not the panel, which no longer draws a weather row at all. A sentence
+    // naming a surface the switch is not on is worse than one that names none:
+    // it sends the reader somewhere to look for a control that was moved, and
+    // this one said "on the main panel" for as long as the row was there.
+    #expect(said.contains("panel") == false)
+}
+
+// The switch the panel row used to carry, on the surface it moved to. Two
+// weather sections over the SAME connector — same location, same notes, same
+// everything the section draws — differing only in whether that connector is
+// switched on.
+//
+// Pixels are the only instrument available: a SwiftUI `Toggle` is not an
+// `NSButton` in the view tree and cannot be read off it, exactly as the panel's
+// own toggles cannot. So what this says is that the section DRAWS the
+// connector's state; that pressing the switch writes it back is on the list
+// only a person can check, alongside "the gear opens the settings".
+@Test @MainActor func theWeatherIsSwitchedOffInTheSettingsRatherThanOnThePanel() {
+    let weather = weatherConnector(over: SkyAndClockTransport())
+    let on = testModel(connectors: [StubConnector(), weather])
+    let off = testModel(connectors: [StubConnector(), weather])
+
+    off.setEnabled(false, for: weather)
+
+    let switchedOn = drawnSettings(on)
+
+    #expect(on.settings(for: weather).isEnabled)
+    #expect(off.settings(for: weather).isEnabled == false)
+    #expect(switchedOn != nil)
+    #expect(switchedOn != drawnSettings(off))
+    // The same surface twice is the same pixels, or the inequality above is
+    // noise rather than content.
+    #expect(switchedOn == drawnSettings(on))
 }
 
 // MARK: - What opening the panel asks for

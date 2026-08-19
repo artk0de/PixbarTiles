@@ -409,6 +409,54 @@ private func staysFalse(
     #expect(audio.played == [[clip()]])
 }
 
+// An app pushed into the loop stays there until something removes it, and the
+// only ending that removes one is a clean quit. The lifetime is the firmware
+// doing it on this app's behalf when the updates stop — after a crash, a sleep
+// or a dropped network the last reading would otherwise sit on the matrix for
+// good, with nothing on screen to say it is stale.
+@Test func aLifetimeReachesTheDeviceOnAnAppDelivery() async throws {
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(text: "4°", surface: .app("weather"), lifetime: 3_600)
+    let transport = RecordingTransport()
+    let host = makeHost(connector: connector, transport: transport)
+
+    _ = await host.runOnce(connectorId: "stub")
+
+    let request = try #require(transport.requests.first { $0.url?.path == "/api/custom" })
+    #expect(jsonBody(request)["lifetime"] as? Int == 3_600)
+}
+
+// And never on a notification, however loudly the output asks for one. A
+// notification interrupts and then goes away by itself, so there is nothing
+// left on the clock for a lifetime to expire — and the firmware documents the
+// key for custom apps alone.
+@Test func aLifetimeIsNeverSentOnANotification() async throws {
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(text: "hi", lifetime: 3_600)
+    let transport = RecordingTransport()
+    let host = makeHost(connector: connector, transport: transport)
+
+    _ = await host.runOnce(connectorId: "stub")
+
+    let request = try #require(transport.requests.first { $0.url?.path == "/api/notify" })
+    #expect(jsonBody(request)["lifetime"] == nil)
+}
+
+// A producer that says nothing about staleness reaches the device exactly as it
+// did before there was anything to say: no key at all, so the firmware keeps
+// the app until this app removes it.
+@Test func aConnectorThatDeclaresNoLifetimeSendsNoSuchKey() async throws {
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(text: "4°", surface: .app("weather"))
+    let transport = RecordingTransport()
+    let host = makeHost(connector: connector, transport: transport)
+
+    _ = await host.runOnce(connectorId: "stub")
+
+    let request = try #require(transport.requests.first { $0.url?.path == "/api/custom" })
+    #expect(jsonBody(request)["lifetime"] == nil)
+}
+
 // MARK: - Holding the banner for the speech
 
 // The clock cannot decode audio, so the banner is the only thing standing in

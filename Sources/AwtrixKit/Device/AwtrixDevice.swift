@@ -74,12 +74,41 @@ public struct AppPayload: Sendable, Equatable {
     /// app time — which the user chose in its settings, and which this app has
     /// no better answer than.
     public var duration: Int?
+    /// Seconds without an update after which the clock removes this app by
+    /// itself, or nil to leave it in the loop until this app takes it out.
+    ///
+    /// The only ending that removes an app is a clean quit, and the endings
+    /// that matter are the other ones: a crash, a force quit, the Mac sleeping,
+    /// the network dropping. Every one of them leaves the last reading on the
+    /// matrix for good — yesterday's temperature shown as today's, with nothing
+    /// on screen to say it is stale.
+    ///
+    /// Deletion rather than the firmware's `lifetimeMode: 1`, which keeps the
+    /// app and draws a red rectangle round it. A marked-stale app is still a
+    /// number in the rotation, and a red border says "this app has a problem"
+    /// to somebody who has never read this file; an app that is simply gone
+    /// says the one true thing, that nothing here knows the temperature any
+    /// more. The default mode is the deleting one, so nothing is sent for it.
+    ///
+    /// A consequence worth knowing before it surprises somebody: `pos` — where
+    /// the app sits in the loop — applies only on the FIRST push of a name. An
+    /// app the clock removed on its lifetime and this app later pushes again is
+    /// a first push, so it can come back in a different place in the rotation
+    /// than it left.
+    public var lifetime: Int?
 
-    public init(text: String, icon: String? = nil, color: String? = nil, duration: Int? = nil) {
+    public init(
+        text: String,
+        icon: String? = nil,
+        color: String? = nil,
+        duration: Int? = nil,
+        lifetime: Int? = nil
+    ) {
         self.text = text
         self.icon = icon
         self.color = color
         self.duration = duration
+        self.lifetime = lifetime
     }
 
     /// Only set fields are emitted — the firmware rejects nulls.
@@ -88,6 +117,7 @@ public struct AppPayload: Sendable, Equatable {
         if let icon { object["icon"] = icon }
         if let color { object["color"] = color }
         if let duration { object["duration"] = duration }
+        if let lifetime { object["lifetime"] = lifetime }
         return object
     }
 }

@@ -349,6 +349,11 @@ public actor ConnectorHost {
                 && output.surface == .notification
             switch output.surface {
             case .notification:
+                // `output.lifetime` stops here, and the asymmetry is the point:
+                // a notification interrupts and then goes away by itself, so
+                // there is nothing left on the clock for a lifetime to expire.
+                // The firmware scopes the key to custom apps, as it scopes
+                // several others to one surface or the other.
                 try await device.notify(
                     NotifyPayload(
                         text: output.text,
@@ -369,7 +374,11 @@ public actor ConnectorHost {
                 try await custody.show(
                     AppPayload(
                         text: output.text, icon: iconName,
-                        color: output.color, duration: output.duration
+                        color: output.color, duration: output.duration,
+                        // The clock removing this app itself, for the endings
+                        // this process never gets to clean up after. Custody
+                        // above covers only the clean quit.
+                        lifetime: output.lifetime
                     ),
                     named: name,
                     // Falling back to the app's own name rather than skipping

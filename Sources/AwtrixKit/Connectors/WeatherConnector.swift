@@ -80,6 +80,15 @@ public struct WeatherConnector: Connector {
             icon: theme.icon,
             color: TemperatureColour(celsius: felt).hex,
             surface: .app(Self.appName),
+            // An hour without a fresh reading and the clock drops the app on
+            // its own — the only thing that survives this process ending
+            // without a quit. An hour rather than something tighter because
+            // the poll is 900 seconds: four missed ones, so a network hiccup
+            // or one slow answer from a free public service cannot strip the
+            // temperature off the loop while this app is alive and about to
+            // succeed. And an hour is where the reading stops being weather
+            // anyway, so nothing is lost by waiting that long to drop it.
+            lifetime: 3_600,
             overlay: theme.overlay
         )
     }

@@ -56,6 +56,14 @@ public struct ConnectorOutput: Sendable, Equatable {
     /// Where this is drawn. Defaulted to the notification, which is what every
     /// output was before there was a choice.
     public var surface: DeliverySurface
+    /// Seconds without a fresh delivery after which the clock takes this off
+    /// itself, or nil to stay until this app removes it.
+    ///
+    /// Next to `surface` because it belongs to one: an app in the loop is the
+    /// only thing that outlives the delivery that made it. Defaulted to none,
+    /// so a producer that says nothing about staleness behaves exactly as it
+    /// did before there was anything to say.
+    public var lifetime: Int?
     /// The device-wide weather layer this output wants, or nil to leave
     /// whatever is on the device alone.
     ///
@@ -74,6 +82,7 @@ public struct ConnectorOutput: Sendable, Equatable {
         duration: Int? = nil,
         color: String? = nil,
         surface: DeliverySurface = .notification,
+        lifetime: Int? = nil,
         overlay: DeviceOverlay? = nil
     ) {
         self.text = text
@@ -84,6 +93,7 @@ public struct ConnectorOutput: Sendable, Equatable {
         self.duration = duration
         self.color = color
         self.surface = surface
+        self.lifetime = lifetime
         self.overlay = overlay
     }
 }

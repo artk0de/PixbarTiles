@@ -165,6 +165,38 @@ private func decodeBody(_ request: URLRequest) throws -> [String: Any] {
         == "invalid device host: not a host")
 }
 
+// MARK: - The app in the loop
+
+// A custom app stays in the clock's loop until something takes it out, and a
+// clean quit is the only ending that does one. A crash, a force quit, the Mac
+// going to sleep or the wifi dropping all leave the last reading on the matrix
+// for good — yesterday's temperature shown as today's, with nothing on screen
+// to say it is stale. A lifetime is the firmware removing it on this app's
+// behalf once the updates stop arriving.
+@Test func anAppWithALifetimeSendsItToTheFirmware() async throws {
+    let transport = RecordingTransport()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    try await device.showApp(AppPayload(text: "4°", lifetime: 3_600), named: "weather")
+
+    let request = try #require(transport.requests.first)
+    #expect(request.url?.absoluteString == "http://10.0.0.5/api/custom?name=weather")
+    #expect(try decodeBody(request)["lifetime"] as? Int == 3_600)
+}
+
+// Unset is an absent key rather than a null, as every other optional field on
+// both payloads already is — the firmware rejects nulls.
+@Test func anAppWithoutALifetimeOmitsTheKeyEntirely() async throws {
+    let transport = RecordingTransport()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    try await device.showApp(AppPayload(text: "4°", icon: "2289"), named: "weather")
+
+    let body = try decodeBody(try #require(transport.requests.first))
+    #expect(body["lifetime"] == nil)
+    #expect(body.keys.count == 2)
+}
+
 // MARK: - What a typed address is aimed at
 
 // Pasting the address out of the clock's own web interface is the single most

@@ -179,6 +179,22 @@ private struct PassThroughIcons: IconInstalling {
     #expect(output.holdUntilAudioEnds == false)
 }
 
+// The reading takes itself off the clock if this app stops feeding it. An hour
+// against a 900-second poll is four missed polls: a network hiccup or one slow
+// answer from a free public service must not strip the app out of the loop
+// while this app is perfectly alive, and an hour is where a temperature stops
+// being weather.
+@Test func theReadingIsGivenAnHourBeforeTheClockDropsIt() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk }
+    )
+
+    let output = try await connector.produce()
+
+    #expect(output.lifetime == 3_600)
+}
+
 // Two quantities in one element, which is the whole point of it: the digits
 // answer how many degrees it is, the colour answers how that feels. A 4.2° in a
 // wind stands in like a -2°, and the reading is drawn as a -2 would be while

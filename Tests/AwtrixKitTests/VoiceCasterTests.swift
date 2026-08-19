@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import AwtrixKit
 
@@ -248,4 +249,117 @@ private func makeCaster() -> VoiceCaster {
 
     #expect(VoiceCaster().cast(turns).map(\.voice.id)
         == ["arthas", "crystal", "arthas", "crystal"])
+}
+
+// MARK: - A voice per connector
+
+// Giving each connector its own narrator is what makes the weather and a broken
+// build sound like two different characters. Everything below pins the four
+// rules that keeps it from disturbing the casting Task 27 restored.
+
+/// A connector that names the voice its narration is spoken in.
+private struct NarratedConnector: Connector {
+    let id = "narrated"
+    let displayName = "Narrated"
+    let defaultInterval: TimeInterval = 60
+    let narrator: Voice
+
+    func produce() async throws -> ConnectorOutput { ConnectorOutput(text: "") }
+}
+
+/// A connector that names none, so what reaches the caster is the protocol's
+/// own answer rather than one written down here.
+private struct UnnarratedConnector: Connector {
+    let id = "unnarrated"
+    let displayName = "Unnarrated"
+    let defaultInterval: TimeInterval = 60
+
+    func produce() async throws -> ConnectorOutput { ConnectorOutput(text: "") }
+}
+
+/// Narration at both ends and three speakers between them — the shape every
+/// prepared anecdote has.
+private let anAnecdote = [
+    Turn(speaker: .narrator, text: "Заходят в бар:"),
+    Turn(speaker: .actor(0), text: "раз"),
+    Turn(speaker: .actor(1), text: "два"),
+    Turn(speaker: .actor(2), text: "три"),
+    Turn(speaker: .narrator, text: "АХАХАХА"),
+]
+
+/// The voices of the actor turns only, in order.
+private func actorVoices(_ cast: [VoicedTurn]) -> [String] {
+    zip(anAnecdote, cast).filter { $0.0.speaker != .narrator }.map { $0.1.voice.id }
+}
+
+@Test func aConnectorsNarratorVoiceIsUsedForItsNarratorLines() {
+    let cast = VoiceCaster(narrating: NarratedConnector(narrator: .batrak)).cast(anAnecdote)
+
+    // Asserted to differ from the default first. A connector whose narrator
+    // happened to BE the default would satisfy the two expectations below with
+    // the connector ignored altogether — which is this file's own failure mode.
+    #expect(Voice.batrak != VoiceCaster.defaultNarrator)
+    #expect(cast.first?.voice == .batrak)
+    #expect(cast.last?.voice == .batrak)
+}
+
+@Test func perSpeakerCastingInsideTheTextIsUnchanged() {
+    let byDefault = VoiceCaster().cast(anAnecdote)
+    let byPeon = VoiceCaster(narrating: NarratedConnector(narrator: .peon)).cast(anAnecdote)
+
+    // The narration moved, or the comparison below holds for the uninteresting
+    // reason that nothing about the caster changed at all.
+    #expect(byDefault.first?.voice == .arthas)
+    #expect(byPeon.first?.voice == .peon)
+    #expect(actorVoices(byPeon) == actorVoices(byDefault))
+    #expect(actorVoices(byPeon) == ["arthas", "acolyte", "batrak"])
+}
+
+@Test func aConnectorNarratorDoesNotConsumeTheReservedFemaleVoice() {
+    let turns = [
+        Turn(speaker: .narrator, text: "Заходят:"),
+        Turn(speaker: .actor(0), text: "Я закрыла дверь"),
+        Turn(speaker: .actor(1), text: "раз"),
+    ]
+
+    let cast = VoiceCaster(narrating: NarratedConnector(narrator: .crystal)).cast(turns)
+
+    #expect(cast[0].voice != VoiceCaster.reservedFemale)
+    #expect(cast[0].voice == VoiceCaster.defaultNarrator)
+    // And she still gets it. The reservation is the whole point of refusing it
+    // to the narrator, so a fallback that also lost her the voice would be no
+    // better than handing it over.
+    #expect(cast[1].voice == VoiceCaster.reservedFemale)
+    #expect(cast[2].voice != VoiceCaster.reservedFemale)
+}
+
+@Test func anUnknownNarratorFallsBackRatherThanFailing() {
+    let deleted = Voice(id: "deleted-from-the-pack-directory")
+
+    let cast = VoiceCaster(narrating: NarratedConnector(narrator: deleted)).cast(anAnecdote)
+
+    #expect(Voice.installed.contains(deleted) == false)
+    #expect(cast.first?.voice == VoiceCaster.defaultNarrator)
+    // Nothing anywhere in the anecdote names a pack that is not on disk: the
+    // sidecar resolves a voice to `voices/<name>.wav` and would fail the whole
+    // batch on one that is missing.
+    #expect(cast.allSatisfy { Voice.installed.contains($0.voice) })
+}
+
+// The two fallbacks compose, and the order they compose in is the whole of it:
+// the empty pool falls back to the narrator, so a narrator that was refused
+// above would come straight back as the voice every actor draws.
+@Test func aRefusedNarratorIsNotWhatAnEmptyPoolFallsBackTo() {
+    let caster = VoiceCaster(narrator: Voice(id: "deleted-from-the-pack-directory"), pool: [])
+
+    let cast = caster.cast([Turn(speaker: .actor(0), text: "раз")])
+
+    #expect(cast.map(\.voice) == [VoiceCaster.defaultNarrator])
+}
+
+@Test func connectorsWithoutANarratorSoundExactlyAsBefore() {
+    let cast = VoiceCaster(narrating: UnnarratedConnector()).cast(anAnecdote)
+
+    #expect(cast.first?.voice.id == "arthas")
+    #expect(cast.map(\.voice.id) == VoiceCaster().cast(anAnecdote).map(\.voice.id))
 }

@@ -66,16 +66,42 @@ public struct VoiceCaster: Sendable {
             $0 != defaultNarrator && $0 != reservedFemale
         }
 
-    private let narrator: Voice
+    /// The voice narration is actually spoken in, after the rules below have
+    /// had their say. Readable because the connector in front of this caster
+    /// has to be able to answer the same question, and a second copy of the
+    /// answer would be free to disagree with the one that does the narrating.
+    public let narrator: Voice
     private let female: Voice
     private let pool: [Voice]
+
+    /// A caster that narrates in the connector's own voice.
+    ///
+    /// The connector names a character; what it does not get to do is disturb
+    /// the casting inside the text. The pool is left exactly as it was, so the
+    /// speakers of an anecdote draw the same voices in the same order whichever
+    /// connector is telling it.
+    public init(narrating connector: any Connector) {
+        self.init(narrator: connector.narrator)
+    }
 
     public init(
         narrator: Voice = VoiceCaster.defaultNarrator,
         pool: [Voice] = VoiceCaster.defaultPool,
         female: Voice = VoiceCaster.reservedFemale
     ) {
-        self.narrator = narrator
+        // Two ways a narrator is refused, and both fall back rather than fail.
+        //
+        // The reserved voice, because a connector narrating in it would take the
+        // one voice a female speaker has — she would answer the narrator in the
+        // narrator's own voice, which is the casting defect the reservation
+        // exists to prevent, arriving through the front door.
+        //
+        // And a voice no pack on disk answers to. The sidecar resolves a name to
+        // `voices/<name>.wav` and fails the whole batch when the file is not
+        // there, so a connector naming a pack somebody deleted would take the
+        // anecdote down with it. It sounds wrong instead.
+        let usable = narrator != female && Voice.installed.contains(narrator)
+        self.narrator = usable ? narrator : Self.defaultNarrator
         self.female = female
         // Reserved means reserved. A pool handed in with the female voice on it
         // would let a male actor draw it on a wrap — precisely what reserving
@@ -84,7 +110,11 @@ public struct VoiceCaster: Sendable {
         // An empty pool would divide by zero on the first actor turn. Falling
         // back to the narrator voice keeps casting total instead of trapping,
         // and a pool holding nothing but the reserved voice arrives here empty.
-        self.pool = unreserved.isEmpty ? [narrator] : unreserved
+        //
+        // The RESOLVED narrator, not the one asked for: falling back to a voice
+        // that was itself refused above would put a missing pack in front of
+        // every actor, which is the failure the refusal exists to avoid.
+        self.pool = unreserved.isEmpty ? [self.narrator] : unreserved
     }
 
     public func cast(_ turns: [Turn]) -> [VoicedTurn] {

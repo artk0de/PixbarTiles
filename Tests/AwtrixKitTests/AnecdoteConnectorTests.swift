@@ -326,6 +326,51 @@ private struct SeededGenerator: RandomNumberGenerator {
         == ["arthas", "arthas", "arthas", "acolyte", "arthas"])
 }
 
+// The connector's declared voice and the voice its clips are actually
+// synthesized in are one answer, not two that happen to agree. A stored
+// property beside the caster would satisfy `Connector.narrator` while every
+// clip came out in a different character — and nobody would find out until a
+// whole batch had been spoken.
+@Test func theAnecdoteConnectorNarratesInTheVoiceItsCasterActuallyUses() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let speech = StubSpeechSynthesizer()
+    let preparer = AnecdotePreparer(
+        source: makeSource(dialogueFeed), speech: speech, queue: queue,
+        caster: VoiceCaster(narrator: .peon)
+    )
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    _ = try await preparer.refill(target: 1)
+
+    // Named as different from the default first: with the shipped narrator both
+    // expectations below hold whether or not anything reads the caster at all.
+    #expect(Voice.peon != VoiceCaster.defaultNarrator)
+    #expect(connector.narrator == .peon)
+    // The announcement and the laughter are the narration turns, and they
+    // bracket the anecdote.
+    #expect(speech.received.first?.voice == .peon)
+    #expect(speech.received.last?.voice == .peon)
+}
+
+// And the shipped wiring names no voice, so the anecdotes go on sounding
+// exactly as they did.
+@Test func anAnecdoteConnectorWiredWithoutACasterKeepsTheDefaultNarrator() async {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let connector = AnecdoteConnector(
+        queue: queue,
+        preparer: AnecdotePreparer(
+            source: makeSource(dialogueFeed), speech: StubSpeechSynthesizer(), queue: queue
+        )
+    )
+
+    #expect(connector.narrator == VoiceCaster.defaultNarrator)
+    #expect(connector.narrator.id == "arthas")
+}
+
 @Test func preparerSkipsAnecdotesAlreadyPlayed() async throws {
     let queue = AnecdoteQueue(
         storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention

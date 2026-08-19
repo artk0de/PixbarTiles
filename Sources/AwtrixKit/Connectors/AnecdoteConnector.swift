@@ -70,6 +70,16 @@ public actor AnecdotePreparer {
     private let speech: any SpeechSynthesizing
     private let queue: AnecdoteQueue
     private let caster: VoiceCaster
+
+    /// The voice every narration turn this preparer synthesizes is spoken in.
+    ///
+    /// Read off the caster rather than stored beside it, and readable without
+    /// entering the actor because the connector in front of this has to answer
+    /// `Connector.narrator` synchronously. Deriving it is what stops the
+    /// connector's declared voice and the voice actually synthesized from ever
+    /// being two different things — a disagreement nobody would hear until a
+    /// whole batch had been spoken in the wrong character.
+    public nonisolated var narrator: Voice { caster.narrator }
     /// The last refill to have claimed a place. Refills run one at a time by
     /// waiting on it; see `refill(target:)` for why they must.
     private var tail: Task<Void, Never>?
@@ -211,6 +221,14 @@ public struct AnecdoteConnector: Connector {
     public let id = "anecdotes"
     public let displayName = "Anecdotes"
     public let defaultInterval: TimeInterval = 30 * 60
+
+    /// Answered by the preparer, which is what actually casts the turns.
+    ///
+    /// Not a stored property of its own. A connector is free to claim any voice
+    /// it likes; only the caster inside the preparer decides what is spoken,
+    /// and two answers to one question would drift the first time either was
+    /// wired differently.
+    public var narrator: Voice { preparer.narrator }
 
     /// How many prepared anecdotes a restock leaves waiting.
     public static let readyTarget = 10

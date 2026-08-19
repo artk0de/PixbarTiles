@@ -126,6 +126,13 @@ final class AppModel: ObservableObject {
     static let monitorInterval: TimeInterval = 20
     /// What holds the schedule of a connector the user switched off.
     static let switchedOff = "off"
+    /// What holds the schedule while the clock is not answering.
+    ///
+    /// The clock rather than the connector, deliberately: the feed and the
+    /// sidecar are fine, the queue is still filling, and the only thing that
+    /// cannot happen is the delivery. Somebody reading this on the panel is
+    /// being told where to look.
+    static let deviceUnreachable = "clock unreachable"
 
     /// Read at launch and never written here — the panel has no editor for it.
     /// A different clock is pointed at with
@@ -640,11 +647,60 @@ final class AppModel: ObservableObject {
     /// the panel to ask about.
     private func noteNextRun(_ id: String, interval: TimeInterval) async -> TimeInterval {
         let delay = await host.nextDelay(connectorId: id, interval: interval)
-        nextRun[id] = .due(Date().addingTimeInterval(delay))
+        // Asked even while the clock is unreachable, and the answer is still
+        // slept: the pause is not sticky, the beat is kept, and the first tick
+        // after the device answers delivers. What changes is only what the
+        // panel is told — naming an hour for a run that will not happen is the
+        // failure `.held` exists to avoid, and the user plans around it.
+        //
+        // The single writer of this label during a schedule's turn. Written in
+        // the tick's pause branch as well, it would be overwritten by the very
+        // next turn of the loop and the panel would name an hour for the whole
+        // of the sleep that follows.
+        nextRun[id] = deviceIsUnreachable
+            ? .held(Self.deviceUnreachable)
+            : .due(Date().addingTimeInterval(delay))
         return delay
     }
 
+    /// Whether the clock has been asked and did not answer.
+    ///
+    /// Read off the monitor's three-state answer rather than off the
+    /// `isDeviceOnline` mirror the glyph draws from. `.unknown` is not online
+    /// there either, so a schedule gated on that mirror would run nothing at
+    /// all between launch and the first poll landing — and "not asked yet" is
+    /// not "not there", which is the conflation `DeviceState` exists to
+    /// prevent.
+    private var deviceIsUnreachable: Bool {
+        if case .offline = monitor.state { return true }
+        return false
+    }
+
     private func tick(_ id: String) async {
+        // The clock is asked before anything is spent on a delivery it cannot
+        // receive. `produce()` pops an anecdote and RETIRES it before the
+        // banner goes out, so a run against a device that is not answering
+        // permanently consumes something the user never hears — about six of
+        // them over a half-hour outage once the backoff has shortened the
+        // retries, and a queue dragged under its refill threshold on top.
+        //
+        // Nothing is put back, deliberately: returning an undelivered anecdote
+        // would mean taking its id out of `played`, and `played` is the
+        // never-repeat guarantee. Not running at all removes the cost without
+        // going near it.
+        //
+        // Only the run is held. The restock below is outside the guard on
+        // purpose — an outage of the clock is not an outage of the feed or the
+        // sidecar, and it is exactly when the queue should be filling so that
+        // recovery has something to show immediately.
+        //
+        // And nothing is recorded, in either direction. `runOnce` is what moves
+        // the failure count; not calling it is what leaves the backoff exactly
+        // as the feed earned it. A pause is neither a failure nor a success.
+        guard deviceIsUnreachable == false else {
+            await restock(id)
+            return
+        }
         // Marked before the maintain, not between it and the run. `maintain` IS
         // the expensive half — a refill loads a 1.8 GB model and synthesizes a
         // whole batch, a minute or more — and once it has run, `runOnce` finds a

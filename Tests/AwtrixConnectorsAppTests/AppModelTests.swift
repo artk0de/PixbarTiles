@@ -1219,3 +1219,264 @@ private func historyAfterReaping(
 
     #expect(ContinuousClock.now - started >= .milliseconds(150))
 }
+
+// MARK: - Paused while the clock is unreachable
+
+// What the pause is worth, and why it is not housekeeping: `produce()` pops an
+// anecdote and retires it BEFORE the banner goes out, so every retry against a
+// clock that is not answering permanently spends something the user never
+// hears. With the backoff shortening the retries that is about six over a
+// half-hour outage rather than one, and the queue is dragged under its refill
+// threshold on top. Not running at all is the fix.
+//
+// The control is what makes this a test about the OUTAGE. Two models alike in
+// everything — same connector, same spy, same beat — except that one clock
+// answers and the other does not: the reachable one delivers on the very beat
+// the unreachable one declines. So "no run" cannot be a schedule that was never
+// built, a connector that was switched off, or a tick that never arrived.
+@Test @MainActor func theScheduleDoesNotRunConnectorsWhileTheDeviceIsOffline() async {
+    let unreachableHost = SpyHost()
+    let unreachableSchedule = Metronome()
+    let unreachable = testModel(
+        host: unreachableHost,
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        sleep: unreachableSchedule.sleep
+    )
+    let answeringHost = SpyHost()
+    let answeringSchedule = Metronome()
+    let answering = testModel(
+        host: answeringHost,
+        transport: StubTransport(body: onlineStats),
+        sleep: answeringSchedule.sleep
+    )
+
+    unreachable.start()
+    answering.start()
+    // Both polls have answered, so what the gate reads is the state under test
+    // rather than the one every model starts in.
+    #expect(await waitUntil { isOffline(unreachable) })
+    #expect(await waitUntil { answering.isDeviceOnline })
+    // The launch's own restock, waited out on both, so everything after it
+    // belongs to the beat.
+    #expect(await waitUntil { unreachableHost.calls == ["maintain:stub"] })
+    #expect(await waitUntil { answeringHost.calls == ["maintain:stub"] })
+    #expect(await waitUntil { unreachableSchedule.parked == 1 })
+    #expect(await waitUntil { answeringSchedule.parked == 1 })
+
+    unreachableSchedule.tick()
+    answeringSchedule.tick()
+
+    #expect(await waitUntil { answeringHost.calls.contains("run:stub") })
+    // Waited on the BEAT BEING OVER — the loop asleep again on the next
+    // interval — rather than on a call count. A count of two is reached
+    // half-way through an ungated tick as well, between its restock and its
+    // run, and a test that read the log there would find no delivery yet and
+    // pass while the delivery was one continuation away.
+    #expect(await waitUntil { unreachableSchedule.parked == 1 })
+    #expect(unreachableHost.calls == ["maintain:stub", "maintain:stub"])
+    #expect(unreachableHost.calls.contains("run:stub") == false)
+    await unreachable.teardown()
+    await answering.teardown()
+}
+
+// Nothing about the pause is sticky. The timer keeps its beat and the poll
+// keeps asking, so the first beat after the clock answers delivers — there is
+// no state to clear and nothing to wait for beyond the poll itself.
+@Test @MainActor func theScheduleResumesAsSoonAsTheDeviceAnswers() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let poll = Metronome()
+    let clock = SwitchableTransport(answering: false)
+    let subject = testModel(
+        host: host, transport: clock, sleep: schedule.sleep, pollSleep: poll.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    // The beat is over — asleep again — before the log is read, or the absence
+    // of a delivery is only the absence of one YET.
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(host.calls.contains("run:stub") == false)
+
+    clock.nowAnswers()
+    #expect(await waitUntil { poll.parked == 1 })
+    poll.tick()
+    #expect(await waitUntil { subject.isDeviceOnline })
+
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:stub") })
+    await subject.teardown()
+}
+
+// A pause is not a failure. The backoff describes how the FEED is behaving, and
+// a clock that is not answering says nothing about anekdot.ru — a count that
+// grew through an outage would have a healthy connector retrying every thirty
+// seconds the moment the clock came back.
+//
+// Read off the shipped host's own count rather than a spy's, and with the
+// control in the same test: the manual run at the end goes through the same
+// wiring against the same unreachable clock and DOES move the count, so the
+// zero above is the schedule declining to run rather than a counter nothing
+// here can reach.
+@Test @MainActor func anOfflinePauseDoesNotAdvanceTheFailureCounter() async {
+    let schedule = Metronome()
+    let wiring = modelOverRealHost(
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)), sleep: schedule.sleep
+    )
+
+    wiring.model.start()
+    #expect(await waitUntil { isOffline(wiring.model) })
+    #expect(await waitUntil { schedule.parked == 1 })
+    for _ in 0..<3 {
+        schedule.tick()
+        #expect(await waitUntil { schedule.parked == 1 })
+    }
+
+    #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 0)
+
+    wiring.model.runNow("stub")
+
+    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed:") == true })
+    #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 1)
+    await wiring.model.teardown()
+}
+
+// And not a success either. A backoff a genuinely broken feed earned has to
+// survive the outage that follows it: resuming into a cleared count would have
+// the app deliver nothing and say nothing was wrong.
+@Test @MainActor func anOfflinePauseDoesNotResetAnEarnedBackoff() async {
+    let schedule = Metronome()
+    let poll = Metronome()
+    let clock = SwitchableTransport()
+    let wiring = modelOverRealHost(
+        connector: BrokenConnector(), transport: clock, sleep: schedule.sleep, pollSleep: poll.sleep
+    )
+
+    wiring.model.start()
+    #expect(await waitUntil { wiring.model.isDeviceOnline })
+    // Earned against a clock that IS answering, so the failure is the feed's.
+    wiring.model.runNow("stub")
+    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed:") == true })
+    #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 1)
+
+    clock.nowFails()
+    #expect(await waitUntil { poll.parked == 1 })
+    poll.tick()
+    #expect(await waitUntil { isOffline(wiring.model) })
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 1)
+    await wiring.model.teardown()
+}
+
+// The half that must not be paused. Preparing anecdotes needs the feed and the
+// sidecar, and neither of them is the clock — an outage is exactly when the
+// queue should be filling, so that recovery has something to show immediately
+// rather than paying for a model load on the first delivery back.
+@Test @MainActor func maintenanceStillRunsWhileTheDeviceIsOffline() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        host: host,
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        sleep: schedule.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    schedule.tick()
+
+    // Read once the beat is over, not the moment the log first looks right: an
+    // ungated tick passes through exactly `[maintain, maintain]` on its way
+    // from its restock to its run, so a wait on that shape alone is satisfied
+    // by the tick this test says must not happen.
+    #expect(await waitUntil { schedule.parked == 1 })
+    // The tick's own restock, on top of the launch's, and nothing else.
+    #expect(host.calls == ["maintain:stub", "maintain:stub"])
+    #expect(host.calls.contains("run:stub") == false)
+    await subject.teardown()
+}
+
+// The press is the consent. A "Run now" while the clock is down runs, fails,
+// and says why — silence would read as the button being broken, which is
+// precisely the defect this branch already shipped once.
+//
+// Over the shipped host, because half the rule is that the REASON lands where
+// the user is looking, and a spy that answers `.delivered` has no reason to
+// give.
+@Test @MainActor func aManualRunStillRunsWhileTheDeviceIsOffline() async {
+    let schedule = Metronome()
+    let wiring = modelOverRealHost(
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)), sleep: schedule.sleep
+    )
+
+    wiring.model.start()
+    #expect(await waitUntil { isOffline(wiring.model) })
+
+    wiring.model.runNow("stub")
+
+    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed:") == true })
+    await wiring.model.teardown()
+}
+
+// `.unknown` is not offline. Before the first poll answers, nothing has been
+// established about the clock — and a gate that read the two-state mirror the
+// glyph uses would find `isDeviceOnline` false for both and run nothing at all
+// at launch.
+//
+// The clock here has been asked and has not answered YET: the poll is parked
+// inside the transport, which is what holds the state at `.unknown` for as long
+// as this test needs rather than for however long a race allows.
+@Test @MainActor func anUnknownDeviceStateDoesNotPauseTheSchedule() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let gate = Gate()
+    let subject = testModel(host: host, transport: GatedTransport(gate: gate), sleep: schedule.sleep)
+
+    subject.start()
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(subject.monitor.state == .unknown)
+
+    schedule.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:stub") })
+    #expect(subject.monitor.state == .unknown)
+    // Released so the poll is not left parked on a continuation nothing will
+    // ever resume.
+    gate.open()
+    await subject.teardown()
+}
+
+// What the panel says while the pause holds. A time named for a run that will
+// not happen is the failure `NextRun.held` exists to avoid — the user plans
+// around it — and this gate is the second thing to supply its own words.
+@Test @MainActor func aPausedScheduleSaysTheClockIsUnreachableRatherThanNamingAnHour() async {
+    let schedule = Metronome()
+    let subject = testModel(
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)), sleep: schedule.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+    #expect(await waitUntil { schedule.parked == 1 })
+    // The label is decided once per turn, before the sleep, so the first one
+    // decided with the poll's answer in hand is the one after this beat.
+    schedule.tick()
+
+    #expect(await waitUntil { subject.nextRun["stub"] == .held(AppModel.deviceUnreachable) })
+    let line = NextRunLine.text(for: subject.nextRun["stub"]) ?? ""
+    #expect(line.isEmpty == false)
+    #expect(line.contains(where: \.isNumber) == false)
+    await subject.teardown()
+}

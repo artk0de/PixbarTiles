@@ -303,7 +303,12 @@ func testModel(
     connectors: [any Connector] = [StubConnector()],
     host: any ConnectorRunning = SpyHost(),
     store: any SettingsStore = InMemorySettingsStore(),
-    transport: any Transport = StubTransport(),
+    // A clock that answers, because the schedule now asks. `StubTransport()`'s
+    // `[]` does not decode as `DeviceStats`, so the default used to leave every
+    // started model reporting the device unreachable — which, since the pause
+    // landed, is a schedule that runs nothing. A test that wants an outage says
+    // so with a transport of its own.
+    transport: any Transport = StubTransport(body: onlineStats),
     uploads: any UploadedIconStore = InMemoryUploadedIconStore(),
     defaults: UserDefaults = UserDefaults(suiteName: "testModel-\(UUID().uuidString)")!,
     sleep: @escaping AppModel.Sleeping = parked,
@@ -523,4 +528,106 @@ final class RestockReportingHost: ConnectorRunning, @unchecked Sendable {
     func runOnce(connectorId: String) async -> RunResult { .delivered }
 
     func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+}
+
+// MARK: - A clock that stops answering, and starts again
+
+/// A transport whose answer a test can change while the app is running.
+///
+/// `StubTransport` is fixed at construction, which is enough for a clock that is
+/// up or a clock that is down — but not for the thing the pause is about, which
+/// is one becoming the other underneath a schedule that is already ticking.
+final class SwitchableTransport: Transport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var failing: Bool
+    private let body: Data
+
+    init(answering: Bool = true, body: Data = onlineStats) {
+        self.failing = answering == false
+        self.body = body
+    }
+
+    func nowFails() { lock.withLock { failing = true } }
+    func nowAnswers() { lock.withLock { failing = false } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if lock.withLock({ failing }) { throw URLError(.cannotConnectToHost) }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+        )!
+        return (body, response)
+    }
+}
+
+/// A connector whose feed is down: it throws every time it is asked.
+///
+/// What it stands for is the one thing the backoff exists to describe, and the
+/// one thing an outage of the clock must not be confused with.
+struct BrokenConnector: Connector {
+    struct FeedIsDown: Error {}
+
+    let id: String
+    let displayName: String
+    let defaultInterval: TimeInterval
+
+    init(id: String = "stub", displayName: String = "Stub", defaultInterval: TimeInterval = 5 * 60) {
+        self.id = id
+        self.displayName = displayName
+        self.defaultInterval = defaultInterval
+    }
+
+    func produce() async throws -> ConnectorOutput { throw FeedIsDown() }
+}
+
+/// A model over the SHIPPED host, so the failure count a test reads is the real
+/// one rather than a spy's idea of it.
+///
+/// The device is built once and handed to both, which is the whole point: the
+/// monitor's reachability answer and the host's delivery go through the same
+/// transport, exactly as they do in the app. A pair of them over two transports
+/// could be told the clock was down while delivering to one that was up.
+@MainActor
+func modelOverRealHost(
+    connector: any Connector = StubConnector(),
+    transport: any Transport,
+    sleep: @escaping AppModel.Sleeping = parked,
+    pollSleep: @escaping AppModel.Sleeping = parked
+) -> (model: AppModel, host: ConnectorHost) {
+    let registry = ConnectorRegistry()
+    registry.register(connector)
+    let store = InMemorySettingsStore()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+    let host = ConnectorHost(
+        device: device,
+        registry: registry,
+        store: store,
+        audio: SilentAudioPlayer(),
+        iconInstaller: NoIconInstaller()
+    )
+    let model = AppModel(
+        deviceHost: "10.0.0.5",
+        device: device,
+        registry: registry,
+        host: host,
+        store: store,
+        installer: CatalogueIconInstaller(
+            device: device, transport: transport, uploads: InMemoryUploadedIconStore()
+        ),
+        defaults: UserDefaults(suiteName: "realHost-\(UUID().uuidString)")!,
+        pasteboard: NSPasteboard(name: NSPasteboard.Name("realHost-\(UUID().uuidString)")),
+        sleep: sleep,
+        pollSleep: pollSleep
+    )
+    return (model, host)
+}
+
+/// Whether the poll has answered, and answered that the clock is not there.
+///
+/// Spelled out rather than read off `isDeviceOnline`, which is false for
+/// `.unknown` as well — a wait on that would return before the poll had run at
+/// all, and the pause under test is about the answered case only.
+@MainActor
+func isOffline(_ model: AppModel) -> Bool {
+    if case .offline = model.monitor.state { return true }
+    return false
 }

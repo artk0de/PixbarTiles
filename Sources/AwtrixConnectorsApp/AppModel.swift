@@ -356,6 +356,14 @@ final class AppModel: ObservableObject {
     /// moment it ends. A second beat arriving while one is already held inserts
     /// nothing.
     private var heldRuns: Set<String> = []
+    /// The ambient connectors this launch still owes the clock's loop a first
+    /// delivery, drained by the first poll that finds the clock answering.
+    ///
+    /// A set for the same reason `heldRuns` is one, and a debt rather than a
+    /// run for a different one: what is owed here is not a beat that arrived at
+    /// a bad moment but the ONLY delivery a launch makes, and losing it is ten
+    /// minutes of a clock with nothing on it.
+    private var launchDeliveriesOwed: Set<String> = []
     /// When each scheduled connector's loop will next wake, as the turn that
     /// went to sleep computed it.
     ///
@@ -776,10 +784,85 @@ final class AppModel: ObservableObject {
         // is a prompt the user learns to dismiss. What reads the answer is
         // `FocusGate.rule`, on every turn of every schedule.
         focus.requestAccess()
+        // Recorded before the loops are started, not after them: everything in
+        // this method is synchronous and no task runs until it returns, but the
+        // poll is what SPENDS this debt and reading it half-written is one
+        // ordering nobody should have to reason about.
+        noteLaunchDeliveries()
         startMonitoring()
         startWatchingMicrophones()
         for connector in registry.all { reschedule(connector) }
         restockAtLaunch()
+    }
+
+    /// Writes down which connectors this launch owes a delivery.
+    ///
+    /// Ambient ones and nothing else. A connector whose output is ambient is
+    /// furniture in the device's own loop rather than an event: until it has
+    /// delivered once, the clock does not have it at all. Measured on the
+    /// hardware, the weather took sixteen minutes to appear in the loop after a
+    /// launch, and shortening the cadence only shortens the wait — it does not
+    /// remove it. With a `lifetime` on the output it is worse than a wait: an
+    /// app that expired while the machine slept stays expired for a whole
+    /// cadence more. Everything else keeps the sleep-first rule exactly,
+    /// because a relaunch must not shout an anecdote at whoever just logged in.
+    ///
+    /// Read off `isAmbient` rather than off a flag of its own. That property
+    /// already means precisely this — a connector that keeps a value fresh in
+    /// the loop rather than announcing something — and a second one would be
+    /// two claims about one thing with nothing to keep them in step.
+    ///
+    /// Switched-off connectors are left out, for the reason `restockAtLaunch`
+    /// leaves them out: `ConnectorHost` answers `.skipped` for them anyway, so
+    /// nothing would break, but a connector the user turned off is not one this
+    /// app should be asking about at all.
+    private func noteLaunchDeliveries() {
+        launchDeliveriesOwed = Set(
+            registry.all
+                .filter { $0.isAmbient && settings(for: $0).isEnabled }
+                .map(\.id)
+        )
+    }
+
+    /// Hands the clock what the launch owes it, once it is known to be there.
+    ///
+    /// Called from `poll()` rather than from `start()`, and the poll is the
+    /// whole reason this is a debt instead of a call. A launch is not a licence
+    /// to write to a device that is not answering — and at the instant `start()`
+    /// returns the device has not answered ANYTHING yet. `DeviceState.unknown`
+    /// is deliberately not a hold for a schedule, because a schedule that
+    /// stopped for "not asked yet" would lose beats to a question that resolves
+    /// in milliseconds; but a beat lost is followed by another one a cadence
+    /// later, where this delivery has no successor at all. So it waits for an
+    /// answer instead of guessing, and the poll is the turn that has one.
+    ///
+    /// `scheduleHold` decides, exactly as it decides a beat — nothing here is a
+    /// second opinion about the same gates. Which of them can actually hold an
+    /// ambient connector is worth naming, because it is not all of them: the
+    /// quiet rules are about SPEAKING, and `scheduleHold` asks `isAudible`
+    /// before it asks a Focus or a microphone, so a connector that draws into
+    /// the loop and says nothing is held by the unreachable clock and by
+    /// nothing else. It is asked through `scheduleHold` all the same rather
+    /// than against `deviceIsUnreachable` directly, because `isAmbient` and
+    /// `isAudible` are separate claims: an ambient connector that DID make a
+    /// sound would be held through a Focus here without another line being
+    /// written.
+    ///
+    /// Delivered through `runNow` rather than through a task of its own. It is
+    /// the same run the panel's button makes — outside the schedule, owned by
+    /// this model so teardown can wait for it, reported on the same line — and
+    /// a second copy of that bracket is the duplication `runAndReport` already
+    /// warns about.
+    ///
+    /// Cleared BEFORE the runs rather than after them, for the reason
+    /// `releaseHeldRuns` clears before its own: the poll turns while a delivery
+    /// is in flight, and a subtraction below the loop would be reading a set
+    /// that a later turn may already have acted on.
+    private func deliverWhatTheLaunchOwes() {
+        let due = launchDeliveriesOwed.filter { scheduleHold(for: $0) == nil }
+        guard due.isEmpty == false else { return }
+        launchDeliveriesOwed.subtract(due)
+        for id in due { runNow(id) }
     }
 
     /// Fills every enabled connector's queue, once, at launch.
@@ -936,6 +1019,12 @@ final class AppModel: ObservableObject {
         // any loop being told, and a minute is close enough for a label about a
         // nine-hour window.
         refreshScheduleLabels()
+        // In the same turn as the labels, and for the same reason: this is what
+        // a fresh answer about the clock changes. A launch owes the device's
+        // loop one delivery per ambient connector, and this is the first turn
+        // that knows whether there is a device to give it to. Costs a set read
+        // once the debt is settled, which is within a poll of every launch.
+        deliverWhatTheLaunchOwes()
         // Awaited here rather than detached. The dialog does not block — it
         // schedules itself — and what is awaited is the authorization request,
         // which happens once. A detached task would be one more thing teardown
@@ -1070,9 +1159,21 @@ final class AppModel: ObservableObject {
                 guard
                     let delay = await self?.noteNextRun(id, interval: interval)
                 else { return }
-                // The sleep comes first, so enabling a connector — or launching
-                // the app, which reschedules every one of them — does not fire a
-                // delivery on the spot.
+                // The sleep comes first, so enabling a connector — or dragging
+                // its interval slider, which rebuilds the schedule just the
+                // same — does not fire a delivery on the spot. That rule holds
+                // for every connector and is not weakened below: a relaunch
+                // must not shout an anecdote at whoever just logged in, and a
+                // slider drag must not touch the clock at all.
+                //
+                // A LAUNCH is now the exception, and only for a connector whose
+                // output is ambient — an app in the device's loop is furniture
+                // rather than an event, and the clock does not have it until
+                // one delivery has been made. That delivery is deliberately not
+                // made from here: this task is rebuilt on every settings
+                // change, so a first-turn delivery in this loop would fire on
+                // the two gestures the paragraph above rules out. It belongs to
+                // the launch, and `deliverWhatTheLaunchOwes` is where it lives.
                 do { try await sleep(delay) } catch { return }
                 // Returned on, not swallowed. A cancelled sleep is the quit
                 // path, and carrying on into the tick would start one more

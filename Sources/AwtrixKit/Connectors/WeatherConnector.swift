@@ -23,9 +23,27 @@ public struct WeatherConnector: Connector {
 
     public let id = "weather"
     public let displayName = "Weather"
-    /// The service's own cadence, so a user who never touches the slider polls
-    /// a free public API at exactly the rate it updates.
-    public let defaultInterval: TimeInterval = OpenMeteoSource.defaultInterval
+    /// How often the CLOCK is refreshed — which is a different question from
+    /// how often the SERVICE has something new, and the two numbers are
+    /// deliberately no longer one.
+    ///
+    /// 900 is the service's own update cadence and it stays where it belongs,
+    /// as the window `OpenMeteoSource` answers from its cache: that is what
+    /// keeps this app off a free public API between updates, and it is not
+    /// affected by anything here. 600 is this app writing to the device. A poll
+    /// that lands inside the cache window reaches no network at all and
+    /// re-pushes the reading it already had — which is not waste, it is the
+    /// point: the output carries `lifetime: 3600`, so the app drops out of the
+    /// device's loop an hour after the last delivery. At 600 seconds six
+    /// refreshes fit inside that hour, so five consecutive failures are
+    /// survivable; at 900 only four fit, and three failures put the temperature
+    /// off the clock.
+    ///
+    /// Whoever changes one of these must look at the other. Refreshing the
+    /// clock LESS often than the service updates would show a stale reading;
+    /// refreshing it so rarely that fewer than a handful fit inside `lifetime`
+    /// puts a blank slot on the matrix the first time the network hiccups.
+    public let defaultInterval: TimeInterval = 600
     /// Nothing here is heard. The reading is drawn into the device's own loop
     /// and the sky is a setting on the matrix — no speech, no jingle, nothing
     /// that reaches the room. So the two quiet rules do not apply to it: a
@@ -82,12 +100,14 @@ public struct WeatherConnector: Connector {
             surface: .app(Self.appName),
             // An hour without a fresh reading and the clock drops the app on
             // its own — the only thing that survives this process ending
-            // without a quit. An hour rather than something tighter because
-            // the poll is 900 seconds: four missed ones, so a network hiccup
-            // or one slow answer from a free public service cannot strip the
-            // temperature off the loop while this app is alive and about to
-            // succeed. And an hour is where the reading stops being weather
-            // anyway, so nothing is lost by waiting that long to drop it.
+            // without a quit. An hour rather than something tighter because of
+            // what the poll fits inside it: at `defaultInterval`'s 600 seconds
+            // that is six refreshes, so five in a row have to fail before the
+            // temperature leaves the loop, and a network hiccup or one slow
+            // answer from a free public service cannot strip it off while this
+            // app is alive and about to succeed. And an hour is where the
+            // reading stops being weather anyway, so nothing is lost by waiting
+            // that long to drop it.
             lifetime: 3_600,
             overlay: theme.overlay
         )

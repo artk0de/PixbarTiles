@@ -180,10 +180,10 @@ private struct PassThroughIcons: IconInstalling {
 }
 
 // The reading takes itself off the clock if this app stops feeding it. An hour
-// against a 900-second poll is four missed polls: a network hiccup or one slow
-// answer from a free public service must not strip the app out of the loop
-// while this app is perfectly alive, and an hour is where a temperature stops
-// being weather.
+// against the connector's 600-second cadence is six refreshes, so five in a row
+// have to fail before the app leaves the loop: a network hiccup or one slow
+// answer from a free public service must not strip it out while this app is
+// perfectly alive, and an hour is where a temperature stops being weather.
 @Test func theReadingIsGivenAnHourBeforeTheClockDropsIt() async throws {
     let transport = SkyAndClock(sky: weatherBody(code: 61))
     let connector = WeatherConnector(
@@ -368,8 +368,8 @@ private struct PassThroughIcons: IconInstalling {
 // With the record in memory only, the next launch read the device, found this
 // app's own `rain` sitting there, and wrote it down as what the user had —
 // after which every clean quit restored `rain` and the real setting was
-// recoverable from nowhere. Weather ships enabled at a 900-second cadence, so
-// this armed itself within fifteen minutes of a first launch.
+// recoverable from nowhere. Weather ships enabled at a 600-second cadence and
+// now delivers at launch, so this armed itself on the first launch itself.
 @Test func aLaunchAfterAnUncleanExitStillPutsBackTheOverlayTheUserHad() async throws {
     let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "clear")
     // The one thing that survives the process below.
@@ -595,16 +595,26 @@ private struct PassThroughIcons: IconInstalling {
     #expect(output.jingle == nil)
 }
 
-// The cadence the schedule offers by default is the source's own, so a user who
-// never touches the slider polls a free public service at exactly the rate it
-// updates.
-@Test func theWeatherConnectorDefaultsToTheSourcesOwnCadence() {
+// Two numbers that were one, and the split is the point rather than a drift.
+// 900 is the SERVICE's cadence and stays inside `OpenMeteoSource` as the window
+// its cache answers from, which is what keeps this app off a free public API
+// between updates. 600 is how often the CLOCK is refreshed. A poll that finds
+// the cache still warm re-pushes the same reading and reaches no network at
+// all, and that is not waste: it is what keeps `lifetime` from expiring the app
+// out of the device's loop.
+//
+// Pinned as an inequality as well as as two values, because that is the
+// relationship somebody changing either of them has to preserve: refreshing the
+// clock less often than the service updates would show a stale reading, and it
+// is the failure neither number states on its own.
+@Test func theClockIsRefreshedMoreOftenThanTheServiceUpdates() {
     let connector = WeatherConnector(
         source: OpenMeteoSource(transport: SkyAndClock()), location: { desk }
     )
 
-    #expect(connector.defaultInterval == OpenMeteoSource.defaultInterval)
-    #expect(connector.defaultInterval == 900)
+    #expect(connector.defaultInterval == 600)
+    #expect(OpenMeteoSource.defaultInterval == 900)
+    #expect(connector.defaultInterval < OpenMeteoSource.defaultInterval)
 }
 
 // MARK: - The picture beside the number

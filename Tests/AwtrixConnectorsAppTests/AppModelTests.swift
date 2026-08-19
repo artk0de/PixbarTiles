@@ -289,6 +289,99 @@ import Testing
     #expect(host.calls.contains("run:stub") == false)
 }
 
+// MARK: - What the launch puts in the clock's loop
+
+// A custom app is furniture rather than an event. The clock has none of it
+// until this app has been running for a whole cadence — measured on the
+// hardware at sixteen minutes of a blank slot after a launch — and once a
+// `lifetime` is on the output, an app that expired during a long sleep stays
+// expired for a cadence more. An anecdote is the opposite case, and the reason
+// the sleep-first rule exists: relaunching must not shout one at whoever just
+// logged in. `isAmbient` is what tells the two apart.
+//
+// Both connectors in ONE model, on one launch, so "delivered" and "did not" are
+// the same event rather than two runs of a suite. Nothing is ticked: the whole
+// claim is a delivery that happens before any interval has elapsed.
+@Test @MainActor func theLaunchPutsAnAmbientConnectorInTheLoopAndLeavesTheRestAsleep() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [ambientConnector, StubConnector()], host: host, sleep: schedule.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { host.calls.contains("run:ambient") })
+    // Both loops asleep on their first interval, so the silence of the second
+    // connector is a schedule that exists and has not fired — rather than one
+    // that was never built, which would prove nothing at all.
+    #expect(await waitUntil { schedule.parked == 2 })
+
+    #expect(host.calls.contains("run:stub") == false)
+    await subject.teardown()
+}
+
+// A launch is not a licence to write to a device that is not answering, so the
+// unreachable clock that holds a beat holds this too. What differs is what
+// happens next: a beat declined is followed by another one a cadence later,
+// while the launch has no successor — so the delivery is KEPT and spent on the
+// first poll that finds the clock there.
+//
+// Driven on the poll's own clock, which is the loop that learns the difference.
+// The schedule is left parked for a day, so the delivery this reads can only be
+// the launch's.
+@Test @MainActor func theLaunchDeliveryIsKeptWhileTheClockIsNotAnsweringAndGoesOutWhenItDoes()
+    async
+{
+    let host = SpyHost()
+    let poll = Metronome()
+    let clock = SwitchableTransport(answering: false)
+    let subject = testModel(
+        connectors: [ambientConnector], host: host, transport: clock, pollSleep: poll.sleep
+    )
+
+    subject.start()
+    // The poll has ANSWERED, rather than merely not been asked yet: the
+    // decision this test is about is made on that answer, in the same turn.
+    #expect(await waitUntil { isOffline(subject) })
+    #expect(host.calls.contains("run:ambient") == false)
+
+    clock.nowAnswers()
+    #expect(await waitUntil { poll.parked == 1 })
+    poll.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:ambient") })
+    await subject.teardown()
+}
+
+// One extra delivery, not one instead. The schedule beside it is still asleep
+// on its own full interval, so the first beat lands one cadence after the
+// launch rather than two — which is what a launch that spent the beat, or
+// restarted the loop after delivering, would cost.
+@Test @MainActor func theLaunchDeliveryDoesNotSpendTheFirstScheduledBeat() async {
+    let connector = StubConnector(
+        id: "ambient",
+        displayName: "Ambient",
+        defaultInterval: 600,
+        isAudible: false,
+        isAmbient: true
+    )
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(connectors: [connector], host: host, sleep: schedule.sleep)
+
+    subject.start()
+    #expect(await waitUntil { host.calls.contains("run:ambient") })
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    // One wait asked for, and it is the connector's own: the launch delivery
+    // neither shortened it nor consumed a turn of the loop.
+    #expect(schedule.durations == [600])
+    schedule.tick()
+
+    #expect(await waitUntil { host.calls.filter { $0 == "run:ambient" }.count == 2 })
+    await subject.teardown()
+}
+
 // MARK: - Quit
 
 // Cancelling a delivery does not release its caller: the held banner's dismiss

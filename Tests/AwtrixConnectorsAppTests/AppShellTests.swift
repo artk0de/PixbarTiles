@@ -801,10 +801,14 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
     )
 
     let weather = try #require(subject.registry.connector(id: "weather"))
-    // Its own cadence rather than the store's thirty-minute fallback: this is
-    // a free public API whose own response says it updates every fifteen.
-    #expect(weather.defaultInterval == 900)
-    #expect(subject.settings(for: weather).interval == 900)
+    // Its own cadence rather than the store's thirty-minute fallback, and the
+    // ten minutes it names rather than the fifteen the service updates at: the
+    // number here is how often the CLOCK is refreshed, and the app carries a
+    // one-hour `lifetime` that a slower cadence would let expire on a couple of
+    // failed polls. The service's own fifteen stays inside `OpenMeteoSource` as
+    // the cache window, which is what a free public API is owed.
+    #expect(weather.defaultInterval == 600)
+    #expect(subject.settings(for: weather).interval == 600)
 }
 
 // The location the shipped connector reads is the one the settings write, and

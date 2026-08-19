@@ -124,6 +124,15 @@ final class AppModel: ObservableObject {
     /// How often reachability is re-asked. Not a user setting: it costs one
     /// request and the answer drives a glyph, not a delivery.
     static let monitorInterval: TimeInterval = 20
+    /// How often a held run asks whether the meeting is over.
+    ///
+    /// Five seconds. Not a user setting, and not the schedule's interval: what
+    /// this decides is how long after the microphone goes quiet the deferred
+    /// anecdote arrives, and a full enumeration costs 1.36 ms measured on this
+    /// machine. Polled rather than listened for, because devices come and go —
+    /// a listener would need re-registering every time the phone appears, and
+    /// the property it would listen to is on a device that may not exist yet.
+    static let microphoneInterval: TimeInterval = 5
     /// What holds the schedule of a connector the user switched off.
     static let switchedOff = "off"
     /// What holds the schedule while the clock is not answering.
@@ -199,6 +208,10 @@ final class AppModel: ObservableObject {
     /// Focus is on. Published because the pickers bind to it; the defaults
     /// behind it are persistence, not state — the same split as `chosen`.
     @Published private(set) var quietHours: QuietWindow
+    /// The microphones the schedule waits for. Published for the same reason
+    /// `quietHours` is: the settings' tick boxes bind to it, and the defaults
+    /// behind it are persistence rather than state.
+    @Published private(set) var watchedMicrophones: [WatchedMicrophone]
 
     private let host: any ConnectorRunning
     private let store: any SettingsStore
@@ -220,6 +233,14 @@ final class AppModel: ObservableObject {
     /// meant — an aggregate cannot, and a test waiting on "something is asleep"
     /// gets whichever loop won the race.
     private let pollSleep: Sleeping
+    /// The cadence a held run is released on, one sleeper for the whole app.
+    ///
+    /// A third clock rather than a share of either of the two above, for the
+    /// reason those two are apart: an aggregate can only answer "something is
+    /// asleep", and a test that drives the release must be able to say it meant
+    /// the microphone rather than the schedule — otherwise "held then released"
+    /// cannot be told from "ran late", which is this feature's whole claim.
+    private let micSleep: Sleeping
     /// Where a threshold crossing goes.
     ///
     /// A collaborator rather than a call into AppKit, and it has no default for
@@ -229,6 +250,8 @@ final class AppModel: ObservableObject {
     private let alerts: any BatteryWarningPresenting
     /// Whether macOS says the user is busy, and what to call it when it does.
     private let focus: FocusGate
+    /// Whether a microphone the user cares about is capturing.
+    private let microphone: MicrophoneGate
     private var timers: [String: Task<Void, Never>] = [:]
     private var monitorLoop: Task<Void, Never>?
     /// Runs the user asked for, still going. Keyed by nothing meaningful: two
@@ -261,6 +284,16 @@ final class AppModel: ObservableObject {
     /// still in flight — the panel claiming a finished delivery during a
     /// running one, which is the lie this whole line of fixes is about.
     private var outstanding: [String: Int] = [:]
+    /// Connectors whose scheduled run is waiting out a meeting.
+    ///
+    /// A SET, and that is the rule rather than a container choice: at most one
+    /// run is held per connector, so a two-hour meeting that swallows four
+    /// beats releases one anecdote rather than firing four in a burst the
+    /// moment it ends. A second beat arriving while one is already held inserts
+    /// nothing.
+    private var heldRuns: Set<String> = []
+    /// The loop that lets them go.
+    private var microphoneWatch: Task<Void, Never>?
     private var iconRemoval: Task<Void, Never>?
 
     init(
@@ -276,8 +309,11 @@ final class AppModel: ObservableObject {
         alerts: any BatteryWarningPresenting,
         focus: FocusGate,
         quietHours: QuietWindow = .default,
+        microphone: MicrophoneGate,
+        watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
         sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
-        pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
+        pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
+        micSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
         self.deviceHost = deviceHost
         self.typedHost = deviceHost
@@ -292,8 +328,11 @@ final class AppModel: ObservableObject {
         self.alerts = alerts
         self.focus = focus
         self.quietHours = quietHours
+        self.microphone = microphone
+        self.watchedMicrophones = watching
         self.scheduleSleep = sleep
         self.pollSleep = pollSleep
+        self.micSleep = micSleep
         for connector in registry.all {
             chosen[connector.id] = Self.resolved(connector, in: store)
         }
@@ -341,7 +380,9 @@ final class AppModel: ObservableObject {
                 dialog: ModalBatteryDialog(), notifications: SystemBatteryNotifier()
             ),
             focus: FocusGate(status: SystemFocusStatus()),
-            quietHours: QuietWindow.stored(in: defaults)
+            quietHours: QuietWindow.stored(in: defaults),
+            microphone: MicrophoneGate(inputs: SystemAudioInputs()),
+            watching: WatchedMicrophone.stored(in: defaults)
         )
     }
 
@@ -446,6 +487,33 @@ final class AppModel: ObservableObject {
     func setQuietHours(_ window: QuietWindow) {
         quietHours = window
         window.save(to: defaults)
+    }
+
+    /// Every input the system reports, with the watched ones marked.
+    ///
+    /// Asked rather than stored, because the list changes underneath the app:
+    /// the phone appears and vanishes, headphones are plugged in. Costs one
+    /// CoreAudio enumeration — 1.36 ms measured — and is only drawn while the
+    /// settings are open.
+    var microphoneListing: [MicrophoneChoice] {
+        microphone.listing(watching: watchedMicrophones)
+    }
+
+    /// Adds or removes a microphone from the set the schedule waits for.
+    ///
+    /// Removal goes through the same `matches` rule the gate decides with, and
+    /// not through equality on the stored entry: the shipped defaults carry no
+    /// UID, so an entry-equality removal would leave a box that cannot be
+    /// unticked.
+    func setWatched(_ watched: Bool, for input: AudioInput) {
+        let present = microphone.listing(watching: watchedMicrophones).map(\.input)
+        var watching = watchedMicrophones.filter { $0.matches(input, among: present) == false }
+        // Written with the UID this app has just SEEN, which is what upgrades a
+        // shipped default from a name to an identity the moment the user
+        // confirms it.
+        if watched { watching.append(WatchedMicrophone(uid: input.uid, name: input.name)) }
+        watchedMicrophones = watching
+        WatchedMicrophone.save(watching, to: defaults)
     }
 
     // MARK: - Settings
@@ -571,6 +639,7 @@ final class AppModel: ObservableObject {
         // `FocusGate.rule`, on every turn of every schedule.
         focus.requestAccess()
         startMonitoring()
+        startWatchingMicrophones()
         for connector in registry.all { reschedule(connector) }
         restockAtLaunch()
     }
@@ -668,13 +737,16 @@ final class AppModel: ObservableObject {
         monitorLoop?.cancel()
         monitorLoop = nil
         let running = Array(timers.values) + Array(manualRuns.values) + Array(replays.values)
-            + [iconRemoval, launchRestock, historyLoad].compactMap { $0 }
+            + [iconRemoval, launchRestock, historyLoad, microphoneWatch].compactMap { $0 }
         timers.removeAll()
         manualRuns.removeAll()
         replays.removeAll()
         iconRemoval = nil
         launchRestock = nil
         historyLoad = nil
+        // Awaited with the rest, not merely cancelled: a release in flight puts
+        // the same held banner on the clock as any other run.
+        microphoneWatch = nil
         for task in running { task.cancel() }
         for task in running { await task.value }
     }
@@ -699,6 +771,48 @@ final class AppModel: ObservableObject {
                 do { try await self.pollSleep(Self.monitorInterval) } catch { return }
             }
         }
+    }
+
+    /// Watches for the meeting being over, and lets the held run go.
+    ///
+    /// A loop of its own rather than a share of the reachability poll: they
+    /// answer different questions on different cadences, and — the reason that
+    /// decides it — a test driving one must be able to say which it meant. With
+    /// the two folded together, "held then released" could not be told from
+    /// "ran late", which is this feature's entire claim.
+    ///
+    /// The release is AWAITED inside the loop, so a long run cannot be overtaken
+    /// by the next turn, and so teardown waiting on this task waits on the run
+    /// as well.
+    private func startWatchingMicrophones() {
+        microphoneWatch?.cancel()
+        microphoneWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.releaseHeldRuns()
+                do { try await self.micSleep(Self.microphoneInterval) } catch { return }
+            }
+        }
+    }
+
+    /// Lets go of the runs a meeting held, once nothing is holding them.
+    ///
+    /// Gated on the whole of `scheduleHold`, not only on the microphone. A run
+    /// held through a meeting that ends inside a Focus would otherwise speak
+    /// into the Focus — and holding on costs nothing, because this loop is
+    /// still turning and lets it go the moment both are clear. Nothing here is
+    /// sticky in either direction.
+    ///
+    /// Emptied BEFORE the runs, never after them. Not for re-entrancy — the
+    /// watch loop awaits each release, so there is no second turn to defend
+    /// against — but because a scheduled beat can land while a release is in
+    /// flight: the meeting resumes, that beat records its own hold, and an
+    /// `removeAll()` below the loop would take the new one with it.
+    private func releaseHeldRuns() async {
+        guard heldRuns.isEmpty == false, scheduleHold == nil else { return }
+        let due = heldRuns
+        heldRuns.removeAll()
+        for id in due { await runAndReport(id) }
     }
 
     private func reschedule(_ connector: any Connector) {
@@ -787,7 +901,18 @@ final class AppModel: ObservableObject {
     /// because they are about the room rather than the hardware.
     private var scheduleHold: String? {
         if deviceIsUnreachable { return Self.deviceUnreachable }
-        return focus.silence(quietHours: quietHours)
+        if let quiet = focus.silence(quietHours: quietHours) { return quiet }
+        return busyMicrophone.map { MicrophoneGate.inUse($0.name) }
+    }
+
+    /// The watched microphone that is capturing right now, or nil.
+    ///
+    /// Asked separately from `scheduleHold` because the two answers are put to
+    /// different uses: the hold decides whether to run, and this decides
+    /// whether not running was a WAIT. A meeting during an outage is still a
+    /// meeting, and the run it stopped is still owed.
+    private var busyMicrophone: AudioInput? {
+        microphone.capturing(watching: watchedMicrophones)
     }
 
     private func tick(_ id: String) async {
@@ -818,7 +943,15 @@ final class AppModel: ObservableObject {
         // the run is held, the restock below is outside on purpose, and nothing
         // is recorded in either direction. What differs is only which words
         // reach the panel, and `noteNextRun` is the one place that writes them.
+        //
+        // And Task 24's microphone is a WAIT rather than a skip, which is the
+        // one place the shape differs. A joke deferred by twenty minutes is
+        // still a joke; one skipped is gone, and it was already paid for in
+        // synthesis. So the run is written down here and released by
+        // `releaseHeldRuns` when the room is quiet again — at most one per
+        // connector, so a two-hour meeting does not end in a burst of four.
         guard scheduleHold == nil else {
+            if busyMicrophone != nil { heldRuns.insert(id) }
             await restock(id)
             return
         }

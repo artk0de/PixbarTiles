@@ -209,10 +209,24 @@ final class Metronome: @unchecked Sendable {
 /// The alternative is a fixed sleep, which is either too short on a loaded
 /// machine or wasted time on an idle one. Returns rather than asserting, so the
 /// failure is reported by the expectation that named the rule.
+///
+/// Five seconds rather than two, and the number was measured rather than
+/// guessed. Every caller is `@MainActor`, and so is every SwiftUI render in
+/// `PanelRenderingTests`: laying out the settings surface costs 65 ms — the two
+/// 24-hour pickers are 46 ms of it — and `cacheDisplay` is SYNCHRONOUS, so each
+/// render is time subtracted from the budget of every poll running beside it.
+/// About seventeen settings renders now happen across a suite that finishes in
+/// 2.1 s, which put a two-second budget inside the noise: measured at 1 red run
+/// in 5, on tests with nothing wrong with them, scattered at random.
+///
+/// Raising it weakens nothing. Every use is an "eventually" wait followed by a
+/// synchronous read — none of them infers a negative from a timeout — so a
+/// longer limit only makes a genuinely failing test slower to report, and costs
+/// exactly nothing when the condition holds.
 @discardableResult
 @MainActor
 func waitUntil(
-    _ condition: @MainActor () -> Bool, limit: TimeInterval = 2
+    _ condition: @MainActor () -> Bool, limit: TimeInterval = 5
 ) async -> Bool {
     let deadline = Date().addingTimeInterval(limit)
     while Date() < deadline {
@@ -335,7 +349,14 @@ func testModel(
     // allowed to ask, and a default of `.notDetermined` would have every test
     // in this target pass or fail depending on the hour it was run at.
     focus: FocusGate = FocusGate(status: StubFocusStatus(access: .authorized)),
-    quietHours: QuietWindow = .default
+    quietHours: QuietWindow = .default,
+    // Nothing capturing, so nothing in the suite is held by whatever is plugged
+    // into the machine running it. A default reading the REAL inputs would have
+    // every schedule test in this target answer to the always-on Thunderbolt
+    // interface on this desk.
+    microphone: MicrophoneGate = MicrophoneGate(inputs: StubAudioInputs()),
+    watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
+    micSleep: @escaping AppModel.Sleeping = parked
 ) -> AppModel {
     let registry = ConnectorRegistry()
     for connector in connectors { registry.register(connector) }
@@ -355,8 +376,11 @@ func testModel(
         alerts: alerts,
         focus: focus,
         quietHours: quietHours,
+        microphone: microphone,
+        watching: watching,
         sleep: sleep,
-        pollSleep: pollSleep
+        pollSleep: pollSleep,
+        micSleep: micSleep
     )
 }
 
@@ -633,8 +657,11 @@ func modelOverRealHost(
     anecdotes: (any AnecdoteReplaying)? = nil,
     focus: FocusGate = FocusGate(status: StubFocusStatus(access: .authorized)),
     quietHours: QuietWindow = .default,
+    microphone: MicrophoneGate = MicrophoneGate(inputs: StubAudioInputs()),
+    watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
     sleep: @escaping AppModel.Sleeping = parked,
-    pollSleep: @escaping AppModel.Sleeping = parked
+    pollSleep: @escaping AppModel.Sleeping = parked,
+    micSleep: @escaping AppModel.Sleeping = parked
 ) -> (model: AppModel, host: ConnectorHost) {
     let registry = ConnectorRegistry()
     registry.register(connector)
@@ -662,8 +689,11 @@ func modelOverRealHost(
         alerts: SpyAlerts(),
         focus: focus,
         quietHours: quietHours,
+        microphone: microphone,
+        watching: watching,
         sleep: sleep,
-        pollSleep: pollSleep
+        pollSleep: pollSleep,
+        micSleep: micSleep
     )
     return (model, host)
 }
@@ -819,3 +849,73 @@ func atHour(_ hour: Int, calendar: Calendar = .current) -> Date {
     components.second = 0
     return calendar.date(from: components)!
 }
+
+// MARK: - Microphones
+
+/// The inputs on this desk, with the two facts that make the naive gate wrong.
+///
+/// `Universal Audio Thunderbolt` is not decoration: probed on the machine this
+/// was written on, that always-on interface reports `capturing == true`
+/// permanently with no meeting in progress, and it is why "is any input
+/// capturing" is a permanent mute rather than a gate. Every fixture below keeps
+/// at least one unwatched capturing device, or the watch-set filter is never
+/// exercised and a test claiming it passes with the filter deleted.
+enum Inputs {
+    static let builtIn = AudioInput(
+        uid: "BuiltInMicrophoneDevice", name: "MacBook Pro Microphone", isCapturing: false
+    )
+    static let phone = AudioInput(
+        uid: "C1E4A019-FDA0-4A69-99C4-B06600000003", name: "iPhone Microphone",
+        isCapturing: false
+    )
+    /// The always-on interface. Unwatched, and capturing whatever else is true.
+    static let interface = AudioInput(
+        uid: "com_uaudio_driver_UAD2AudioEngine:0", name: "Universal Audio Thunderbolt",
+        isCapturing: true
+    )
+    static let virtual = AudioInput(
+        uid: "VirtualAudio_UID", name: "Serato Virtual Audio", isCapturing: false
+    )
+
+    static func capturing(_ input: AudioInput) -> AudioInput {
+        AudioInput(uid: input.uid, name: input.name, isCapturing: true)
+    }
+
+    static func idle(_ input: AudioInput) -> AudioInput {
+        AudioInput(uid: input.uid, name: input.name, isCapturing: false)
+    }
+}
+
+/// Reports whatever a test hands it, and can change its answer while the app is
+/// running.
+///
+/// Changing it underneath a running schedule is the point: a meeting that never
+/// ends cannot pose the question the deferral exists to answer.
+final class StubAudioInputs: AudioInputReporting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var reported: [AudioInput]
+    private var reads = 0
+
+    init(_ reported: [AudioInput] = [Inputs.builtIn, Inputs.phone, Inputs.interface]) {
+        self.reported = reported
+    }
+
+    /// How many times the gate asked the system.
+    var enumerations: Int { lock.withLock { reads } }
+
+    func inputs() -> [AudioInput] {
+        lock.withLock {
+            reads += 1
+            return reported
+        }
+    }
+
+    func nowReports(_ reported: [AudioInput]) { lock.withLock { self.reported = reported } }
+}
+
+/// The desk as it is during a meeting: the built-in microphone hot, the
+/// always-on interface hot as ever, the phone idle and present.
+let duringAMeeting = [Inputs.capturing(Inputs.builtIn), Inputs.phone, Inputs.interface]
+
+/// And after it: only the interface, which is never evidence of anything.
+let afterTheMeeting = [Inputs.builtIn, Inputs.phone, Inputs.interface]

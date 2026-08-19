@@ -765,13 +765,23 @@ private func openSettings(focus: FocusGate, quietHours: QuietWindow) -> AppModel
         focus: FocusGate(status: StubFocusStatus(access: .denied)), quietHours: night
     )
 
+    // Bound rather than re-drawn per expectation, and that is not tidiness.
+    // Laying out this surface costs 65 ms — the two 24-hour pickers are 46 ms
+    // of it, measured — and it is SYNCHRONOUS main-actor work, so every render
+    // here is time taken out of the 2-second budget of every `waitUntil` in
+    // every test running beside it. Sixteen draws across the four settings
+    // tests was a second of starvation and a suite that went red at random.
+    let bySystem = drawn(system)
+    let byWindow = drawn(window)
+
     #expect(system.focusRule == .focus)
     #expect(window.focusRule == .quietHours(night))
-    #expect(drawn(system) != nil)
-    #expect(drawn(system) != drawn(window))
-    // The same surface twice is the same pixels, or the inequality above is
-    // noise rather than content.
-    #expect(drawn(system) == drawn(system))
+    #expect(bySystem != nil)
+    #expect(bySystem != byWindow)
+    // The same surface twice is the same pixels, or every inequality in this
+    // section is noise rather than content. Asserted once, here, for all four
+    // of them.
+    #expect(bySystem == drawn(system))
 }
 
 // And the window itself is on the surface, not only in the defaults: two
@@ -782,6 +792,65 @@ private func openSettings(focus: FocusGate, quietHours: QuietWindow) -> AppModel
     let night = openSettings(focus: refused, quietHours: QuietWindow(startHour: 23, endHour: 8))
     let noon = openSettings(focus: refused, quietHours: QuietWindow(startHour: 11, endHour: 14))
 
-    #expect(drawn(night) != nil)
-    #expect(drawn(night) != drawn(noon))
+    let atNight = drawn(night)
+
+    #expect(atNight != nil)
+    #expect(atNight != drawn(noon))
+}
+
+// MARK: - Which microphones the schedule waits for
+
+/// The settings, open, over a given set of inputs and a given watch set.
+@MainActor
+private func openSettings(
+    inputs: [AudioInput], watching: [WatchedMicrophone]
+) -> AppModel {
+    let model = testModel(
+        microphone: MicrophoneGate(inputs: StubAudioInputs(inputs)), watching: watching
+    )
+    model.openSettings()
+    return model
+}
+
+// The device list reaches the surface rather than only the model. Two settings
+// surfaces over the SAME four inputs — so the rows, their count and their
+// labels are identical — differing only in which of them are ticked.
+//
+// Same inputs on both, deliberately: with different device lists the two would
+// differ by a row, and the test claiming the ticks would pass with the ticks
+// gone.
+@Test @MainActor func thePanelMarksWhichMicrophonesAreWatched() {
+    let present = [Inputs.builtIn, Inputs.phone, Inputs.interface, Inputs.virtual]
+    let watchingBuiltIn = openSettings(
+        inputs: present,
+        watching: [WatchedMicrophone(uid: Inputs.builtIn.uid, name: Inputs.builtIn.name)]
+    )
+    let watchingTheInterface = openSettings(
+        inputs: present,
+        watching: [WatchedMicrophone(uid: Inputs.interface.uid, name: Inputs.interface.name)]
+    )
+
+    let builtInTicked = drawn(watchingBuiltIn)
+
+    #expect(watchingBuiltIn.microphoneListing.map(\.input) == present)
+    #expect(watchingTheInterface.microphoneListing.map(\.input) == present)
+    #expect(builtInTicked != nil)
+    #expect(builtInTicked != drawn(watchingTheInterface))
+}
+
+// And every input is listed, not only the watched ones: a surface over four
+// devices is not the same surface as one over two.
+@Test @MainActor func thePanelListsEveryInputRatherThanOnlyTheWatchedOnes() {
+    let watching = [WatchedMicrophone(uid: Inputs.builtIn.uid, name: Inputs.builtIn.name)]
+    let all = openSettings(
+        inputs: [Inputs.builtIn, Inputs.phone, Inputs.interface, Inputs.virtual],
+        watching: watching
+    )
+    let onlyWatched = openSettings(inputs: [Inputs.builtIn], watching: watching)
+
+    let everything = drawn(all)
+
+    #expect(all.microphoneListing.count == 4)
+    #expect(everything != nil)
+    #expect(everything != drawn(onlyWatched))
 }

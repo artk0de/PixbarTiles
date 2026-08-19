@@ -19,6 +19,8 @@ struct SettingsSheet: View {
             Divider()
             quietHoursSection
             Divider()
+            microphonesSection
+            Divider()
             iconSection
         }
         .padding(14)
@@ -107,6 +109,31 @@ struct SettingsSheet: View {
         .labelsHidden()
         .controlSize(.small)
         .accessibilityLabel(label)
+    }
+
+    /// Which microphones the schedule waits for.
+    ///
+    /// Every input the system reports, watched ones ticked — not only the
+    /// watched ones. A gate the user cannot inspect is a gate they will
+    /// eventually fight, and the always-on interface that reports itself busy
+    /// for ever is only understandable next to the inputs that do not.
+    ///
+    /// Read live on every draw, at one CoreAudio enumeration — 1.36 ms measured
+    /// on this machine — because the list changes underneath the app: the phone
+    /// appears and vanishes, headphones are plugged in. Nothing on this surface
+    /// redraws at frame rate, which is what makes that affordable here and
+    /// worth stating before anybody moves it to the panel.
+    private var microphonesSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Wait for these microphones").font(.caption).foregroundStyle(.secondary)
+            ForEach(model.microphoneListing) { choice in
+                Toggle(choice.input.name, isOn: Binding(
+                    get: { choice.isWatched },
+                    set: { model.setWatched($0, for: choice.input) }
+                ))
+                .controlSize(.small)
+            }
+        }
     }
 
     /// The only thing this app writes to the device's flash, and the only way to

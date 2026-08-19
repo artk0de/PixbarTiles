@@ -99,7 +99,14 @@ public struct WeatherConnector: Connector {
     /// columns to say something nobody reads off a clock across a room.
     /// `rounded()` rather than truncation, so -3.6 is -4 rather than -3 — the
     /// wrong direction on the side of the scale where it matters.
+    ///
+    /// The scale is spelled out, and the columns it costs are the reason it was
+    /// once left off. With the sky now drawn as an icon in the leading eight
+    /// pixels, a bare `4°` left the rest of the row empty — and a lone degree
+    /// sign is the one reading a person can misread as Fahrenheit without ever
+    /// noticing they did. Four glyphs still fit beside the icon; the firmware
+    /// scrolls anything that does not.
     static func degrees(_ celsius: Double) -> String {
-        "\(Int(celsius.rounded()))°"
+        "\(Int(celsius.rounded()))°C"
     }
 }

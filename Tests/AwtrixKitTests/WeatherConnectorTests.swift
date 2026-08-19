@@ -172,7 +172,7 @@ private struct PassThroughIcons: IconInstalling {
     // you glance at the clock, not interrupt what is on it.
     #expect(output.surface == .app(WeatherConnector.appName))
     #expect(output.overlay == .rain)
-    #expect(output.text == "4°")
+    #expect(output.text == "4°C")
     #expect(output.color == TemperatureColour(celsius: 4.2).hex)
     // Nothing is spoken and nothing is held: an app has no banner to release.
     #expect(output.localAudio.isEmpty)
@@ -211,7 +211,7 @@ private struct PassThroughIcons: IconInstalling {
     #expect(output.color != TemperatureColour(celsius: 4.2).hex)
     // The reading itself is untouched. Showing the apparent temperature would
     // be a clock that disagrees with every other thermometer in the room.
-    #expect(output.text == "4°")
+    #expect(output.text == "4°C")
 }
 
 // And the sky is not what the colour says any more, which is the change: an
@@ -246,11 +246,11 @@ private struct PassThroughIcons: IconInstalling {
     let output = try await connector.produce()
 
     #expect(output.color == TemperatureColour(celsius: 27.5).hex)
-    #expect(output.text == "28°")
+    #expect(output.text == "28°C")
 }
 
 @Test func theTemperatureIsRoundedToWholeDegreesEitherSideOfZero() async throws {
-    for (reading, shown) in [(4.2, "4°"), (4.6, "5°"), (-3.4, "-3°"), (-3.6, "-4°"), (0.2, "0°")] {
+    for (reading, shown) in [(4.2, "4°C"), (4.6, "5°C"), (-3.4, "-3°C"), (-3.6, "-4°C"), (0.2, "0°C")] {
         let transport = SkyAndClock(sky: weatherBody(temperature: reading))
         let connector = WeatherConnector(
             source: OpenMeteoSource(transport: transport), location: { desk }

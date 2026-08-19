@@ -109,19 +109,6 @@ public struct WeatherConnector: Connector {
             // reading stops being weather anyway, so nothing is lost by waiting
             // that long to drop it.
             lifetime: 3_600,
-            // The hour, which nothing else on the app had left to carry it. The
-            // icon cannot: the catalogue has no cloud-at-night and no moon
-            // behind a cloud — both LaMetric weather packs were swept whole to
-            // check, and ids 53798 through 53801 are four copies of the same
-            // grey cloud. The colour cannot: it is spent on how the temperature
-            // feels. The overlay cannot: night is not one of the seven layers
-            // the firmware has. So at full overcast — the commonest sky here —
-            // the clock drew an identical app at noon and at midnight.
-            //
-            // Taken from `reading.isDay` rather than from `theme`, because the
-            // theme only knows the hour for a clear sky and overcast is
-            // precisely the case that complained.
-            background: WeatherTheme.background(isDay: reading.isDay),
             overlay: theme.overlay
         )
     }

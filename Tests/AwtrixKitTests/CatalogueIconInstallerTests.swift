@@ -464,3 +464,112 @@ private final class RefusingTransport: Transport, @unchecked Sendable {
 
     #expect(first.uploadedIcons().count == 16)
 }
+
+// MARK: - Listing the flash once rather than once per delivery
+
+/// The `/list` calls that reached the clock, in order. Everything below is
+/// bought in exactly this number, so it is what the assertions count.
+private func listings(_ transport: RoutingTransport) -> [URLRequest] {
+    transport.requests.filter { $0.url?.path == "/list" }
+}
+
+// The weather draws an icon on every poll — 900 seconds by default — and the
+// anecdotes draw one on every telling. Asking the clock which files it holds,
+// to answer a question this process already answered, is a request per delivery
+// for a fact that cannot have changed underneath it: while this app runs, it is
+// the only thing writing to `/ICONS`. Fewer requests to the clock is the whole
+// point of this wave of work, so an icon that costs one on every delivery is
+// moving backwards.
+@Test func anIconConfirmedOnceIsNotLookedForAgain() async throws {
+    let transport = RoutingTransport([
+        iconDirectory(holding: "9039.gif"),
+        Route(match: "icon_thumbs/9039.gif", status: 200, body: gifBytes),
+    ])
+    let subject = installer(transport)
+
+    _ = try await subject.ensureInstalled(.catalogue(9039))
+    _ = try await subject.ensureInstalled(.catalogue(9039))
+
+    #expect(listings(transport).count == 1)
+    #expect(uploads(transport).isEmpty)
+}
+
+// The other way onto the flash, and the one the fake device cannot fake: it
+// does not keep what is uploaded, so a second listing would answer "empty" and
+// the icon would be downloaded and written again. One listing, one download,
+// one upload.
+@Test func anIconThisAppJustUploadedIsNotLookedForEither() async throws {
+    let transport = RoutingTransport([
+        emptyIconDirectory,
+        Route(match: "icon_thumbs/9039.gif", status: 200, body: gifBytes),
+    ])
+    let subject = installer(transport)
+
+    _ = try await subject.ensureInstalled(.catalogue(9039))
+    _ = try await subject.ensureInstalled(.catalogue(9039))
+
+    #expect(listings(transport).count == 1)
+    #expect(uploads(transport).count == 1)
+    #expect(catalogueFetches(transport).count == 1)
+}
+
+// Confirmed by name, not "we have listed once". A blanket flag would answer for
+// an icon the listing never mentioned — the anecdote face on a clock that only
+// ever showed the weather — and skip straight to an upload it cannot know is
+// needed, or worse, to a name that is not there.
+@Test func anIconThatWasNeverConfirmedIsStillLookedFor() async throws {
+    let transport = RoutingTransport([
+        iconDirectory(holding: "9039.gif", "2282.gif"),
+        Route(match: "icon_thumbs/2282.gif", status: 200, body: gifBytes),
+    ])
+    let subject = installer(transport)
+
+    _ = try await subject.ensureInstalled(.catalogue(9039))
+    _ = try await subject.ensureInstalled(.catalogue(2282))
+
+    #expect(listings(transport).count == 2)
+}
+
+// An upload the device refused leaves nothing on the flash, so there is nothing
+// to remember. Remembering it anyway is how an app ends up icon-less for the
+// rest of the launch: every later delivery would skip both the listing and the
+// upload, and nothing ever revisits an icon believed to be there.
+@Test func anUploadTheDeviceRefusedIsNotRememberedAsPresent() async throws {
+    let transport = RoutingTransport([
+        emptyIconDirectory,
+        Route(match: "icon_thumbs/9039.gif", status: 200, body: gifBytes),
+        Route(match: "/edit", status: 500, body: Data("boom".utf8)),
+    ])
+    let subject = installer(transport)
+
+    await #expect(throws: AwtrixError.self) {
+        _ = try await subject.ensureInstalled(.catalogue(9039))
+    }
+    await #expect(throws: AwtrixError.self) {
+        _ = try await subject.ensureInstalled(.catalogue(9039))
+    }
+
+    // Listed both times, and tried both times. Nothing was confirmed, so
+    // nothing may be skipped.
+    #expect(listings(transport).count == 2)
+    #expect(uploads(transport).count == 2)
+}
+
+// "Remove icons" takes the file back off the flash. A memory that outlived the
+// file would skip the listing and skip the upload on the next weather poll, and
+// the app would draw nothing at all until the next launch — with the record
+// saying the icon is there and the clock disagreeing.
+@Test func aRemovedIconIsForgottenSoTheNextDeliveryPutsItBack() async throws {
+    let transport = RoutingTransport([
+        emptyIconDirectory,
+        Route(match: "icon_thumbs/9039.gif", status: 200, body: gifBytes),
+    ])
+    let subject = installer(transport)
+
+    _ = try await subject.ensureInstalled(.catalogue(9039))
+    _ = try await subject.removeUploaded()
+    _ = try await subject.ensureInstalled(.catalogue(9039))
+
+    #expect(uploads(transport).count == 2)
+    #expect(listings(transport).count == 2)
+}

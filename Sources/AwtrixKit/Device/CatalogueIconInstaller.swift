@@ -24,6 +24,13 @@ public struct CatalogueIconInstaller: IconInstalling {
     private let device: AwtrixDevice
     private let transport: any Transport
     private let uploads: any UploadedIconStore
+    /// Built here rather than taken as a parameter, unlike `uploads`. Nothing
+    /// outside can opt out of it and nothing outside needs to see it: it holds
+    /// no fact the flash does not already hold, only the ones this launch has
+    /// been told. One installer is built per clock, so scoping the memory to
+    /// the instance is what stops a change of device address from carrying an
+    /// answer about one clock's flash over to another's.
+    private let confirmed = ConfirmedIconsOnFlash()
 
     /// `uploads` is required rather than defaulted, because this type is the
     /// only party that can tell an upload from a reuse: `ensureInstalled`
@@ -47,14 +54,31 @@ public struct CatalogueIconInstaller: IconInstalling {
             // `id` is an `Int`, so the name it produces cannot contain a slash
             // or a `..` — nothing from the catalogue picks the path it lands on.
             let name = String(id)
+            // Confirmed once is confirmed for the rest of the launch. The
+            // listing this skips was otherwise paid on every anecdote and, now
+            // that the weather draws a picture too, on every poll of it — for
+            // an answer that cannot have changed underneath us: while this app
+            // runs it is the only thing writing to `/ICONS`, and the one path
+            // that takes a file back off forgets the name as it goes.
+            guard !confirmed.holds(name) else { return name }
             let present = try await device.list("/ICONS")
             guard !present.contains(where: { $0.name == "\(name).gif" }) else {
+                // Found rather than uploaded, so it is remembered HERE and not
+                // in `uploads`: the two records answer different questions, and
+                // recording this one as an upload would delete a user's own
+                // file on "Remove icons".
+                confirmed.remember(name)
                 return name
             }
             try await device.installIcon(download(id: id), named: name)
-            // After the upload, never before: an icon that failed to reach the
-            // flash is not one this app can be asked to take back off it.
+            // Both records after the upload, never before. An icon that failed
+            // to reach the flash is not one this app can be asked to take back
+            // off it, and not one to skip the next listing for either — a
+            // remembered failure is an app drawn with no picture beside it for
+            // the rest of the launch, and nothing revisits an icon believed to
+            // be there.
             uploads.record(name)
+            confirmed.remember(name)
             return name
         }
     }
@@ -83,6 +107,12 @@ public struct CatalogueIconInstaller: IconInstalling {
             do {
                 try await device.removeIcon(named: name)
                 uploads.forget(name)
+                // And forgotten as present, or the next delivery would skip
+                // both the listing and the upload and draw an app with nothing
+                // beside it until the process ends. A refusal skips this line
+                // for the same reason it skips the one above: the file is
+                // still there.
+                confirmed.forget(name)
                 removed.append(name)
             } catch {
                 refused.append(name)
@@ -121,5 +151,39 @@ public struct CatalogueIconInstaller: IconInstalling {
             throw Failure.notAnImage(id)
         }
         return data
+    }
+}
+
+/// The icon names this launch has confirmed are on the device's flash.
+///
+/// Not a `Store`, and not durable — one decision, not two. `/ICONS` is editable
+/// by hand from the clock's own web interface and by any other tool on the
+/// network, so a name carried across launches is a claim about a flash this
+/// process has never looked at, and nothing revisits an icon it believes is
+/// there. Inside one launch the claim holds: this app is the only thing writing
+/// there while it runs, and it forgets whatever it takes back off. One listing
+/// per launch is cheap; a wrong memory lasts until somebody notices an app with
+/// no picture and quits.
+///
+/// A `final class` behind an `NSLock`, which is the shape `InMemoryUploadedIconStore`
+/// already solves here. An `actor` was the alternative and is worse for this:
+/// every check would become a suspension point in the middle of
+/// `ensureInstalled`, between asking whether the icon is there and uploading
+/// it. `Mutex` would earn the `Sendable` without `@unchecked`, but it is
+/// macOS 15+ and this package floors at macOS 14.
+final class ConfirmedIconsOnFlash: @unchecked Sendable {
+    private var names: Set<String> = []
+    private let lock = NSLock()
+
+    func holds(_ name: String) -> Bool {
+        lock.withLock { names.contains(name) }
+    }
+
+    func remember(_ name: String) {
+        lock.withLock { _ = names.insert(name) }
+    }
+
+    func forget(_ name: String) {
+        lock.withLock { _ = names.remove(name) }
     }
 }

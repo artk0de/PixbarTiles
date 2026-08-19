@@ -426,7 +426,14 @@ final class AppModel: ObservableObject {
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.registry = registry
-        self.monitor = DeviceMonitor(device: device)
+        // Durable, for the reason the borrowed overlay is: what this app learned
+        // is not recoverable by looking at the device afterwards. `/api/stats`
+        // never says which way the battery is going — that takes a series of
+        // readings — and an in-memory one has every launch spend twenty minutes
+        // earning a trend the launch before it already had.
+        self.monitor = DeviceMonitor(
+            device: device, history: UserDefaultsBatteryHistoryStore(defaults: defaults)
+        )
         self.host = host
         self.store = store
         self.installer = installer

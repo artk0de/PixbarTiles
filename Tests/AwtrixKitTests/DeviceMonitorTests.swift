@@ -472,3 +472,57 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
 
     #expect(monitor.battery?.direction == .unknown)
 }
+
+// MARK: - What the next launch inherits
+
+/// Runs a monitor through the twenty-six minutes of discharge a verdict needs,
+/// writing the series down as it goes.
+@MainActor
+private func watchADischarge(
+    through history: any BatteryHistoryStore, on transport: RecordingTransport
+) async -> DeviceMonitor {
+    let monitor = DeviceMonitor(
+        device: AwtrixDevice(host: "10.0.0.5", transport: transport), history: history
+    )
+    for minute in 0...25 {
+        transport.body = trendJSON(bat: 50, raw: 400 - minute)
+        await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60))
+    }
+    return monitor
+}
+
+@Test @MainActor func aRelaunchedMonitorResumesTheSeriesTheLastOneWroteDown() async {
+    let history = InMemoryBatteryHistoryStore()
+    let transport = RecordingTransport()
+    let before = await watchADischarge(through: history, on: transport)
+    #expect(before.battery?.direction == .discharging)
+
+    // The app was quit and opened again a minute later. A second monitor on the
+    // same store is what that looks like from here.
+    let after = DeviceMonitor(
+        device: AwtrixDevice(host: "10.0.0.5", transport: transport), history: history
+    )
+    // Still nothing until this launch has heard from the clock: the reading is
+    // gated on the device answering, and a restored series is not an answer.
+    #expect(after.battery == nil)
+
+    transport.body = trendJSON(bat: 50, raw: 374)
+    await after.refresh(at: origin.addingTimeInterval(26 * 60))
+
+    // One poll, and there is a direction. Without the series behind it this is
+    // `.unknown` for the next twenty minutes.
+    #expect(after.battery?.direction == .discharging)
+}
+
+@Test @MainActor func aMonitorWithNothingStoredStartsColdAsItAlwaysDid() async {
+    let transport = RecordingTransport()
+    transport.body = trendJSON(bat: 50, raw: 400)
+    let monitor = DeviceMonitor(
+        device: AwtrixDevice(host: "10.0.0.5", transport: transport),
+        history: InMemoryBatteryHistoryStore()
+    )
+
+    await monitor.refresh(at: origin)
+
+    #expect(monitor.battery?.direction == .unknown)
+}

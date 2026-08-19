@@ -55,6 +55,54 @@ public struct BatteryWarning: Sendable, Equatable {
     }
 }
 
+/// One reading, with the instant it was taken at.
+///
+/// The raw figure and nothing else. `bat` used to be carried here too, to
+/// derive how many raw steps the firmware spends on a percent; the estimate is
+/// raw-native now and nothing in the fit has a use for a percentage.
+///
+/// Public and `Codable` because this is also the shape the readings are written
+/// down in. A separate on-disk type was the alternative, and it would be this
+/// one field for field plus a mapping in each direction — two places to add the
+/// next field to, and a fit that reads whichever of them was updated.
+public struct BatterySample: Sendable, Codable, Equatable {
+    public let raw: Int
+    public let at: Date
+
+    public init(raw: Int, at: Date) {
+        self.raw = raw
+        self.at = at
+    }
+}
+
+/// Everything one launch has to hand the next one about the battery.
+///
+/// The readings, and the two facts that say whether they still describe the
+/// clock in front of us. Without the uid a restored series cannot be told from
+/// another device's, and without the uptime a reboot in the gap is invisible —
+/// so the three travel together or the record is only ever part of an answer.
+///
+/// What is NOT in here is the verdict, the ratcheted figure, or which warnings
+/// are still armed. The verdict is derived from the samples and is recomputed
+/// from them; the ratchet exists to stop a figure flickering on screen and
+/// there is no screen across a relaunch; the armed set is a function of the
+/// percentage the next poll reports, so it re-arms itself.
+public struct BatteryHistory: Sendable, Codable, Equatable {
+    /// Which clock the readings came off.
+    public let uid: String
+    /// How long that clock had been up when the last of them arrived, or nil
+    /// where the firmware does not report it.
+    public let uptime: Int?
+    /// The readings themselves, oldest first.
+    public let samples: [BatterySample]
+
+    public init(uid: String, uptime: Int?, samples: [BatterySample]) {
+        self.uid = uid
+        self.uptime = uptime
+        self.samples = samples
+    }
+}
+
 /// Everything one clock has said about its battery, and what that adds up to.
 ///
 /// A value rather than an object: `DeviceMonitor` owns exactly one, mutates it
@@ -197,23 +245,27 @@ public struct BatteryTrajectory: Sendable {
     /// — the same storm the edge trigger exists to stop, arriving more slowly.
     public static let rearmMargin = 3
 
-    /// One reading, with the instant it was taken at.
-    ///
-    /// The raw figure and nothing else. `bat` used to be carried here too, to
-    /// derive how many raw steps the firmware spends on a percent; the estimate
-    /// is raw-native now and nothing in the fit has a use for a percentage.
-    private struct Sample {
-        let raw: Int
-        let at: Date
-    }
-
     /// Readings inside the window, oldest first. Only ones carrying a raw
     /// figure: a firmware that omits it contributes a percentage and no trend.
-    private var samples: [Sample] = []
-    /// The whole of the last report, which is what `uid` and `uptime` are read
-    /// off — and what the percentage is read off, so that a clock with no raw
-    /// figure still has one.
+    private var samples: [BatterySample] = []
+    /// The whole of the last report, which is what the percentage is read off,
+    /// so that a clock with no raw figure still has one.
+    ///
+    /// This launch's only. It is not restored from a stored series and must not
+    /// be: a percentage read before the app was closed is a reading nobody took
+    /// now, and `reading` would hand it to the panel before the first poll of
+    /// this launch has answered.
     private var latest: DeviceStats?
+    /// Which clock the readings in `samples` came off, and how long it had been
+    /// up when the last of them arrived.
+    ///
+    /// Read off the same report `latest` is and kept beside it, which is a
+    /// duplication with a reason: this pair survives a launch and `latest` does
+    /// not. They are not readings — they are what says whether the readings
+    /// beside them still describe the clock now answering — so they are exactly
+    /// what a stored series can be checked against.
+    private var seriesUid: String?
+    private var seriesUptime: Int?
     private var direction: BatteryDirection = .unknown
     /// The ratcheted figure, or nil before anything has been recorded.
     private var shown: Int?
@@ -223,7 +275,44 @@ public struct BatteryTrajectory: Sendable {
     /// last line, which that gate no longer holds at all.
     private var armed: Set<Int> = Set(BatteryTrajectory.thresholds)
 
-    public init() {}
+    /// A fresh trajectory, or the one a previous launch wrote down.
+    ///
+    /// The samples come back AND the two facts they are checked against, and
+    /// that pairing is the whole of what makes resuming safe: the first live
+    /// reading goes through `invalidates(_:at:)` exactly as a mid-session one
+    /// does, so a series off another clock, from before a reboot, or older than
+    /// the window is discarded and this launch starts cold — correctly.
+    /// Restoring the readings alone would defeat all three checks at once,
+    /// because each of them compares against something the series carries.
+    ///
+    /// The verdict is recomputed here rather than stored, for the reason
+    /// `BatteryHistory` gives: a stored one could only be trusted or dropped.
+    /// Recomputing also puts a resumed launch in exactly the state an
+    /// uninterrupted one would be in, which is what makes a late first poll
+    /// hold the trend across the gap instead of blanking it.
+    ///
+    /// Nothing is READABLE off this until a poll answers — `latest` stays nil,
+    /// so `reading` does — so a restored verdict is never shown beside a
+    /// percentage from before the relaunch.
+    public init(resuming history: BatteryHistory? = nil) {
+        guard let history else { return }
+        samples = history.samples
+        seriesUid = history.uid
+        seriesUptime = history.uptime
+        direction = Self.direction(of: samples, holding: .unknown)
+    }
+
+    /// What this launch has to hand the next one, or nil while it has nothing
+    /// to say.
+    ///
+    /// Nil before the first reading, and deliberately not an empty series: a
+    /// record naming no clock cannot be checked against the device that answers
+    /// next, and the check is the whole reason the record is safe to resume
+    /// from.
+    public var history: BatteryHistory? {
+        guard let seriesUid else { return nil }
+        return BatteryHistory(uid: seriesUid, uptime: seriesUptime, samples: samples)
+    }
 
     /// Takes one reading, and answers with the threshold it just fell through.
     ///
@@ -240,11 +329,13 @@ public struct BatteryTrajectory: Sendable {
     public mutating func record(_ stats: DeviceStats, at now: Date) -> BatteryWarning? {
         if invalidates(stats, at: now) { discardHistory() }
         latest = stats
+        seriesUid = stats.uid
+        seriesUptime = stats.uptime
         // Held across the recompute, because the ratchet is released by a CHANGE
         // of direction and there is nowhere else to see one from.
         let before = direction
         if let raw = stats.batRaw {
-            samples.append(Sample(raw: raw, at: now))
+            samples.append(BatterySample(raw: raw, at: now))
             samples.removeAll { now.timeIntervalSince($0.at) > Self.window }
             direction = Self.direction(of: samples, holding: direction)
         }
@@ -331,7 +422,7 @@ public struct BatteryTrajectory: Sendable {
     /// two into a launch, or on the far side of a long gap. A glyph blanked
     /// every time a poll ran late is a worse answer than the last real one.
     private static func direction(
-        of samples: [Sample], holding previous: BatteryDirection
+        of samples: [BatterySample], holding previous: BatteryDirection
     ) -> BatteryDirection {
         guard let rise = fittedChange(of: samples, over: riseWindow, needing: minimumTrendSpan)
         else { return previous }
@@ -351,7 +442,7 @@ public struct BatteryTrajectory: Sendable {
     /// rate would have to be a different number for each window, and moving one
     /// window would silently change what the other one believed.
     private static func fittedChange(
-        of samples: [Sample], over window: TimeInterval, needing span: TimeInterval
+        of samples: [BatterySample], over window: TimeInterval, needing span: TimeInterval
     ) -> Double? {
         guard let last = samples.last else { return nil }
         let inside = samples.filter { last.at.timeIntervalSince($0.at) <= window }
@@ -399,7 +490,7 @@ public struct BatteryTrajectory: Sendable {
     /// of them. Two endpoints are two readings — and two readings, one of which
     /// caught the ADC on a wobble, is the noisiest possible way to use ninety of
     /// them.
-    private static func rawSlope(of samples: [Sample]) -> Double? {
+    private static func rawSlope(of samples: [BatterySample]) -> Double? {
         guard let start = samples.first?.at else { return nil }
         // Seconds since the first sample rather than since 1970. The fit squares
         // its x-deviations, and a billion-and-a-half squared spends the
@@ -434,14 +525,21 @@ public struct BatteryTrajectory: Sendable {
     ///
     /// Three ways it can, and each of them would otherwise poison the rate with
     /// a pair of readings that never belonged in the same series.
+    ///
+    /// "The last one" reaches back through a relaunch, because the series does:
+    /// a restored one arrives with the same uid, uptime and instant a live one
+    /// would have left behind, so all three questions are asked of it without
+    /// knowing or caring that the app was closed in between. A second rule for
+    /// restored series was the alternative, and two copies of a rule this
+    /// load-bearing is how one of them quietly stops matching the other.
     private func invalidates(_ stats: DeviceStats, at now: Date) -> Bool {
-        guard let latest else { return false }
+        guard let seriesUid else { return false }
         // A different clock entirely: the address was repointed, or two of them
         // answer on it in turn.
-        if stats.uid != latest.uid { return true }
+        if stats.uid != seriesUid { return true }
         // Uptime going backwards is a reboot, and a reboot is exactly when
         // somebody unplugged the clock and plugged it in again.
-        if let now = stats.uptime, let before = latest.uptime, now < before { return true }
+        if let now = stats.uptime, let before = seriesUptime, now < before { return true }
         // The Mac slept, or the app was quit. Equal is not a gap, so a poll
         // that ran exactly on the boundary is kept.
         guard let last = samples.last else { return false }
@@ -463,6 +561,11 @@ public struct BatteryTrajectory: Sendable {
     /// function of the percentage rather than of the history — so a battery
     /// that charged while the app was asleep re-arms on the first reading after
     /// it, with no trend needed.
+    ///
+    /// The uid and the uptime survive too, and are meant to: `record` writes
+    /// them from the very reading that caused the discard, on the line after
+    /// this one. Clearing them here would leave the new series describing the
+    /// old clock for exactly one statement.
     private mutating func discardHistory() {
         samples = []
         direction = .unknown

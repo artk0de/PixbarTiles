@@ -510,6 +510,159 @@ private let dischargingOnBattery = [
     #expect(subject.reading?.direction == .discharging)
 }
 
+// MARK: - What survives a relaunch
+
+// The battery does not change while the app is closed; only the app's memory of
+// it does. Held in memory alone, every launch started from no samples and could
+// not name a direction until it had re-earned one — two minutes for a charge
+// and twenty for a discharge — and what the user saw was a bare percentage 81
+// seconds after opening the app.
+//
+// Sampling faster does not shorten that: charging moves the raw figure about
+// 2.5 steps a minute against a wander of ±2, so half a minute of it is smaller
+// than the noise it has to clear. The series is written down instead, and the
+// window is not shortened but absent.
+
+/// The series the launch before this one would have left behind: half an hour
+/// of the discharge this clock was actually measured at, ending at raw 570.
+private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
+    var previous = BatteryTrajectory()
+    _ = settleOnDischarge(&previous, at: 50, raw: 570)
+    // The precondition rather than the claim. Every test below is about what a
+    // relaunch does with THIS, so a fixture that had not established a
+    // discharge would have them all pass for the wrong reason.
+    #expect(previous.reading?.direction == .discharging)
+    return try #require(previous.history)
+}
+
+@Test func aStoredSeriesNamesItsDirectionOnTheFirstReadingAfterALaunch() throws {
+    let stored = try lastLaunchWatchedADischarge()
+
+    var subject = BatteryTrajectory(resuming: stored)
+    // Nothing is claimed off the restored series on its own. A percentage read
+    // before the relaunch is a reading nobody took now, and the panel must not
+    // draw one until this launch has heard from the clock itself.
+    #expect(subject.reading == nil)
+
+    subject.record(stats(percent: 50, raw: 570), at: at(31 * 60))
+
+    // One reading, and it is a discharge — where the same first reading with
+    // nothing behind it says `.unknown` for the next twenty minutes.
+    #expect(subject.reading?.direction == .discharging)
+}
+
+@Test func aStoredSeriesFromAnotherClockIsDiscarded() throws {
+    let stored = try lastLaunchWatchedADischarge()
+    var subject = BatteryTrajectory(resuming: stored)
+
+    // The address in the settings was repointed while the app was closed, or
+    // two clocks answer on it in turn. The raw figure is still falling, so a
+    // restore that skipped the rule would answer discharging off another
+    // clock's readings.
+    subject.record(stats(percent: 50, raw: 570, uid: "awtrix_ffffff"), at: at(31 * 60))
+
+    #expect(subject.reading?.direction == .unknown)
+}
+
+@Test func aStoredSeriesFromBeforeARebootIsDiscarded() throws {
+    let stored = try lastLaunchWatchedADischarge()
+    var subject = BatteryTrajectory(resuming: stored)
+
+    // Uptime going backwards is a reboot, and a reboot is exactly when somebody
+    // unplugged the clock and plugged it in again — which is the one event that
+    // makes the readings either side of it describe two different situations.
+    subject.record(stats(percent: 50, raw: 570, uptime: 5), at: at(31 * 60))
+
+    #expect(subject.reading?.direction == .unknown)
+}
+
+@Test func aStoredSeriesOlderThanTheWindowIsDiscarded() throws {
+    let stored = try lastLaunchWatchedADischarge()
+    var subject = BatteryTrajectory(resuming: stored)
+
+    // The app was closed for longer than the window, so everything between the
+    // last stored reading and this one is unobserved. Persisting the samples
+    // does not make the gap smaller.
+    subject.record(
+        stats(percent: 50, raw: 570), at: at(30 * 60 + BatteryTrajectory.window + 1)
+    )
+
+    #expect(subject.reading?.direction == .unknown)
+}
+
+@Test func aStoredSeriesInsideTheWindowSurvivesTheGapToTheRelaunch() throws {
+    // The half that tells the rule apart from discarding on every launch, and
+    // the ordinary case: quitting and reopening the app is a gap of minutes.
+    let stored = try lastLaunchWatchedADischarge()
+    var subject = BatteryTrajectory(resuming: stored)
+
+    subject.record(
+        stats(percent: 50, raw: 570), at: at(30 * 60 + BatteryTrajectory.window - 1)
+    )
+
+    #expect(subject.reading?.direction == .discharging)
+}
+
+@Test func aTrajectoryWithNothingRecordedHasNoSeriesToStore() {
+    // Nothing to hand the next launch, and it must not be spelled as an empty
+    // one: a stored series naming no clock would be compared against the first
+    // reading and read as a different device.
+    #expect(BatteryTrajectory().history == nil)
+}
+
+@Test func theStoredSeriesCarriesTheReadingsAndTheClockTheyCameOff() throws {
+    var subject = BatteryTrajectory()
+    _ = settleOnDischarge(&subject, at: 50, raw: 570)
+
+    let stored = try #require(subject.history)
+
+    #expect(stored.uid == "awtrix_a07f9c")
+    // The uptime of the LAST report, which is what a reboot is measured
+    // against. One reading a minute for half an hour, plus the one at zero.
+    #expect(stored.uptime == 9_000)
+    #expect(stored.samples.count == 31)
+    #expect(stored.samples.first?.at == at(0))
+    #expect(stored.samples.last?.at == at(30 * 60))
+}
+
+// MARK: - The store the series survives in
+
+@Test func aStoredSeriesSurvivesTheUserDefaultsStore() throws {
+    let suite = "battery-history-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let stored = BatteryHistory(
+        uid: "awtrix_a07f9c", uptime: 9_000,
+        samples: [BatterySample(raw: 574, at: at(0)), BatterySample(raw: 570, at: at(1_800))]
+    )
+
+    UserDefaultsBatteryHistoryStore(defaults: defaults).save(stored)
+
+    // Read back through a second store on the same defaults, because the
+    // question is what a LAUNCH finds rather than what one instance remembers.
+    #expect(UserDefaultsBatteryHistoryStore(defaults: defaults).storedHistory() == stored)
+}
+
+@Test func aFirstLaunchFindsNothingInTheStoreRatherThanAnEmptySeries() throws {
+    let suite = "battery-history-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    #expect(UserDefaultsBatteryHistoryStore(defaults: defaults).storedHistory() == nil)
+}
+
+@Test func aKeyHoldingSomethingElseReadsAsAFirstLaunch() throws {
+    let suite = "battery-history-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    // A shape from an older version of this app, or another key's value written
+    // over it. Whatever it is, it is not a series — and a launch that starts
+    // cold is exactly what the discard rules produce anyway.
+    defaults.set(Data("not a series".utf8), forKey: "batteryHistory")
+
+    #expect(UserDefaultsBatteryHistoryStore(defaults: defaults).storedHistory() == nil)
+}
+
 // MARK: - How long is left
 
 @Test func theEstimateIsTheRawFigureAboveEmptyOverTheFittedRate() {

@@ -23,10 +23,26 @@ public final class DeviceMonitor: ObservableObject {
     /// same refresh writes both — and a second published property would emit a
     /// second `objectWillChange` for one poll, which is the flicker the monitor
     /// already has a test against.
-    private var trajectory = BatteryTrajectory()
+    private var trajectory: BatteryTrajectory
+    /// Where the readings are written down, so a relaunch resumes the trend
+    /// instead of spending twenty minutes earning it again.
+    ///
+    /// In memory by default, which is what every test that has no opinion about
+    /// persistence wants; the app hands in the durable one. Defaulted rather
+    /// than optional because "no store" and "a store that forgets" are the same
+    /// behaviour, and one of them is a branch nobody would exercise.
+    private let history: any BatteryHistoryStore
 
-    public init(device: AwtrixDevice) {
+    public init(
+        device: AwtrixDevice,
+        history: any BatteryHistoryStore = InMemoryBatteryHistoryStore()
+    ) {
         self.device = device
+        self.history = history
+        // Resumed at construction rather than on the first poll: the trajectory
+        // is a value this object owns from the moment it exists, and a restore
+        // deferred to the first refresh would be a second state to be in.
+        self.trajectory = BatteryTrajectory(resuming: history.storedHistory())
     }
 
     /// Asks the clock how it is, and answers with the threshold that reading
@@ -46,6 +62,12 @@ public final class DeviceMonitor: ObservableObject {
         do {
             let stats = try await device.stats()
             let warning = trajectory.record(stats, at: now)
+            // Written on the way past rather than at quit. The exits that lose
+            // a session are the ones with no teardown in them — a force quit, a
+            // crash, a logout that outruns the quit budget — and those are
+            // exactly the launches somebody reopens wanting to know what the
+            // battery is doing.
+            if let series = trajectory.history { history.save(series) }
             state = .online(stats)
             return warning
         } catch {

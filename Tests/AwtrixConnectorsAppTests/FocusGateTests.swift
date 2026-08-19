@@ -148,7 +148,7 @@ import Testing
         status: StubFocusStatus(access: .authorized, isFocused: false), now: { atHour(12) }
     )
 
-    #expect(gate.rule(quietHours: night) == .focus)
+    #expect(gate.rule(quietHours: night) == .anyFocus)
     #expect(gate.silence(quietHours: night) == nil)
 }
 
@@ -668,13 +668,35 @@ import Testing
 
 // MARK: - Which rule the settings say is in force
 
-@Test func theRuleLineNamesTheSystemWhenTheSystemIsAnswering() {
-    let line = FocusRuleLine.text(for: .focus)
+// There are three states and there were two sentences. The user granted Full
+// Disk Access, the app started reading the mode and silencing for Do Not
+// Disturb and Sleep alone, and the caption went on announcing the old rule —
+// which is how it was reported: a sentence that stopped being true.
+
+@Test func theRuleLineNamesTheTwoFocusesThatSilenceWhileTheModeCanBeRead() {
+    let line = FocusRuleLine.text(for: .namedFocuses)
+
+    // The rule as it now behaves, named rather than described: every other
+    // Focus speaks, and somebody who set one up needs to know which.
+    #expect(line.contains("Do Not Disturb"))
+    #expect(line.contains("Sleep"))
+    // The window still applies underneath, and the line sits directly under the
+    // pickers that set it.
+    #expect(line.contains("quiet hours"))
+    #expect(line.contains(where: \.isNumber) == false)
+}
+
+@Test func theRuleLineNamesTheSystemWhileTheModeCannotBeRead() {
+    let line = FocusRuleLine.text(for: .anyFocus)
 
     #expect(line.contains("Focus"))
     // No hours in it: naming a window while the system is deciding would tell
     // the user their pickers are doing something they are not.
     #expect(line.contains(where: \.isNumber) == false)
+    // And no claim about the permission. A mode that cannot be read is a
+    // refused read, a moved file and a shape Apple changed alike, and the
+    // standing sentence below the line is where the grant is explained.
+    #expect(line.contains("Full Disk Access") == false)
 }
 
 @Test func theRuleLineNamesTheWindowWhenTheSystemWillNotAnswer() {
@@ -683,5 +705,62 @@ import Testing
     let line = FocusRuleLine.text(for: .quietHours(window))
 
     #expect(line.contains(window.label))
-    #expect(line != FocusRuleLine.text(for: .focus))
+    #expect(line != FocusRuleLine.text(for: .namedFocuses))
+}
+
+@Test func eachOfTheThreeStatesGetsItsOwnSentence() {
+    let said = Set(
+        [
+            FocusRuleLine.text(for: .namedFocuses),
+            FocusRuleLine.text(for: .anyFocus),
+            FocusRuleLine.text(for: .quietHours(QuietWindow(startHour: 23, endHour: 8))),
+        ]
+    )
+
+    // Three states, three sentences. Two of them saying the same thing is the
+    // defect this task exists for, arriving from the other side.
+    #expect(said.count == 3)
+}
+
+// MARK: - Which of the three the gate is in
+
+// The distinction the caption could not make, and the one thing that decides
+// it: whether a mode was actually read a moment ago. That is an observation
+// rather than an inference about a permission, which is why it can be said out
+// loud where "no access" cannot.
+@Test func theRuleFollowsWhetherAModeWasActuallyRead() {
+    let night = QuietWindow(startHour: 23, endHour: 8)
+    let readable = FocusGate(
+        status: StubFocusStatus(access: .authorized, isFocused: true, activeMode: .noFocus),
+        now: { atHour(12) }
+    )
+    let named = FocusGate(
+        status: StubFocusStatus(
+            access: .authorized, isFocused: true,
+            activeMode: .mode("com.apple.donotdisturb.mode.default")
+        ),
+        now: { atHour(12) }
+    )
+    let unreadable = FocusGate(
+        status: StubFocusStatus(access: .authorized, isFocused: true, activeMode: .cannotTell),
+        now: { atHour(12) }
+    )
+
+    // Nothing asserted is still a read: the file said so.
+    #expect(readable.rule(quietHours: night) == .namedFocuses)
+    #expect(named.rule(quietHours: night) == .namedFocuses)
+    #expect(unreadable.rule(quietHours: night) == .anyFocus)
+}
+
+// The permission outranks the file, and it has to: a database this app may not
+// act on is not evidence, so a readable mode behind an unauthorized centre is
+// still the window alone.
+@Test func anUnauthorizedCenterIsTheWindowEvenWhenTheModeCanBeRead() {
+    let night = QuietWindow(startHour: 23, endHour: 8)
+    let gate = FocusGate(
+        status: StubFocusStatus(access: .denied, isFocused: true, activeMode: .noFocus),
+        now: { atHour(12) }
+    )
+
+    #expect(gate.rule(quietHours: night) == .quietHours(night))
 }

@@ -153,15 +153,26 @@ struct QuietWindow: Equatable, Sendable {
 /// this gate the user cannot see from outside.
 ///
 /// No longer a choice BETWEEN two rules: `FocusGate.silence(quietHours:)`
-/// applies the user's window whichever of these holds, and this says only
-/// whether the Focus half is switched on beside it. Kept as two cases anyway,
-/// because somebody who refused the prompt should be able to see that the app
-/// is running on their window alone — "no Focus is on" and "I am not allowed to
-/// know" look identical from the surface, and only in the second is the window
-/// carrying the whole gate.
+/// applies the user's window whichever of these holds, and this says only what
+/// the Focus half beside it is doing. Kept as cases of its own rather than
+/// folded into a boolean, because somebody who refused the prompt should be
+/// able to see that the app is running on their window alone — "no Focus is on"
+/// and "I am not allowed to know" look identical from the surface, and only in
+/// the second is the window carrying the whole gate.
+///
+/// Three cases and not two, because the app has behaved three ways since it
+/// started reading the mode and the caption could only say two of them — which
+/// is how it came to announce a rule that had stopped being true. The split is
+/// not the permission: it is whether a mode was READ, which is one observation
+/// rather than an inference about why a read failed.
 enum QuietRule: Equatable, Sendable {
-    /// macOS answered, and this app is allowed to ask.
-    case focus
+    /// The mode was read, so only the Focuses this app knows to be silencing
+    /// silence it. Every other one — Work, Fitness, whatever the user invented
+    /// — speaks.
+    case namedFocuses
+    /// A Focus can be seen but not named, so every Focus silences. The
+    /// conservative branch, and the one most machines are on.
+    case anyFocus
     /// The system's answer is not evidence, so the user's own hours are all
     /// there is.
     case quietHours(QuietWindow)
@@ -206,12 +217,22 @@ struct FocusGate: Sendable {
     /// written as "not denied" would put a `notDetermined` centre's
     /// `isFocused == false` back in charge, which is the whole defect.
     ///
-    /// Still a `QuietRule` rather than the `Bool` this now computes, because
+    /// Still a `QuietRule` rather than the `Bool` this once computed, because
     /// the settings sheet reads it through `FocusRuleLine`: a bare boolean
-    /// would have to be turned back into the same two sentences one layer up,
+    /// would have to be turned back into the same sentences one layer up,
     /// somewhere a test cannot read them back off the model.
+    ///
+    /// Three answers and not two, because the app behaves three ways and the
+    /// caption could only say two of them. The permission decides first — an
+    /// unauthorized centre is the window alone whatever the file says — and
+    /// then whether a mode was actually read decides which Focus rule is in
+    /// force: named, so only Do Not Disturb and Sleep silence, or unnamed, so
+    /// every Focus does. That second question is asked of the same
+    /// `activeMode` `activeFocusSilence` branches on, so the sentence and the
+    /// behaviour cannot disagree.
     func rule(quietHours: QuietWindow) -> QuietRule {
-        status.access == .authorized ? .focus : .quietHours(quietHours)
+        guard status.access == .authorized else { return .quietHours(quietHours) }
+        return status.activeMode == .cannotTell ? .anyFocus : .namedFocuses
     }
 
     /// What is silencing the schedule, or nil when nothing is.
@@ -238,9 +259,15 @@ struct FocusGate: Sendable {
     /// believes no Focus is ever on, silently and by construction. The mode is
     /// behind the same guard for the same reason: a database this app may not
     /// act on is not evidence either.
+    ///
+    /// The two Focus cases fall through together, and that is not a case left
+    /// unhandled: they differ in what the settings SAY, not in what may be
+    /// read, and the branch between them is `activeFocusSilence`'s own — made
+    /// from the same `activeMode` `rule` asked, so the caption cannot describe
+    /// one rule while the gate runs another.
     func silence(quietHours: QuietWindow) -> String? {
         if quietHours.contains(now()) { return Self.duringQuietHours }
-        guard case .focus = rule(quietHours: quietHours) else { return nil }
+        if case .quietHours = rule(quietHours: quietHours) { return nil }
         return activeFocusSilence
     }
 
@@ -291,6 +318,15 @@ enum FocusRuleLine {
     /// presented as a fact. What the two states DO is certain, so that is what
     /// this says.
     ///
+    /// That argument still holds, and `text(for:)` does not break it. This
+    /// sentence is about the PERMISSION — why the app might not be able to name
+    /// a Focus — and the cause of a failed read is the part that cannot be
+    /// known. The line above it reports something else entirely: whether a mode
+    /// was in fact read a moment ago. That is an observation with an answer,
+    /// taken from the same read the gate acts on, and it says which rule is
+    /// running without claiming to know why. Neither line announces "no
+    /// access"; only this one talks about access at all.
+    ///
     /// No button beside it. `x-apple.systempreferences:` URLs for this pane
     /// were not verified to land on it, and a button that opens the wrong pane
     /// is worse than a sentence naming the right one.
@@ -302,18 +338,27 @@ enum FocusRuleLine {
 
     /// Which rule is in force, said under the pickers that set the window.
     ///
-    /// The `.focus` sentence names BOTH gates, and it has to: the line sits
-    /// directly under the hour pickers, and while the window was dropped on
-    /// this branch the old wording was true. It is not any more — the window
-    /// applies either way — and a caption saying the system decides would tell
-    /// somebody who had just set 23:00 that their pickers do nothing.
+    /// Both Focus sentences name BOTH gates, and they have to: the line sits
+    /// directly under the hour pickers, and a caption saying the system decides
+    /// would tell somebody who had just set 23:00 that their pickers do
+    /// nothing.
     ///
-    /// Said without naming the hours, unlike the other branch. They are on the
+    /// The two of them differ in WHICH Focuses silence, which is the thing that
+    /// changed under the user and was reported as a defect: Full Disk Access
+    /// was granted, the app started reading the mode and silencing for Do Not
+    /// Disturb and Sleep alone, and this caption went on announcing that any
+    /// Focus would. The modes are named rather than counted, because "some
+    /// Focuses" is not something a person can act on and these two are the
+    /// whole list.
+    ///
+    /// Said without naming the hours, unlike the third branch. They are on the
     /// two pickers immediately above, and a caption repeating them is a second
     /// place for them to disagree.
     static func text(for rule: QuietRule) -> String {
         switch rule {
-        case .focus:
+        case .namedFocuses:
+            "Quiet during Do Not Disturb and Sleep, and inside your quiet hours either way"
+        case .anyFocus:
             "Quiet while macOS reports a Focus, and inside your quiet hours either way"
         case let .quietHours(window):
             "macOS will not say whether a Focus is on — quiet \(window.label) instead"

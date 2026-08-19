@@ -1209,7 +1209,7 @@ private func openSettings(focus: FocusGate, quietHours: QuietWindow) -> AppModel
     let bySystem = drawn(system)
     let byWindow = drawn(window)
 
-    #expect(system.focusRule == .focus)
+    #expect(system.focusRule == .anyFocus)
     #expect(window.focusRule == .quietHours(night))
     #expect(bySystem != nil)
     #expect(bySystem != byWindow)

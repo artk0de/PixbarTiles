@@ -128,3 +128,79 @@ private let groups: [Group] = [
     #expect(WeatherTheme(code: 56, isDay: true).overlay == .frost)
     #expect(DeviceOverlay.namesTheFirmwareAccepts.contains("drizzle"))
 }
+
+// MARK: - The picture beside the number
+
+/// The catalogue id each sky draws, written down here separately from the type
+/// that carries them — the same reason the overlay names are written twice. A
+/// table compared against itself agrees with any typo introduced into it.
+///
+/// This is also the record of what was verified: the catalogue has no public
+/// search, so every id below cost a download and a look at its frames, and all
+/// ten are 8x8 animated GIFs, which is the only thing the device draws.
+private let verifiedIcons: [WeatherTheme: Int] = [
+    .clearDay: 2282,
+    .clearNight: 12181,
+    .cloud: 53384,
+    .fog: 17056,
+    .drizzle: 2284,
+    .rain: 2284,
+    .snow: 2289,
+    .frost: 2289,
+    .thunder: 49299,
+    .storm: 49299,
+]
+
+/// The id inside a catalogue reference, or nil for one already on the flash.
+private func catalogueId(_ reference: IconReference) -> Int? {
+    guard case let .catalogue(id) = reference else { return nil }
+    return id
+}
+
+@Test func everySkyDrawsTheCatalogueIconThatWasVerifiedForIt() throws {
+    // A sky added without an id would otherwise reach the device drawing
+    // whatever its neighbour draws, which is the one failure this file exists
+    // to catch: the clock shows a picture either way.
+    #expect(verifiedIcons.count == WeatherTheme.allCases.count)
+
+    for theme in WeatherTheme.allCases {
+        let id = try #require(verifiedIcons[theme], "no verified icon for \(theme.rawValue)")
+
+        #expect(theme.icon == .catalogue(id), "\(theme.rawValue) drew \(theme.icon)")
+    }
+}
+
+// Every sky reaches for the catalogue rather than for a name assumed to be on
+// the flash. `.installed` would be a promise about a device this app has never
+// listed — on a clock that has never run it, the app draws no picture at all
+// and nothing anywhere says why.
+@Test func noSkyAssumesItsPictureIsAlreadyOnTheDevice() {
+    for theme in WeatherTheme.allCases {
+        #expect(catalogueId(theme.icon) != nil, "\(theme.rawValue) named an installed icon")
+    }
+}
+
+// Three of the ten borrow a neighbour's picture, and it is a decision rather
+// than an oversight: the catalogue has nothing of its own for them yet, and
+// inventing an id means shipping whatever art happens to sit at that number.
+// What keeps the three distinguishable on the clock is the overlay, which is a
+// different firmware layer for each — the picture is not the only thing the
+// device draws about the weather.
+//
+// Replacing one is a one-line edit here and a one-line edit in the table
+// above, which is what makes new art a decision rather than a drift.
+@Test func theThreeSkiesWithNoArtOfTheirOwnBorrowANeighboursPicture() {
+    #expect(WeatherTheme.drizzle.icon == WeatherTheme.rain.icon)
+    #expect(WeatherTheme.frost.icon == WeatherTheme.snow.icon)
+    #expect(WeatherTheme.storm.icon == WeatherTheme.thunder.icon)
+
+    // And the device still tells each pair apart, on the layer that draws over
+    // everything rather than in the eight pixels beside the number.
+    #expect(WeatherTheme.drizzle.overlay != WeatherTheme.rain.overlay)
+    #expect(WeatherTheme.frost.overlay != WeatherTheme.snow.overlay)
+    #expect(WeatherTheme.storm.overlay != WeatherTheme.thunder.overlay)
+
+    // Ten skies, seven pictures. Stated as a count so that a copy-paste that
+    // gave a fourth sky somebody else's id fails here rather than on the clock.
+    #expect(Set(WeatherTheme.allCases.compactMap { catalogueId($0.icon) }).count == 7)
+}

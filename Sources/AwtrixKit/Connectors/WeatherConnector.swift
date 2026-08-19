@@ -56,6 +56,13 @@ public struct WeatherConnector: Connector {
         let felt = reading.apparentTemperature ?? reading.temperature
         return ConnectorOutput(
             text: Self.degrees(reading.temperature),
+            // The sky, drawn inside the app rather than over the whole matrix.
+            // The overlay below already carries it to the device, but four
+            // skies share `clear` there and night is not a layer at all — so on
+            // an overcast evening the clock shows a number and nothing else.
+            // The icon is what distinguishes the ten, in the eight pixels next
+            // to the reading they belong to.
+            icon: theme.icon,
             color: TemperatureColour(celsius: felt).hex,
             surface: .app(Self.appName),
             overlay: theme.overlay

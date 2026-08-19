@@ -114,4 +114,39 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
         case .storm: .storm
         }
     }
+
+    /// The picture drawn beside the reading, from the LaMetric catalogue.
+    ///
+    /// A switch rather than a dictionary, so that a sky added to this enum
+    /// fails to compile until somebody chooses its picture. A dictionary would
+    /// compile with the entry missing and answer nil at the poll — an app drawn
+    /// beside whatever the previous one in the loop left on the matrix, which
+    /// nothing on the device or in this app would report.
+    ///
+    /// Every id below was fetched and its frames counted: all ten are 8x8
+    /// animated GIFs, which is the only thing the clock draws. The catalogue
+    /// has no public search, so an id costs a download and a look — do not
+    /// invent one, and do not go hunting for a better one.
+    ///
+    /// `drizzle`, `frost` and `storm` deliberately borrow a neighbour's
+    /// picture, because the catalogue has nothing of their own yet. It is a
+    /// placeholder rather than an oversight, and it is not a mapping that lost
+    /// anything: each of the three drives a different firmware overlay, so the
+    /// device still tells them apart on the layer that draws over everything.
+    /// Art of their own replaces one line here and one line in the test's
+    /// table.
+    public var icon: IconReference {
+        switch self {
+        case .clearDay: .catalogue(2282)      // sun, 7 frames
+        case .clearNight: .catalogue(12181)   // crescent moon with stars, 4 frames
+        case .cloud: .catalogue(53384)        // a cloud drifting across, 16 frames
+        case .fog: .catalogue(17056)          // horizontal grey bars, 2 frames
+        case .drizzle: .catalogue(2284)       // shared with rain, awaiting its own art
+        case .rain: .catalogue(2284)          // cloud with blue drops, 5 frames
+        case .snow: .catalogue(2289)          // cloud with white flakes, 9 frames
+        case .frost: .catalogue(2289)         // shared with snow, awaiting its own art
+        case .thunder: .catalogue(49299)      // rain with a bolt on frames 2 and 4, 7 frames
+        case .storm: .catalogue(49299)        // shared with thunder, awaiting its own art
+        }
+    }
 }

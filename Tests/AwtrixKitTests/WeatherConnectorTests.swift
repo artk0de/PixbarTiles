@@ -590,3 +590,48 @@ private struct PassThroughIcons: IconInstalling {
     #expect(connector.defaultInterval == OpenMeteoSource.defaultInterval)
     #expect(connector.defaultInterval == 900)
 }
+
+// MARK: - The picture beside the number
+
+// The reading is digits in a 32-by-8 matrix, and the sky is on an overlay that
+// draws over the whole screen rather than inside the app. The icon is what says
+// which sky at a glance, in the app itself, next to the number it belongs to.
+@Test func theSkyIsDrawnAsAnIconBesideTheReading() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 71))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk }
+    )
+
+    let output = try await connector.produce()
+
+    #expect(output.icon == WeatherTheme.snow.icon)
+}
+
+// Every sky, including the ones borrowing a neighbour's picture and the
+// fallback an unknown code lands on. An output with no icon is an app drawn
+// beside whatever the previous app in the loop left behind.
+@Test func everySkyPutsAPictureOnTheOutput() async throws {
+    for code in [0, 3, 45, 48, 51, 61, 71, 95, 96, 4_242] {
+        let transport = SkyAndClock(sky: weatherBody(code: code))
+        let connector = WeatherConnector(
+            source: OpenMeteoSource(transport: transport), location: { desk }
+        )
+
+        let output = try await connector.produce()
+
+        #expect(output.icon == WeatherTheme(code: code, isDay: true).icon, "WMO \(code)")
+    }
+}
+
+// And it reaches the loop, which is a separate claim from being on the output:
+// the app payload carries the icon by the name the installer answered with, and
+// an icon installed but never named in the payload is bytes on the flash that
+// nothing draws.
+@Test func theIconTravelsWithTheReadingIntoTheLoop() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 71))
+    let (host, _) = weatherHost(transport: transport)
+
+    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+
+    #expect(transport.customAppPosts.first?["icon"] as? String == "2289")
+}

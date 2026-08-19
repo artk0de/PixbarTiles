@@ -204,15 +204,28 @@ enum BatteryLine {
     /// Written out rather than handed to `DateComponentsFormatter`, which is
     /// locale-dependent: the suite would then say one thing on this machine and
     /// another on anybody else's.
+    ///
+    /// Quantised, and that is a claim about the estimate rather than about the
+    /// formatting. It extrapolates to 0%, and lithium-ion stops being linear
+    /// long before it gets there — so the number is least trustworthy exactly
+    /// where somebody most wants it. "3 h 47 m" states a minute of precision
+    /// nothing behind it can support, and a reader plans around what they are
+    /// shown.
     static func duration(_ seconds: TimeInterval) -> String {
         let total = max(0, Int(seconds.rounded()))
-        let hours = total / 3_600
-        let minutes = (total % 3_600) / 60
+        // Coarser above the hour, because the same relative claim costs more
+        // minutes there: five on forty is a quarter of an hour on four. Chosen
+        // by what was handed in rather than by what it rounds to, or the hour is
+        // a boundary the answer can round itself across and back.
+        let step = total < 3_600 ? 5 * 60 : 15 * 60
+        // Floored at one step. Under half a step rounds to nothing, and "0 m"
+        // reads as a broken estimate rather than an urgent one.
+        let quantised = max(((total + step / 2) / step) * step, step)
+        let hours = quantised / 3_600
+        let minutes = (quantised % 3_600) / 60
         if hours > 0 && minutes > 0 { return "\(hours) h \(minutes) m" }
         if hours > 0 { return "\(hours) h" }
-        // Under a minute rounds up rather than reading "0 m", which looks like
-        // a broken estimate rather than an urgent one.
-        return "\(max(minutes, 1)) m"
+        return "\(minutes) m"
     }
 }
 

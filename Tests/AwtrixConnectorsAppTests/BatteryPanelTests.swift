@@ -88,11 +88,44 @@ private func reading(
 
 @Test func aDurationReadsAsHoursAndMinutes() {
     #expect(BatteryLine.duration(14_400) == "4 h")
-    #expect(BatteryLine.duration(15_600) == "4 h 20 m")
+    #expect(BatteryLine.duration(15_300) == "4 h 15 m")
     #expect(BatteryLine.duration(2_700) == "45 m")
-    // Under a minute left rounds up rather than reading "0 m", which looks like
-    // a broken estimate rather than an urgent one.
-    #expect(BatteryLine.duration(20) == "1 m")
+    // Under a minute left reads as the smallest step the grid has rather than
+    // "0 m", which looks like a broken estimate rather than an urgent one.
+    #expect(BatteryLine.duration(20) == "5 m")
+    #expect(BatteryLine.duration(0) == "5 m")
+}
+
+// The estimate extrapolates all the way to 0%, and lithium-ion stops being
+// linear long before it gets there — so the number is least trustworthy exactly
+// where somebody most wants it. "3 h 47 m" claims a minute of precision that
+// nothing behind it can support, and a reader takes the claim at face value.
+@Test func anEstimateUnderAnHourIsRoundedToFiveMinutes() {
+    // Three readings that mean the same thing say the same thing.
+    #expect(BatteryLine.duration(47 * 60) == "45 m")
+    #expect(BatteryLine.duration(45 * 60) == "45 m")
+    #expect(BatteryLine.duration(43 * 60) == "45 m")
+    // Five and not ten: three quarters of an hour and two thirds of one are
+    // different amounts of evening, and the grid must not merge them.
+    #expect(BatteryLine.duration(41 * 60) == "40 m")
+}
+
+// Coarser above the hour, because the same relative claim costs more minutes
+// there: five minutes on forty is a quarter of an hour on four.
+@Test func anEstimateOverAnHourIsRoundedToAQuarterOfOne() {
+    #expect(BatteryLine.duration(4 * 3_600 + 22 * 60) == "4 h 15 m")
+    #expect(BatteryLine.duration(4 * 3_600 + 8 * 60) == "4 h 15 m")
+    #expect(BatteryLine.duration(4 * 3_600 + 2 * 60) == "4 h")
+}
+
+// Which grid a reading lands on is decided by the reading, not by what it
+// rounds to — otherwise the hour is a boundary the answer can round itself
+// across and back.
+@Test func theHourIsWhereTheGridChanges() {
+    #expect(BatteryLine.duration(57 * 60) == "55 m")
+    // A second under the hour, on the five-minute grid, rounding up to it.
+    #expect(BatteryLine.duration(3_599) == "1 h")
+    #expect(BatteryLine.duration(3_600 + 8 * 60) == "1 h 15 m")
 }
 
 @Test func urgencyIsCarriedByTheColourRatherThanASecondGlyph() {

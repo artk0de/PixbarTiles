@@ -242,3 +242,61 @@ private func catalogueId(_ reference: IconReference) -> Int? {
     // gave a fourth sky somebody else's id fails here rather than on the clock.
     #expect(Set(WeatherTheme.allCases.compactMap { catalogueId($0.icon) }).count == 8)
 }
+
+// MARK: - The hour behind the reading
+
+/// The night sky, written down separately from the constant that produces it —
+/// the same reason the overlay names and the catalogue ids are each written
+/// twice in this file. Derived, it would agree with any digit fumbled into the
+/// constant, and a colour the firmware cannot parse is dropped in silence.
+private let nightSky = "#000033"
+
+// The complaint this answers, in the user's words: "cloudy by day is
+// indistinguishable from cloudy by night". Nothing else on the app can carry
+// the hour. The icon cannot — the catalogue has no cloud-at-night and no moon
+// behind a cloud, and both LaMetric weather packs were swept whole to check.
+// The text colour cannot — it is spent on how the temperature feels, which is a
+// different question. That leaves the panel behind the text.
+@Test func nightPutsAColourBehindTheReadingAndDayLeavesThePanelUnlit() {
+    #expect(WeatherTheme.background(isDay: false) == nightSky)
+    // Not a light colour by day — nothing at all. An unlit panel is what the
+    // device does by default and what every other app in the loop looks like,
+    // so a daytime tint would make the weather the odd one out in the rotation
+    // for saying something the absence of a tint already says.
+    #expect(WeatherTheme.background(isDay: true) == nil)
+}
+
+// The firmware takes six hex digits behind a hash and drops anything else
+// without a word — the same silence `TemperatureColour` is written against. A
+// malformed background is not an error anywhere; it is a panel that simply
+// stays dark, which is indistinguishable from the daytime answer and so
+// invisible in exactly the case this exists for.
+@Test func theNightSkyIsAColourTheFirmwareParses() throws {
+    let drawn = try #require(WeatherTheme.background(isDay: false))
+
+    #expect(drawn.wholeMatch(of: #/#[0-9A-F]{6}/#) != nil, "drew \(drawn)")
+}
+
+// The generalisation, which is the reason the hour rides on the background
+// rather than on a special case for overcast: EVERY sky is now drawn
+// differently at night, not just the one that prompted the complaint.
+//
+// The hour is deliberately taken as an argument rather than read off a case.
+// Only `clearDay`/`clearNight` split on it, and they split because the ICON had
+// to — a sun and a moon are different pictures. Doubling all eleven cases to
+// carry one boolean would produce twenty, nineteen of which draw their
+// partner's icon over their partner's overlay.
+@Test func everySkyIsDrawnDifferentlyByNightThanByDay() {
+    for code in [0, 1, 2, 3, 45, 48, 51, 61, 71, 80, 95, 96, 4_242] {
+        let byDay = (WeatherTheme(code: code, isDay: true).icon, WeatherTheme.background(isDay: true))
+        let byNight = (
+            WeatherTheme(code: code, isDay: false).icon, WeatherTheme.background(isDay: false)
+        )
+
+        #expect(byDay != byNight, "WMO \(code) is drawn identically at noon and at midnight")
+    }
+    // Overcast is what proves the difference comes from the background rather
+    // than from the icon: it is ONE theme for both halves of the day — same
+    // case, same picture, same overlay — which is exactly the complaint.
+    #expect(WeatherTheme(code: 3, isDay: true) == WeatherTheme(code: 3, isDay: false))
+}

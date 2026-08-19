@@ -96,19 +96,34 @@ public struct AppPayload: Sendable, Equatable {
     /// a first push, so it can come back in a different place in the rotation
     /// than it left.
     public var lifetime: Int?
+    /// The colour of the panel behind the text, or nil to leave it unlit.
+    ///
+    /// Six hex digits behind a hash, the only form the firmware parses — the
+    /// same silence `color` is written against, and it costs more here: a
+    /// background it drops leaves the panel dark, which is exactly what "no
+    /// background" looks like. A malformed one is therefore not a wrong colour
+    /// but an invisible one.
+    ///
+    /// nil rather than black, and they are not the same instruction. Black is a
+    /// colour the firmware is told to paint over 256 pixels; nil is the key
+    /// left out, which is what every other app in the loop sends and what the
+    /// device does by default.
+    public var background: String?
 
     public init(
         text: String,
         icon: String? = nil,
         color: String? = nil,
         duration: Int? = nil,
-        lifetime: Int? = nil
+        lifetime: Int? = nil,
+        background: String? = nil
     ) {
         self.text = text
         self.icon = icon
         self.color = color
         self.duration = duration
         self.lifetime = lifetime
+        self.background = background
     }
 
     /// Only set fields are emitted — the firmware rejects nulls.
@@ -118,6 +133,7 @@ public struct AppPayload: Sendable, Equatable {
         if let color { object["color"] = color }
         if let duration { object["duration"] = duration }
         if let lifetime { object["lifetime"] = lifetime }
+        if let background { object["background"] = background }
         return object
     }
 }

@@ -64,6 +64,25 @@ public struct ConnectorOutput: Sendable, Equatable {
     /// so a producer that says nothing about staleness behaves exactly as it
     /// did before there was anything to say.
     public var lifetime: Int?
+    /// The colour of the panel behind the text, or nil to leave it unlit.
+    ///
+    /// Beside `lifetime` rather than beside `color`, for `lifetime`'s reason
+    /// rather than out of tidiness: it belongs to ONE surface. Only an app in
+    /// the loop is glanced at hours after it was pushed, and only something
+    /// still on the matrix has a reader left to tell anything to. `color` is
+    /// the other kind of field — both surfaces draw text, so both take one.
+    ///
+    /// The difference from `lifetime` is where the restriction comes from, and
+    /// it is worth knowing before somebody "fixes" it. The firmware scopes
+    /// `lifetime` itself; it accepts `background` on notifications perfectly
+    /// happily. This one is a decision of this app's, made because a
+    /// notification interrupts, is read while it is on screen, and goes away —
+    /// whoever is reading one is standing in front of the clock and does not
+    /// need the panel to tell them the hour.
+    ///
+    /// Defaulted to none, so a producer that says nothing reaches the device
+    /// exactly as it did before there was anything to say.
+    public var background: String?
     /// The device-wide weather layer this output wants, or nil to leave
     /// whatever is on the device alone.
     ///
@@ -83,6 +102,7 @@ public struct ConnectorOutput: Sendable, Equatable {
         color: String? = nil,
         surface: DeliverySurface = .notification,
         lifetime: Int? = nil,
+        background: String? = nil,
         overlay: DeviceOverlay? = nil
     ) {
         self.text = text
@@ -94,6 +114,7 @@ public struct ConnectorOutput: Sendable, Equatable {
         self.color = color
         self.surface = surface
         self.lifetime = lifetime
+        self.background = background
         self.overlay = overlay
     }
 }

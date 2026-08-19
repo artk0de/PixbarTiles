@@ -128,6 +128,56 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
         }
     }
 
+    /// A night sky: near-black, with only the blue channel lit, and lit at 51 —
+    /// the exact floor `TemperatureColour` holds every one of its stops above.
+    ///
+    /// The value is what the constraint leaves. The panel is 32x8 and a
+    /// background lights all 256 pixels of it while a reading is a few dozen
+    /// drawn on top, so the digits have a floor to stay above and this has a
+    /// ceiling to stay under. Sitting AT that floor is the most this can be
+    /// without ever being brighter than the dimmest channel a digit is lit at.
+    ///
+    /// What it leaves: the dimmest reading the gradient can draw is the cold
+    /// clamp, #3333FF, and it puts out about 18 times the light of this. That
+    /// is also the closest reading to this in hue — both are blue — so it is
+    /// the one most at risk of disappearing into the panel, and it is the case
+    /// the swept test in `TemperatureColourTests` pins. On the blue channel the
+    /// two share it is 255 against 51, five to one, and the reading carries red
+    /// and green at 51 against a panel that is unlit in both.
+    ///
+    /// Rejected: a mid navy — #000080, #191970 — which would be plainly visible
+    /// and is the obvious choice on a bright screen. The clock runs at
+    /// brightness 2 to 3, where the firmware's `nscale8` collapses every
+    /// channel to nearly nothing, so a background chosen to survive that
+    /// collapse lands on the same LED level as the digits do. The cold end of
+    /// the gradient is blue, and it would vanish into a blue wall. Losing the
+    /// tint in a dark room is the cheaper mistake than losing the reading.
+    public static let nightSky = "#000033"
+
+    /// The colour of the panel behind the reading, or nil to leave it unlit.
+    ///
+    /// Takes the hour rather than reading it off `self`, and that is the
+    /// decision rather than an oversight. The hour is not a property of the
+    /// SKY: only `clearDay` and `clearNight` split on it, and they split
+    /// because the ICON had to — a sun and a moon are different pictures.
+    /// Doubling all eleven cases to carry one boolean would produce twenty,
+    /// nineteen of which draw their partner's picture over their partner's
+    /// overlay, and `partlyCloudyDay` already has the argument written against
+    /// it: a sky the device cannot draw differently is a branch nobody sees.
+    /// The hour is an axis beside the sky, so it is passed beside it.
+    ///
+    /// Static for the same reason — with the sky unable to answer, an instance
+    /// member would invite `WeatherTheme.clearNight.background(isDay: true)`,
+    /// which has no honest answer at all.
+    ///
+    /// Day is nil rather than a light colour. An unlit panel is what the device
+    /// does by default and what every other app in the loop looks like, so a
+    /// daytime tint would make the weather the odd one out in the rotation for
+    /// saying what its own absence already says.
+    public static func background(isDay: Bool) -> String? {
+        isDay ? nil : nightSky
+    }
+
     /// The picture drawn beside the reading, from the LaMetric catalogue.
     ///
     /// A switch rather than a dictionary, so that a sky added to this enum

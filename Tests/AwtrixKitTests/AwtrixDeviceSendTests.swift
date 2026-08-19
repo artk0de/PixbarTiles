@@ -277,3 +277,37 @@ private func decodeBody(_ request: URLRequest) throws -> [String: Any] {
         Issue.record("expected .invalidHost, got \(error)")
     }
 }
+
+// MARK: - The colour behind the reading
+
+// The icon says which sky and the text colour says how the temperature feels,
+// which leaves the hour with nothing to ride on: at full overcast the clock
+// draws the same grey cloud at noon and at midnight. `background` is the
+// firmware's own field for the panel behind the text, and it is the one lever
+// left that neither of the other two is already spending.
+@Test func anAppWithABackgroundSendsItToTheFirmware() async throws {
+    let transport = RecordingTransport()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    try await device.showApp(AppPayload(text: "4°", background: "#000033"), named: "weather")
+
+    let request = try #require(transport.requests.first)
+    #expect(request.url?.absoluteString == "http://10.0.0.5/api/custom?name=weather")
+    #expect(try decodeBody(request)["background"] as? String == "#000033")
+}
+
+// Unset is an absent key rather than a null, as every other optional field on
+// both payloads already is — the firmware rejects nulls. It matters more here
+// than elsewhere: an unlit panel is what the device does by default and what
+// every other app in the loop looks like, so "no background" has to reach the
+// clock as silence rather than as a colour that happens to be black.
+@Test func anAppWithoutABackgroundOmitsTheKeyEntirely() async throws {
+    let transport = RecordingTransport()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    try await device.showApp(AppPayload(text: "4°", icon: "2289"), named: "weather")
+
+    let body = try decodeBody(try #require(transport.requests.first))
+    #expect(body["background"] == nil)
+    #expect(body.keys.count == 2)
+}

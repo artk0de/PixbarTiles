@@ -148,3 +148,54 @@ private func channels(_ hex: String) -> (red: Int, green: Int, blue: Int) {
     #expect(hot.red == 255)
     #expect(hot.red > hot.blue)
 }
+
+// MARK: - The panel the gradient is drawn on
+
+/// How much light a colour puts out, Rec.709 weighted.
+///
+/// Deliberately NOT gamma-decoded first, the way a contrast ratio for a screen
+/// would be. These bytes are a PWM duty cycle on an LED — the firmware scales
+/// them with `nscale8` and nothing anywhere applies a transfer curve — so the
+/// value IS the light, and decoding sRGB out of it would model a monitor this
+/// display is not.
+private func light(_ hex: String) -> Double {
+    let (red, green, blue) = channels(hex)
+    return 0.2126 * Double(red) + 0.7152 * Double(green) + 0.0722 * Double(blue)
+}
+
+// The night background lights all 256 pixels of the panel, while a reading is a
+// few dozen of them drawn on top. So the constraint runs the opposite way from
+// every other test in this file: the digits have a floor to stay above, and the
+// background has a ceiling it must stay under, or a colour chosen to say
+// "night" quietly eats the number it was put behind.
+//
+// Swept rather than spot-checked for the same reason the gradient is: it is a
+// property of the whole range, and the worst case sits at an end rather than at
+// a stop somebody would think to try. The measured worst case is 17.8, at the
+// cold clamp — deep blue #3333FF is the dimmest thing the gradient can draw,
+// and it is also the closest in hue to the background, so it is the reading
+// most at risk of disappearing into it.
+@Test func noReadingIsSwallowedByTheNightPanelItIsDrawnOn() throws {
+    let panel = try #require(WeatherTheme.background(isDay: false))
+
+    for step in stride(from: -40.0, through: 60.0, by: 0.25) {
+        let reading = TemperatureColour(celsius: step).hex
+        let ratio = light(reading) / light(panel)
+
+        #expect(ratio >= 12, "\(step)° drew \(reading), only \(ratio):1 over the panel")
+    }
+}
+
+// And the same claim per channel, which is what actually decides whether a
+// glyph has an edge: the panel's brightest channel has to lose to the reading's
+// even where the two are the same colour. `TemperatureColour` guarantees every
+// reading a channel at or above 200; anything at or under the gradient's own
+// floor of 51 is therefore beaten by at least 3.9 to 1 without needing to know
+// which reading it is.
+@Test func theNightPanelStaysAtOrUnderTheFloorTheDigitsNeverGoBelow() throws {
+    let (red, green, blue) = channels(try #require(WeatherTheme.background(isDay: false)))
+
+    #expect(max(red, green, blue) <= 51, "the panel is lit at \(max(red, green, blue))")
+    // Not black either, or there is nothing to see and the hour is uncarried.
+    #expect(max(red, green, blue) > 0)
+}

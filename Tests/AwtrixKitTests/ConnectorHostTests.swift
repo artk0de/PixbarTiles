@@ -1271,3 +1271,58 @@ private func staysFalse(
     #expect(read.intervalPosition == 11)
     #expect(read.lastDeliveredAt == nil)
 }
+
+// MARK: - The panel behind an app
+
+// An app in the loop is glanced at hours after it was pushed, so it is the one
+// surface where a colour behind the text says something a reader is still there
+// to read.
+@Test func aBackgroundReachesTheDeviceOnAnAppDelivery() async throws {
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(
+        text: "4°", surface: .app("weather"), background: "#000033"
+    )
+    let transport = RecordingTransport()
+    let host = makeHost(connector: connector, transport: transport)
+
+    _ = await host.runOnce(connectorId: "stub")
+
+    let request = try #require(transport.requests.first { $0.url?.path == "/api/custom" })
+    #expect(jsonBody(request)["background"] as? String == "#000033")
+}
+
+// And never on a notification, however loudly the output asks for one — the
+// same asymmetry `lifetime` has, reached by a different route and worth saying
+// out loud because of that. The firmware accepts `background` on BOTH surfaces:
+// its property table marks the key for custom apps and notifications alike,
+// unlike `lifetime`, which it scopes to custom apps by itself. So this line is
+// this app's decision rather than the device's constraint. A notification
+// interrupts, is read while it is on screen, and goes away; whoever is reading
+// it is standing there and already knows what time it is. Tinting every banner
+// would spend the panel on an hour nobody needed told.
+@Test func aBackgroundIsNeverSentOnANotification() async throws {
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(text: "hi", background: "#000033")
+    let transport = RecordingTransport()
+    let host = makeHost(connector: connector, transport: transport)
+
+    _ = await host.runOnce(connectorId: "stub")
+
+    let request = try #require(transport.requests.first { $0.url?.path == "/api/notify" })
+    #expect(jsonBody(request)["background"] == nil)
+}
+
+// A producer that says nothing about the hour reaches the device exactly as it
+// did before there was anything to say: no key at all, so the panel stays unlit
+// and the app looks like every other one in the loop.
+@Test func aConnectorThatDeclaresNoBackgroundSendsNoSuchKey() async throws {
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(text: "4°", surface: .app("weather"))
+    let transport = RecordingTransport()
+    let host = makeHost(connector: connector, transport: transport)
+
+    _ = await host.runOnce(connectorId: "stub")
+
+    let request = try #require(transport.requests.first { $0.url?.path == "/api/custom" })
+    #expect(jsonBody(request)["background"] == nil)
+}

@@ -354,6 +354,17 @@ public actor ConnectorHost {
                 // there is nothing left on the clock for a lifetime to expire.
                 // The firmware scopes the key to custom apps, as it scopes
                 // several others to one surface or the other.
+                //
+                // `output.background` stops here too, and for a DIFFERENT
+                // reason worth keeping apart from that one. The firmware does
+                // not scope it — its property table marks `background` for
+                // notifications as readily as for custom apps — so this is a
+                // decision of this app's. The panel behind the text carries the
+                // hour, and it is worth carrying on something glanced at later:
+                // whoever is reading a banner is standing in front of the clock
+                // while it scrolls, and already knows what time it is. Tinting
+                // every interruption would spend the panel telling nobody
+                // anything.
                 try await device.notify(
                     NotifyPayload(
                         text: output.text,
@@ -378,7 +389,12 @@ public actor ConnectorHost {
                         // The clock removing this app itself, for the endings
                         // this process never gets to clean up after. Custody
                         // above covers only the clean quit.
-                        lifetime: output.lifetime
+                        lifetime: output.lifetime,
+                        // The panel behind the reading, which is where the hour
+                        // rides. Only an app can carry one — see the notify
+                        // branch above for why this app scopes it here even
+                        // though the firmware would take it on either surface.
+                        background: output.background
                     ),
                     named: name,
                     // Falling back to the app's own name rather than skipping

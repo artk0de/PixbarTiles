@@ -1077,6 +1077,17 @@ final class AppModel: ObservableObject {
         registry.connector(id: connectorId)?.isAudible ?? true
     }
 
+    /// Whether the user's own quiet hours are what is silencing the app right
+    /// now.
+    ///
+    /// Asked apart from `scheduleHold(for:)` because it decides a different
+    /// question: not whether to deliver, but whether to SPEND. Read through the
+    /// gate rather than off the wall clock, so it uses the same instant every
+    /// other quiet decision does.
+    private var duringTheQuietWindow: Bool {
+        focus.silence(quietHours: quietHours) == FocusGate.duringQuietHours
+    }
+
     /// The watched microphone that is capturing right now, or nil.
     ///
     /// Asked separately from `scheduleHold` because the two answers are put to
@@ -1128,9 +1139,31 @@ final class AppModel: ObservableObject {
         // there is nothing for it to be held by here except the clock, and an
         // unreachable clock is a SKIP for a drawing exactly as it is for a
         // banner.
+        //
+        // One exception to "the restock is outside the guard", and it is the
+        // user's own quiet hours. `topUpIfNeeded` refreshes when nothing in the
+        // queue was prepared on today's calendar day, and midnight falls inside
+        // every plausible quiet window — so the first beat after 00:00 loaded a
+        // 1.8 GB model and synthesized a batch, with fans, on the machine of
+        // somebody who had said these hours were not for making noise in. The
+        // pass is not lost: the first beat after 08:00 finds the same nothing
+        // prepared today and does the same work while its owner is awake.
+        //
+        // A Focus is deliberately NOT included, and neither is a busy
+        // microphone. Both say "the user is busy right now" about somebody
+        // sitting at the machine who will turn back to it — which is exactly
+        // when the queue should be filling, and is the argument
+        // `maintenanceStillRunsDuringFocus` already makes. The quiet window
+        // says something else: nine hours on the shipped default, nobody coming
+        // back to the desk at 00:30. An outage is not included either — an
+        // outage of the clock is still not an outage of the feed.
+        //
+        // A launch inside the window still restocks, and a "Run now" inside it
+        // still restocks after itself. Both are the user's own hand on the
+        // machine; what this removes is the unattended one.
         guard scheduleHold(for: id) == nil else {
             if isAudible(id), busyMicrophone != nil { heldRuns.insert(id) }
-            await restock(id)
+            if duringTheQuietWindow == false { await restock(id) }
             return
         }
         // Marked before the maintain, not between it and the run. `maintain` IS

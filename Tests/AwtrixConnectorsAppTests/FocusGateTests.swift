@@ -247,7 +247,11 @@ import Testing
 
     #expect(await waitUntil { awakeHost.calls.contains("run:stub") })
     #expect(await waitUntil { sleepingSchedule.parked == 1 })
-    #expect(sleepingHost.calls == ["maintain:stub", "maintain:stub"])
+    // The launch's restock and nothing else: a beat inside the quiet window
+    // spends nothing at all, which is `theNightlyRefreshDoesNotRunInsideThe
+    // UsersQuietHours`. A Focus is the other way round and still is —
+    // `maintenanceStillRunsDuringFocus`.
+    #expect(sleepingHost.calls == ["maintain:stub"])
     #expect(sleepingHost.calls.contains("run:stub") == false)
     await asleep.teardown()
     await awake.teardown()
@@ -277,6 +281,111 @@ import Testing
     // from its restock to its run.
     #expect(await waitUntil { schedule.parked == 1 })
     #expect(host.calls == ["maintain:stub", "maintain:stub"])
+    #expect(host.calls.contains("run:stub") == false)
+    await subject.teardown()
+}
+
+// The one thing a beat inside the quiet window must not do is spend. The daily
+// refresh triggers on a calendar day boundary, and midnight is inside every
+// plausible quiet window — so the first beat after 00:00 loaded a 1.8 GB model
+// and synthesized a batch, with fans, on the machine of somebody who had just
+// told the app these hours were not for making noise in.
+//
+// Read once the beat is over rather than on a call count: an ungated tick
+// passes through exactly `[maintain, maintain]` on its way from its restock to
+// its run.
+@Test @MainActor func theNightlyRefreshDoesNotRunInsideTheUsersQuietHours() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        host: host,
+        sleep: schedule.sleep,
+        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(0) }),
+        quietHours: QuietWindow(startHour: 23, endHour: 8)
+    )
+
+    subject.start()
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    schedule.tick()
+
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(host.calls == ["maintain:stub"])
+    await subject.teardown()
+}
+
+// And it is deferred rather than skipped: the first beat outside the window
+// finds the same nothing prepared today and does the same work, while its owner
+// is awake. Two models alike in everything but the hour.
+@Test @MainActor func theNightlyRefreshRunsOnTheFirstBeatOutsideTheQuietHours() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        host: host,
+        sleep: schedule.sleep,
+        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(9) }),
+        quietHours: QuietWindow(startHour: 23, endHour: 8)
+    )
+
+    subject.start()
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    schedule.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:stub") })
+    #expect(host.calls.filter { $0 == "maintain:stub" }.count > 1)
+    await subject.teardown()
+}
+
+// An outage is a different fact and keeps its own rule: the feed and the sidecar
+// are fine, and a paused schedule outside the quiet window is exactly when the
+// queue should be filling so recovery has something to show immediately.
+@Test @MainActor func aPausedBeatOutsideTheQuietHoursStillRestocks() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        host: host,
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        sleep: schedule.sleep,
+        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(12) }),
+        quietHours: QuietWindow(startHour: 23, endHour: 8)
+    )
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    schedule.tick()
+
+    #expect(await waitUntil { host.calls == ["maintain:stub", "maintain:stub"] })
+    #expect(host.calls.contains("run:stub") == false)
+    await subject.teardown()
+}
+
+// A meeting is not the night either. A busy microphone says the user is at the
+// machine and will turn back to it, which is when the queue should be filling —
+// the same argument `maintenanceStillRunsDuringFocus` makes one gate over.
+@Test @MainActor func aBeatHeldByAMicrophoneStillRestocks() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        host: host,
+        sleep: schedule.sleep,
+        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(12) }),
+        quietHours: QuietWindow(startHour: 23, endHour: 8),
+        microphone: MicrophoneGate(inputs: StubAudioInputs(duringAMeeting))
+    )
+
+    subject.start()
+    #expect(await waitUntil { host.calls == ["maintain:stub"] })
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    schedule.tick()
+
+    #expect(await waitUntil { host.calls == ["maintain:stub", "maintain:stub"] })
     #expect(host.calls.contains("run:stub") == false)
     await subject.teardown()
 }

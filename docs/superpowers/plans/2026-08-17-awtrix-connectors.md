@@ -5032,3 +5032,18 @@ shared `.default` is never exercised.
 
 Not yet proven, and it will not be proven by reading. It needs an instrumented
 build that records which window resigned, and one press of the button.
+
+### Task 34 — partly cloudy becomes a sky of its own
+
+Decided after the icons were on screen: WMO code 2 currently collapses into
+"clear", so an afternoon of broken cloud draws a bare sun.
+
+- Code 2 with the sun up gets its own theme, drawn by **53802** — a cloud with
+  the sun behind it, verified frame by frame.
+- Code 2 after dark keeps going to `clearNight`. There is deliberately NO
+  `partlyCloudyNight` case: the catalogue has no moon behind a cloud (both
+  weather packs were swept whole), so such a case would draw the same moon, over
+  the same `clear` overlay, in the same temperature-derived colour as a clear
+  night — a distinction the device cannot express is a dead branch, not a
+  feature.
+- Codes 0 and 1 are unchanged.

@@ -35,6 +35,10 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     private let parkInMaintain: Gate?
     private let parkInDeliver: Gate?
     private let delay: TimeInterval?
+    /// How a replay ends. A clock that is not answering is the case the History
+    /// has to say something about, and a double that always succeeds cannot
+    /// pose it.
+    private let deliverResult: RunResult
 
     /// `delay` stands in for a connector that is failing: nil answers with the
     /// interval it was asked about, which is what a healthy one gets.
@@ -42,12 +46,14 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
         parkInRun: Gate? = nil,
         parkInMaintain: Gate? = nil,
         parkInDeliver: Gate? = nil,
-        delay: TimeInterval? = nil
+        delay: TimeInterval? = nil,
+        deliverResult: RunResult = .delivered
     ) {
         self.parkInRun = parkInRun
         self.parkInMaintain = parkInMaintain
         self.parkInDeliver = parkInDeliver
         self.delay = delay
+        self.deliverResult = deliverResult
     }
 
     /// One entry per call, in call order: `maintain:<id>` / `run:<id>` /
@@ -89,7 +95,7 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     func deliver(_ output: ConnectorOutput) async -> RunResult {
         lock.withLock { recorded.append("deliver:\(output.text)") }
         await parkInDeliver?.enter()
-        return .delivered
+        return deliverResult
     }
 }
 
@@ -590,6 +596,7 @@ struct BrokenConnector: Connector {
 func modelOverRealHost(
     connector: any Connector = StubConnector(),
     transport: any Transport,
+    anecdotes: (any AnecdoteReplaying)? = nil,
     sleep: @escaping AppModel.Sleeping = parked,
     pollSleep: @escaping AppModel.Sleeping = parked
 ) -> (model: AppModel, host: ConnectorHost) {
@@ -613,6 +620,7 @@ func modelOverRealHost(
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: InMemoryUploadedIconStore()
         ),
+        anecdotes: anecdotes,
         defaults: UserDefaults(suiteName: "realHost-\(UUID().uuidString)")!,
         pasteboard: NSPasteboard(name: NSPasteboard.Name("realHost-\(UUID().uuidString)")),
         sleep: sleep,

@@ -1480,3 +1480,85 @@ private func historyAfterReaping(
     #expect(line.contains(where: \.isNumber) == false)
     await subject.teardown()
 }
+
+// MARK: - What a replay says for itself
+
+// The half of the discarded result that stays discarded. A replay is not a run:
+// the connector's own line goes on describing what the SCHEDULE last did, and a
+// failure heard from the History must not be written over it — nor counted,
+// which `aReplayStillDoesNotMoveTheFailureCounter` owns.
+//
+// The failing case, deliberately. A replay that works and a replay that is
+// dropped on the floor both leave the run line empty, so a successful one
+// cannot tell the rule from its absence.
+//
+// The run at the end is the control: the same model, the same line, and it does
+// get written — so the emptiness above is a refusal rather than a line nothing
+// here can reach.
+@Test @MainActor func aReplayOutcomeNeverReachesTheRunLine() async throws {
+    let host = SpyHost(deliverResult: .failed("the clock is not answering"))
+    let here = try playableAnecdote(id: "here", text: "still here")
+    let subject = testModel(
+        host: host,
+        anecdotes: StubAnecdotes(history: [PlayedAnecdote(anecdote: here, playedAt: Date())])
+    )
+
+    subject.replay(here)
+
+    #expect(await waitUntil { subject.replayResult != nil })
+    #expect(subject.replayResult?.contains("the clock is not answering") == true)
+    #expect(subject.lastResults["stub"] == nil)
+
+    subject.runNow("stub")
+
+    #expect(await waitUntil { subject.lastResults["stub"] == "delivered" })
+    // And the replay's own answer is still the replay's, not overwritten by the
+    // run that followed it.
+    #expect(subject.replayResult?.contains("the clock is not answering") == true)
+}
+
+// The other half, read off the shipped host's own count. `deliver` has no
+// connector id to record against and that is the point: the backoff describes
+// how the FEED is behaving, and hearing this morning's anecdote again is not
+// evidence about anekdot.ru in either direction — least of all when it fails
+// because the clock is unplugged.
+//
+// The manual run at the end is the control: the same wiring, the same
+// unreachable clock, and it DOES move the count.
+@Test @MainActor func aReplayStillDoesNotMoveTheFailureCounter() async throws {
+    let here = try playableAnecdote(id: "here", text: "still here")
+    let wiring = modelOverRealHost(
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        anecdotes: StubAnecdotes(history: [PlayedAnecdote(anecdote: here, playedAt: Date())])
+    )
+
+    wiring.model.replay(here)
+
+    #expect(await waitUntil { wiring.model.replayResult?.hasPrefix("failed:") == true })
+    #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 0)
+
+    wiring.model.runNow("stub")
+
+    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed:") == true })
+    #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 1)
+    await wiring.model.teardown()
+}
+
+// Opening the surface is asking what has played, not asking again about the
+// last thing that was pressed. An answer kept across the open would be read as
+// having just happened — and since the window close now takes the surface with
+// it, "just opened" is the only state it is ever entered in.
+@Test @MainActor func openingTheHistoryClearsTheLastReplaysAnswer() async throws {
+    let here = try playableAnecdote(id: "here", text: "still here")
+    let subject = testModel(
+        host: SpyHost(deliverResult: .failed("the clock is not answering")),
+        anecdotes: StubAnecdotes(history: [PlayedAnecdote(anecdote: here, playedAt: Date())])
+    )
+    subject.openHistory()
+    subject.replay(here)
+    #expect(await waitUntil { subject.replayResult != nil })
+
+    subject.openHistory()
+
+    #expect(subject.replayResult == nil)
+}

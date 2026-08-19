@@ -549,3 +549,188 @@ private func drawnEntry(
     #expect(listed != empty)
     #expect(listed != playable)
 }
+
+// MARK: - The menu opens on the panel
+
+/// A launched delegate over `model`, hearing only what this test posts.
+///
+/// Its own notification centre, because the observer is not filtered by window:
+/// posted into `.default`, one test's window closing would shut the surface of
+/// every other model alive in the suite.
+@MainActor
+private func launched(
+    _ model: AppModel, hearing notifications: NotificationCenter
+) -> AppDelegate {
+    let delegate = AppDelegate(
+        model: model,
+        budget: QuitBudget(),
+        discovery: inertDiscovery(),
+        notifications: notifications
+    )
+    delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    return delegate
+}
+
+/// The window going away, as AppKit says it: a menu bar extra is dismissed by
+/// losing focus, and it is ordered out rather than closed.
+@MainActor
+private func closeTheWindow(_ notifications: NotificationCenter) {
+    notifications.post(
+        name: NSWindow.didResignKeyNotification,
+        object: NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 700),
+            styleMask: [.titled], backing: .buffered, defer: true
+        )
+    )
+}
+
+// A menu bar item is clicked to answer "is the clock alive, and what is next".
+// Coming back to a list of old jokes answers a question nobody asked, and that
+// is what a surface outliving its window did.
+//
+// Measured on the pixels rather than on the flag: what the next click opens on
+// is the claim, and it is the same drawing as a panel that was never left.
+//
+// The model is left unstarted and the close is its own, for the reason
+// `openingTheHistoryReplacesThePanelWithIt` leaves it unstarted: a started one
+// polls and schedules, so the two drawings would differ by a device state and
+// an hour as well as by the surface. What carries the AppKit event into this
+// call is the pair of tests below.
+@Test @MainActor func closingTheWindowReturnsTheMenuToThePanel() async throws {
+    let played = PlayedAnecdote(
+        anecdote: try playableAnecdote(id: "a", text: "Заходит улитка в бар"),
+        playedAt: Date()
+    )
+    let model = testModel(anecdotes: StubAnecdotes(history: [played]))
+    let panel = drawn(model)
+    model.openHistory()
+    #expect(await waitUntil { model.history.isEmpty == false })
+    let history = drawn(model)
+
+    model.windowDidClose()
+
+    #expect(panel != nil)
+    #expect(panel != history)
+    #expect(panel == drawn(model))
+}
+
+@Test @MainActor func theHistorySurfaceDoesNotSurviveAWindowClose() async {
+    let notifications = NotificationCenter()
+    let model = testModel(
+        sleep: Metronome().sleep, pollSleep: Metronome().sleep,
+        anecdotes: StubAnecdotes(id: "stub")
+    )
+    let delegate = launched(model, hearing: notifications)
+    model.openHistory()
+    #expect(model.historyIsOpen)
+
+    closeTheWindow(notifications)
+
+    #expect(await waitUntil { model.historyIsOpen == false })
+    // Held to the end deliberately: the observer's block holds the delegate
+    // weakly, so a released one hears the close and does nothing about it.
+    withExtendedLifetime(delegate) {}
+    await model.teardown()
+}
+
+// The two surfaces were consistent with each other, which is how this got here.
+// Consistent is not the same as right, and both of them go.
+@Test @MainActor func theSettingsSurfaceDoesNotSurviveAWindowClose() async {
+    let notifications = NotificationCenter()
+    let model = testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep)
+    let delegate = launched(model, hearing: notifications)
+    model.openSettings()
+    #expect(model.settingsAreOpen)
+
+    closeTheWindow(notifications)
+
+    #expect(await waitUntil { model.settingsAreOpen == false })
+    // Held to the end deliberately: the observer's block holds the delegate
+    // weakly, so a released one hears the close and does nothing about it.
+    withExtendedLifetime(delegate) {}
+    await model.teardown()
+}
+
+// MARK: - What a replay says for itself
+
+/// The History showing one playable entry, opened and loaded.
+@MainActor
+private func historyWithOneEntry(host: any ConnectorRunning) async throws
+    -> (model: AppModel, anecdote: PreparedAnecdote)
+{
+    let anecdote = try playableAnecdote(id: "a", text: "Заходит улитка в бар")
+    let model = testModel(
+        host: host,
+        anecdotes: StubAnecdotes(history: [PlayedAnecdote(anecdote: anecdote, playedAt: played)])
+    )
+    model.openHistory()
+    #expect(await waitUntil { model.history.isEmpty == false })
+    return (model, anecdote)
+}
+
+/// One fixed moment, so two surfaces built for a comparison cannot differ by
+/// the second they were built in.
+private let played = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+// `deliver`'s result is discarded as far as the run line is concerned, and that
+// stays — but discarding it entirely left "Play again" against an unreachable
+// clock doing nothing at all, with no explanation. This branch has already
+// shipped that exact defect once.
+//
+// Two Histories alike in everything — same entry, same text, same moment it
+// played, same list — except that one of them has had a replay reported. Delete
+// the line and they are identical; nothing else on the surface moves when a
+// replay finishes, because the list is read on opening and a replay does not
+// re-read it.
+@Test @MainActor func aReplayReportsItsOutcomeInTheHistory() async throws {
+    let quiet = try await historyWithOneEntry(host: SpyHost())
+    let reporting = try await historyWithOneEntry(host: SpyHost())
+
+    reporting.model.replay(reporting.anecdote)
+
+    #expect(await waitUntil { reporting.model.replayResult != nil })
+    #expect(drawn(quiet.model) != nil)
+    #expect(drawn(quiet.model) != drawn(reporting.model))
+}
+
+// And what it says is how it WENT, not that something happened. A failed replay
+// drawn the same as a successful one is the silence again with a decoration on
+// it: the two surfaces below have both had a replay reported, so a line that
+// said "replayed" either way would draw them identically.
+//
+// The quiet one is the third leg: without it, a surface that drew nothing at
+// all for either outcome would still pass the first comparison.
+@Test @MainActor func aFailedReplayIsVisibleRatherThanSilent() async throws {
+    let quiet = try await historyWithOneEntry(host: SpyHost())
+    let succeeded = try await historyWithOneEntry(host: SpyHost())
+    let failed = try await historyWithOneEntry(
+        host: SpyHost(deliverResult: .failed("the clock is not answering"))
+    )
+
+    succeeded.model.replay(succeeded.anecdote)
+    failed.model.replay(failed.anecdote)
+
+    #expect(await waitUntil { succeeded.model.replayResult != nil })
+    #expect(await waitUntil { failed.model.replayResult != nil })
+    #expect(drawn(failed.model) != nil)
+    #expect(drawn(failed.model) != drawn(quiet.model))
+    #expect(drawn(failed.model) != drawn(succeeded.model))
+}
+
+// The panel is not where it goes. A replay is pressed in the History and its
+// answer belongs there — thrown to the panel's run line it lands on a surface
+// the user has already left, and on the line that describes the schedule.
+@Test @MainActor func aReplaysOutcomeIsDrawnInTheHistoryRatherThanOnThePanel() async throws {
+    let quiet = try await historyWithOneEntry(host: SpyHost())
+    let reporting = try await historyWithOneEntry(
+        host: SpyHost(deliverResult: .failed("the clock is not answering"))
+    )
+    reporting.model.replay(reporting.anecdote)
+    #expect(await waitUntil { reporting.model.replayResult != nil })
+
+    quiet.model.closeHistory()
+    reporting.model.closeHistory()
+
+    #expect(drawn(quiet.model) != nil)
+    #expect(drawn(quiet.model) == drawn(reporting.model))
+}

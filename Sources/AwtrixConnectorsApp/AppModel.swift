@@ -176,6 +176,16 @@ final class AppModel: ObservableObject {
     /// has no reader to tell. The list is whatever the queue still holds — the
     /// retention window bounds it, and nothing here bounds it a second time.
     @Published private(set) var history: [PlayedAnecdote] = []
+    /// How the last replay went, in the History's own words, and nil until one
+    /// has been asked for.
+    ///
+    /// Its own line rather than the connector's. A replay is not a run: the run
+    /// line describes what the SCHEDULE last did, and a failure heard from the
+    /// History written over it would claim the schedule had failed. What the
+    /// discarded result never stops being discarded FOR is the run line and the
+    /// backoff — but discarding it altogether is what left "Play again" against
+    /// an unreachable clock doing nothing at all, with no explanation.
+    @Published private(set) var replayResult: String?
     @Published private(set) var iconStatus: String?
     /// Mirrored from `monitor` rather than read through it, because the poll
     /// below is what learns the answer and a view that wants only the glyph
@@ -427,6 +437,11 @@ final class AppModel: ObservableObject {
     /// surface opened right after a run has to show that run.
     func openHistory() {
         historyIsOpen = true
+        // Whatever the last replay said goes with the surface it was said on.
+        // Opening the History is asking what has played, not asking again about
+        // the last thing that was pressed — and an answer kept across the open
+        // would read as having just happened.
+        replayResult = nil
         historyLoad?.cancel()
         guard let anecdotes else { return }
         historyLoad = Task { [weak self] in
@@ -437,6 +452,23 @@ final class AppModel: ObservableObject {
     }
 
     func closeHistory() { historyIsOpen = false }
+
+    /// Puts the menu back on the panel, because the window went away.
+    ///
+    /// Both surfaces, not one. They were consistent with each other — each
+    /// outlived the window — which is how clicking away from the History and
+    /// clicking back returned to the History, and consistent is not the same as
+    /// right. A menu bar item is clicked to answer "is the clock alive, and
+    /// what is next"; a list of old jokes answers a question nobody asked.
+    ///
+    /// Not a teardown. Nothing is stopped and nothing is cancelled — the
+    /// schedule, the poll and any replay in flight carry on behind a window
+    /// that is not on screen, exactly as they carry on behind a surface that
+    /// is.
+    func windowDidClose() {
+        settingsAreOpen = false
+        historyIsOpen = false
+    }
 
     /// Plays a past anecdote again.
     ///
@@ -460,7 +492,12 @@ final class AppModel: ObservableObject {
         let key = nextReplayKey
         nextReplayKey += 1
         replays[key] = Task { [weak self] in
-            _ = await self?.host.deliver(output)
+            let result = await self?.host.deliver(output)
+            // Kept, where the run line and the failure count are still not
+            // touched. Those two are what the discarded result was ever
+            // discarded for; the History is a third place, and it is the one
+            // the button was pressed on.
+            if let result { self?.replayResult = Self.words(for: result) }
             self?.replays[key] = nil
         }
     }
@@ -807,11 +844,27 @@ final class AppModel: ObservableObject {
     }
 
     private func record(_ result: RunResult, for id: String) {
+        lastResults[id] = Self.words(for: result)
+    }
+
+    /// What a delivery's outcome is called, in the words both surfaces use.
+    ///
+    /// One vocabulary rather than one per surface, because it is one question
+    /// asked twice: a replay IS a delivery — the same banner, the same jingle,
+    /// the same classification of whatever goes wrong, literally the same code
+    /// below the produce — so two lists of words would drift the first time
+    /// either moved. What differs between the two callers is WHERE the answer
+    /// is written, and that is decided by them.
+    ///
+    /// `.skipped` cannot arrive from a replay. `deliver` never reads
+    /// enablement — it has no connector id to read it for — so the word belongs
+    /// to the run path, and it is here because the switch is exhaustive.
+    private static func words(for result: RunResult) -> String {
         switch result {
-        case .delivered: lastResults[id] = "delivered"
-        case .skipped: lastResults[id] = "off"
-        case .cancelled: lastResults[id] = "cancelled"
-        case let .failed(message): lastResults[id] = "failed: \(message.prefix(60))"
+        case .delivered: "delivered"
+        case .skipped: "off"
+        case .cancelled: "cancelled"
+        case let .failed(message): "failed: \(message.prefix(60))"
         }
     }
 }

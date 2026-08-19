@@ -33,6 +33,18 @@ struct HistoryMenu: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            // How the last replay went, under the header rather than beside it:
+            // the reason one failed is a sentence, and a row shared with the
+            // title has room for a word. Nothing at all until one has been
+            // asked for — the surface is a list of what has played, and an
+            // empty slot above it would be a question nobody asked.
+            if let outcome = model.replayResult {
+                Text(outcome)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Divider()
             if model.history.isEmpty {
                 Text("Nothing has played yet")

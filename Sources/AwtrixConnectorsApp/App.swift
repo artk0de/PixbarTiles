@@ -105,11 +105,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// appearing on the network because there is nothing between them.
     let discovery: DeviceBrowser
     private let budget: QuitBudget
+    /// Where the window's comings and goings are heard.
+    ///
+    /// Injected for the reason every other collaborator here is: a test that
+    /// posts one into `.default` would be heard by every other model alive in
+    /// the suite, and closing one window would shut another test's surface.
+    private let notifications: NotificationCenter
+    /// The subscription that puts the menu back on the panel.
+    private var windowClosings: (any NSObjectProtocol)?
 
     override init() {
         self.model = .live()
         self.discovery = DeviceBrowser()
         self.budget = QuitBudget()
+        self.notifications = .default
         super.init()
     }
 
@@ -118,10 +127,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// on a delegate that took it — would put a live `NWBrowser` on the user's
     /// LAN from inside `swift test`. Naming it is one argument; noticing it
     /// afterwards is not.
-    init(model: AppModel, budget: QuitBudget, discovery: DeviceBrowser) {
+    init(
+        model: AppModel,
+        budget: QuitBudget,
+        discovery: DeviceBrowser,
+        notifications: NotificationCenter = .default
+    ) {
         self.model = model
         self.discovery = discovery
         self.budget = budget
+        self.notifications = notifications
         super.init()
     }
 
@@ -130,6 +145,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         model.start()
         discovery.start()
+        watchForTheWindowClosing()
+    }
+
+    /// Puts the menu back on the panel whenever its window goes away.
+    ///
+    /// Losing key IS how a menu bar extra closes. Its window is dismissed by
+    /// the click that lands somewhere else, and it is ordered out rather than
+    /// closed — so `NSWindow.willClose` never arrives, and SwiftUI's own
+    /// `onDisappear` is worse than silent: measured here, it fires when a
+    /// hosting view is torn down, which every throwaway render does, and not
+    /// when a window is ordered out at all.
+    ///
+    /// Here rather than in `AppModel`, for the reason `applicationDidFinish
+    /// Launching` is: translating what AppKit says into what the model does is
+    /// this type's whole job, and the model has no window to watch.
+    ///
+    /// Unfiltered by window because this app has exactly one. A second window
+    /// would want the filter; there is nothing to filter against until then.
+    private func watchForTheWindowClosing() {
+        guard windowClosings == nil else { return }
+        windowClosings = notifications.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.windowDidClose() }
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -156,6 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // inside it would be three more seconds of a quit with nothing left to
         // do.
         discovery.stop()
+        if let windowClosings {
+            notifications.removeObserver(windowClosings)
+            self.windowClosings = nil
+        }
         Task {
             _ = await budget.settle { await self.model.teardown() }
             reply(true)

@@ -11,10 +11,20 @@ import Testing
 // U+1FAAB, and neither has a charging variant. The plug is the closest thing
 // that exists and the only one that reads unambiguously beside a percentage.
 
+/// A reading whose shown figure is the real one unless a test separates them.
+///
+/// Defaulted here rather than on `BatteryReading`, which has two percentages on
+/// purpose and should make every caller say which it means. The two only differ
+/// while the ratchet is holding one against the other, and that is what the
+/// tests naming `shown` are about.
 private func reading(
-    _ percent: Int, _ direction: BatteryDirection, remaining: TimeInterval? = nil
+    _ percent: Int, _ direction: BatteryDirection, shown: Int? = nil,
+    remaining: TimeInterval? = nil
 ) -> BatteryReading {
-    BatteryReading(percent: percent, direction: direction, timeRemaining: remaining)
+    BatteryReading(
+        percent: percent, shownPercent: shown ?? percent, direction: direction,
+        timeRemaining: remaining
+    )
 }
 
 // MARK: - The glyph
@@ -76,14 +86,42 @@ private func reading(
     #expect(line?.contains("14400") == false)
 }
 
-@Test func aChargingLineSaysSoRatherThanCountingDownToEmpty() {
-    let line = BatteryLine.text(for: reading(48, .charging, remaining: 14_400))
+@Test func aChargingLineIsThePlugAndThePercentageAndNothingElse() {
+    let line = BatteryLine.text(for: reading(100, .charging, remaining: 14_400))
 
-    #expect(line?.contains("charging") == true)
+    // The plug already says what is happening, and any word beside it is noise.
+    // How full the clock is is what a person reads this line for, so the
+    // percentage stays and nothing else joins it.
+    #expect(line == "\u{1F50C} 100%")
+}
+
+@Test func aChargingLineCarriesNoCountdownEvenWhenHandedOne() {
     // Time to empty for something filling up is a number that means nothing,
     // and the trajectory withholds it — but the line must not render one even
     // if it is handed one.
+    let line = BatteryLine.text(for: reading(48, .charging, remaining: 14_400))
+
     #expect(line?.contains("4 h") == false)
+    #expect(line?.contains("charging") == false)
+}
+
+@Test func theLinePrintsTheShownFigureRatherThanTheReadingBehindIt() {
+    // The percentage flickers 100 to 99 on ADC noise with nothing changing, and
+    // the ratchet holds it. The line prints what the ratchet holds.
+    let held = reading(99, .charging, shown: 100)
+
+    #expect(BatteryLine.text(for: held) == "\u{1F50C} 100%")
+}
+
+@Test func urgencyIsReadOffTheRealFigureRatherThanTheHeldOne() {
+    // A battery through 20% while the ratchet still shows 21. The colour and
+    // the glyph are the same line the first warning fires at, and a threshold
+    // read off a ratcheted number is a warning that never arrives.
+    let held = reading(19, .discharging, shown: 21)
+
+    #expect(BatteryLine.colour(for: held) == BatteryLine.colour(for: reading(19, .discharging)))
+    #expect(BatteryLine.glyph(for: held) == "\u{1FAAB}")
+    #expect(BatteryLine.text(for: held)?.contains("21%") == true)
 }
 
 @Test func aDurationReadsAsHoursAndMinutes() {
@@ -145,10 +183,11 @@ private func reading(
 
 /// The panel, drawn at the width it ships at, with the battery already read.
 ///
-/// Two polls rather than one, because one reading is not a trend: the direction
-/// is what this is about and it takes a pair to establish. The instants are
-/// supplied rather than taken, so nothing here depends on how long a render
-/// took.
+/// A ramp of polls rather than a pair, and a minute apart rather than twenty
+/// seconds: the direction is a line fitted across a window now, so a pair
+/// inside two minutes establishes nothing and both panels would draw the same
+/// unknown state. The instants are supplied rather than taken, so nothing here
+/// depends on how long a render took.
 ///
 /// No window and no run loop: `cacheDisplay` renders the layer tree
 /// synchronously, which is what keeps this deterministic rather than a wait on
@@ -159,7 +198,7 @@ private func panelPixels(percent: Int, raw: [Int]) async -> Data? {
     let model = testModel(transport: clock)
     let origin = Date(timeIntervalSince1970: 1_700_000_000)
     for step in raw.indices {
-        await model.monitor.refresh(at: origin.addingTimeInterval(Double(step) * 20))
+        await model.monitor.refresh(at: origin.addingTimeInterval(Double(step) * 60))
     }
     let browsing = FakeBonjourBrowser()
     let browser = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
@@ -174,12 +213,17 @@ private func panelPixels(percent: Int, raw: [Int]) async -> Data? {
     return target.representation(using: .png, properties: [:])
 }
 
+/// Twelve minutes of a raw figure climbing two steps a minute, and twelve of it
+/// falling one — a charge and the rate a full discharge actually runs at.
+private let climbing = (0..<12).map { 640 + 2 * $0 }
+private let falling = (0..<12).map { 600 - $0 }
+
 @Test @MainActor func whatTheTrajectorySaysIsDrawnOnThePanel() async {
     // The same percentage, drawn twice, differing only in which way the raw
-    // reading moved. Deleting the battery line from `body` leaves every pure
+    // reading trended. Deleting the battery line from `body` leaves every pure
     // test above green — this is the one that notices.
-    let charging = await panelPixels(percent: 42, raw: [400, 404])
-    let discharging = await panelPixels(percent: 42, raw: [400, 396])
+    let charging = await panelPixels(percent: 42, raw: climbing)
+    let discharging = await panelPixels(percent: 42, raw: falling)
 
     #expect(charging != nil)
     #expect(charging != discharging)
@@ -187,8 +231,8 @@ private func panelPixels(percent: Int, raw: [Int]) async -> Data? {
 
 @Test @MainActor func thePanelDrawsTheSameBatteryTwice() async {
     // Otherwise the expectation above passes on noise rather than on content.
-    let once = await panelPixels(percent: 42, raw: [400, 396])
-    let again = await panelPixels(percent: 42, raw: [400, 396])
+    let once = await panelPixels(percent: 42, raw: falling)
+    let again = await panelPixels(percent: 42, raw: falling)
 
     #expect(once == again)
 }

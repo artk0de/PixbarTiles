@@ -515,15 +515,26 @@ import Testing
     let poll = Metronome()
     let subject = testModel(
         transport: ScriptedTransport(
-            bodies: [statsBody(percent: 25, raw: 250), statsBody(percent: 19, raw: 190)]
+            bodies: (0...5).map { statsBody(percent: 25, raw: 522 - $0) }
+                + [statsBody(percent: 25, raw: 516), statsBody(percent: 19, raw: 511)]
         ),
         pollSleep: poll.sleep,
         alerts: alerts
     )
 
+    // Six minutes of discharge fed in before the loop starts, at instants
+    // ending just before now. The warnings are gated on a direction, the
+    // direction is a line fitted across a window, and the poll takes its own
+    // instant off the wall clock — so two ticks a millisecond apart establish
+    // nothing on their own and no crossing could ever reach the alert.
+    let base = Date()
+    for minute in 0...5 {
+        await subject.monitor.refresh(at: base.addingTimeInterval(Double(minute - 6) * 60))
+    }
+
     subject.start()
-    // The first poll parked, so the first reading has landed. One reading is
-    // not a trend, so nothing has been crossed yet.
+    // The first poll parked, so the first reading has landed. It crosses
+    // nothing: 25% is a long way above the first line.
     #expect(await waitUntil { poll.parked == 1 })
     #expect(alerts.warnings.isEmpty)
 

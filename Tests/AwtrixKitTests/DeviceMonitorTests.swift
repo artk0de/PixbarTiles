@@ -372,10 +372,15 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
     await monitor.refresh(at: origin)
     #expect(monitor.battery?.direction == .unknown)
 
-    // The percentage does not move between the two, so a monitor that fed the
-    // trajectory `bat` rather than the whole report would still have nothing.
-    transport.body = trendJSON(bat: 50, raw: 396)
-    await monitor.refresh(at: origin.addingTimeInterval(20))
+    // Six minutes of the raw figure walking down at the rate a real discharge
+    // runs at. The percentage does not move through any of it, so a monitor
+    // that fed the trajectory `bat` rather than the whole report would still
+    // have nothing — and the direction is a fit across a window now, so one
+    // step down twenty seconds later says nothing either.
+    for minute in 1...6 {
+        transport.body = trendJSON(bat: 50, raw: 400 - minute)
+        await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60))
+    }
 
     #expect(monitor.battery?.direction == .discharging)
     #expect(monitor.battery?.percent == 50)
@@ -400,19 +405,25 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
 
 @Test @MainActor func aRefreshAnswersWithTheThresholdItJustCrossed() async {
     let transport = RecordingTransport()
-    transport.body = trendJSON(bat: 25, raw: 250)
     let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
-    #expect(await monitor.refresh(at: origin) == nil)
+
+    // Six minutes of discharge before the crossing. The warnings are gated on a
+    // direction and the direction is a line fitted across a window, so one step
+    // down from a standing start crosses nothing.
+    for minute in 0...5 {
+        transport.body = trendJSON(bat: 25, raw: 250 - minute)
+        #expect(await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60)) == nil)
+    }
 
     transport.body = trendJSON(bat: 19, raw: 190)
 
     #expect(
-        await monitor.refresh(at: origin.addingTimeInterval(20))
+        await monitor.refresh(at: origin.addingTimeInterval(6 * 60))
             == BatteryWarning(threshold: 20, percent: 19)
     )
     // Once. The crossing is an edge, and a monitor that kept it would hand the
     // same one to every poll that followed.
-    #expect(await monitor.refresh(at: origin.addingTimeInterval(40)) == nil)
+    #expect(await monitor.refresh(at: origin.addingTimeInterval(7 * 60)) == nil)
 }
 
 @Test @MainActor func aRefreshThatReachesNothingAnswersWithNothing() async {
@@ -445,16 +456,18 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
     transport.body = trendJSON(bat: 50, raw: 400)
     let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
     await monitor.refresh(at: origin)
-    transport.body = trendJSON(bat: 50, raw: 396)
-    await monitor.refresh(at: origin.addingTimeInterval(20))
+    for minute in 1...6 {
+        transport.body = trendJSON(bat: 50, raw: 400 - minute)
+        await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60))
+    }
     #expect(monitor.battery?.direction == .discharging)
 
     // Two refreshes a wall-clock millisecond apart, described as being an hour
-    // apart — which is what a Mac waking from sleep looks like. A monitor
-    // reading the wall clock instead of its argument would see no gap at all
-    // and carry the trend straight across it.
+    // and a half apart — which is what a Mac waking from sleep looks like. A
+    // monitor reading the wall clock instead of its argument would see no gap
+    // at all and carry the trend straight across it.
     transport.body = trendJSON(bat: 50, raw: 392)
-    await monitor.refresh(at: origin.addingTimeInterval(20 + BatteryTrajectory.window + 1))
+    await monitor.refresh(at: origin.addingTimeInterval(360 + BatteryTrajectory.window + 1))
 
     #expect(monitor.battery?.direction == .unknown)
 }

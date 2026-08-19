@@ -206,9 +206,15 @@ enum BatteryLine {
     }
 
     /// The whole line: the glyph, the percentage, and what happens next.
+    ///
+    /// `shownPercent` and not `percent`, and this is the only place the two are
+    /// told apart. The reading flickers a percent either way on ADC noise with
+    /// nothing changing, and the trajectory holds the displayed figure against
+    /// that; the glyph and the colour below stay on the real one, because they
+    /// are the same line the first warning fires at.
     static func text(for reading: BatteryReading?) -> String? {
         guard let reading else { return nil }
-        let percent = "\(reading.percent)%"
+        let percent = "\(reading.shownPercent)%"
         let head = glyph(for: reading).map { "\($0) \(percent)" } ?? percent
         guard let tail = trend(for: reading) else { return head }
         return "\(head) · \(tail)"
@@ -216,14 +222,18 @@ enum BatteryLine {
 
     /// What the line says after the percentage.
     ///
-    /// Nothing while the direction is unknown; "charging" while it is filling,
-    /// and never a countdown — time to empty for something filling up is a
-    /// number that means nothing, and rendering one handed in by mistake would
-    /// be worse than withholding it upstream.
+    /// Nothing while the direction is unknown, and nothing while charging
+    /// either: the plug already says what is happening, and a word beside it is
+    /// noise on a line read at a glance. A countdown is doubly out — time to
+    /// empty for something filling up is a number that means nothing, and
+    /// rendering one handed in by mistake would be worse than withholding it
+    /// upstream.
+    ///
+    /// "estimating…" survives where it belongs, which is a real discharge whose
+    /// rate is not established yet.
     private static func trend(for reading: BatteryReading) -> String? {
         switch reading.direction {
-        case .unknown: nil
-        case .charging: "charging"
+        case .unknown, .charging: nil
         case .discharging: reading.timeRemaining.map { "\(duration($0)) left" } ?? "estimating…"
         }
     }

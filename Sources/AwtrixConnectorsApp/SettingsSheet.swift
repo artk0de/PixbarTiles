@@ -56,14 +56,15 @@ struct SettingsSheet: View {
             LoginItemSettings(item: loginItem())
         }
         .padding(14)
-        // The stored width, the same number the panel and the History read.
-        // Wrapping this sheet in an outer `.frame(width:)` from `MenuPanel` was
-        // tried instead and does not substitute: measured, a 500-wide host round
-        // a sheet whose own frame said 320 gave 320 of content CENTRED, fields
-        // at x=104 with 90 points of nothing each side. A child's fixed frame is
-        // not something its parent can overrule, so the literal has to go rather
-        // than be wrapped.
-        .frame(width: PanelWidth.stored(in: defaults).points)
+        // The width the three surfaces share, on this sheet rather than wrapped
+        // round it from `MenuPanel`. The outer frame was tried and measured: a
+        // 500-wide host round a sheet whose own frame said 320 gave 320 of
+        // content CENTRED, fields at x=104 with 90 points of nothing each side.
+        // A child's fixed frame is not something its parent can overrule, so the
+        // literal had to go rather than be wrapped.
+        //
+        // No second axis: the form is exactly as tall as its sections.
+        .panelWidth(from: defaults)
     }
 
     private var header: some View {

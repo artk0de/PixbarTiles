@@ -297,33 +297,6 @@ struct MenuPanel: View {
     /// whoever is running the suite.
     private let defaults: UserDefaults
 
-    /// The width a drag in flight has reached, and nil the rest of the time.
-    ///
-    /// Optional rather than a width held for the life of the view, because a
-    /// held one goes stale: this view outlives the surface switch, so a width
-    /// dragged on the settings would be saved, come back to a panel still
-    /// holding the number it was built with, and the two surfaces would disagree
-    /// about a value they are supposed to share. Nil means "ask the defaults",
-    /// which is where the shared answer lives.
-    ///
-    /// It cannot be nil DURING a drag, though, and that is why the state exists
-    /// at all: a `UserDefaults` write publishes nothing to SwiftUI, so a panel
-    /// reading the defaults on every frame of a drag would draw the old width
-    /// until something else happened to invalidate it — and during a drag
-    /// nothing else happens.
-    @State private var draggedWidth: CGFloat?
-
-    /// What the panel is laid out at: the drag if there is one, the defaults
-    /// otherwise.
-    private var width: CGFloat { draggedWidth ?? PanelWidth.stored(in: defaults).points }
-
-    /// What the drag in flight started from: the width then, and where the
-    /// pointer was in SCREEN points. Nil when no drag is in flight.
-    ///
-    /// One value rather than two optionals, because they are only ever true
-    /// together — half a drag start is not a state this can be in.
-    @State private var dragOrigin: (width: CGFloat, pointerX: CGFloat)?
-
     /// Written out rather than left to the memberwise one, only so `defaults`
     /// can be private and still be handed in.
     init(
@@ -367,13 +340,18 @@ struct MenuPanel: View {
             lastRow
         }
         .padding(14)
-        // The stored width rather than the literal it replaced, and it is the
-        // CONTENT that carries it rather than the window. `MenuBarExtra` in
-        // `.window` style keeps its window at the content's fitting size and
-        // re-imposes that on every layout pass, so the content's width is the
-        // only thing the window will agree to be. `widthHandle` has the
-        // measurement.
-        .frame(width: width)
+        // The width the three surfaces share, and the border it is dragged by.
+        // It is the CONTENT that carries the width rather than the window:
+        // `MenuBarExtra` in `.window` style keeps its window at the content's
+        // fitting size and re-imposes that on every layout pass, so the
+        // content's width is the only thing the window will agree to be. The
+        // measurement is in `docs/HANDOFF.md`, under the panel's width
+        // belonging to the content.
+        //
+        // No second axis. The panel is exactly as tall as its rows and there is
+        // nothing for a top or bottom edge to change; only the History, which
+        // holds a list that outgrows any height, stores one.
+        .panelWidth(from: defaults)
         // On this branch rather than on `body`, and that is the point: the
         // settings and the History are drawn by the same view, and a panel that
         // asked for a reading every time somebody came back from the gear would
@@ -397,90 +375,7 @@ struct MenuPanel: View {
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Settings")
-            widthHandle
         }
-    }
-
-    /// The corner that changes how wide the panel is.
-    ///
-    /// Ours rather than the window's own, and that is a measurement rather than
-    /// a preference. The reference needed to make the real window resizable is
-    /// already there — `ee2c7c1` gave `AppDelegate` the panel's `NSWindow` — so
-    /// route one was probed on the running app before this was written.
-    /// `MenuBarExtraWindow` accepts `.resizable` into its style mask, and it
-    /// accepts a `setContentSize` to 500 points wide: the frame reads 500
-    /// immediately afterwards. Half a second later it reads 320 again. SwiftUI
-    /// keeps that window at its content's fitting size, pins `contentMinSize`
-    /// there too, and re-imposes both on every layout pass — so with the content
-    /// at a fixed `.frame(width:)` there is nowhere for a dragged size to
-    /// survive, `.resizable` or not.
-    ///
-    /// The same measurement is why a handle works where the style mask does not.
-    /// The window follows the CONTENT: the moment the gear opened, the window
-    /// went from 320x198 to 320x615 unasked, and moved itself to stay under its
-    /// menu bar item. So a width the content carries is a width the window
-    /// adopts, and SwiftUI does the anchoring.
-    private var widthHandle: some View {
-        Image(systemName: "arrow.left.and.right")
-            .font(.caption)
-            .foregroundStyle(.tertiary)
-            .padding(.leading, 6)
-            // The glyph is a few points across and a drag needs somewhere to
-            // start; without this the hit area is the ink.
-            .contentShape(Rectangle())
-            .accessibilityLabel("Panel width")
-            .help("Drag to change how wide the panel is")
-            // Set rather than pushed and popped. The panel is dismissed by a
-            // click somewhere else, which can perfectly well be a click that
-            // happens while the pointer is over this glyph — and a view torn
-            // down mid-hover never gets its `false`. A push left unbalanced
-            // follows the user into the next app as a resize cursor that nothing
-            // will take back.
-            .onHover { inside in
-                if inside { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { _ in
-                        // Measured against the pointer in SCREEN points, not
-                        // against the gesture's own translation, and the reason
-                        // is where this panel hangs. It is anchored to its menu
-                        // bar item: an item near the right of the bar grows the
-                        // window LEFTWARDS, moving the window's origin out from
-                        // under the pointer. A translation is reported in the
-                        // window's coordinates, so on that panel every point the
-                        // window grew would read as another point the pointer
-                        // had moved, and one nudge would run the width to the
-                        // ceiling by itself. Screen points are the one frame of
-                        // reference a resize does not move.
-                        let origin = dragOrigin
-                            ?? (width: width, pointerX: NSEvent.mouseLocation.x)
-                        dragOrigin = origin
-                        // Clamped against where the drag STARTED rather than
-                        // accumulated, so a drag that ran into the floor and
-                        // came back gives the width back. Accumulating would
-                        // leave the pointer somewhere the panel is not.
-                        let moved = NSEvent.mouseLocation.x - origin.pointerX
-                        draggedWidth = PanelWidth(origin.width + moved).points
-                    }
-                    .onEnded { _ in
-                        dragOrigin = nil
-                        // Saved, and only then let go of. The order is the whole
-                        // handover: the moment `draggedWidth` is nil the view is
-                        // reading the defaults again, so the defaults have to be
-                        // holding the number by then or the panel snaps back to
-                        // whatever was there before the drag.
-                        //
-                        // Written once the drag is over rather than on every
-                        // change: what reads it is the next launch and the other
-                        // two surfaces, neither of which is looking mid-drag. The
-                        // panel cannot be dismissed mid-drag either — what
-                        // dismisses it is a mouse-down elsewhere, and the mouse
-                        // is already down here.
-                        PanelWidth(width).save(to: defaults)
-                        draggedWidth = nil
-                    }
-            )
     }
 
     private var statusSection: some View {

@@ -67,12 +67,11 @@ struct HistoryMenu: View {
             }
         }
         .padding(14)
-        // The stored width, the same number the panel and the settings read, and
-        // on this surface rather than wrapped round it from `MenuPanel` for the
-        // reason `SettingsSheet` carries its own: a child's fixed frame is not
-        // something its parent can overrule, and the outer frame leaves the
-        // content centred in it.
-        .frame(width: PanelWidth.stored(in: defaults).points)
+        // The width the three surfaces share, on this surface rather than
+        // wrapped round it from `MenuPanel` for the reason `SettingsSheet`
+        // carries its own: a child's fixed frame is not something its parent can
+        // overrule, and the outer frame leaves the content centred in it.
+        .panelWidth(from: defaults)
     }
 
     private var header: some View {

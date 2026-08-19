@@ -909,15 +909,27 @@ final class StubFocusStatus: FocusStatusReading, @unchecked Sendable {
     private let lock = NSLock()
     private var accessValue: FocusAccess
     private var focused: Bool
+    private var mode: ActiveFocusMode
     private var asks = 0
 
-    init(access: FocusAccess = .notDetermined, isFocused: Bool = false) {
+    /// `activeMode` defaults to `.cannotTell` — the answer a machine without
+    /// Full Disk Access gives — so every test written before the mode could be
+    /// read still poses exactly what it posed: the fallback branch, where the
+    /// boolean above decides. Defaulted to `.noFocus` instead, it would have
+    /// made half of `FocusGateTests` unreachable without failing any of it.
+    init(
+        access: FocusAccess = .notDetermined,
+        isFocused: Bool = false,
+        activeMode: ActiveFocusMode = .cannotTell
+    ) {
         self.accessValue = access
         self.focused = isFocused
+        self.mode = activeMode
     }
 
     var access: FocusAccess { lock.withLock { accessValue } }
     var isFocused: Bool { lock.withLock { focused } }
+    var activeMode: ActiveFocusMode { lock.withLock { mode } }
     /// How many times the gate asked macOS for access.
     var accessRequests: Int { lock.withLock { asks } }
 

@@ -16,21 +16,58 @@ enum FocusAccess: Equatable, Sendable {
     case authorized
 }
 
+/// Which Focus is on, as the Do Not Disturb database has it.
+///
+/// Three answers rather than an optional identifier, because the third is not a
+/// missing value. "Nothing is on" and "I could not read the file" are opposite
+/// instructions — the first speaks, the second hands the decision back to
+/// `INFocusStatusCenter`'s boolean — and a `String?` spells them the same way.
+enum ActiveFocusMode: Equatable, Sendable {
+    /// Nothing is asserted. Spelled out rather than left as `nil` for the
+    /// reason above, and not called `none`, which would read as `Optional`'s
+    /// own at every use site that wraps this.
+    case noFocus
+    /// This mode identifier is asserted right now.
+    case mode(String)
+    /// The database could not be read, or was not the shape this app knows.
+    /// Not an error state: without Full Disk Access it is what every launch
+    /// gets, and on most machines it is the only answer this app will see.
+    case cannotTell
+}
+
 /// What macOS says about Focus.
 ///
-/// Two questions rather than one, and keeping them apart is the whole point.
+/// Three questions rather than one, and keeping them apart is the whole point.
 /// An unauthorized centre answers `isFocused == false` — the same answer as a
 /// genuinely idle Mac — so a gate that read only the second would believe no
 /// Focus is ever on and speak at three in the morning for ever, silently and by
 /// construction.
+///
+/// The third is not the framework's answer at all. Apple exposes no API for
+/// which Focus is on, so it comes off disk from behind a permission this app
+/// usually does not hold — which is why it carries a "cannot tell" of its own
+/// instead of leaning on `access`: the two refusals are granted separately and
+/// an app can easily have one and not the other.
 protocol FocusStatusReading: Sendable {
     /// Whether this app may believe the answer below.
     var access: FocusAccess { get }
     /// Whether a Focus is on, as the system reports it. Evidence only while
     /// `access` is `.authorized`.
     var isFocused: Bool { get }
+    /// WHICH Focus is on, which the two answers above cannot express and
+    /// `INFocusStatusCenter` will not say. See `DoNotDisturbDatabase` for where
+    /// it comes from and why it is usually `.cannotTell`.
+    var activeMode: ActiveFocusMode { get }
     /// Asks macOS for access. See `SystemFocusStatus` for what that costs.
     func requestAccess()
+}
+
+extension FocusStatusReading {
+    /// The conservative answer, so a centre that says nothing about the mode
+    /// behaves exactly as this app did before it could read one: the boolean
+    /// decides, and every Focus silences. A default of `.noFocus` would have
+    /// been a silent opt-in to speaking through Sleep.
+    var activeMode: ActiveFocusMode { .cannotTell }
 }
 
 /// The hours the schedule stays quiet when macOS will not say whether a Focus
@@ -135,10 +172,11 @@ enum QuietRule: Equatable, Sendable {
 struct FocusGate: Sendable {
     /// What the panel says while a Focus silences the schedule.
     ///
-    /// `INFocusStatusCenter` reports *whether* a Focus is active, never *which*
-    /// — telling Sleep from Work needs the TCC-protected Do Not Disturb
-    /// database and Full Disk Access with it — so the words name the state
-    /// rather than the Focus.
+    /// The state rather than the mode, even now that the mode is sometimes
+    /// known. A second string naming Do Not Disturb would put the permission on
+    /// the panel, which is opened to answer "is the clock alive" and is not
+    /// somewhere the user can act on Full Disk Access; the explanation belongs
+    /// behind the gear, which is where `FocusRuleLine` keeps it.
     static let duringFocus = "Focus is on"
     /// And while the user's own hours do, because macOS would not say.
     static let duringQuietHours = "quiet hours"
@@ -165,16 +203,44 @@ struct FocusGate: Sendable {
 
     /// What is silencing the schedule, or nil when nothing is.
     ///
-    /// `isFocused` is read on ONE of the two branches. Read on both — or read
-    /// before the rule is decided — an unauthorized centre's false would be an
-    /// app that believes no Focus is ever on and speaks at three in the
-    /// morning, silently and by construction.
+    /// The centre's two answers are read on ONE of the two branches. Read on
+    /// both — or read before the rule is decided — an unauthorized centre's
+    /// false would be an app that believes no Focus is ever on and speaks at
+    /// three in the morning, silently and by construction. The mode is inside
+    /// that same branch for the same reason: a database this app may not act on
+    /// is not evidence either.
     func silence(quietHours: QuietWindow) -> String? {
         switch rule(quietHours: quietHours) {
         case .focus:
-            return status.isFocused ? Self.duringFocus : nil
+            return activeFocusSilence
         case let .quietHours(window):
             return window.contains(now()) ? Self.duringQuietHours : nil
+        }
+    }
+
+    /// Which Focus is on when the database will say, and the boolean when it
+    /// will not.
+    ///
+    /// The asymmetry in the last branch is deliberate, and a future reader will
+    /// otherwise file it as a bug and remove it: told nothing about the mode,
+    /// this goes back to treating EVERY Focus as silencing. Staying quiet when
+    /// it could have spoken costs the user a joke they never hear; speaking
+    /// when it should have stayed quiet is what wakes somebody at three in the
+    /// morning. Only one of those is recoverable.
+    ///
+    /// `.noFocus` speaks without consulting the boolean, because the file is
+    /// where the boolean's own answer comes from — Control Center writes an
+    /// assertion and `INFocusStatusCenter` reports that there is one — so a
+    /// disagreement between them is the two being read a moment apart rather
+    /// than two opinions worth arbitrating.
+    private var activeFocusSilence: String? {
+        switch status.activeMode {
+        case let .mode(identifier):
+            DoNotDisturbDatabase.silencing.contains(identifier) ? Self.duringFocus : nil
+        case .noFocus:
+            nil
+        case .cannotTell:
+            status.isFocused ? Self.duringFocus : nil
         }
     }
 
@@ -190,6 +256,24 @@ struct FocusGate: Sendable {
 /// `NextRunLine` is one: what the user reads is behaviour, and a `Text` in a
 /// SwiftUI body is not somewhere behaviour can be read back from.
 enum FocusRuleLine {
+    /// What the permission buys, said where the user can act on it.
+    ///
+    /// A standing sentence rather than a line that changes with the grant, and
+    /// the reason is that the app cannot tell the two apart: a refused
+    /// permission, a moved file and a shape macOS has changed all read as
+    /// `.cannotTell`, so a line announcing "no access" would be a guess
+    /// presented as a fact. What the two states DO is certain, so that is what
+    /// this says.
+    ///
+    /// No button beside it. `x-apple.systempreferences:` URLs for this pane
+    /// were not verified to land on it, and a button that opens the wrong pane
+    /// is worse than a sentence naming the right one.
+    static let whichFocusesSilenceDependsOnFullDiskAccess =
+        "macOS tells apps only that some Focus is on, never which one. Without "
+            + "Full Disk Access every Focus silences this app; grant it in System "
+            + "Settings › Privacy & Security › Full Disk Access and only Do Not "
+            + "Disturb and Sleep do."
+
     static func text(for rule: QuietRule) -> String {
         switch rule {
         case .focus:
@@ -249,6 +333,10 @@ struct SystemFocusStatus: FocusStatusReading {
         INFocusStatusCenter.default.focusStatus.isFocused ?? false
     }
 
+    /// Read off the disk on every ask — a read this app is refused until
+    /// somebody grants Full Disk Access by hand. See `DoNotDisturbDatabase`.
+    var activeMode: ActiveFocusMode { DoNotDisturbDatabase.activeMode() }
+
     func requestAccess() {
         guard canAsk else { return }
         // The handler is deliberately empty. Measured above, it is never called
@@ -266,5 +354,112 @@ struct SystemFocusStatus: FocusStatusReading {
     private var canAsk: Bool {
         Bundle.main.bundleIdentifier != nil
             && Bundle.main.object(forInfoDictionaryKey: "NSFocusStatusUsageDescription") != nil
+    }
+}
+
+/// `~/Library/DoNotDisturb/DB/Assertions.json`, read for the one fact
+/// `INFocusStatusCenter` will not give up: WHICH Focus is on.
+///
+/// Undocumented, unsupported, and taken deliberately. There is no API for this
+/// — the centre answers `isFocused` and nothing else — so the choice was
+/// between reading the file and silencing every Focus alike, which is what the
+/// app did and what this exists to stop. The cost is stated rather than hidden:
+/// Apple may change the format in any release, and the app that reads it is
+/// asking for a key to the whole disk.
+///
+/// The read costs Full Disk Access and nothing less. Measured on this machine:
+/// the directory is the user's own, `drwxr-xr-x`, with no restricted flag, and
+/// a read still fails `EPERM` rather than `EACCES` — TCC's signature, not the
+/// file system's. A self-signed identity and a LaunchServices launch were both
+/// tried, which is what revived CoreLocation and the Focus centre here, and
+/// neither moves this one.
+enum DoNotDisturbDatabase {
+    /// The two modes this app stays quiet for.
+    ///
+    /// Matched on the IDENTIFIER, never on the `mode.name` that sits beside it
+    /// in `ModeConfigurations.json`: that name is localised — it reads "Сон"
+    /// and "Работа" on this machine — and the user can rename any Focus from
+    /// System Settings. These identifiers ship with macOS and are not editable.
+    ///
+    /// `ModeConfigurations.json` is not read at all. It could only corroborate
+    /// what these two identifiers already say, and every other mode in it is
+    /// one to speak through — including the ones a user invents, which no list
+    /// here could enumerate.
+    static let silencing: Set<String> = [
+        "com.apple.donotdisturb.mode.default",
+        "com.apple.sleep.sleep-mode",
+    ]
+
+    /// Where macOS keeps it.
+    ///
+    /// The real home directory, which this app has because it is not sandboxed.
+    /// A sandboxed one would be handed its own container here and would read a
+    /// path that does not exist — silently, as a missing file, which this app
+    /// reads as `.cannotTell` and would look exactly like a refused permission.
+    static let assertions = URL.homeDirectory
+        .appending(path: "Library/DoNotDisturb/DB/Assertions.json")
+
+    /// What the file on disk says right now.
+    ///
+    /// Read on every ask rather than cached, and the price is one 4-5 KB file
+    /// and a decode: 32 µs measured, against a gate consulted a few times every
+    /// five seconds by the label refresh. A cache would have to be invalidated
+    /// on a change nothing tells this app about, and a stale one is a Focus the
+    /// user switched off half an hour ago still holding the app quiet.
+    static func activeMode(at url: URL = assertions) -> ActiveFocusMode {
+        guard let data = try? Data(contentsOf: url) else { return .cannotTell }
+        return activeMode(inAssertions: data)
+    }
+
+    /// The same question asked of bytes, so the shape can be tested without the
+    /// permission — which the suite does not have and must never need.
+    static func activeMode(inAssertions data: Data) -> ActiveFocusMode {
+        guard
+            let file = try? JSONDecoder().decode(AssertionsFile.self, from: data),
+            let store = file.data.first
+        else { return .cannotTell }
+        // Absent is what an idle Mac was MEASURED to write: with every Focus
+        // off, the key is not in the file at all. Empty was never observed and
+        // is defended against rather than seen. Both have to mean "nothing is
+        // on" — read as an unrecognised shape, the commonest state there is
+        // would fall back to the boolean and put the old behaviour back.
+        guard let records = store.storeAssertionRecords, records.isEmpty == false else {
+            return .noFocus
+        }
+        let identifiers = records.compactMap { $0.assertionDetails?.assertionDetailsModeIdentifier }
+        // Something is asserted and this app cannot name it. Not `.noFocus`,
+        // which would speak through what might be Sleep.
+        guard identifiers.count == records.count else { return .cannotTell }
+        // Whichever one silences, if either is there. Modes do not stack today
+        // — one record, one Focus, in every capture — but the file is a list,
+        // and the quiet answer is the recoverable one if that stops being true.
+        return .mode(identifiers.first { silencing.contains($0) } ?? identifiers[0])
+    }
+
+    /// The file, with the history left out BY CONSTRUCTION.
+    ///
+    /// This is the whole defence against the trap, and it is a type rather than
+    /// a rule somebody has to keep in mind. Beside `storeAssertionRecords` the
+    /// file carries `storeInvalidationRecords` and
+    /// `storeInvalidationRequestRecords` — assertions that have ENDED, in the
+    /// same shape, wrapping the same `assertionDetailsModeIdentifier`. Captured
+    /// on an idle machine they held five records naming Do Not Disturb, Sleep
+    /// and Work while nothing at all was on. `Decodable` ignores keys a type
+    /// does not declare, so a parser written this way cannot read the history
+    /// even by accident.
+    private struct AssertionsFile: Decodable {
+        let data: [Store]
+
+        struct Store: Decodable {
+            let storeAssertionRecords: [Record]?
+        }
+
+        struct Record: Decodable {
+            let assertionDetails: Details?
+        }
+
+        struct Details: Decodable {
+            let assertionDetailsModeIdentifier: String?
+        }
     }
 }

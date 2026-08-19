@@ -132,6 +132,15 @@ struct SettingsSheet: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            // Under the line about which rule is in force, because it is the
+            // same subject one level down: that one says WHO is deciding, and
+            // this one says how much the system's answer is worth. Full Disk
+            // Access is not a permission anybody grants by accident, and an app
+            // that quietly needs one is worse than an app that says so.
+            Text(FocusRuleLine.whichFocusesSilenceDependsOnFullDiskAccess)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

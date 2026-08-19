@@ -18,12 +18,21 @@ struct SettingsSheet: View {
     /// other fields save as they are typed.
     private let loginItem: () -> LoginItemModel
 
+    /// Where the width the three surfaces share is read.
+    ///
+    /// Handed in rather than reached for, for the reason `MenuPanel` takes one:
+    /// a test can put a width in and see the sheet drawn at it, instead of the
+    /// only proof being a write into the preferences of whoever runs the suite.
+    private let defaults: UserDefaults
+
     init(
         model: AppModel,
-        loginItem: @autoclosure @escaping () -> LoginItemModel = LoginItemModel()
+        loginItem: @autoclosure @escaping () -> LoginItemModel = LoginItemModel(),
+        defaults: UserDefaults = .standard
     ) {
         _model = ObservedObject(wrappedValue: model)
         self.loginItem = loginItem
+        self.defaults = defaults
     }
 
     var body: some View {
@@ -47,7 +56,14 @@ struct SettingsSheet: View {
             LoginItemSettings(item: loginItem())
         }
         .padding(14)
-        .frame(width: 320)
+        // The stored width, the same number the panel and the History read.
+        // Wrapping this sheet in an outer `.frame(width:)` from `MenuPanel` was
+        // tried instead and does not substitute: measured, a 500-wide host round
+        // a sheet whose own frame said 320 gave 320 of content CENTRED, fields
+        // at x=104 with 90 points of nothing each side. A child's fixed frame is
+        // not something its parent can overrule, so the literal has to go rather
+        // than be wrapped.
+        .frame(width: PanelWidth.stored(in: defaults).points)
     }
 
     private var header: some View {

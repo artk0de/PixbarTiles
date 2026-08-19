@@ -297,14 +297,25 @@ struct MenuPanel: View {
     /// whoever is running the suite.
     private let defaults: UserDefaults
 
-    /// The width the panel is drawn at, live while a drag is in flight.
+    /// The width a drag in flight has reached, and nil the rest of the time.
     ///
-    /// `@State` rather than reading `PanelWidth.stored(in:)` on every body, and
-    /// that is what makes the drag visible at all: a `UserDefaults` write
-    /// publishes nothing to SwiftUI, so a panel reading the defaults each time
-    /// would draw the old width until something else happened to invalidate it —
-    /// and during a drag nothing else happens.
-    @State private var width: CGFloat
+    /// Optional rather than a width held for the life of the view, because a
+    /// held one goes stale: this view outlives the surface switch, so a width
+    /// dragged on the settings would be saved, come back to a panel still
+    /// holding the number it was built with, and the two surfaces would disagree
+    /// about a value they are supposed to share. Nil means "ask the defaults",
+    /// which is where the shared answer lives.
+    ///
+    /// It cannot be nil DURING a drag, though, and that is why the state exists
+    /// at all: a `UserDefaults` write publishes nothing to SwiftUI, so a panel
+    /// reading the defaults on every frame of a drag would draw the old width
+    /// until something else happened to invalidate it — and during a drag
+    /// nothing else happens.
+    @State private var draggedWidth: CGFloat?
+
+    /// What the panel is laid out at: the drag if there is one, the defaults
+    /// otherwise.
+    private var width: CGFloat { draggedWidth ?? PanelWidth.stored(in: defaults).points }
 
     /// What the drag in flight started from: the width then, and where the
     /// pointer was in SCREEN points. Nil when no drag is in flight.
@@ -313,11 +324,8 @@ struct MenuPanel: View {
     /// together — half a drag start is not a state this can be in.
     @State private var dragOrigin: (width: CGFloat, pointerX: CGFloat)?
 
-    /// Written out rather than left to the memberwise one, only so `width` can
-    /// start at what the last launch left. `@State`'s initial value is taken
-    /// once, when SwiftUI first builds this view's identity, and there is no
-    /// other point at which the defaults could be read without reading them on
-    /// every frame.
+    /// Written out rather than left to the memberwise one, only so `defaults`
+    /// can be private and still be handed in.
     init(
         model: AppModel,
         monitor: DeviceMonitor,
@@ -328,14 +336,15 @@ struct MenuPanel: View {
         self.monitor = monitor
         self.discovery = discovery
         self.defaults = defaults
-        _width = State(initialValue: PanelWidth.stored(in: defaults).points)
     }
 
+    /// Which surface is on screen — and the same defaults down every branch,
+    /// because the width is one number for all three of them.
     var body: some View {
         if model.settingsAreOpen {
-            SettingsSheet(model: model)
+            SettingsSheet(model: model, defaults: defaults)
         } else if model.historyIsOpen {
-            HistoryMenu(model: model)
+            HistoryMenu(model: model, defaults: defaults)
         } else {
             panel
         }
@@ -452,17 +461,24 @@ struct MenuPanel: View {
                         // came back gives the width back. Accumulating would
                         // leave the pointer somewhere the panel is not.
                         let moved = NSEvent.mouseLocation.x - origin.pointerX
-                        width = PanelWidth(origin.width + moved).points
+                        draggedWidth = PanelWidth(origin.width + moved).points
                     }
                     .onEnded { _ in
                         dragOrigin = nil
-                        // Written once the drag is over, rather than on every
-                        // change: the value is read at the next launch and
-                        // nowhere else, so a write per frame of a drag would buy
-                        // nothing. The panel cannot be dismissed mid-drag — what
+                        // Saved, and only then let go of. The order is the whole
+                        // handover: the moment `draggedWidth` is nil the view is
+                        // reading the defaults again, so the defaults have to be
+                        // holding the number by then or the panel snaps back to
+                        // whatever was there before the drag.
+                        //
+                        // Written once the drag is over rather than on every
+                        // change: what reads it is the next launch and the other
+                        // two surfaces, neither of which is looking mid-drag. The
+                        // panel cannot be dismissed mid-drag either — what
                         // dismisses it is a mouse-down elsewhere, and the mouse
                         // is already down here.
                         PanelWidth(width).save(to: defaults)
+                        draggedWidth = nil
                     }
             )
     }

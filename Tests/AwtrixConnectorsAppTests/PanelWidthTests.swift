@@ -173,3 +173,86 @@ private func hostedPanel(readingWidthFrom defaults: UserDefaults) -> NSHostingVi
 
     #expect(hostedPanel(readingWidthFrom: defaults).fittingSize.width == 320)
 }
+
+// MARK: - The width the three surfaces share
+
+/// The settings, laid out, with a login item that answers without asking the
+/// real login-item database.
+@MainActor
+private func hostedSettings(readingWidthFrom defaults: UserDefaults) -> NSHostingView<SettingsSheet> {
+    let host = NSHostingView(
+        rootView: SettingsSheet(model: testModel(), defaults: defaults)
+    )
+    host.frame = NSRect(origin: .zero, size: host.fittingSize)
+    host.layoutSubtreeIfNeeded()
+    return host
+}
+
+/// The History, laid out. Nothing has played, which is beside the point: the
+/// width is the surface's, not the list's.
+@MainActor
+private func hostedHistory(readingWidthFrom defaults: UserDefaults) -> NSHostingView<HistoryMenu> {
+    let host = NSHostingView(rootView: HistoryMenu(model: testModel(), defaults: defaults))
+    host.frame = NSRect(origin: .zero, size: host.fittingSize)
+    host.layoutSubtreeIfNeeded()
+    return host
+}
+
+// The gear is behind the same number as the panel. Widening the panel and then
+// opening the settings used to narrow the window back to 320 under the pointer —
+// the literal was on this surface too, and a width only the panel honoured was a
+// window that changed size depending on which surface you were looking at.
+@Test @MainActor func theSettingsAreLaidOutAtTheStoredWidth() throws {
+    let suite = "panel-width-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    defaults.set(480.0, forKey: PanelWidth.storageKey)
+
+    #expect(hostedSettings(readingWidthFrom: defaults).fittingSize.width == 480)
+}
+
+// The same for the History, and the same reason.
+@Test @MainActor func theHistoryIsLaidOutAtTheStoredWidth() throws {
+    let suite = "panel-width-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    defaults.set(480.0, forKey: PanelWidth.storageKey)
+
+    #expect(hostedHistory(readingWidthFrom: defaults).fittingSize.width == 480)
+}
+
+// What the three tests above cannot say separately: that it is ONE number. Three
+// surfaces each honouring a width of its own would pass all three and still
+// leave a window that resizes itself every time somebody presses the gear. The
+// claim is that they agree, so it is asserted as agreement.
+@Test @MainActor func theThreeSurfacesAreLaidOutAtOneWidth() throws {
+    let suite = "panel-width-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    defaults.set(520.0, forKey: PanelWidth.storageKey)
+
+    let panel = hostedPanel(readingWidthFrom: defaults).fittingSize.width
+    let settings = hostedSettings(readingWidthFrom: defaults).fittingSize.width
+    let history = hostedHistory(readingWidthFrom: defaults).fittingSize.width
+
+    #expect(panel == 520)
+    #expect(settings == panel)
+    #expect(history == panel)
+}
+
+// The floor is the whole surface's, not the panel's. A settings sheet that took
+// a hand-typed 12 at face value would be the unrecoverable state the clamp
+// exists to prevent, reached through the one surface the drag is not even on.
+@Test @MainActor func aStoredWidthUnderTheFloorDrawsEverySurfaceAtTheFloor() throws {
+    let suite = "panel-width-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    defaults.set(12.0, forKey: PanelWidth.storageKey)
+
+    #expect(hostedSettings(readingWidthFrom: defaults).fittingSize.width == PanelWidth.smallest)
+    #expect(hostedHistory(readingWidthFrom: defaults).fittingSize.width == PanelWidth.smallest)
+}

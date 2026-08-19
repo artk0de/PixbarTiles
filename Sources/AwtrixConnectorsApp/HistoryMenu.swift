@@ -30,6 +30,18 @@ enum PlayedAtLine {
 struct HistoryMenu: View {
     @ObservedObject var model: AppModel
 
+    /// Where the width the three surfaces share is read.
+    ///
+    /// Handed in rather than reached for, for the reason `MenuPanel` takes one:
+    /// a test can put a width in and see the History drawn at it, instead of the
+    /// only proof being a write into the preferences of whoever runs the suite.
+    private let defaults: UserDefaults
+
+    init(model: AppModel, defaults: UserDefaults = .standard) {
+        _model = ObservedObject(wrappedValue: model)
+        self.defaults = defaults
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -55,7 +67,12 @@ struct HistoryMenu: View {
             }
         }
         .padding(14)
-        .frame(width: 320)
+        // The stored width, the same number the panel and the settings read, and
+        // on this surface rather than wrapped round it from `MenuPanel` for the
+        // reason `SettingsSheet` carries its own: a child's fixed frame is not
+        // something its parent can overrule, and the outer frame leaves the
+        // content centred in it.
+        .frame(width: PanelWidth.stored(in: defaults).points)
     }
 
     private var header: some View {

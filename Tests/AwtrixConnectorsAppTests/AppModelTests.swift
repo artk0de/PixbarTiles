@@ -382,6 +382,185 @@ import Testing
     await subject.teardown()
 }
 
+// MARK: - A relaunch resumes the schedule rather than restarting it
+
+// Measured on the hardware: an hourly connector, the app last started at
+// 16:07:49, so the first anecdote was due at 17:07:49 — and it had been
+// relaunched five times inside the preceding hour, each relaunch pushing that
+// first delivery a whole hour further out. Somebody who quits and reopens now
+// and then never hears one at all.
+//
+// The sleep-first rule is not what was wrong and is not weakened here. What was
+// missing is the memory of when this connector last delivered, so the elapsed
+// time counts against the wait and the app owes the remainder of it rather than
+// the whole of it again.
+@Test @MainActor func aRelaunchWaitsOutWhatIsLeftOfTheIntervalRatherThanAWholeOneAgain()
+    async throws
+{
+    let store = InMemorySettingsStore()
+    // Position 11 is the hour, and it is the position the reported defect was
+    // measured at rather than a round number picked to read well.
+    store.save(
+        ConnectorSettings(
+            intervalPosition: 11, lastDeliveredAt: Date().addingTimeInterval(-55 * 60)
+        ),
+        for: "stub"
+    )
+    let schedule = Metronome()
+    let subject = testModel(store: store, sleep: schedule.sleep)
+
+    subject.start()
+    #expect(await waitUntil { schedule.durations.isEmpty == false })
+
+    // About five minutes rather than exactly five: the remainder is measured
+    // against a wall clock this test cannot stop. A clock injected for the sake
+    // of this one line would be a seam in the model that nothing else wants.
+    let first = try #require(schedule.durations.first)
+    #expect(abs(first - 5 * 60) < 5)
+    await subject.teardown()
+}
+
+// The other half of the same rule, and the reason a missing instant is not
+// folded into a zero: a connector with nothing behind it owes no remainder, so
+// it waits the whole cadence exactly as it did before any of this. Firing at
+// launch instead is what the sleep-first rule was put there to prevent.
+@Test @MainActor func aConnectorThatHasNeverDeliveredStillWaitsAWholeInterval() async {
+    let store = InMemorySettingsStore()
+    store.save(ConnectorSettings(intervalPosition: 11), for: "stub")
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(host: host, store: store, sleep: schedule.sleep)
+
+    subject.start()
+    #expect(await waitUntil { schedule.durations == [60 * 60] })
+
+    #expect(host.calls.contains("run:stub") == false)
+    await subject.teardown()
+}
+
+// A gap longer than the interval owes ONE delivery. Four anecdotes queued up
+// for having closed the laptop over lunch is a punishment rather than a
+// catch-up, and it is the choice this branch has already made twice: a meeting
+// that swallows four beats releases one, and an outage that swallows six
+// replays none of them.
+//
+// Two claims, and the second is what "resume the cadence" means: the remainder
+// is clamped at zero rather than left negative, and the beat after the overdue
+// one asks for a whole interval again rather than another nothing.
+@Test @MainActor func aGapOfSeveralIntervalsOwesOneDeliveryRatherThanAQueueOfThem() async {
+    let store = InMemorySettingsStore()
+    store.save(
+        ConnectorSettings(
+            intervalPosition: 11, lastDeliveredAt: Date().addingTimeInterval(-5 * 60 * 60)
+        ),
+        for: "stub"
+    )
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(host: host, store: store, sleep: schedule.sleep)
+
+    subject.start()
+    #expect(await waitUntil { schedule.durations == [0] })
+    // Released here rather than arriving on its own, because that is the claim:
+    // an overdue relaunch reaches its delivery through the sleep and the tick,
+    // where every hold the schedule answers to is asked of it unchanged.
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { schedule.durations == [0, 60 * 60] })
+
+    #expect(host.calls.filter { $0 == "run:stub" } == ["run:stub"])
+    await subject.teardown()
+}
+
+// Dragging the slider rebuilds the schedule, and the rebuilt one starts from
+// NOW. The remembered instant belongs to the launch and is spent by it: a
+// resume that survived into a settings change would fire a delivery on the
+// gesture `commit` rules out in as many words, and switching a connector on
+// would deliver the moment its switch moved.
+@Test @MainActor func draggingTheSliderReschedulesFromNowRatherThanFromTheRememberedInstant()
+    async
+{
+    let connector = StubConnector()
+    let store = InMemorySettingsStore()
+    store.save(
+        ConnectorSettings(
+            intervalPosition: 11, lastDeliveredAt: Date().addingTimeInterval(-55 * 60)
+        ),
+        for: connector.id
+    )
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [connector], host: host, store: store, sleep: schedule.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { schedule.durations.count == 1 })
+    subject.setIntervalPosition(5, for: connector)
+    #expect(await waitUntil { schedule.durations.count == 2 })
+
+    // Everything after the launch's own wait is the half hour just chosen,
+    // with nothing subtracted from it.
+    #expect(Array(schedule.durations.dropFirst()) == [30 * 60])
+    #expect(host.calls.contains("run:stub") == false)
+    await subject.teardown()
+}
+
+// What the next launch reads, written by the run that earned it. Beside the
+// interval rather than in a store of its own: one key per connector, one shape
+// to decode, and nothing that can fall out of step with the settings the slider
+// writes through the same path.
+@Test @MainActor func aDeliveryIsWrittenDownWhereTheNextLaunchWillReadIt() async throws {
+    let connector = StubConnector()
+    let store = InMemorySettingsStore()
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [connector], host: host, store: store, sleep: schedule.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { store.storedSettings(for: connector.id)?.lastDeliveredAt != nil })
+
+    let delivered = try #require(store.storedSettings(for: connector.id)?.lastDeliveredAt)
+    // The instant of the delivery, not of the launch that scheduled it.
+    #expect(abs(delivered.timeIntervalSinceNow) < 5)
+    await subject.teardown()
+}
+
+// The weather is the connector this deliberately does NOT apply to, and stating
+// why is the point: an ambient connector is already delivered at launch, on the
+// first poll that finds the clock answering. Resuming would owe it a second
+// delivery seconds after the first, and the schedule's copy would go out while
+// the device state is still `.unknown` — the write `deliverWhatTheLaunchOwes`
+// exists to refuse. One launch owes one delivery per connector; `isAmbient` is
+// what decides which of the two mechanisms pays it.
+@Test @MainActor func anAmbientConnectorIsLeftToItsLaunchDeliveryRatherThanAlsoResuming() async {
+    let store = InMemorySettingsStore()
+    store.save(
+        ConnectorSettings(
+            intervalPosition: 11, lastDeliveredAt: Date().addingTimeInterval(-5 * 60 * 60)
+        ),
+        for: ambientConnector.id
+    )
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [ambientConnector], host: host, store: store, sleep: schedule.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { host.calls.contains("run:ambient") })
+
+    // The whole hour the settings name, rather than the nothing an overdue
+    // resume would have asked for.
+    #expect(await waitUntil { schedule.durations == [60 * 60] })
+    #expect(host.calls.filter { $0 == "run:ambient" } == ["run:ambient"])
+    await subject.teardown()
+}
+
 // MARK: - Quit
 
 // Cancelling a delivery does not release its caller: the held banner's dismiss

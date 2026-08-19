@@ -812,7 +812,10 @@ final class AppModel: ObservableObject {
         noteLaunchDeliveries()
         startMonitoring()
         startWatchingMicrophones()
-        for connector in registry.all { reschedule(connector) }
+        // The one caller that resumes. A cadence describes the gap BETWEEN
+        // deliveries, and every OTHER caller of `reschedule` is a settings
+        // change, where the gap the user just chose starts now.
+        for connector in registry.all { reschedule(connector, resuming: true) }
         restockAtLaunch()
     }
 
@@ -1154,7 +1157,13 @@ final class AppModel: ObservableObject {
         for id in due { await runAndReport(id) }
     }
 
-    private func reschedule(_ connector: any Connector) {
+    /// Builds this connector's delivery loop, replacing whatever it had.
+    ///
+    /// - Parameter resuming: whether the FIRST sleep is the remainder of the
+    ///   interval rather than the whole of it. Set by the launch and by nothing
+    ///   else; `noteNextRun` is where the remainder is worked out and where the
+    ///   argument for it lives.
+    private func reschedule(_ connector: any Connector, resuming: Bool = false) {
         timers.removeValue(forKey: connector.id)?.cancel()
         // Whatever the replaced schedule was going to wake at is not what the
         // new one will, and a refresh landing between here and the first
@@ -1169,7 +1178,24 @@ final class AppModel: ObservableObject {
         let id = connector.id
         let interval = settings.interval
         let sleep = self.scheduleSleep
+        // An ambient connector is deliberately NOT resumed, and the two halves
+        // are one sentence rather than two rules: a launch owes each connector
+        // one delivery, and `isAmbient` decides which mechanism pays it.
+        // `deliverWhatTheLaunchOwes` pays the weather's, on the first poll that
+        // finds the clock answering. Resuming it as well would owe a second
+        // delivery seconds after the first — and the schedule's copy would go
+        // out at the instant `start()` returns, while the device state is still
+        // `.unknown`, which is exactly the write that mechanism exists to
+        // refuse. Nothing is lost by letting its cadence start from the launch:
+        // the reading is already on the matrix by then, which is the only thing
+        // resuming would have bought it.
+        let resumesFromTheLastDelivery = resuming && connector.isAmbient == false
         timers[id] = Task { [weak self] in
+            // Spent by the first turn and never offered to a second. What is
+            // owed is the remainder of ONE interval; a loop that kept asking
+            // would measure every later beat against an instant that only gets
+            // older, and would end up sleeping nothing at all for ever.
+            var owesTheRemainder = resumesFromTheLastDelivery
             while !Task.isCancelled {
                 // Asked every turn, not once when the schedule is built. The
                 // answer is the interval until this connector starts failing,
@@ -1178,8 +1204,11 @@ final class AppModel: ObservableObject {
                 // a released model is not held alive across the sleep by its
                 // own timer.
                 guard
-                    let delay = await self?.noteNextRun(id, interval: interval)
+                    let delay = await self?.noteNextRun(
+                        id, interval: interval, resuming: owesTheRemainder
+                    )
                 else { return }
+                owesTheRemainder = false
                 // The sleep comes first, so enabling a connector — or dragging
                 // its interval slider, which rebuilds the schedule just the
                 // same — does not fire a delivery on the spot. That rule holds
@@ -1187,14 +1216,28 @@ final class AppModel: ObservableObject {
                 // must not shout an anecdote at whoever just logged in, and a
                 // slider drag must not touch the clock at all.
                 //
-                // A LAUNCH is now the exception, and only for a connector whose
-                // output is ambient — an app in the device's loop is furniture
-                // rather than an event, and the clock does not have it until
-                // one delivery has been made. That delivery is deliberately not
-                // made from here: this task is rebuilt on every settings
-                // change, so a first-turn delivery in this loop would fire on
-                // the two gestures the paragraph above rules out. It belongs to
-                // the launch, and `deliverWhatTheLaunchOwes` is where it lives.
+                // What a LAUNCH changes is how LONG that first sleep is, never
+                // whether there is one. The time since the last delivery is
+                // taken off it — `noteNextRun` argues for that — so a relaunch
+                // 55 minutes into an hourly cadence waits out the five that are
+                // left, and one that is already past due waits out nothing. The
+                // delivery still arrives the way a due beat does, out of this
+                // sleep and through the tick below, where every hold is asked
+                // of it unchanged. That is what a shorter sleep buys over a
+                // call: an overdue relaunch against an unreachable clock is
+                // held exactly as an overdue beat is.
+                //
+                // Which leaves one launch delivery that is NOT made from here,
+                // and it is the ambient connector's — an app in the device's
+                // loop is furniture rather than an event, and the clock does
+                // not have it at all until one delivery has been made, however
+                // little of its cadence is left. It cannot come from this task,
+                // because this task is rebuilt on every settings change and a
+                // first-turn delivery in this loop would fire on the two
+                // gestures the first paragraph rules out. It belongs to the
+                // launch, and `deliverWhatTheLaunchOwes` is where it lives —
+                // which is also why it is the one kind of connector this loop
+                // does not resume; see `resumesFromTheLastDelivery` above.
                 do { try await sleep(delay) } catch { return }
                 // Returned on, not swallowed. A cancelled sleep is the quit
                 // path, and carrying on into the tick would start one more
@@ -1212,8 +1255,38 @@ final class AppModel: ObservableObject {
     /// with the schedule right up until the retry policy shortened a wait — and
     /// the occasions it then disagreed on are exactly the ones somebody opened
     /// the panel to ask about.
-    private func noteNextRun(_ id: String, interval: TimeInterval) async -> TimeInterval {
-        let delay = await host.nextDelay(connectorId: id, interval: interval)
+    ///
+    /// - Parameter resuming: true on the first turn after a launch, and there
+    ///   only. A cadence is a claim about the gaps BETWEEN deliveries, and a
+    ///   launch that started the gap over is what made an hourly connector
+    ///   inaudible to anybody who quits and reopens: measured on this machine,
+    ///   five relaunches inside one hour and five fresh hours, so the first
+    ///   anecdote was never reached. What is subtracted is the time since the
+    ///   connector last delivered — see `whatIsLeftOf(_:for:)`.
+    ///
+    ///   The FIRST turn only, because it is the only one with a gap behind it
+    ///   that this process did not sleep through. Every later beat is measured
+    ///   from a delivery this loop itself made, and re-reading the record there
+    ///   would subtract the same elapsed time twice.
+    ///
+    ///   And a LAUNCH only, because `reschedule` is what a settings change
+    ///   calls as well: a resume that reached one would fire a delivery on the
+    ///   slider drag `commit` rules out in as many words, and on the gesture
+    ///   that switches a connector on.
+    ///
+    ///   A parameter threaded from `start()` rather than a debt written down in
+    ///   the manner of `launchDeliveriesOwed`. That one is a debt because it
+    ///   outlives the turn that records it and is spent by a different loop
+    ///   entirely; this is spent by the first turn of the loop the same call
+    ///   starts. A set would also have to be drained for the connectors that
+    ///   never get a loop — a connector switched OFF at launch would keep its
+    ///   entry and spend it the moment the user switched it on, which is the
+    ///   one gesture this must not fire on.
+    private func noteNextRun(
+        _ id: String, interval: TimeInterval, resuming: Bool
+    ) async -> TimeInterval {
+        let wait = await host.nextDelay(connectorId: id, interval: interval)
+        let delay = resuming ? whatIsLeftOf(wait, for: id) : wait
         // Asked even while the clock is unreachable, and the answer is still
         // slept: the pause is not sticky, the beat is kept, and the first tick
         // after the device answers delivers. What changes is only what the
@@ -1226,6 +1299,33 @@ final class AppModel: ObservableObject {
         scheduledDue[id] = Date().addingTimeInterval(delay)
         publishNextRun(id)
         return delay
+    }
+
+    /// How much of a wait is left, counting from this connector's last
+    /// delivery.
+    ///
+    /// Clamped at zero rather than allowed to go negative, and that clamp IS
+    /// the no-backlog rule: a laptop shut for four intervals owes one delivery,
+    /// not four. Four anecdotes in a burst is a punishment for having gone
+    /// away, and it is the choice this app has already made twice — a meeting
+    /// that swallows four beats releases one when it ends, and an outage that
+    /// swallows six replays none of them. Nothing counts the missed beats, on
+    /// purpose: a count is what a backlog is made of.
+    ///
+    /// Never longer than the wait either, which only decides anything when the
+    /// stored instant is in the FUTURE — a clock moved back, a machine restored
+    /// from a backup, settings carried across a time zone. Subtracted straight,
+    /// that would give a remainder longer than the cadence the user chose, and
+    /// the connector would go quiet for as long as the clock was wrong.
+    ///
+    /// Nil is not zero. A connector that has never delivered has no gap behind
+    /// it, so it waits the whole interval exactly as it did before any of this;
+    /// firing at launch instead is what the sleep-first rule exists to prevent.
+    /// It is also why the record is an optional instant rather than one
+    /// defaulted to the epoch, which would make every fresh connector overdue.
+    private func whatIsLeftOf(_ wait: TimeInterval, for id: String) -> TimeInterval {
+        guard let delivered = chosen[id]?.lastDeliveredAt else { return wait }
+        return min(wait, max(0, wait - Date().timeIntervalSince(delivered)))
     }
 
     /// Writes one connector's line from what is true now.
@@ -1476,6 +1576,13 @@ final class AppModel: ObservableObject {
     /// word squeezed into this one, and that is a design decision nobody has
     /// asked for yet.
     private func reportOutcome(_ result: RunResult, for id: String) {
+        // Above the guard, never below it. What that guard decides is whose
+        // outcome the panel gets to SHOW — an earlier run's word is dropped
+        // while a later one is still going — and a delivery that happened is a
+        // fact about the cadence whether or not there is a free line to say it
+        // on. Below it, two overlapping runs would leave the first one's
+        // delivery unrecorded and the next launch measuring from before it.
+        if case .delivered = result { noteDelivery(id) }
         outstanding[id, default: 1] -= 1
         guard outstanding[id, default: 0] <= 0 else { return }
         record(result, for: id)
@@ -1505,6 +1612,33 @@ final class AppModel: ObservableObject {
 
     private func record(_ result: RunResult, for id: String) {
         lastResults[id] = Self.words(for: result)
+    }
+
+    /// Writes down that this connector has just put something on the clock, for
+    /// the launch after this one to measure its first sleep from.
+    ///
+    /// Off the OUTCOME rather than off the call. A run that failed or was
+    /// skipped delivered nothing, and a cadence measured from attempts would
+    /// slip a whole interval every time the feed was down — the connector
+    /// waiting out an hour it had already waited.
+    ///
+    /// Through the store and the key the slider already writes, because the two
+    /// are read together: `settings(for:)` is what the schedule asks, and a
+    /// record kept beside it would be a second key to write, migrate and delete
+    /// in step for ever. `chosen` is updated as well as the store, not instead
+    /// of it — the next `commit` builds what it saves out of `chosen`, so a
+    /// toggle or a slider drag would otherwise write back a copy that had
+    /// forgotten the delivery.
+    ///
+    /// An id with nothing resolved against it is left alone. `init` gives every
+    /// registered connector an entry, so this is an id the registry does not
+    /// have, and inventing a row of choices in the store for one is worse than
+    /// forgetting a delivery nobody can schedule anyway.
+    private func noteDelivery(_ id: String) {
+        guard var settings = chosen[id] else { return }
+        settings.lastDeliveredAt = Date()
+        chosen[id] = settings
+        store.save(settings, for: id)
     }
 
     /// What a delivery's outcome is called, in the words both surfaces use.

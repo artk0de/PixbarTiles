@@ -1,6 +1,8 @@
 import Foundation
 
-/// What the user decided about one connector: whether it runs, and how often.
+/// What the user decided about one connector — whether it runs, and how often —
+/// and the one thing the user did not decide that the cadence is meaningless
+/// without.
 ///
 /// The interval is stored as a scale position rather than a duration, because
 /// the position is what the slider in the menu binds to. Storing seconds would
@@ -9,11 +11,46 @@ import Foundation
 public struct ConnectorSettings: Sendable, Codable, Equatable {
     public var isEnabled: Bool
     public var intervalPosition: Int
+    /// When this connector last put something on the clock, or nil while it
+    /// never has.
+    ///
+    /// Not a decision, and it is here anyway. "Every half hour" is a claim
+    /// about the gaps BETWEEN deliveries, and a cadence with no last delivery
+    /// behind it can only be measured from the launch — which is the defect
+    /// this field exists for: five relaunches inside an hour, each one starting
+    /// the hour again, and an hourly connector that is never heard from. The
+    /// instant is what the interval is measured from, so the two travel
+    /// together or the pair is only ever half true.
+    ///
+    /// A record of its own — a second `UserDefaults` key, its own store — was
+    /// the alternative, and it buys a struct that is purely the user's choices
+    /// at the cost of two keys per connector that must be written, migrated and
+    /// deleted in step. `SettingsStore` already answers "what is true of this
+    /// connector, across launches", and a second store answering half of the
+    /// same question is the thing that drifts.
+    ///
+    /// Optional rather than defaulted to the epoch or to the launch. Both of
+    /// those are instants, so both would read as a delivery that happened, and
+    /// the distance from either one decides how long the first sleep is — the
+    /// epoch makes every fresh connector overdue and the launch makes the
+    /// remembering pointless. Never delivered is not an instant, so it is not
+    /// stored as one.
+    ///
+    /// Decoded with `decodeIfPresent`, which is what a synthesized `Codable`
+    /// does for an optional: a key written before this field existed still
+    /// decodes, and the connector reads as one that has never delivered.
+    /// Anything else would fail the decode, and a failed decode is folded into
+    /// "never configured" — resetting every interval the user had chosen, on
+    /// the launch that introduced the field.
+    public var lastDeliveredAt: Date?
 
     /// Position 5 on the scale is thirty minutes.
-    public init(isEnabled: Bool = true, intervalPosition: Int = 5) {
+    public init(
+        isEnabled: Bool = true, intervalPosition: Int = 5, lastDeliveredAt: Date? = nil
+    ) {
         self.isEnabled = isEnabled
         self.intervalPosition = intervalPosition
+        self.lastDeliveredAt = lastDeliveredAt
     }
 
     public var interval: TimeInterval {

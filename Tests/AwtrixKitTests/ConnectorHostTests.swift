@@ -1227,3 +1227,47 @@ private func staysFalse(
 
     #expect(store.storedSettings(for: "stub") == nil)
 }
+
+// MARK: - When a connector last delivered
+
+// The instant the schedule resumes from, and the whole reason it is on
+// `ConnectorSettings` rather than in a record of its own: it has to survive the
+// process that wrote it, and this is the path that already does. Read back
+// through a SECOND store over the same defaults, because that is what a
+// relaunch is — the instance that wrote it is gone.
+@Test func theInstantOfTheLastDeliverySurvivesTheUserDefaultsStore() throws {
+    let suite = "connector-host-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let delivered = Date(timeIntervalSince1970: 1_755_000_000)
+    UserDefaultsSettingsStore(defaults: defaults)
+        .save(
+            ConnectorSettings(intervalPosition: 11, lastDeliveredAt: delivered), for: "stub"
+        )
+
+    let read = try #require(
+        UserDefaultsSettingsStore(defaults: defaults).storedSettings(for: "stub")
+    )
+    #expect(read.lastDeliveredAt == delivered)
+    #expect(read.intervalPosition == 11)
+}
+
+// A key written before there was an instant to write is still a choice the user
+// made. The alternative is what `anUndecodableKeyReadsAsNeverConfigured` does
+// on purpose for a corrupt key and must not do here: fold the decode failure
+// into "never configured", which on the launch that introduced the field would
+// silently reset every connector the user had ever configured.
+@Test func settingsStoredBeforeThereWasADeliveryInstantStillRead() throws {
+    let suite = "connector-host-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set(
+        Data(#"{"isEnabled":true,"intervalPosition":11}"#.utf8), forKey: "connector.stub"
+    )
+
+    let read = try #require(
+        UserDefaultsSettingsStore(defaults: defaults).storedSettings(for: "stub")
+    )
+    #expect(read.intervalPosition == 11)
+    #expect(read.lastDeliveredAt == nil)
+}

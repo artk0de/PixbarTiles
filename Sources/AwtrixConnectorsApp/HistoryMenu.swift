@@ -1,3 +1,4 @@
+import AppKit
 import AwtrixKit
 import SwiftUI
 
@@ -37,9 +38,54 @@ struct HistoryMenu: View {
     /// only proof being a write into the preferences of whoever runs the suite.
     private let defaults: UserDefaults
 
-    init(model: AppModel, defaults: UserDefaults = .standard) {
+    /// How much display there is to hang this surface in.
+    ///
+    /// Handed in for the reason `defaults` is: a test has no screen worth
+    /// speaking of, and the claim worth proving — that a History taller than the
+    /// display is cut down to it — cannot be posed against whatever monitor the
+    /// suite happens to be running on.
+    private let screenHeight: CGFloat
+
+    /// What is left of the display once the menu bar and the Dock have had
+    /// theirs, which is what `visibleFrame` answers.
+    ///
+    /// `NSScreen.main` is the screen with the keyboard focus, which is not
+    /// necessarily the one the menu bar item was clicked on. It is the closest
+    /// public answer — a menu bar extra does not tell anybody which screen its
+    /// window went to — and being wrong means clamping against the wrong display
+    /// of a multi-monitor setup, not against nothing.
+    static var availableScreenHeight: CGFloat {
+        NSScreen.main?.visibleFrame.height ?? HistoryHeight.shortestDisplay
+    }
+
+    /// What a drag in flight has reached, and nil the rest of the time — for the
+    /// reason `SharedPanelWidth` keeps the width the same way: a `UserDefaults`
+    /// write publishes nothing to SwiftUI, so a surface reading the defaults on
+    /// every frame of a drag would draw the old height the whole way down.
+    @State private var draggedHeight: CGFloat?
+
+    init(
+        model: AppModel,
+        defaults: UserDefaults = .standard,
+        screenHeight: CGFloat = HistoryMenu.availableScreenHeight
+    ) {
         _model = ObservedObject(wrappedValue: model)
         self.defaults = defaults
+        self.screenHeight = screenHeight
+    }
+
+    private var height: CGFloat {
+        draggedHeight ?? HistoryHeight.stored(in: defaults, fittingInto: screenHeight).points
+    }
+
+    /// The height, as somewhere the border can write. The setter is where the
+    /// clamp is, so a drag meets the floor and the screen as it happens rather
+    /// than when the button comes up.
+    private var heightBinding: Binding<CGFloat> {
+        Binding(
+            get: { height },
+            set: { draggedHeight = HistoryHeight($0, fittingInto: screenHeight).points }
+        )
     }
 
     var body: some View {
@@ -71,7 +117,23 @@ struct HistoryMenu: View {
         // wrapped round it from `MenuPanel` for the reason `SettingsSheet`
         // carries its own: a child's fixed frame is not something its parent can
         // overrule, and the outer frame leaves the content centred in it.
-        .panelWidth(from: defaults)
+        //
+        // And the second axis, which only this surface has — but only while
+        // there is a list to resize. With nothing played yet the surface is one
+        // line of text, and a top or bottom edge would show a resize cursor and
+        // then move nothing, which is the same lie as a border that resizes
+        // silently told from the other side.
+        .panelWidth(
+            from: defaults,
+            alsoResizing: model.history.isEmpty ? nil : heightBinding
+        ) {
+            // The width's own save is `SharedPanelWidth`'s; this is the half it
+            // cannot know about. Saved before the state is let go of, for the
+            // same reason and in the same order: the moment `draggedHeight` is
+            // nil the list is reading the defaults again.
+            HistoryHeight(height, fittingInto: screenHeight).save(to: defaults)
+            draggedHeight = nil
+        }
     }
 
     private var header: some View {
@@ -85,12 +147,24 @@ struct HistoryMenu: View {
         }
     }
 
-    /// Scrolled, and capped rather than left to grow.
+    /// Scrolled, and as tall as it was last left rather than as tall as its
+    /// contents.
     ///
     /// Ten days of a half-hourly connector is a few hundred entries, and a menu
-    /// that tall is one macOS draws off the bottom of the screen. Keyed by the
-    /// anecdote's id, which is the feed's guid and is unique by the requirement
-    /// that nothing is ever played twice.
+    /// that tall is one macOS draws off the bottom of the screen. The height is
+    /// stored, and the scroll view is what makes storing one honest: it is a
+    /// viewport over the list rather than a cut through it, so the entries below
+    /// the fold are a scroll away instead of gone.
+    ///
+    /// An exact height and not `maxHeight:`, which is what the literal 280 was.
+    /// Capped at a maximum, a short list takes only what it needs — and then
+    /// dragging the bottom edge of a History with three jokes in it moves
+    /// nothing at all, which is precisely the border that cannot be told from
+    /// one that does not work. A stored height is a size somebody chose, and it
+    /// is honoured whether the list fills it or not.
+    ///
+    /// Keyed by the anecdote's id, which is the feed's guid and is unique by the
+    /// requirement that nothing is ever played twice.
     private var entries: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
@@ -99,7 +173,7 @@ struct HistoryMenu: View {
                 }
             }
         }
-        .frame(maxHeight: 280)
+        .frame(height: height)
     }
 
     /// The joke, when it played, and the two things that can be done with it.

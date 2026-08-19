@@ -97,12 +97,15 @@ final class SettleClock: @unchecked Sendable {
 
 /// Polls until the condition holds or the wait runs out. Returns rather than
 /// asserting, so the failure is reported by the expectation that named the rule.
+///
+/// The budget is `pollingBudget`, never a number written here: this helper is
+/// the one that was left at two seconds when its twin was raised to five.
 @discardableResult
 @MainActor
 private func waitUntil(
-    _ condition: @MainActor () -> Bool, limit: TimeInterval = 2
+    _ condition: @MainActor () -> Bool, limit: TimeInterval? = nil
 ) async -> Bool {
-    let deadline = Date().addingTimeInterval(limit)
+    let deadline = Date().addingTimeInterval(waitBudget(limit))
     while Date() < deadline {
         if condition() { return true }
         try? await Task.sleep(for: .milliseconds(1))

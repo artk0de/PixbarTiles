@@ -234,6 +234,37 @@ final class Metronome: @unchecked Sendable {
     }
 }
 
+/// How long a poll in this target waits before it gives up.
+///
+/// One number for the whole target, stated here because it drifted the other
+/// way: the raise from two seconds to five landed on this copy and not on the
+/// kit tests', and `startingAgainReplacesTheBrowseRatherThanAddingOne` went red
+/// four times in a single 30-run pass because of the copy left behind.
+///
+/// The same five seconds as `AwtrixKitTests/Waiting.swift`. Test targets cannot
+/// import each other, so the budget is stated twice on purpose, and each
+/// statement is pinned by a test named for the agreement.
+let pollingBudget: TimeInterval = 5
+
+/// The budget a poll with no limit of its own uses.
+///
+/// A function rather than a default argument, and that is the whole point: a
+/// default argument cannot be read back by anything, which is exactly why one
+/// copy of this rule sat at two seconds for as long as it did. Resolved here,
+/// the number has one site per target and a test can state it.
+func waitBudget(_ limit: TimeInterval?) -> TimeInterval { limit ?? pollingBudget }
+
+// The two targets share one machine, one main actor and a growing population of
+// synchronous renders, so this is headroom against LOAD rather than against the
+// work being waited for. It has to be the same headroom on both sides or the
+// tighter side is the one that flakes, which is what happened.
+@Test func theWaitBudgetInTheAppTestsIsTheFiveSecondsTheKitTestsAlsoUse() {
+    #expect(waitBudget(nil) == 5)
+    // And a caller that names its own window still gets it: the constant is the
+    // fallback, not an override.
+    #expect(waitBudget(0.05) == 0.05)
+}
+
 /// Polls `condition` until it holds or the wait runs out.
 ///
 /// The alternative is a fixed sleep, which is either too short on a loaded
@@ -256,9 +287,9 @@ final class Metronome: @unchecked Sendable {
 @discardableResult
 @MainActor
 func waitUntil(
-    _ condition: @MainActor () -> Bool, limit: TimeInterval = 5
+    _ condition: @MainActor () -> Bool, limit: TimeInterval? = nil
 ) async -> Bool {
-    let deadline = Date().addingTimeInterval(limit)
+    let deadline = Date().addingTimeInterval(waitBudget(limit))
     while Date() < deadline {
         if condition() { return true }
         try? await Task.sleep(for: .milliseconds(1))

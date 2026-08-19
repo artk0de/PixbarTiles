@@ -334,8 +334,12 @@ private func clip(_ path: String = "/tmp/a.wav") -> SpokenClip {
 /// For a condition that must NOT come true, use `staysFalse(for:_:)` — this one
 /// times out silently, which is the wrong shape for an assertion and makes the
 /// passing case pay the whole budget.
+/// The budget is `pollingBudget`, for the reason the discovery tests' copy
+/// reads it: three wait helpers with three numbers in them is how one of them
+/// gets raised and the others do not.
 private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
-    for _ in 0..<500 {
+    let deadline = Date().addingTimeInterval(waitBudget(nil))
+    while Date() < deadline {
         if condition() { return }
         try await Task.sleep(nanoseconds: 1_000_000)
     }

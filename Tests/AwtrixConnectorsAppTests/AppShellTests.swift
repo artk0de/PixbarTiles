@@ -253,6 +253,44 @@ private func scratchStore() -> URL {
     #expect(body.contains("/ICONS/9039.gif"))
 }
 
+// The same argument one field over, and the one the final review found still
+// open: the record of the overlay this app borrowed has to outlive the process
+// that borrowed it. `live()` handing `ConnectorHost` the in-memory default
+// meant a force quit — or any teardown that outran the quit budget — left the
+// user's own overlay unrecoverable, and nothing in the suite could see it.
+@Test @MainActor func whatAnEarlierLaunchBorrowedIsStillGivenBackInThisOne() async throws {
+    let suite = "app-model-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    // Written by a previous launch that never got to give it back, through the
+    // store `live()` is meant to use.
+    UserDefaultsBorrowedOverlayStore(defaults: defaults).record(
+        BorrowedOverlay(before: "aurora", applied: "rain", borrower: "weather")
+    )
+    let transport = StubTransport(body: onlineStats)
+
+    let subject = AppModel.live(
+        defaults: defaults,
+        transport: transport,
+        anecdoteStore: FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-\(UUID().uuidString).json")
+    )
+    await subject.teardown()
+
+    let written = transport.requests
+        .filter { $0.url?.path == "/api/settings" && $0.httpMethod == "POST" }
+        .compactMap {
+            (try? JSONSerialization.jsonObject(with: $0.httpBody ?? Data()))
+                .flatMap { $0 as? [String: Any] }?["OVERLAY"] as? String
+        }
+    // What the earlier launch displaced, not `clear` and not the `rain` it left
+    // on the device.
+    #expect(written == ["aurora"])
+    // And the loan is discharged, so the launch after this one does not write
+    // it a second time over whatever the user has set since.
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults).borrowedOverlay() == nil)
+}
+
 @Test @MainActor func theDeviceHostIsTakenFromDefaultsWhenOneIsSaved() throws {
     let suite = "app-model-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))

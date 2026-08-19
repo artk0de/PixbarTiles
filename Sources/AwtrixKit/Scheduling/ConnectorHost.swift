@@ -81,7 +81,14 @@ public actor ConnectorHost {
         store: any SettingsStore,
         audio: any AudioPlaying,
         iconInstaller: any IconInstalling,
-        retryPolicy: RetryPolicy = RetryPolicy()
+        retryPolicy: RetryPolicy = RetryPolicy(),
+        // Where the borrowed overlay is written down. Defaulted to the
+        // in-memory one so a test gets a record scoped to itself; the shipped
+        // app passes the durable one, because a record that dies with the
+        // process is what turned this app's own weather into the user's
+        // original. `AppModel.live` is the only caller that must not take this
+        // default, and a test at the composition root says so.
+        borrowedOverlays: any BorrowedOverlayStore = InMemoryBorrowedOverlayStore()
     ) {
         self.device = device
         self.registry = registry
@@ -89,7 +96,7 @@ public actor ConnectorHost {
         self.audio = audio
         self.iconInstaller = iconInstaller
         self.retryPolicy = retryPolicy
-        self.custody = DeviceCustody(device: device)
+        self.custody = DeviceCustody(device: device, overlays: borrowedOverlays)
     }
 
     /// Puts back the device-wide state this app borrowed.

@@ -14,6 +14,13 @@ import Foundation
 /// rather than assuming `clear`. The plan's constraint is that the app removes
 /// what it created, and a setting is as much of a trace as a file on the flash.
 ///
+/// And keep that reading somewhere a crash cannot take it. The record lived in
+/// this actor's own memory until it was measured: one exit without a teardown —
+/// a force quit, a logout, or a teardown that outruns the 15-second quit budget
+/// — and the next launch read this app's own `rain` off the device and wrote it
+/// down as the user's original, which every clean quit afterwards dutifully
+/// restored. See `BorrowedOverlayStore`.
+///
 /// Never rewrite an unchanged overlay. It is a flash write on a device that
 /// lives on a shelf for years, and an identical value buys nothing at all. The
 /// app in the loop is the opposite case and is rewritten every time: it lives
@@ -27,13 +34,25 @@ public actor DeviceCustody {
     private let device: AwtrixDevice
 
     /// The overlay this app displaced, what it wrote over it, and which
-    /// connector asked. One global setting, so one record.
-    private var overlay: (before: String, applied: DeviceOverlay, borrower: String)?
+    /// connector asked. One global setting, so one record — and a record that
+    /// outlives the process, because the launch that borrows is not always the
+    /// launch that gives back.
+    private let overlays: any BorrowedOverlayStore
     /// Apps put in the loop, by the connector that asked for them.
+    ///
+    /// In memory, and that is not an oversight after the overlay was made
+    /// durable: an app in the device's loop lives in RAM, so a clock that
+    /// reboots comes back without it and there is nothing for a later launch to
+    /// remove. The overlay is the opposite — flash, one value, unrecoverable —
+    /// which is the whole reason the two are stored differently.
     private var apps: [String: Set<String>] = [:]
 
-    public init(device: AwtrixDevice) {
+    public init(
+        device: AwtrixDevice,
+        overlays: any BorrowedOverlayStore = InMemoryBorrowedOverlayStore()
+    ) {
         self.device = device
+        self.overlays = overlays
     }
 
     /// Puts this app's overlay on the device, remembering what it displaced.
@@ -43,21 +62,36 @@ public actor DeviceCustody {
     /// nothing to put back — better to deliver nothing than to take something
     /// this app cannot return.
     public func apply(_ wanted: DeviceOverlay, for connectorId: String) async throws {
-        if let held = overlay, held.borrower == connectorId, held.applied == wanted { return }
+        let held = overlays.borrowedOverlay()
+        if let held, held.borrower == connectorId, held.applied == wanted.rawValue { return }
 
         // The ORIGINAL, never the value written on the way past: a connector
         // that has already borrowed this keeps the overlay it first displaced.
         // A firmware with no OVERLAY key at all reads as `clear`, which is the
         // value it coerces every unknown name to and so the closest thing it
         // has to "nothing set".
+        //
+        // The stored record wins over the device read, and that is the fix for
+        // the crash case rather than a caching optimisation: after an exit with
+        // no restore, the device is holding what THIS APP put there, so asking
+        // it would answer with our own overlay and enshrine it as the user's.
+        //
+        // The residual, stated rather than hidden: a user who changes the
+        // overlay by hand between an unclean exit and the next launch has that
+        // change put back to the pre-crash value at the following quit. That is
+        // one hand-edit inside one crash window, against a default-enabled
+        // connector that otherwise destroys the setting permanently within
+        // fifteen minutes of first launch.
         let before: String
-        if let held = overlay {
+        if let held {
             before = held.before
         } else {
             before = try await device.settings().overlay ?? DeviceOverlay.clear.rawValue
         }
         try await device.setOverlay(named: wanted.rawValue)
-        overlay = (before: before, applied: wanted, borrower: connectorId)
+        overlays.record(
+            BorrowedOverlay(before: before, applied: wanted.rawValue, borrower: connectorId)
+        )
     }
 
     /// Puts an app in the device's loop, remembering that it is this app's to
@@ -103,10 +137,10 @@ public actor DeviceCustody {
             if apps[id]?.isEmpty == true { apps[id] = nil }
         }
 
-        if let held = overlay, connectorId == nil || connectorId == held.borrower {
+        if let held = overlays.borrowedOverlay(), connectorId == nil || connectorId == held.borrower {
             do {
                 try await device.setOverlay(named: held.before)
-                overlay = nil
+                overlays.forget()
             } catch {
                 failure = failure ?? error
             }

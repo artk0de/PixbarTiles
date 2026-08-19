@@ -413,7 +413,13 @@ final class AppModel: ObservableObject {
                 registry: registry,
                 store: store,
                 audio: SequentialAudioPlayer(),
-                iconInstaller: installer
+                iconInstaller: installer,
+                // Durable, for the reason the uploaded-icon record is: what
+                // this app did to the device is not knowable by looking at the
+                // device afterwards. One exit without a teardown and an
+                // in-memory record turns this app's own weather overlay into
+                // the value it restores for ever.
+                borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
             ),
             store: store,
             installer: installer,

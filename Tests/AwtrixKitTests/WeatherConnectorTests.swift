@@ -115,7 +115,13 @@ private final class Clock: @unchecked Sendable {
 }
 
 private func weatherHost(
-    transport: SkyAndClock, clock: Clock = Clock(), store: any SettingsStore = InMemorySettingsStore()
+    transport: SkyAndClock,
+    clock: Clock = Clock(),
+    store: any SettingsStore = InMemorySettingsStore(),
+    /// Handed in so a test can outlive the host that wrote it — which is how a
+    /// relaunch is posed here: a second host over the same store and the same
+    /// device, with nothing in between.
+    borrowedOverlays: any BorrowedOverlayStore = InMemoryBorrowedOverlayStore()
 ) -> (host: ConnectorHost, connector: WeatherConnector) {
     let connector = WeatherConnector(
         source: OpenMeteoSource(transport: transport, now: clock.now),
@@ -128,7 +134,8 @@ private func weatherHost(
         registry: registry,
         store: store,
         audio: SilentAudio(),
-        iconInstaller: PassThroughIcons()
+        iconInstaller: PassThroughIcons(),
+        borrowedOverlays: borrowedOverlays
     )
     return (host, connector)
 }
@@ -274,6 +281,122 @@ private struct PassThroughIcons: IconInstalling {
 
     #expect(transport.overlayWrites == ["rain", "aurora"])
     #expect(DeviceOverlay.namesTheFirmwareAccepts.contains("aurora") == false)
+}
+
+// MARK: - Across an unclean exit
+
+// The launch that borrows is not always the launch that gives back. A force
+// quit, a logout, a crash, or a teardown that outruns the 15-second quit budget
+// while a synthesis is wedged all end a launch with the overlay still on loan
+// and `restoreDeviceState` never reached.
+//
+// With the record in memory only, the next launch read the device, found this
+// app's own `rain` sitting there, and wrote it down as what the user had —
+// after which every clean quit restored `rain` and the real setting was
+// recoverable from nowhere. Weather ships enabled at a 900-second cadence, so
+// this armed itself within fifteen minutes of a first launch.
+@Test func aLaunchAfterAnUncleanExitStillPutsBackTheOverlayTheUserHad() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "clear")
+    // The one thing that survives the process below.
+    let borrowed = InMemoryBorrowedOverlayStore()
+
+    let first = weatherHost(transport: transport, borrowedOverlays: borrowed)
+    #expect(await first.host.runOnce(connectorId: "weather") == .delivered)
+    #expect(transport.currentOverlay == "rain")
+    // The process dies here. No teardown, no restore — `first` is simply gone.
+
+    let second = weatherHost(transport: transport, borrowedOverlays: borrowed)
+    #expect(await second.host.runOnce(connectorId: "weather") == .delivered)
+    await second.host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(transport.currentOverlay == "clear")
+    // And the relaunch rewrote nothing: the device already held `rain`, which
+    // is a flash write saved as well as a correctness claim.
+    #expect(transport.overlayWrites == ["rain", "clear"])
+}
+
+// The precise mechanism, read off the record rather than off the outcome: what
+// a relaunch writes down as the displaced value is the USER's, never the one
+// this app put there. An unclean exit is the only way the two differ, and it is
+// the ordinary way this app ends.
+@Test func theOverlayThisAppWroteIsNeverRecordedAsTheOneItDisplaced() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
+    let borrowed = InMemoryBorrowedOverlayStore()
+
+    let first = weatherHost(transport: transport, borrowedOverlays: borrowed)
+    #expect(await first.host.runOnce(connectorId: "weather") == .delivered)
+
+    // Relaunch into weather that has since changed, so the second run really
+    // does write and really does decide what it displaced.
+    transport.changeSky(to: weatherBody(code: 71))
+    let second = weatherHost(transport: transport, borrowedOverlays: borrowed)
+    #expect(await second.host.runOnce(connectorId: "weather") == .delivered)
+
+    #expect(
+        borrowed.borrowedOverlay()
+            == BorrowedOverlay(before: "snow", applied: "snow", borrower: "weather")
+    )
+}
+
+// A restore that got through clears the record, or the launch after it would
+// write a stale overlay back over whatever the user has set since.
+@Test func anOverlayGivenBackIsNoLongerOnLoan() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "clear")
+    let borrowed = InMemoryBorrowedOverlayStore()
+    let (host, _) = weatherHost(transport: transport, borrowedOverlays: borrowed)
+
+    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(borrowed.borrowedOverlay() != nil)
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(borrowed.borrowedOverlay() == nil)
+}
+
+// A refused restore keeps the record, on the durable store as much as on the
+// actor: dropping it there is the same defect as dropping it here, one launch
+// later.
+@Test func aRefusedRestoreLeavesTheBorrowOnTheRecord() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
+    let borrowed = InMemoryBorrowedOverlayStore()
+    let (host, _) = weatherHost(transport: transport, borrowedOverlays: borrowed)
+
+    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    transport.refuseSettingsWrites()
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(
+        borrowed.borrowedOverlay()
+            == BorrowedOverlay(before: "snow", applied: "rain", borrower: "weather")
+    )
+}
+
+// The record has to survive the process, and the store that ships is the only
+// one that can. Written by one instance, read by another over the same
+// defaults — which is what two launches are.
+@Test func aBorrowedOverlaySurvivesTheProcessThatWroteItDown() throws {
+    let suite = "borrowed-overlay-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let borrowed = BorrowedOverlay(before: "aurora", applied: "rain", borrower: "weather")
+
+    UserDefaultsBorrowedOverlayStore(defaults: defaults).record(borrowed)
+
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults).borrowedOverlay() == borrowed)
+    UserDefaultsBorrowedOverlayStore(defaults: defaults).forget()
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults).borrowedOverlay() == nil)
+}
+
+// A half-written record is no record. Reading a `before` with nothing beside it
+// would restore a value without being able to tell whether this app is the one
+// that displaced it.
+@Test func aPartialRecordReadsAsNothingOnLoan() throws {
+    let suite = "borrowed-overlay-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    defaults.set(["before": "snow"], forKey: "borrowedOverlay")
+
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults).borrowedOverlay() == nil)
 }
 
 @Test func restoringSomethingThatWasNeverTakenWritesNothing() async throws {

@@ -80,6 +80,39 @@ advertises `_http._tcp` as `awtrix_a07f9c`, and `awtrix.local` does NOT resolve.
 - The catalogue's "animated" flag is unreliable — it marks single-frame icons
   animated. Count frames instead. The laughing icon is `66558`, 55 frames.
 
+### The battery, measured 2026-08-19 — and the number that was guessed wrong
+
+`bat_raw` is an ADC count. `bat` is derived from it by the firmware as
+`map(raw, 475, 665, 0, 100)`, which reproduces both live observations exactly
+(648 → 91%, 665 → 100%). So **one percent is about 1.9 raw steps**, not the
+seven a comment in this tree used to claim — that figure was `648/91`, a ratio
+where a slope was wanted.
+
+Three rates, all from this clock, all needed to tell a discharge from noise:
+
+| state | measured | per ten minutes |
+| --- | --- | --- |
+| charging | 664 → 669 in two minutes | ~25 steps |
+| **discharging** | **646 → 642 over 30 minutes; 90% → 87%** | **~1.33 steps** |
+| at rest on mains | 667–669 across ten minutes | ±1 |
+
+The discharge figure is the one that matters and the one that was got wrong
+twice. A brief written from it said "a few hours" of range; the measurement says
+**about 16.7 hours** at brightness 3. A threshold sized against the guess was
+twice the real signal, so the app reported a charging clock throughout an entire
+discharge — plug shown, no estimate, and every low-battery warning silently
+ungated, because the direction gates those too.
+
+**The series is not monotonic**, and that is the crux: raw held 644 for nine
+consecutive samples, fell to 641, rebounded to 643. The wander is ±2 — LARGER
+than the 1.33 of signal over ten minutes. No threshold on a short window can
+separate them; only a longer baseline can, which is why the fall window is an
+hour and the rise window is ten minutes. The asymmetry is 20:1 in the signals,
+not in the noise.
+
+Anyone re-tuning these numbers: take a fresh series first. The clock's rate
+depends on its brightness, and `BRI` was 2–3 for every measurement above.
+
 ## The icon
 
 AWTRIX 3 publishes **no square logo**. Its repository holds one wide AI-rendered

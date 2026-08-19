@@ -195,6 +195,10 @@ final class AppModel: ObservableObject {
     /// connector's own default. Published because the toggles and the slider
     /// bind to it; the store behind it is persistence, not state.
     @Published private var chosen: [String: ConnectorSettings] = [:]
+    /// The hours the schedule stays quiet when macOS will not say whether a
+    /// Focus is on. Published because the pickers bind to it; the defaults
+    /// behind it are persistence, not state — the same split as `chosen`.
+    @Published private(set) var quietHours: QuietWindow
 
     private let host: any ConnectorRunning
     private let store: any SettingsStore
@@ -223,6 +227,8 @@ final class AppModel: ObservableObject {
     /// dialog and asks macOS for notification permission, and a default would
     /// put both in front of whoever is running `swift test`.
     private let alerts: any BatteryWarningPresenting
+    /// Whether macOS says the user is busy, and what to call it when it does.
+    private let focus: FocusGate
     private var timers: [String: Task<Void, Never>] = [:]
     private var monitorLoop: Task<Void, Never>?
     /// Runs the user asked for, still going. Keyed by nothing meaningful: two
@@ -268,6 +274,8 @@ final class AppModel: ObservableObject {
         defaults: UserDefaults = .standard,
         pasteboard: NSPasteboard = .general,
         alerts: any BatteryWarningPresenting,
+        focus: FocusGate,
+        quietHours: QuietWindow = .default,
         sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
@@ -282,6 +290,8 @@ final class AppModel: ObservableObject {
         self.installer = installer
         self.anecdotes = anecdotes
         self.alerts = alerts
+        self.focus = focus
+        self.quietHours = quietHours
         self.scheduleSleep = sleep
         self.pollSleep = pollSleep
         for connector in registry.all {
@@ -329,7 +339,9 @@ final class AppModel: ObservableObject {
             defaults: defaults,
             alerts: BatteryAlert(
                 dialog: ModalBatteryDialog(), notifications: SystemBatteryNotifier()
-            )
+            ),
+            focus: FocusGate(status: SystemFocusStatus()),
+            quietHours: QuietWindow.stored(in: defaults)
         )
     }
 
@@ -413,6 +425,27 @@ final class AppModel: ObservableObject {
         chosen[connector.id] = settings
         store.save(settings, for: connector.id)
         reschedule(connector)
+    }
+
+    /// Which rule decides whether the schedule may speak, right now.
+    ///
+    /// Asked rather than stored, because the answer changes underneath the app:
+    /// a permission granted in System Settings while this is running moves it
+    /// from the window to the system without anything here being told.
+    var focusRule: QuietRule { focus.rule(quietHours: quietHours) }
+
+    /// Sets the hours the schedule stays quiet while macOS will not say
+    /// whether a Focus is on.
+    ///
+    /// Saved on every change rather than on submit, for the reason `typedHost`
+    /// is: there is nothing to confirm, and a picker that looks saved and is
+    /// not is worse than one that never looked saved. Unlike the address, this
+    /// takes effect on the next beat rather than the next launch — the gate
+    /// reads the window from here every time it is asked, so there is no second
+    /// copy to keep in step.
+    func setQuietHours(_ window: QuietWindow) {
+        quietHours = window
+        window.save(to: defaults)
     }
 
     // MARK: - Settings
@@ -531,6 +564,12 @@ final class AppModel: ObservableObject {
     /// before the first of them fires. Separate from `init` so that
     /// constructing this type reaches neither the network nor the clock.
     func start() {
+        // Once, here, and never from a gate check. Measured on this machine,
+        // `INFocusStatusCenter.requestAuthorization` never calls its handler
+        // back — so nothing waits on this — and a prompt raised on every beat
+        // is a prompt the user learns to dismiss. What reads the answer is
+        // `FocusGate.rule`, on every turn of every schedule.
+        focus.requestAccess()
         startMonitoring()
         for connector in registry.all { reschedule(connector) }
         restockAtLaunch()
@@ -716,9 +755,8 @@ final class AppModel: ObservableObject {
         // the tick's pause branch as well, it would be overwritten by the very
         // next turn of the loop and the panel would name an hour for the whole
         // of the sleep that follows.
-        nextRun[id] = deviceIsUnreachable
-            ? .held(Self.deviceUnreachable)
-            : .due(Date().addingTimeInterval(delay))
+        nextRun[id] = scheduleHold.map(NextRun.held)
+            ?? .due(Date().addingTimeInterval(delay))
         return delay
     }
 
@@ -733,6 +771,23 @@ final class AppModel: ObservableObject {
     private var deviceIsUnreachable: Bool {
         if case .offline = monitor.state { return true }
         return false
+    }
+
+    /// What is holding the schedule right now, or nil when nothing is.
+    ///
+    /// One question asked in two places — before the sleep, to label the panel,
+    /// and at the top of the tick, to decide — and asking it twice is the
+    /// point: the state can change during a half-hour sleep, and a decision
+    /// carried over from the label would act on what was true when the schedule
+    /// went to bed.
+    ///
+    /// Ordered, and the order is what the user is told when two of them hold at
+    /// once. The clock first, because an unreachable device is the one the
+    /// panel's own status line is already about; the quiet rules after it,
+    /// because they are about the room rather than the hardware.
+    private var scheduleHold: String? {
+        if deviceIsUnreachable { return Self.deviceUnreachable }
+        return focus.silence(quietHours: quietHours)
     }
 
     private func tick(_ id: String) async {
@@ -756,7 +811,14 @@ final class AppModel: ObservableObject {
         // And nothing is recorded, in either direction. `runOnce` is what moves
         // the failure count; not calling it is what leaves the backoff exactly
         // as the feed earned it. A pause is neither a failure nor a success.
-        guard deviceIsUnreachable == false else {
+        //
+        // The same guard now covers the two quiet rules Task 23 added — a macOS
+        // Focus, and the window that stands in for it while this app is not
+        // allowed to ask. Everything above holds of them word for word: only
+        // the run is held, the restock below is outside on purpose, and nothing
+        // is recorded in either direction. What differs is only which words
+        // reach the panel, and `noteNextRun` is the one place that writes them.
+        guard scheduleHold == nil else {
             await restock(id)
             return
         }

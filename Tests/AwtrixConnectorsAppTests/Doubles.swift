@@ -329,7 +329,13 @@ func testModel(
     // Recorded rather than raised. The shipped one puts a modal dialog on
     // screen and asks macOS for notification permission, and there is no
     // default on `AppModel.init` for exactly that reason.
-    alerts: any BatteryWarningPresenting = SpyAlerts()
+    alerts: any BatteryWarningPresenting = SpyAlerts(),
+    // Authorized and not focused, so nothing in the suite is silenced by the
+    // wall clock: the quiet window is only consulted while this app is NOT
+    // allowed to ask, and a default of `.notDetermined` would have every test
+    // in this target pass or fail depending on the hour it was run at.
+    focus: FocusGate = FocusGate(status: StubFocusStatus(access: .authorized)),
+    quietHours: QuietWindow = .default
 ) -> AppModel {
     let registry = ConnectorRegistry()
     for connector in connectors { registry.register(connector) }
@@ -347,6 +353,8 @@ func testModel(
         defaults: defaults,
         pasteboard: pasteboard,
         alerts: alerts,
+        focus: focus,
+        quietHours: quietHours,
         sleep: sleep,
         pollSleep: pollSleep
     )
@@ -514,6 +522,27 @@ func waitForQueue(
     return ready
 }
 
+/// Polls the shipped host's failure count until it reaches `target` or the wait
+/// runs out.
+///
+/// `waitUntil` takes a synchronous `@MainActor` condition, which cannot await
+/// an actor. Returns the last value read, so the expectation that names the
+/// rule is the thing that reports the failure — and waiting on the COUNT rather
+/// than on the panel's line is what tells a second failure from the first: both
+/// write the same words, so a wait on `lastResults` returns before the run that
+/// is being waited for has started.
+func waitForFailures(
+    of id: String, on host: ConnectorHost, toReach target: Int, limit: TimeInterval = 2
+) async -> Int {
+    let deadline = Date().addingTimeInterval(limit)
+    var count = await host.consecutiveFailures(connectorId: id)
+    while Date() < deadline, count != target {
+        try? await Task.sleep(for: .milliseconds(5))
+        count = await host.consecutiveFailures(connectorId: id)
+    }
+    return count
+}
+
 /// Answers whatever a test tells it to for a background pass, and delivers
 /// every run.
 ///
@@ -602,6 +631,8 @@ func modelOverRealHost(
     connector: any Connector = StubConnector(),
     transport: any Transport,
     anecdotes: (any AnecdoteReplaying)? = nil,
+    focus: FocusGate = FocusGate(status: StubFocusStatus(access: .authorized)),
+    quietHours: QuietWindow = .default,
     sleep: @escaping AppModel.Sleeping = parked,
     pollSleep: @escaping AppModel.Sleeping = parked
 ) -> (model: AppModel, host: ConnectorHost) {
@@ -629,6 +660,8 @@ func modelOverRealHost(
         defaults: UserDefaults(suiteName: "realHost-\(UUID().uuidString)")!,
         pasteboard: NSPasteboard(name: NSPasteboard.Name("realHost-\(UUID().uuidString)")),
         alerts: SpyAlerts(),
+        focus: focus,
+        quietHours: quietHours,
         sleep: sleep,
         pollSleep: pollSleep
     )
@@ -739,4 +772,50 @@ final class StubNotifications: BatteryNotificationPosting, @unchecked Sendable {
     func post(title: String, body: String) async {
         lock.withLock { recorded.append((title, body)) }
     }
+}
+
+// MARK: - Focus
+
+/// A Focus centre whose two answers a test chooses, independently.
+///
+/// Independently is the point. The trap this gate exists to close is an
+/// UNAUTHORIZED centre answering `isFocused == false`, which is the same answer
+/// an idle Mac gives — so a double that folded the pair into one switch could
+/// not pose the case at all.
+final class StubFocusStatus: FocusStatusReading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var accessValue: FocusAccess
+    private var focused: Bool
+    private var asks = 0
+
+    init(access: FocusAccess = .notDetermined, isFocused: Bool = false) {
+        self.accessValue = access
+        self.focused = isFocused
+    }
+
+    var access: FocusAccess { lock.withLock { accessValue } }
+    var isFocused: Bool { lock.withLock { focused } }
+    /// How many times the gate asked macOS for access.
+    var accessRequests: Int { lock.withLock { asks } }
+
+    func requestAccess() { lock.withLock { asks += 1 } }
+
+    /// A Focus turning on or off underneath a schedule that is already ticking.
+    func nowFocused(_ value: Bool) { lock.withLock { focused = value } }
+
+    func nowReports(access: FocusAccess) { lock.withLock { accessValue = access } }
+}
+
+/// A clock stopped at an hour, so a test can ask what the gate does at three in
+/// the morning without waiting until then.
+///
+/// Built through `Calendar.current`, and read back through it, so the hour is
+/// the one the machine running the suite would call three o'clock rather than
+/// whatever UTC makes of it.
+func atHour(_ hour: Int, calendar: Calendar = .current) -> Date {
+    var components = calendar.dateComponents([.year, .month, .day], from: Date())
+    components.hour = hour
+    components.minute = 30
+    components.second = 0
+    return calendar.date(from: components)!
 }

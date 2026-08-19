@@ -734,3 +734,54 @@ private let played = Date(timeIntervalSinceReferenceDate: 800_000_000)
     #expect(drawn(quiet.model) != nil)
     #expect(drawn(quiet.model) == drawn(reporting.model))
 }
+
+// MARK: - Which rule keeps the app quiet
+
+/// The settings, open, with the given Focus centre behind them.
+///
+/// Neither model is started, so neither has polled and both draw the same
+/// device line: what is left over between two of these is the quiet-hours
+/// section and nothing else.
+@MainActor
+private func openSettings(focus: FocusGate, quietHours: QuietWindow) -> AppModel {
+    let model = testModel(focus: focus, quietHours: quietHours)
+    model.openSettings()
+    return model
+}
+
+// The rule reaches the surface rather than only the model.
+//
+// Two settings surfaces alike in everything — same address, same window, same
+// pickers on both, neither started — except which rule is deciding. The pickers
+// are drawn on BOTH, deliberately: hidden on one of them, the two would differ
+// by a missing control and this test would pass with the line deleted, which is
+// this file's own signature failure.
+@Test @MainActor func thePanelSaysWhichRuleIsInForce() {
+    let night = QuietWindow(startHour: 23, endHour: 8)
+    let system = openSettings(
+        focus: FocusGate(status: StubFocusStatus(access: .authorized)), quietHours: night
+    )
+    let window = openSettings(
+        focus: FocusGate(status: StubFocusStatus(access: .denied)), quietHours: night
+    )
+
+    #expect(system.focusRule == .focus)
+    #expect(window.focusRule == .quietHours(night))
+    #expect(drawn(system) != nil)
+    #expect(drawn(system) != drawn(window))
+    // The same surface twice is the same pixels, or the inequality above is
+    // noise rather than content.
+    #expect(drawn(system) == drawn(system))
+}
+
+// And the window itself is on the surface, not only in the defaults: two
+// surfaces whose ONLY difference is the hours in the pickers must not draw the
+// same.
+@Test @MainActor func theQuietHoursAreVisibleAndEditableInTheSettings() {
+    let refused = FocusGate(status: StubFocusStatus(access: .denied))
+    let night = openSettings(focus: refused, quietHours: QuietWindow(startHour: 23, endHour: 8))
+    let noon = openSettings(focus: refused, quietHours: QuietWindow(startHour: 11, endHour: 14))
+
+    #expect(drawn(night) != nil)
+    #expect(drawn(night) != drawn(noon))
+}

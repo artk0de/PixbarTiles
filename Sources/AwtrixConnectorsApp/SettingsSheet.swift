@@ -17,6 +17,8 @@ struct SettingsSheet: View {
             Divider()
             deviceHostSection
             Divider()
+            quietHoursSection
+            Divider()
             iconSection
         }
         .padding(14)
@@ -51,6 +53,60 @@ struct SettingsSheet: View {
                 Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
+    }
+
+    /// When the app stays quiet, and which rule is deciding that.
+    ///
+    /// The pickers are shown whichever rule is in force, not only when the
+    /// window is the one deciding. Two reasons, and only the first is about the
+    /// user: a control that appears and disappears with a permission the user
+    /// cannot see the state of is a control they cannot find when they need it,
+    /// and setting the window BEFORE the fallback bites is the whole point of
+    /// having one. The second is about the test below — with the pickers hidden
+    /// on one of the two renders, the surfaces would differ by the pickers as
+    /// well as by the line, and the test claiming the line would pass with the
+    /// line deleted.
+    private var quietHoursSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Quiet hours").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                hourPicker("From", selection: Binding(
+                    get: { model.quietHours.startHour },
+                    set: { model.setQuietHours(QuietWindow(
+                        startHour: $0, endHour: model.quietHours.endHour
+                    )) }
+                ))
+                hourPicker("To", selection: Binding(
+                    get: { model.quietHours.endHour },
+                    set: { model.setQuietHours(QuietWindow(
+                        startHour: model.quietHours.startHour, endHour: $0
+                    )) }
+                ))
+            }
+            // Said whichever rule holds, because "no Focus is on" and "I am not
+            // allowed to know" look identical from outside and only one of them
+            // means the window below is doing anything.
+            Text(FocusRuleLine.text(for: model.focusRule))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// One end of the window.
+    ///
+    /// Both ends draw from the same list of hours: a window is a pair of hours,
+    /// not a start with a length, and a picker offering durations would have to
+    /// decide what a nine-hour window starting at 23:00 is called.
+    private func hourPicker(_ label: String, selection: Binding<Int>) -> some View {
+        Picker(label, selection: selection) {
+            ForEach(QuietWindow.selectableHours, id: \.self) { candidate in
+                Text(QuietWindow.clockFace(candidate)).tag(candidate)
+            }
+        }
+        .labelsHidden()
+        .controlSize(.small)
+        .accessibilityLabel(label)
     }
 
     /// The only thing this app writes to the device's flash, and the only way to

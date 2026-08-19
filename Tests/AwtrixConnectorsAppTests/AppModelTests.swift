@@ -952,6 +952,7 @@ private func modelWithARealAnecdoteConnector(
         ),
         defaults: UserDefaults(suiteName: "launch-\(UUID().uuidString)")!,
         alerts: SpyAlerts(),
+        focus: FocusGate(status: StubFocusStatus(access: .authorized)),
         sleep: schedule.sleep,
         pollSleep: parked
     )

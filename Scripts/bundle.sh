@@ -57,6 +57,15 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
        network. -->
   <key>NSLocalNetworkUsageDescription</key>
   <string>AwtrixConnectors looks for AWTRIX clocks advertising themselves on your network, so you do not have to find the address yourself.</string>
+  <!-- Required, and not merely for the wording: without this key
+       `INFocusStatusCenter.requestAuthorization` does not fail, it ABORTS the
+       process — EXC_CRASH, TCC namespace, "must contain an
+       NSFocusStatusUsageDescription key". `SystemFocusStatus` refuses to ask
+       when it is missing, so a bundle built without it degrades to the quiet
+       window rather than crashing; this is what makes the other half reachable
+       the day the app is signed. -->
+  <key>NSFocusStatusUsageDescription</key>
+  <string>AwtrixConnectors checks whether a Focus is on, so it stays quiet instead of reading a joke out loud while you are busy.</string>
 </dict>
 </plist>
 PLIST

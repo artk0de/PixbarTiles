@@ -663,6 +663,110 @@ private func drawnEntry(
     #expect(listed != playable)
 }
 
+/// The panel, drawn again on the view it was already drawn on.
+///
+/// Every other render in this file builds a fresh `NSHostingView`, which reads
+/// the model as it stands and therefore agrees with it by construction. The
+/// menu bar has ONE view and keeps it across opens, so a surface that is on
+/// screen while the model changes underneath it can only be measured on a view
+/// that was already there. Re-fitted first because the History is not the
+/// panel's height and `cacheDisplay` draws `bounds`.
+@MainActor
+private func redrawn(_ host: NSHostingView<MenuPanel>) -> Data? {
+    // Settled before it is read, and that is what the throwaway passes are for.
+    // Measured: the first draw after the surface has been replaced carries
+    // about 3 kB that no later draw does, and every draw after it is
+    // byte-identical — a focus ring on a control that has just become the
+    // responder, taken back once AppKit has caught up. It belongs to drawing a
+    // reused view into a bitmap rather than to the panel, and a just-changed
+    // surface compared against a settled one reports it as content.
+    //
+    // Sleeping until it goes away was the alternative, and it is worse: it puts
+    // a duration into a file whose whole claim is that `cacheDisplay` is
+    // synchronous, so nothing here has to wait for anything.
+    for _ in 0..<2 {
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        host.layoutSubtreeIfNeeded()
+        _ = bitmap(host)
+    }
+    return bitmap(host)?.representation(using: .png, properties: [:])
+}
+
+// The reported defect: the History shows what has played on the FIRST press,
+// not on the press after a Back.
+//
+// `openingTheHistoryReplacesThePanelWithIt` above waits for `history` to arrive
+// before it draws, so it measures a surface the user never sees — every open
+// looks like a second open to it. This one draws at the instant the button is
+// pressed, which is the moment being complained about.
+//
+// The same view in the same two states, and that is what makes the comparison
+// mean something: a reused hosting view draws a focus ring a fresh one does
+// not, so a reference render built separately would differ for reasons that
+// have nothing to do with the History. Between these two renders the ONLY
+// thing that changes is whether the read has answered — so if the surface has
+// its entries when it opens, the two are the same pixels.
+//
+// The settle before the press is the user's own hand: the History is reached
+// from a button on the panel, so the panel is on screen for as long as it takes
+// somebody to see it and click. It does not weaken what this measures — with
+// nothing asking until the press, no amount of waiting beforehand puts an
+// answer on the surface, which is what this failed with before.
+@Test @MainActor func theHistoryShowsWhatPlayedOnTheFirstPressRatherThanTheSecond() async throws {
+    let played = PlayedAnecdote(
+        anecdote: try playableAnecdote(id: "a", text: "Заходит улитка в бар"),
+        playedAt: Date()
+    )
+    let model = testModel(anecdotes: StubAnecdotes(history: [played]))
+    let host = hostedPanel(model)
+    _ = redrawn(host)
+    #expect(await waitUntil { model.history.isEmpty == false })
+
+    model.openHistory()
+    let asItOpens = redrawn(host)
+    // The same surface once the open's own read has landed: the state the old
+    // behaviour only reached after the user had already looked at it.
+    #expect(await waitUntil { model.history.isEmpty == false })
+    let onceTheReadAnswered = redrawn(host)
+
+    // Without this the equality below is satisfied by a surface that draws
+    // neither the entries nor anything else. A second view driven exactly as
+    // the first — panel, then History — over a connector that really has
+    // nothing to look back over, so the two differ only in there being
+    // something to list.
+    let nothingPlayed = testModel(anecdotes: StubAnecdotes(history: []))
+    let emptyHost = hostedPanel(nothingPlayed)
+    _ = redrawn(emptyHost)
+    nothingPlayed.openHistory()
+    #expect(await waitUntil { nothingPlayed.historyIsOpen })
+
+    #expect(asItOpens != nil)
+    #expect(asItOpens != redrawn(emptyHost))
+    #expect(asItOpens == onceTheReadAnswered)
+}
+
+// And the mechanism underneath it, where a render cannot reach: the panel
+// coming on screen is what asks, so the answer is already there when the button
+// on it is pressed. Asserted through the History never being opened at all —
+// `openHistory` asks too, so a test that opened it could not tell which of the
+// two had done the asking.
+@Test @MainActor func openingThePanelIsAlsoWhatAsksWhatHasPlayed() async throws {
+    let played = PlayedAnecdote(
+        anecdote: try playableAnecdote(id: "a", text: "Заходит улитка в бар"),
+        playedAt: Date()
+    )
+    let model = testModel(anecdotes: StubAnecdotes(history: [played]))
+    #expect(model.history.isEmpty)
+
+    let panel = hostedPanel(model)
+
+    #expect(await waitUntil { model.history.isEmpty == false })
+    #expect(model.historyIsOpen == false)
+    // Held to the end: a hosting view nobody references is torn down, and a
+    // torn-down one has nothing to appear.
+    withExtendedLifetime(panel) {}
+}
+
 // MARK: - The menu opens on the panel
 
 /// A launched delegate over `model`, hearing only what this test posts, with

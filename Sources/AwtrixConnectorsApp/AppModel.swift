@@ -675,8 +675,26 @@ final class AppModel: ObservableObject {
         // the last thing that was pressed — and an answer kept across the open
         // would read as having just happened.
         replayResult = nil
-        historyLoad?.cancel()
+        readHistory()
+    }
+
+    /// Asks what has played, into `history`.
+    ///
+    /// Its own method because the History's own open is too late to be the only
+    /// caller. The read is a round trip to an actor and the surface is drawn the
+    /// instant the button is pressed, so on the FIRST open `history` is still
+    /// the empty array it started as — and an empty array is what the surface
+    /// draws as "Nothing has played yet", which is a wrong answer rather than a
+    /// pending one. Every open after that draws the entries at once, off the
+    /// answer the first open eventually got, which is exactly the asymmetry that
+    /// was reported: the History showing what played only on the second press.
+    ///
+    /// Cancelling the load in flight is what keeps the last open's answer from
+    /// landing after this one's — two reads racing to write the same list, and
+    /// the older one winning is a surface showing what had played a minute ago.
+    private func readHistory() {
         guard let anecdotes else { return }
+        historyLoad?.cancel()
         historyLoad = Task { [weak self] in
             let played = await anecdotes.history()
             guard let self, !Task.isCancelled else { return }
@@ -926,12 +944,16 @@ final class AppModel: ObservableObject {
         if let crossed { await alerts.warn(crossed) }
     }
 
-    /// Takes one reading because the panel is about to show it.
+    /// Asks for what the panel is about to need: one reading, and what has
+    /// played.
     ///
     /// The poll is a minute apart, so what the panel draws about the clock can
     /// be fifty-nine seconds old by the time somebody reads it. This buys the
     /// freshness back for one request per open, which is what makes the minute
     /// affordable in the first place.
+    ///
+    /// The history is here for a different reason, and it is about the surface
+    /// BEHIND the panel rather than the panel itself; see the call below.
     ///
     /// It does NOT restart the poll: a loop restarted on every open is a loop
     /// per open until one of them is cancelled, and the cadence the whole
@@ -944,6 +966,18 @@ final class AppModel: ObservableObject {
     /// fifteen, which is exactly when a second task must not be started.
     /// Checking both is one guard each and covers both ends.
     func refreshOnPanelOpen() {
+        // The History is opened from a button on the panel, so the panel coming
+        // on screen is the last moment early enough for the first open to have
+        // something to draw. Read here as well as on the History's own open —
+        // not instead of it, because a run that happens while the panel is open
+        // has to be in the list the History then shows.
+        //
+        // Ahead of the floor below rather than behind it. That floor is there to
+        // stop a second panel open costing a second REQUEST to the clock; this
+        // read reaches an actor in this process and no network at all, so
+        // sharing the throttle would only mean an open inside the floor got no
+        // history for a reason that is about the device.
+        readHistory()
         let now = Date()
         if let last = lastPanelRefresh, now.timeIntervalSince(last) < Self.panelRefreshFloor {
             return

@@ -119,13 +119,13 @@ import Testing
 // to do, and a grip that does nothing is exactly the thing the brief calls
 // indistinguishable from one that resizes silently. So it is not drawn: the two
 // vertical sides are the whole border there.
-@Test func aSurfaceWithNoStoredHeightOffersOnlyTheEdgesThatChangeItsWidth() {
+@Test @MainActor func aSurfaceWithNoStoredHeightOffersOnlyTheEdgesThatChangeItsWidth() {
     #expect(ResizeBorder.grips(resizingHeight: false) == [.leading, .trailing])
 }
 
 // With both axes it is the whole perimeter, corners included — which is what
 // "drag any edge" was asked for rather than "reach for a particular spot".
-@Test func aSurfaceWithAStoredHeightOffersTheWholePerimeter() {
+@Test @MainActor func aSurfaceWithAStoredHeightOffersTheWholePerimeter() {
     #expect(Set(ResizeBorder.grips(resizingHeight: true)) == Set(ResizeGrip.allCases))
     #expect(ResizeBorder.grips(resizingHeight: true).count == 8)
 }

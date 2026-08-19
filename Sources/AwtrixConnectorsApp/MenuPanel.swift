@@ -194,14 +194,29 @@ enum BatteryLine {
     /// plug, which is the closest thing that exists and reads unambiguously
     /// next to a percentage.
     ///
-    /// Nothing at all until the trend is established, deliberately. A glyph
-    /// implying a verdict the readings have not reached is the same lie as a
-    /// confident estimate from the first two samples of a discharge.
+    /// While the trend is not established the mark is an hourglass, and it is
+    /// chosen for what it does NOT say. The plug says mains, both batteries say
+    /// cell, and the app cannot support any of the three yet — guessing one is
+    /// what `.unknown` exists to stop. An hourglass claims only that an answer
+    /// is being worked out, which is exactly true: readings are accumulating
+    /// towards a verdict.
+    ///
+    /// Nothing at all was the old answer and it is the reported defect — the
+    /// row came out as a bare percentage and read as breakage. A word after the
+    /// figure ("settling…") was the other candidate and it is defensible, but
+    /// the line already spends its tail on the estimate, and a state that ends
+    /// as soon as the trend lands does not deserve the widest thing on the row.
+    /// A mark in the same place as every other state's keeps the column steady
+    /// while the app makes its mind up.
+    ///
+    /// Nil is kept for no reading at all, which is a different state: the clock
+    /// has not answered, so there is no row to mark.
     static func glyph(for reading: BatteryReading?) -> String? {
         switch reading?.direction {
         case .charging: "\u{1F50C}"
         case .discharging: (reading?.percent ?? 0) < low ? "\u{1FAAB}" : "\u{1F50B}"
-        case .unknown, nil: nil
+        case .unknown: "\u{23F3}"
+        case nil: nil
         }
     }
 

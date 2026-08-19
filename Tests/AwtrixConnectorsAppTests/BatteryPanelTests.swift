@@ -42,10 +42,20 @@ private func reading(
     #expect(BatteryLine.glyph(for: reading(95, .discharging)) == "\u{1F50B}")
 }
 
-@Test func aStateThatIsNotEstablishedYetGetsNoGlyph() {
-    // A glyph implying a verdict the readings have not reached is the same lie
-    // as a confident estimate from two samples twenty seconds apart.
-    #expect(BatteryLine.glyph(for: reading(83, .unknown)) == nil)
+@Test func aStateThatIsNotEstablishedYetDrawsSomethingThatClaimsNothing() throws {
+    // Silence was the old answer and it is the reported defect: the row came
+    // out as a bare number and read as the app being broken.
+    let mark = try #require(BatteryLine.glyph(for: reading(83, .unknown)))
+
+    // Not the plug and not either battery. All three are claims about where the
+    // power is coming from — mains, cell, cell nearly out — and not knowing
+    // that is the whole of `.unknown`.
+    #expect(mark != "\u{1F50C}")
+    #expect(mark != "\u{1F50B}")
+    #expect(mark != "\u{1FAAB}")
+
+    // Nothing at all where there is no reading, which is a different state: the
+    // clock has not answered, so there is no row to mark.
     #expect(BatteryLine.glyph(for: nil) == nil)
 }
 
@@ -63,10 +73,16 @@ private func reading(
     #expect(BatteryLine.text(for: nil) == nil)
 }
 
-@Test func anUnestablishedStateShowsThePercentageAndNothingElse() {
-    let line = BatteryLine.text(for: reading(83, .unknown))
+@Test func anUnestablishedStateMarksTheLineRatherThanLeavingABareNumber() throws {
+    let line = try #require(BatteryLine.text(for: reading(83, .unknown)))
 
-    #expect(line == "83%")
+    #expect(line.hasSuffix("83%"))
+    // The defect, stated as the thing that must not come back.
+    #expect(line != "83%")
+    // And one marker, not a marker and a word: the separator is what the line
+    // puts before a trailing phrase, and a second thing saying "still working
+    // it out" is noise on a row read at a glance.
+    #expect(line.contains("·") == false)
 }
 
 @Test func aDischargeWithNoEstimateYetSaysSoRatherThanGuessing() {

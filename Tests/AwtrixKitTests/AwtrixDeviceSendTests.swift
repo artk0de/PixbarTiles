@@ -164,3 +164,84 @@ private func decodeBody(_ request: URLRequest) throws -> [String: Any] {
     #expect(AwtrixError.invalidHost("not a host").localizedDescription
         == "invalid device host: not a host")
 }
+
+// MARK: - What a typed address is aimed at
+
+// Pasting the address out of the clock's own web interface is the single most
+// likely thing anybody does with the field, and the result was a request to a
+// host literally named `http`: every URL is built as `http://<host><path>`, so
+// `http://10.0.0.5` produced `http://http://10.0.0.5/api/stats`. What reached
+// the user was a DNS error in the offline reason and nothing suggesting the
+// address was malformed.
+@Test func aPastedSchemeIsNotPartOfTheHost() {
+    #expect(DeviceAddress.host(from: "http://10.0.0.5") == "10.0.0.5")
+    #expect(DeviceAddress.host(from: "https://10.0.0.5") == "10.0.0.5")
+    // Whatever its case: an address bar is lowercase, a clipboard is whatever
+    // was in the document it came from.
+    #expect(DeviceAddress.host(from: "HTTP://10.0.0.5") == "10.0.0.5")
+    #expect(DeviceAddress.host(from: "HtTpS://awtrix.local") == "awtrix.local")
+}
+
+// The browser shows `http://10.0.0.5/`, and that slash left in place puts a
+// double one in every URL this app builds.
+@Test func everythingFromTheFirstSlashOnIsAPathRatherThanAHost() {
+    #expect(DeviceAddress.host(from: "http://10.0.0.5/") == "10.0.0.5")
+    #expect(DeviceAddress.host(from: "http://10.0.0.5/api/stats") == "10.0.0.5")
+    #expect(DeviceAddress.host(from: "10.0.0.5/") == "10.0.0.5")
+}
+
+// A port is part of the address and stays. It is what somebody running the
+// firmware behind a forward has to type.
+@Test func aPortSurvivesNormalisationBecauseItIsPartOfTheAddress() {
+    #expect(DeviceAddress.host(from: "http://10.0.0.5:8080") == "10.0.0.5:8080")
+    #expect(DeviceAddress.host(from: "10.0.0.5:8080") == "10.0.0.5:8080")
+}
+
+// An ordinary address is returned exactly as it stands, or the normalisation is
+// doing something to the case this app is actually pointed at.
+@Test func anOrdinaryAddressIsLeftAlone() {
+    #expect(DeviceAddress.host(from: "192.168.1.72") == "192.168.1.72")
+    #expect(DeviceAddress.host(from: "  192.168.1.72\n ") == "192.168.1.72")
+    #expect(DeviceAddress.host(from: "awtrix.local") == "awtrix.local")
+}
+
+// And what cannot be made into a host is refused rather than guessed at.
+@Test func anEntryWithNoHostLeftInItIsRefused() {
+    #expect(DeviceAddress.host(from: "http://") == nil)
+    #expect(DeviceAddress.host(from: "/") == nil)
+    #expect(DeviceAddress.host(from: "   ") == nil)
+    // A space cannot be in a host. `URL(string:)` answers nil for one, so
+    // accepting it here only moves the complaint to the next poll.
+    #expect(DeviceAddress.host(from: "a b") == nil)
+}
+
+// End to end, through the device that builds the URL: the request goes to the
+// clock rather than to a host named after a scheme. Not asserted on the
+// normaliser alone, because the defect was the two of them together.
+@Test func aDeviceBuiltFromAPastedAddressAsksTheClockItself() async throws {
+    let transport = RecordingTransport()
+    transport.body = Data(#"{"version":"0.96","uid":"a","bat":50,"ram":1,"ip_address":"10.0.0.5"}"#.utf8)
+    let device = AwtrixDevice(host: "http://10.0.0.5/", transport: transport)
+
+    _ = try await device.stats()
+
+    #expect(transport.requests.first?.url?.host == "10.0.0.5")
+    #expect(transport.requests.first?.url?.absoluteString == "http://10.0.0.5/api/stats")
+}
+
+// An address nothing can be made of is kept as it stands rather than replaced
+// with something plausible, so the error names what the user actually entered.
+@Test func anUnusableAddressIsStillReportedByName() async {
+    let device = AwtrixDevice(host: "a b", transport: RecordingTransport())
+
+    do {
+        _ = try await device.stats()
+        Issue.record("expected the address to be refused")
+    } catch let AwtrixError.invalidHost(named) {
+        // The user's own entry, verbatim. Substituting something plausible in
+        // the initialiser would leave this naming an address nobody typed.
+        #expect(named == "a b")
+    } catch {
+        Issue.record("expected .invalidHost, got \(error)")
+    }
+}

@@ -153,12 +153,16 @@ final class AppModel: ObservableObject {
     /// being told where to look.
     static let deviceUnreachable = "clock unreachable"
 
-    /// Read at launch and never written here — the panel has no editor for it.
-    /// A different clock is pointed at with
-    /// `defaults write dev.artk0re.awtrix-connectors deviceHost 192.168.1.99`,
-    /// which the next launch picks up. A settable property would have to rebuild
-    /// the device, the monitor and the host underneath a running schedule, and
-    /// nothing in the menu asks for that yet.
+    /// Read at launch and never written here. The gear's settings sheet edits
+    /// the address through `DeviceHostField`, which writes the same defaults
+    /// key `defaults write dev.artk0re.awtrix-connectors deviceHost` writes —
+    /// either way the next launch picks it up. A settable property would have
+    /// to rebuild the device, the monitor and the host underneath a running
+    /// schedule, and nothing in the menu asks for that yet.
+    ///
+    /// Whatever is stored, `AwtrixDevice` normalises it: the hand-written path
+    /// reaches no field and no validation, so a `http://10.0.0.5` typed into a
+    /// terminal has to be dealt with where the URL is built.
     let deviceHost: String
     let registry: ConnectorRegistry
     let monitor: DeviceMonitor

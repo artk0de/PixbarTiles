@@ -564,6 +564,45 @@ private func scratchStore() -> URL {
     #expect(defaults.string(forKey: AppModel.deviceHostKey) == "192.168.1.72")
 }
 
+// Pasting `http://10.0.0.5` out of the clock's own web interface is the single
+// most likely thing anybody does with this field, and it was saved verbatim.
+// Every request is then built as `http://http://10.0.0.5/api/stats`, whose host
+// is a machine literally named `http`: a permanently unreachable clock, with a
+// DNS error in the offline reason and nothing suggesting the address is
+// malformed.
+//
+// Read back the way the app reads it, so a field that normalised for display
+// and stored the paste would still be caught.
+@Test @MainActor func aPastedAddressIsStoredWithoutItsScheme() throws {
+    let suite = "host-field-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let note = DeviceHostField.save("http://10.0.0.5/", to: defaults)
+
+    #expect(note == DeviceHostField.takesEffectNextLaunch)
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.5")
+    #expect(
+        AppModel.live(defaults: defaults, anecdoteStore: scratchStore()).deviceHost == "10.0.0.5"
+    )
+}
+
+// And an entry nothing can be made of is complained about on the field rather
+// than accepted and left to fail as a poll a quarter of an hour later, on a
+// different surface, with nothing connecting the two.
+@Test @MainActor func anAddressThatCannotBeAHostIsRefusedOnTheField() throws {
+    let suite = "host-field-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set("10.0.0.9", forKey: AppModel.deviceHostKey)
+
+    #expect(DeviceHostField.save("a b", to: defaults) == DeviceHostField.unusable)
+    #expect(DeviceHostField.save("http://", to: defaults) == DeviceHostField.unusable)
+
+    // And the address that was there is still there.
+    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+}
+
 // What the panel says after a save. The address is read once at launch and
 // handed to the device, the monitor and the host; a confirmation that implied
 // the app had already moved would be wrong until the next launch.

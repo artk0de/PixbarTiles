@@ -87,17 +87,32 @@ enum DeviceHostField {
     /// would be lying until the next launch.
     static let takesEffectNextLaunch = "Saved — takes effect at next launch"
 
+    /// Said instead when what was typed cannot be a host at all.
+    ///
+    /// The example is the answer as much as the complaint, for the reason
+    /// `LocationField.unreadable` carries one: "invalid" leaves somebody
+    /// guessing which part of what they typed this app objected to.
+    static let unusable = "That is not an address — for example 192.168.1.72"
+
     /// Stores a typed address for the next launch, and answers what to say.
     ///
     /// Nil when there is nothing to store. A blank or whitespace-only entry is
     /// refused rather than written: the next launch would come up pointed at an
     /// empty host, and the panel that could fix it is the one behind the device
     /// that no longer answers.
+    ///
+    /// What is stored is the NORMALISED host, not what was typed. Pasting
+    /// `http://10.0.0.5` out of a browser is the likeliest thing anybody does
+    /// with this field, and it used to be saved verbatim — after which every
+    /// request went to `http://http://10.0.0.5/api/stats`, whose host is a
+    /// machine literally named `http`. `DeviceAddress` owns the rule; this is
+    /// where the user hears about it.
     @discardableResult
     static func save(_ typed: String, to defaults: UserDefaults) -> String? {
         let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else { return nil }
-        defaults.set(trimmed, forKey: AppModel.deviceHostKey)
+        guard let host = DeviceAddress.host(from: trimmed) else { return unusable }
+        defaults.set(host, forKey: AppModel.deviceHostKey)
         return takesEffectNextLaunch
     }
 }

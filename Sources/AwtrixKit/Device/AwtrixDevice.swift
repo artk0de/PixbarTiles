@@ -166,8 +166,18 @@ public actor AwtrixDevice {
     private let host: String
     private let transport: Transport
 
+    /// Normalised here as well as at the field the user types into, because
+    /// the field is not the only writer: `AppModel`'s own documentation tells
+    /// the reader to point the app at a different clock with
+    /// `defaults write dev.artk0re.awtrix-connectors deviceHost`, and whatever
+    /// they put there arrives at this initialiser untouched.
+    ///
+    /// A value nothing can be made of is kept exactly as it stands, rather than
+    /// replaced with something plausible: `perform` then reports it by name
+    /// through `AwtrixError.invalidHost`, which is the one message that says
+    /// what is actually wrong.
     public init(host: String, transport: Transport) {
-        self.host = host
+        self.host = DeviceAddress.host(from: host) ?? host
         self.transport = transport
     }
 

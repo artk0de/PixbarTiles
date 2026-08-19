@@ -289,6 +289,14 @@ private struct UnreachableTransport: Transport {
         ("bat", DeviceStats(
             version: "0.98", uid: "awtrix_a07f9c", bat: 4, ram: 139112, ipAddress: "192.168.1.72"
         )),
+        ("batRaw", DeviceStats(
+            version: "0.98", uid: "awtrix_a07f9c", bat: 83, batRaw: 648, ram: 139112,
+            ipAddress: "192.168.1.72"
+        )),
+        ("uptime", DeviceStats(
+            version: "0.98", uid: "awtrix_a07f9c", bat: 83, uptime: 9000, ram: 139112,
+            ipAddress: "192.168.1.72"
+        )),
         ("ram", DeviceStats(
             version: "0.98", uid: "awtrix_a07f9c", bat: 83, ram: 1024, ipAddress: "192.168.1.72"
         )),
@@ -306,4 +314,147 @@ private struct UnreachableTransport: Transport {
 @Test func deviceStateTellsNeverAskedApartFromUnreachable() {
     #expect(DeviceState.unknown != .offline("could not connect"))
     #expect(DeviceState.offline("could not connect") != .offline("HTTP 500"))
+}
+
+// MARK: - The battery trajectory
+
+private let trendingJSON = #"{"bat":83,"bat_raw":648,"uptime":9000,"ram":139112,"version":"0.98","uid":"awtrix_a07f9c","ip_address":"192.168.1.72"}"#
+
+/// One `/api/stats` body with the two fields the trajectory reads.
+private func trendJSON(bat: Int, raw: Int, uptime: Int = 9_000) -> Data {
+    Data(
+        ("{\"bat\":\(bat),\"bat_raw\":\(raw),\"uptime\":\(uptime),\"ram\":139112,"
+            + "\"version\":\"0.98\",\"uid\":\"awtrix_a07f9c\","
+            + "\"ip_address\":\"192.168.1.72\"}").utf8
+    )
+}
+
+private let origin = Date(timeIntervalSince1970: 1_700_000_000)
+
+@Test @MainActor func theReportCarriesTheRawReadingAndTheUptime() async {
+    let transport = RecordingTransport()
+    transport.body = Data(trendingJSON.utf8)
+    let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
+
+    await monitor.refresh()
+
+    guard case let .online(stats) = monitor.state else {
+        Issue.record("expected an online state, got \(monitor.state)")
+        return
+    }
+    // 648 raw is 91% on the real clock, so the raw figure is about seven times
+    // finer than the percentage the panel shows.
+    #expect(stats.batRaw == 648)
+    #expect(stats.uptime == 9000)
+}
+
+@Test @MainActor func aReportWithoutTheTrendFieldsIsStillAReachableDevice() async {
+    let transport = RecordingTransport()
+    // The body every other test in this file uses: no `bat_raw`, no `uptime`.
+    transport.body = Data(statsJSON.utf8)
+    let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
+
+    await monitor.refresh()
+
+    // A firmware that omits them must not read as a clock that is not there.
+    // Decoding is what puts this monitor offline, and a missing trend field is
+    // not a missing device.
+    #expect(monitor.isOnline)
+    #expect(monitor.batteryPercent == 83)
+    #expect(monitor.battery?.direction == .unknown)
+}
+
+@Test @MainActor func aRefreshFeedsTheReadingIntoTheTrajectory() async {
+    let transport = RecordingTransport()
+    transport.body = trendJSON(bat: 50, raw: 400)
+    let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
+
+    await monitor.refresh(at: origin)
+    #expect(monitor.battery?.direction == .unknown)
+
+    // The percentage does not move between the two, so a monitor that fed the
+    // trajectory `bat` rather than the whole report would still have nothing.
+    transport.body = trendJSON(bat: 50, raw: 396)
+    await monitor.refresh(at: origin.addingTimeInterval(20))
+
+    #expect(monitor.battery?.direction == .discharging)
+    #expect(monitor.battery?.percent == 50)
+}
+
+@Test @MainActor func aDeviceThatStopsAnsweringReportsNoBattery() async {
+    let transport = RecordingTransport()
+    transport.body = trendJSON(bat: 50, raw: 400)
+    let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
+    await monitor.refresh(at: origin)
+    transport.body = trendJSON(bat: 50, raw: 396)
+    await monitor.refresh(at: origin.addingTimeInterval(20))
+    #expect(monitor.battery != nil)
+
+    transport.status = 500
+    await monitor.refresh(at: origin.addingTimeInterval(40))
+
+    // The last thing a clock said before it went quiet is not what it is doing
+    // now, and a battery drawn beside "Disconnected" is a reading nobody took.
+    #expect(monitor.battery == nil)
+}
+
+@Test @MainActor func aRefreshAnswersWithTheThresholdItJustCrossed() async {
+    let transport = RecordingTransport()
+    transport.body = trendJSON(bat: 25, raw: 250)
+    let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
+    #expect(await monitor.refresh(at: origin) == nil)
+
+    transport.body = trendJSON(bat: 19, raw: 190)
+
+    #expect(
+        await monitor.refresh(at: origin.addingTimeInterval(20))
+            == BatteryWarning(threshold: 20, percent: 19)
+    )
+    // Once. The crossing is an edge, and a monitor that kept it would hand the
+    // same one to every poll that followed.
+    #expect(await monitor.refresh(at: origin.addingTimeInterval(40)) == nil)
+}
+
+@Test @MainActor func aRefreshThatReachesNothingAnswersWithNothing() async {
+    let transport = RecordingTransport()
+    transport.status = 500
+    let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
+
+    #expect(await monitor.refresh(at: origin) == nil)
+    #expect(monitor.battery == nil)
+}
+
+@Test @MainActor func aRefreshRedrawsExactlyOnceEvenNowThereIsABatteryToDraw() async {
+    let transport = RecordingTransport()
+    transport.body = trendJSON(bat: 50, raw: 400)
+    let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
+    let changes = ChangeCounter()
+    let subscription = monitor.objectWillChange.sink { _ in changes.bump() }
+
+    await monitor.refresh(at: origin)
+
+    // The reading is derived from `state` rather than published beside it. A
+    // second published property is a second notification for one poll, and the
+    // tray redraws off these.
+    #expect(changes.count == 1)
+    subscription.cancel()
+}
+
+@Test @MainActor func theInstantTheCallerSuppliesIsTheOneTheTrajectoryUses() async {
+    let transport = RecordingTransport()
+    transport.body = trendJSON(bat: 50, raw: 400)
+    let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
+    await monitor.refresh(at: origin)
+    transport.body = trendJSON(bat: 50, raw: 396)
+    await monitor.refresh(at: origin.addingTimeInterval(20))
+    #expect(monitor.battery?.direction == .discharging)
+
+    // Two refreshes a wall-clock millisecond apart, described as being an hour
+    // apart — which is what a Mac waking from sleep looks like. A monitor
+    // reading the wall clock instead of its argument would see no gap at all
+    // and carry the trend straight across it.
+    transport.body = trendJSON(bat: 50, raw: 392)
+    await monitor.refresh(at: origin.addingTimeInterval(20 + BatteryTrajectory.window + 1))
+
+    #expect(monitor.battery?.direction == .unknown)
 }

@@ -451,6 +451,76 @@ import Testing
     await subject.teardown()
 }
 
+// MARK: - Battery warnings
+
+@Test @MainActor func aThresholdCrossedByThePollReachesTheAlert() async {
+    let alerts = SpyAlerts()
+    let poll = Metronome()
+    let subject = testModel(
+        transport: ScriptedTransport(
+            bodies: [statsBody(percent: 25, raw: 250), statsBody(percent: 19, raw: 190)]
+        ),
+        pollSleep: poll.sleep,
+        alerts: alerts
+    )
+
+    subject.start()
+    // The first poll parked, so the first reading has landed. One reading is
+    // not a trend, so nothing has been crossed yet.
+    #expect(await waitUntil { poll.parked == 1 })
+    #expect(alerts.warnings.isEmpty)
+
+    poll.tick()
+
+    #expect(await waitUntil { alerts.warnings.count == 1 })
+    #expect(alerts.warnings.first?.threshold == 20)
+    #expect(alerts.warnings.first?.percent == 19)
+    await subject.teardown()
+}
+
+@Test @MainActor func aPollThatCrossesNothingRaisesNothing() async {
+    let alerts = SpyAlerts()
+    let poll = Metronome()
+    let subject = testModel(
+        // Falling, and nowhere near a threshold. The wiring must pass on what
+        // the trajectory answers rather than warning on every reading.
+        transport: ScriptedTransport(
+            bodies: [statsBody(percent: 80, raw: 800), statsBody(percent: 79, raw: 790)]
+        ),
+        pollSleep: poll.sleep,
+        alerts: alerts
+    )
+
+    subject.start()
+    #expect(await waitUntil { poll.parked == 1 })
+    poll.tick()
+    #expect(await waitUntil { poll.durations.count == 2 })
+
+    #expect(alerts.warnings.isEmpty)
+    await subject.teardown()
+}
+
+@Test @MainActor func aTornDownPollStopsAskingTheClockAnything() async {
+    let poll = Metronome()
+    let clock = ScriptedTransport(bodies: [statsBody(percent: 80, raw: 800)])
+    let subject = testModel(transport: clock, pollSleep: poll.sleep, alerts: SpyAlerts())
+    subject.start()
+    #expect(await waitUntil { poll.parked == 1 })
+
+    await subject.teardown()
+    let asked = clock.responses
+
+    // Released after the cancel. A loop that neither returns on the throw nor
+    // rechecks cancellation does not stop — it spins, because a cancelled sleep
+    // throws the moment it is entered, and every turn of it is another request
+    // at a clock the app is in the middle of walking away from. And, since this
+    // poll is now what raises the battery dialog, another chance to put one on
+    // screen during a quit.
+    poll.tick()
+
+    #expect(await waitUntil({ clock.responses > asked }, limit: 0.1) == false)
+}
+
 // MARK: - Icons
 
 @Test @MainActor func removingIconsTakesOffExactlyWhatThisAppUploaded() async {
@@ -881,6 +951,7 @@ private func modelWithARealAnecdoteConnector(
             device: device, transport: StubTransport(), uploads: InMemoryUploadedIconStore()
         ),
         defaults: UserDefaults(suiteName: "launch-\(UUID().uuidString)")!,
+        alerts: SpyAlerts(),
         sleep: schedule.sleep,
         pollSleep: parked
     )

@@ -117,6 +117,90 @@ enum NextRunLine {
     }
 }
 
+/// What the panel says about the battery.
+///
+/// The panel, and deliberately not the menu bar item: that item is a template
+/// image whose monochrome silhouette and its offline variant are both
+/// load-bearing, and an emoji drawn into it would break each of them.
+enum BatteryLine {
+    /// Where the discharging glyph changes, and the same number the first
+    /// warning fires at — one line, so the panel and the dialog cannot disagree
+    /// about what "low" means.
+    static let low = 20
+    /// Below this the wording and the colour carry the urgency. There is no red
+    /// variant of either battery emoji, and stacking a warning sign beside one
+    /// reads as clutter rather than as escalation.
+    static let critical = 10
+
+    /// The emoji for the state, or none while there is no state.
+    ///
+    /// There is no "battery charging" emoji in Unicode — the family is U+1F50B
+    /// and U+1FAAB, and neither has a charging variant — so charging shows the
+    /// plug, which is the closest thing that exists and reads unambiguously
+    /// next to a percentage.
+    ///
+    /// Nothing at all until the trend is established, deliberately. A glyph
+    /// implying a verdict the readings have not reached is the same lie as a
+    /// confident estimate from two samples twenty seconds apart.
+    static func glyph(for reading: BatteryReading?) -> String? {
+        switch reading?.direction {
+        case .charging: "\u{1F50C}"
+        case .discharging: (reading?.percent ?? 0) < low ? "\u{1FAAB}" : "\u{1F50B}"
+        case .unknown, nil: nil
+        }
+    }
+
+    /// The whole line: the glyph, the percentage, and what happens next.
+    static func text(for reading: BatteryReading?) -> String? {
+        guard let reading else { return nil }
+        let percent = "\(reading.percent)%"
+        let head = glyph(for: reading).map { "\($0) \(percent)" } ?? percent
+        guard let tail = trend(for: reading) else { return head }
+        return "\(head) · \(tail)"
+    }
+
+    /// What the line says after the percentage.
+    ///
+    /// Nothing while the direction is unknown; "charging" while it is filling,
+    /// and never a countdown — time to empty for something filling up is a
+    /// number that means nothing, and rendering one handed in by mistake would
+    /// be worse than withholding it upstream.
+    private static func trend(for reading: BatteryReading) -> String? {
+        switch reading.direction {
+        case .unknown: nil
+        case .charging: "charging"
+        case .discharging: reading.timeRemaining.map { "\(duration($0)) left" } ?? "estimating…"
+        }
+    }
+
+    /// How urgent the line looks.
+    ///
+    /// Read off the direction as well as the percentage: a clock filling up at
+    /// 4% is not an emergency, however low the number is.
+    static func colour(for reading: BatteryReading?) -> Color {
+        guard let reading, reading.direction == .discharging else { return .secondary }
+        if reading.percent < critical { return .red }
+        if reading.percent < low { return .orange }
+        return .secondary
+    }
+
+    /// Seconds as something a person reads off a menu bar.
+    ///
+    /// Written out rather than handed to `DateComponentsFormatter`, which is
+    /// locale-dependent: the suite would then say one thing on this machine and
+    /// another on anybody else's.
+    static func duration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let hours = total / 3_600
+        let minutes = (total % 3_600) / 60
+        if hours > 0 && minutes > 0 { return "\(hours) h \(minutes) m" }
+        if hours > 0 { return "\(hours) h" }
+        // Under a minute rounds up rather than reading "0 m", which looks like
+        // a broken estimate rather than an urgent one.
+        return "\(max(minutes, 1)) m"
+    }
+}
+
 struct MenuPanel: View {
     @ObservedObject var model: AppModel
     /// Observed separately from `model`: a nested `ObservableObject` publishes
@@ -181,9 +265,19 @@ struct MenuPanel: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(DeviceStatusLine.title(for: monitor.state))
                     .font(.headline)
-                Text(model.deviceHost + (monitor.batteryPercent.map { " · \($0)%" } ?? ""))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // The address and the battery in one row but two labels: only
+                // the second of them turns orange, and a single string would
+                // have taken the address with it.
+                HStack(spacing: 4) {
+                    Text(model.deviceHost)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let battery = BatteryLine.text(for: monitor.battery) {
+                        Text("· " + battery)
+                            .font(.caption)
+                            .foregroundStyle(BatteryLine.colour(for: monitor.battery))
+                    }
+                }
             }
         }
     }

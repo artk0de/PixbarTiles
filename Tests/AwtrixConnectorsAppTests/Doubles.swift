@@ -325,7 +325,11 @@ func testModel(
     // clipboard of whoever is running the suite.
     pasteboard: NSPasteboard = NSPasteboard(
         name: NSPasteboard.Name("testModel-\(UUID().uuidString)")
-    )
+    ),
+    // Recorded rather than raised. The shipped one puts a modal dialog on
+    // screen and asks macOS for notification permission, and there is no
+    // default on `AppModel.init` for exactly that reason.
+    alerts: any BatteryWarningPresenting = SpyAlerts()
 ) -> AppModel {
     let registry = ConnectorRegistry()
     for connector in connectors { registry.register(connector) }
@@ -342,6 +346,7 @@ func testModel(
         anecdotes: anecdotes,
         defaults: defaults,
         pasteboard: pasteboard,
+        alerts: alerts,
         sleep: sleep,
         pollSleep: pollSleep
     )
@@ -623,6 +628,7 @@ func modelOverRealHost(
         anecdotes: anecdotes,
         defaults: UserDefaults(suiteName: "realHost-\(UUID().uuidString)")!,
         pasteboard: NSPasteboard(name: NSPasteboard.Name("realHost-\(UUID().uuidString)")),
+        alerts: SpyAlerts(),
         sleep: sleep,
         pollSleep: pollSleep
     )
@@ -638,4 +644,99 @@ func modelOverRealHost(
 func isOffline(_ model: AppModel) -> Bool {
     if case .offline = model.monitor.state { return true }
     return false
+}
+
+// MARK: - Battery
+
+/// Answers every request with the next body in the script, and repeats the last
+/// one once the script runs out.
+///
+/// `StubTransport` cannot pose the question the trajectory exists to answer: a
+/// trend needs two readings that DIFFER, and one canned body is one reading
+/// repeated. Repeating the last entry rather than failing is what lets a test
+/// poll as many times as it likes after the interesting pair has landed.
+final class ScriptedTransport: Transport, @unchecked Sendable {
+    private let lock = NSLock()
+    private let bodies: [Data]
+    private var served = 0
+
+    init(bodies: [Data]) {
+        precondition(bodies.isEmpty == false, "a script with no bodies answers nothing")
+        self.bodies = bodies
+    }
+
+    /// How many requests have been answered.
+    var responses: Int { lock.withLock { served } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let body = lock.withLock { () -> Data in
+            let body = bodies[min(served, bodies.count - 1)]
+            served += 1
+            return body
+        }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+        )!
+        return (body, response)
+    }
+}
+
+/// One `/api/stats` body, with the two fields the trajectory reads.
+func statsBody(percent: Int, raw: Int, uptime: Int = 9_000) -> Data {
+    Data(
+        ("{\"version\":\"0.98\",\"uid\":\"awtrix_a07f9c\",\"bat\":\(percent),"
+            + "\"bat_raw\":\(raw),\"uptime\":\(uptime),\"ram\":139112,"
+            + "\"ip_address\":\"10.0.0.5\"}").utf8
+    )
+}
+
+/// Records the crossings a poll handed over, and raises nothing.
+final class SpyAlerts: BatteryWarningPresenting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [BatteryWarning] = []
+
+    var warnings: [BatteryWarning] { lock.withLock { recorded } }
+
+    @MainActor func warn(_ warning: BatteryWarning) async {
+        lock.withLock { recorded.append(warning) }
+    }
+}
+
+/// Records what the dialog was asked to say, instead of putting it on screen.
+final class RecordingDialog: BatteryDialogPresenting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [(title: String, body: String)] = []
+
+    var shown: [(title: String, body: String)] { lock.withLock { recorded } }
+
+    func show(title: String, body: String) {
+        lock.withLock { recorded.append((title, body)) }
+    }
+}
+
+/// Notification Centre, with the answer a test chooses.
+///
+/// `granted: false` is not a hypothetical: measured against a locally built
+/// bundle, `requestAuthorization` comes back refused with `UNErrorDomain` code
+/// 1 rather than prompting at all, so it is the case that ships today.
+final class StubNotifications: BatteryNotificationPosting, @unchecked Sendable {
+    private let lock = NSLock()
+    private let granted: Bool
+    private var requests = 0
+    private var recorded: [(title: String, body: String)] = []
+
+    init(granted: Bool) { self.granted = granted }
+
+    /// How many times authorization was asked for.
+    var authorizationRequests: Int { lock.withLock { requests } }
+    var posted: [(title: String, body: String)] { lock.withLock { recorded } }
+
+    func requestAuthorization() async -> Bool {
+        lock.withLock { requests += 1 }
+        return granted
+    }
+
+    func post(title: String, body: String) async {
+        lock.withLock { recorded.append((title, body)) }
+    }
 }

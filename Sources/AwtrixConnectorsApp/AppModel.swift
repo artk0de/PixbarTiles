@@ -216,6 +216,13 @@ final class AppModel: ObservableObject {
     /// meant — an aggregate cannot, and a test waiting on "something is asleep"
     /// gets whichever loop won the race.
     private let pollSleep: Sleeping
+    /// Where a threshold crossing goes.
+    ///
+    /// A collaborator rather than a call into AppKit, and it has no default for
+    /// the reason `AppDelegate.discovery` has none: the real one raises a modal
+    /// dialog and asks macOS for notification permission, and a default would
+    /// put both in front of whoever is running `swift test`.
+    private let alerts: any BatteryWarningPresenting
     private var timers: [String: Task<Void, Never>] = [:]
     private var monitorLoop: Task<Void, Never>?
     /// Runs the user asked for, still going. Keyed by nothing meaningful: two
@@ -260,6 +267,7 @@ final class AppModel: ObservableObject {
         anecdotes: (any AnecdoteReplaying)? = nil,
         defaults: UserDefaults = .standard,
         pasteboard: NSPasteboard = .general,
+        alerts: any BatteryWarningPresenting,
         sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
@@ -273,6 +281,7 @@ final class AppModel: ObservableObject {
         self.store = store
         self.installer = installer
         self.anecdotes = anecdotes
+        self.alerts = alerts
         self.scheduleSleep = sleep
         self.pollSleep = pollSleep
         for connector in registry.all {
@@ -317,7 +326,10 @@ final class AppModel: ObservableObject {
             store: store,
             installer: installer,
             anecdotes: anecdotes.connector,
-            defaults: defaults
+            defaults: defaults,
+            alerts: BatteryAlert(
+                dialog: ModalBatteryDialog(), notifications: SystemBatteryNotifier()
+            )
         )
     }
 
@@ -633,8 +645,18 @@ final class AppModel: ObservableObject {
         monitorLoop = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                await self.monitor.refresh()
+                // The instant is spelled out here rather than defaulted inside
+                // the monitor: this loop is what decides when a reading was
+                // taken, and the trajectory's whole answer is a function of when
+                // as much as of what.
+                let crossed = await self.monitor.refresh(at: Date())
                 self.isDeviceOnline = self.monitor.isOnline
+                // Awaited inside the loop rather than detached. The dialog does
+                // not block — it schedules itself — and what is awaited here is
+                // the authorization request, which happens once. A detached task
+                // would be one more thing teardown cannot wait for, for a
+                // warning that fires four times in the life of a charge.
+                if let crossed { await self.alerts.warn(crossed) }
                 do { try await self.pollSleep(Self.monitorInterval) } catch { return }
             }
         }

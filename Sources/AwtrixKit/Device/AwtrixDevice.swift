@@ -65,12 +65,51 @@ public struct DeviceStats: Sendable, Decodable, Equatable {
     public let version: String
     public let uid: String
     public let bat: Int
+    /// The reading `bat` is derived from, and the finer of the two: 648 where
+    /// `bat` says 91. Percent is what the user reads; this is what a trend is
+    /// computed on, because an integer percentage only moves every seventh
+    /// reading and a poll every twenty seconds would spend two minutes with
+    /// nothing to say.
+    ///
+    /// Optional because a firmware that does not report it must not read as an
+    /// unreachable clock. `DeviceStats` failing to decode is what puts the
+    /// monitor offline, and a missing trend field is not a missing device — the
+    /// panel shows the percentage and no verdict, which is the state the
+    /// trajectory already has a name for.
+    public let batRaw: Int?
+    /// Seconds since the device booted. Optional for the reason `batRaw` is.
+    ///
+    /// Read for one purpose: it going backwards is a reboot, and a reboot is
+    /// exactly when somebody unplugged the clock and plugged it in again. The
+    /// readings either side of it describe two different situations.
+    public let uptime: Int?
     public let ram: Int
     public let ipAddress: String
 
     private enum CodingKeys: String, CodingKey {
-        case version, uid, bat, ram
+        case version, uid, bat, ram, uptime
+        case batRaw = "bat_raw"
         case ipAddress = "ip_address"
+    }
+
+    /// Spelled out rather than synthesized, so the two optional fields can carry
+    /// defaults: every caller that predates them names the five it always named.
+    public init(
+        version: String,
+        uid: String,
+        bat: Int,
+        batRaw: Int? = nil,
+        uptime: Int? = nil,
+        ram: Int,
+        ipAddress: String
+    ) {
+        self.version = version
+        self.uid = uid
+        self.bat = bat
+        self.batRaw = batRaw
+        self.uptime = uptime
+        self.ram = ram
+        self.ipAddress = ipAddress
     }
 }
 

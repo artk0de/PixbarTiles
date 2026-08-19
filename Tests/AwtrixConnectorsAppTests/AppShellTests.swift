@@ -27,12 +27,54 @@ import Testing
 // Online and offline are two drawings, not one drawing plus a badge — a badge
 // does not survive being 18pt tall. This runs outside a bundle, so what it
 // actually pins is the fallback pair: `NSImage(named:)` finds nothing here.
+//
+// What it does NOT pin is which of the two means which, and that is not a
+// nuance: `lit != unlit` is satisfied by an inverted mapping exactly as well as
+// by a correct one. The two tests below are the direction.
 @Test @MainActor func onlineAndOfflineAreTwoDifferentGlyphs() {
     let lit = AppGlyph.menuBar(lit: true).tiffRepresentation
     let unlit = AppGlyph.menuBar(lit: false).tiffRepresentation
 
     #expect(lit != nil)
     #expect(lit != unlit)
+}
+
+// A reachable clock is the panel with its pixels lit; an unreachable one is the
+// hollow panel. Named here rather than inferred from a comparison, because the
+// comparison above stays green with the two swapped — measured, on the shipped
+// tree, with all 653 tests passing while the menu bar showed a lit AWTRIX panel
+// for a dead clock.
+@Test @MainActor func aReachableClockSelectsTheLitPanelAndAnUnreachableOneTheHollowOne() {
+    #expect(
+        AppGlyph.drawing(lit: true)
+            == AppGlyph.Drawing(resource: "MenuBarIcon", symbol: "square.grid.3x2.fill")
+    )
+    #expect(
+        AppGlyph.drawing(lit: false)
+            == AppGlyph.Drawing(resource: "MenuBarIconOffline", symbol: "square.grid.3x2")
+    )
+}
+
+// And the image handed back is drawn from the drawing that table names, or the
+// table is a decoration nothing reads. Outside a bundle the fallback symbol is
+// what gets drawn, so the reference is built from the symbol name THIS test
+// states and compared pixel for pixel — the same technique the panel tests use,
+// aimed at identity rather than at difference.
+@Test @MainActor func theGlyphIsDrawnFromTheDrawingItsStateNames() {
+    #expect(AppGlyph.menuBar(lit: true).tiffRepresentation == glyphDrawnFrom("square.grid.3x2.fill"))
+    #expect(AppGlyph.menuBar(lit: false).tiffRepresentation == glyphDrawnFrom("square.grid.3x2"))
+    // Or two nils would satisfy both lines above without anything being drawn.
+    #expect(glyphDrawnFrom("square.grid.3x2.fill") != nil)
+}
+
+/// An SF Symbol put through the same preparation `menuBar(lit:)` applies, as
+/// bytes. Two separately built images of one symbol render identically — a
+/// determinism control this depends on, and the reason it is safe to compare
+/// against a reference rather than against the other state.
+@MainActor
+private func glyphDrawnFrom(_ symbol: String) -> Data? {
+    AppGlyph.prepare(NSImage(systemSymbolName: symbol, accessibilityDescription: "AWTRIX")!)
+        .tiffRepresentation
 }
 
 // The bundled case, which nothing running outside a bundle can otherwise reach.

@@ -153,7 +153,22 @@ private func panelFields(deviceHost: String) -> [String] {
 /// The glyph as the menu bar would draw it.
 @MainActor
 private func renderedGlyph(for model: AppModel) -> Data? {
-    let host = NSHostingView(rootView: MenuBarGlyph(model: model))
+    renderedInTheBar(MenuBarGlyph(model: model))
+}
+
+/// The same, for a drawing chosen by hand rather than by a device state.
+///
+/// The reference half of the direction assertion. `MenuBarGlyph`'s body is
+/// `Image(nsImage:).renderingMode(.template)`, so hosting that expression in
+/// the same frame renders the same bytes — measured, and relied on below.
+@MainActor
+private func renderedGlyph(lit: Bool) -> Data? {
+    renderedInTheBar(Image(nsImage: AppGlyph.menuBar(lit: lit)).renderingMode(.template))
+}
+
+@MainActor
+private func renderedInTheBar(_ view: some View) -> Data? {
+    let host = NSHostingView(rootView: view)
     host.frame = NSRect(x: 0, y: 0, width: 30, height: 18)
     host.layoutSubtreeIfNeeded()
     guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
@@ -195,6 +210,24 @@ private func polled(reachable: Bool) async -> AppModel {
     let model = await polled(reachable: true)
 
     #expect(renderedGlyph(for: model) == renderedGlyph(for: model))
+}
+
+// WHICH way round. The test above says the two renders differ, which is exactly
+// as true of `lit: !model.isDeviceOnline` — measured on the shipped tree at
+// 653/653 green, with the menu bar showing a lit panel for a dead clock and an
+// empty one for a healthy one.
+//
+// So each render is compared against the render of the drawing that state is
+// supposed to select, rather than against the other state. Inverting the
+// argument in `MenuBarGlyph` swaps both sides at once and both lines fail.
+@Test @MainActor func aReachableClockLightsTheMenuBarAndAnUnreachableOneEmptiesIt() async {
+    let online = renderedGlyph(for: await polled(reachable: true))
+    let offline = renderedGlyph(for: await polled(reachable: false))
+
+    // Or two nils would satisfy both comparisons with nothing drawn at all.
+    #expect(renderedGlyph(lit: true) != nil)
+    #expect(online == renderedGlyph(lit: true))
+    #expect(offline == renderedGlyph(lit: false))
 }
 
 // MARK: - Behind the gear

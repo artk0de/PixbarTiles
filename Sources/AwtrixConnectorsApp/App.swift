@@ -28,9 +28,13 @@ struct AwtrixConnectorsApp: App {
 /// A view of its own rather than an `Image` written inline, because a Scene does
 /// not observe anything: the glyph would be drawn once at launch and never
 /// change. A view does observe, so this is where the online state is read.
-/// Internal rather than private so a test can draw it. What is worth drawing is
-/// the one thing `AppGlyph`'s own tests cannot say: that the view picks its
-/// image FROM the device state rather than from a constant.
+/// Internal rather than private so a test can draw it, and what is worth
+/// drawing is the pair `AppGlyph`'s own tests cannot say: that the view picks
+/// its image FROM the device state rather than from a constant, and that it
+/// picks the right way round. The second half is not free — a render can only
+/// report that two pictures differ, which `lit: !model.isDeviceOnline`
+/// satisfies — so the test compares each render against the render of the
+/// drawing that state is supposed to select, not against the other state.
 struct MenuBarGlyph: View {
     @ObservedObject var model: AppModel
 
@@ -53,10 +57,46 @@ enum AppGlyph {
     /// stretching the art.
     static let menuBarSize = NSSize(width: 30, height: 18)
 
+    /// One drawing of the mark: where the bundle keeps it, and what to draw
+    /// when there is no bundle.
+    ///
+    /// A value holding both names rather than two ternaries inside
+    /// `menuBar(lit:)`, and the reason is the defect this type shipped with.
+    /// With the names picked separately, the mapping from state to drawing had
+    /// no single site and nothing could read it back: swapping either pair
+    /// inverted the menu bar and left all 653 tests green, because every
+    /// assertion in the suite said only that the two drawings DIFFER, which an
+    /// inverted mapping satisfies exactly as well as a correct one. One value
+    /// per state gives the direction somewhere to be asserted.
+    struct Drawing: Equatable, Sendable {
+        /// The PNG in `Contents/Resources`, once `Scripts/bundle.sh` has
+        /// assembled the .app.
+        let resource: String
+        /// What an unbundled binary draws instead — which is every test, and a
+        /// bare `swift run`.
+        let symbol: String
+    }
+
+    /// The panel with its pixels lit: the clock is answering.
+    static let litDrawing = Drawing(resource: "MenuBarIcon", symbol: "square.grid.3x2.fill")
+
+    /// The same panel with nothing on it: the clock is not answering. Two
+    /// drawings rather than one plus a badge, because a badge does not survive
+    /// being 18pt tall — and an empty panel is also what an unreachable clock
+    /// actually looks like across the room.
+    static let unlitDrawing = Drawing(resource: "MenuBarIconOffline", symbol: "square.grid.3x2")
+
+    /// Which drawing a reachability answer selects.
+    ///
+    /// A function of its own, and the ONLY place the two are told apart.
+    /// Inverting this line is the one edit that inverts the menu bar, so it is
+    /// the one thing a test has to be able to read — which is what it could not
+    /// do while the choice lived inside two ternaries in the middle of an image
+    /// lookup.
+    static func drawing(lit: Bool) -> Drawing { lit ? litDrawing : unlitDrawing }
+
     /// The menu bar mark, as a template image so macOS recolours it for light,
-    /// dark and the highlighted state. Offline is the same panel with nothing
-    /// lit on it — two drawings rather than one plus a badge, because a badge
-    /// does not survive being 18pt tall.
+    /// dark and the highlighted state.
     ///
     /// `NSImage(named:)` reads `Contents/Resources`, which only exists once
     /// `Scripts/bundle.sh` has assembled the .app — under a bare `swift run`
@@ -64,15 +104,15 @@ enum AppGlyph {
     /// keeps the unbundled binary usable rather than showing an empty slot, and
     /// it is what the tests exercise: they run outside a bundle too.
     static func menuBar(lit: Bool) -> NSImage {
-        // Force-unwrapped deliberately. Both names ship with macOS 14, so a nil
-        // here is a typo rather than a runtime condition — and the alternative
-        // to failing loudly is a menu bar item with nothing in it, which looks
-        // exactly like an app that did not launch.
-        prepare(
-            NSImage(named: lit ? "MenuBarIcon" : "MenuBarIconOffline")
+        let chosen = drawing(lit: lit)
+        // Force-unwrapped deliberately. Both symbols ship with macOS 14, so a
+        // nil here is a typo rather than a runtime condition — and the
+        // alternative to failing loudly is a menu bar item with nothing in it,
+        // which looks exactly like an app that did not launch.
+        return prepare(
+            NSImage(named: chosen.resource)
                 ?? NSImage(
-                    systemSymbolName: lit ? "square.grid.3x2.fill" : "square.grid.3x2",
-                    accessibilityDescription: "AWTRIX"
+                    systemSymbolName: chosen.symbol, accessibilityDescription: "AWTRIX"
                 )!
         )
     }

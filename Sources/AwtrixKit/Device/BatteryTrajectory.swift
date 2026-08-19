@@ -31,9 +31,9 @@ public struct BatteryReading: Sendable, Equatable {
 
 /// A threshold the battery has just fallen through, and where it actually is.
 ///
-/// Both, because they are different numbers: a poll every twenty seconds can
-/// find the battery at 19% having last seen it at 25%, and the warning is about
-/// the 20% line while the text the user reads is about the 19.
+/// Both, because they are different numbers: a poll a minute apart can find the
+/// battery at 19% having last seen it at 25%, and the warning is about the 20%
+/// line while the text the user reads is about the 19.
 public struct BatteryWarning: Sendable, Equatable {
     public let threshold: Int
     public let percent: Int
@@ -54,14 +54,34 @@ public struct BatteryTrajectory: Sendable {
     ///
     /// Doubles as what counts as a gap: readings this far apart describe two
     /// situations rather than one, because everything between them is
-    /// unobserved. Thirty minutes is ninety polls at the shipped cadence.
-    public static let window: TimeInterval = 30 * 60
+    /// unobserved. Ninety minutes is ninety polls at the shipped cadence.
+    public static let window: TimeInterval = 90 * 60
     /// How much has to have been watched before a number is put on it. Below
     /// this, "four hours" means "I have two readings".
-    public static let minimumSpan: TimeInterval = 5 * 60
+    ///
+    /// Fifteen minutes, which at the shipped cadence is fifteen samples for the
+    /// fit to run through. A rate read off five of them is noise wearing a
+    /// number.
+    public static let minimumSpan: TimeInterval = 15 * 60
     /// How far the raw reading has to have moved before the same. Two is inside
     /// what an ADC on a battery divider wanders by while nothing happens.
     public static let minimumRawDelta = 4
+    /// What a derived raw-steps-per-percent may be, before it is refused as
+    /// something the readings cannot have meant.
+    ///
+    /// The firmware's map is undocumented and this is not an attempt to guess
+    /// it — the slope is fitted per window, which is the whole point. The band
+    /// is only a sanity check on the fit, and it is wide: the clock on this
+    /// desk answers 665 raw at 100% and 648 at 91%, about two steps to the
+    /// percent, and another divider could plausibly spend ten times that.
+    ///
+    /// What it refuses is a fit that cannot be a map at all. A window straddling
+    /// the firmware's own cap — `bat` pinned at 100 while the raw figure falls,
+    /// then one step to 99 — fits a slope several times the real one, and an
+    /// estimate divided by that is wrong by the same factor. Anything outside
+    /// the band falls back to the percentage rather than being scaled by a
+    /// number nobody can defend.
+    public static let rawPerPercentBand: ClosedRange<Double> = 1...20
     /// Where a warning fires, in percent. Ordered high to low, and read as a
     /// set rather than in order — a poll can find the battery below several at
     /// once.
@@ -134,11 +154,11 @@ public struct BatteryTrajectory: Sendable {
 
     /// Charging, discharging, or whatever it was.
     ///
-    /// The last two readings, not the ends of the window. Over half an hour the
-    /// endpoints describe NET movement, and a clock plugged in five minutes ago
-    /// would keep reading as discharging for another twenty-five — where the
-    /// raw figure moves about seven times per percent, so the pair is already
-    /// enough to be responsive.
+    /// The last two readings, not the ends of the window. Over an hour and a
+    /// half the endpoints describe NET movement, and a clock plugged in five
+    /// minutes ago would keep reading as discharging for another eighty-five —
+    /// where the raw figure moves several steps to the percent, so the pair is
+    /// already enough to be responsive.
     ///
     /// Equal readings hold the previous verdict rather than clearing it: a raw
     /// figure that does not move between two polls is the ordinary case at
@@ -157,22 +177,113 @@ public struct BatteryTrajectory: Sendable {
 
     /// Seconds to empty, or nil while there is not enough observed to say.
     ///
-    /// Percent over the rate the window actually showed, and every gate below
-    /// is a different way of not having a rate. The arithmetic is in percent
-    /// because that is what is left to spend; the raw figure's job is the
-    /// direction above and the movement gate here, where an integer percentage
-    /// is too coarse to tell drift from jitter.
+    /// Percent over the rate the window actually showed, and every gate below is
+    /// a different way of not having a rate.
+    ///
+    /// The rate is read off the RAW figure and converted, rather than off `bat`
+    /// directly. An integer percentage over a window where one percent moved
+    /// quantises the rate to plus or minus the whole of it, and the panel
+    /// renders that as an hour that is not there. The raw figure is already
+    /// collected and moves several steps per percent, so it can say where inside
+    /// that percent the battery is — which is the difference between "one
+    /// percent went" and "one and seven eighths went".
     private var timeRemaining: TimeInterval? {
         guard direction == .discharging else { return nil }
         guard let first = samples.first, let last = samples.last else { return nil }
         let span = last.at.timeIntervalSince(first.at)
         guard span >= Self.minimumSpan else { return nil }
         guard first.raw - last.raw >= Self.minimumRawDelta else { return nil }
-        // The percentage can sit still while the raw figure falls — seven raw
-        // steps buy one percent — and a rate of zero renders as "forever".
-        let spent = first.percent - last.percent
-        guard spent > 0 else { return nil }
-        return Double(last.percent) * span / Double(spent)
+        guard let spending = percentPerSecond(from: first, to: last, over: span) else {
+            return nil
+        }
+        // Zero is the percentage sitting still with nothing to convert it from,
+        // and negative cannot reach here past the direction gate. Either renders
+        // as "forever".
+        guard spending > 0 else { return nil }
+        return Double(last.percent) / spending
+    }
+
+    /// How fast the battery is being spent, in percent per second.
+    ///
+    /// Two raw fits divided by each other: how fast the raw figure falls, and
+    /// how many raw steps the firmware spends on a percent. The second is what
+    /// makes the first mean anything, and it is DERIVED rather than declared —
+    /// the map is undocumented, differs by hardware revision, and a constant
+    /// here would be a guess baked into every estimate the app ever shows.
+    ///
+    /// Falls back to the percentage's own endpoints when the window cannot say
+    /// what a percent is worth: one distinct percentage in it, or a slope the
+    /// band refuses. Coarse, and it is the early window where exactly one
+    /// percent has moved — which is precisely when withholding the estimate
+    /// altogether is least useful to whoever opened the panel.
+    private func percentPerSecond(
+        from first: Sample, to last: Sample, over span: TimeInterval
+    ) -> Double? {
+        if let falling = rateRawPerSecond, let perPercent = rawPerPercent {
+            return falling / perPercent
+        }
+        return Double(first.percent - last.percent) / span
+    }
+
+    /// How fast the raw figure is falling, in raw steps per second.
+    ///
+    /// Fitted over every sample in the window rather than measured between its
+    /// ends. Two endpoints are two readings — and two readings, one of which
+    /// caught the ADC on a wobble, is the noisiest possible way to use ninety
+    /// of them.
+    ///
+    /// Sign flipped, so that discharging counts up: everything downstream is
+    /// about what is being SPENT, and a rate that is negative when the battery
+    /// is draining would put the minus sign in every expression that touches it.
+    private var rateRawPerSecond: Double? {
+        guard let start = samples.first?.at else { return nil }
+        // Seconds since the first sample rather than since 1970. The fit squares
+        // its x-deviations, and a billion-and-a-half squared spends the
+        // precision on the epoch instead of on the window.
+        let slope = Self.slope(
+            of: samples.map { (x: $0.at.timeIntervalSince(start), y: Double($0.raw)) }
+        )
+        return slope.map { -$0 }
+    }
+
+    /// How many raw steps this clock's firmware spends on one percent, or nil
+    /// when this window cannot say.
+    ///
+    /// Nil on one distinct percentage — a fit needs two x values to have a
+    /// slope, and a window where `bat` never moved has nothing to calibrate
+    /// against — and nil again when the answer lands outside
+    /// `rawPerPercentBand`, which is the fit reporting something that cannot be
+    /// a map.
+    private var rawPerPercent: Double? {
+        guard
+            let slope = Self.slope(
+                of: samples.map { (x: Double($0.percent), y: Double($0.raw)) }
+            )
+        else { return nil }
+        guard Self.rawPerPercentBand.contains(slope) else { return nil }
+        return slope
+    }
+
+    /// The slope of a least-squares fit of `y` against `x`, or nil when every
+    /// `x` is the same and there is no line to fit.
+    ///
+    /// Only the slope. An intercept would be the raw figure the fit thinks an
+    /// empty battery reads, and nothing here asks that question — the estimate
+    /// is a rate over a rate.
+    private static func slope(of points: [(x: Double, y: Double)]) -> Double? {
+        guard points.count >= 2 else { return nil }
+        let count = Double(points.count)
+        let meanX = points.reduce(0) { $0 + $1.x } / count
+        let meanY = points.reduce(0) { $0 + $1.y } / count
+        var covariance = 0.0
+        var spread = 0.0
+        for point in points {
+            let dx = point.x - meanX
+            covariance += dx * (point.y - meanY)
+            spread += dx * dx
+        }
+        guard spread > 0 else { return nil }
+        return covariance / spread
     }
 
     // MARK: - What discards the history

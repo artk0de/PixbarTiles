@@ -13,6 +13,16 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
 
 private func at(_ seconds: TimeInterval) -> Date { origin.addingTimeInterval(seconds) }
 
+/// How long is left, to the nearest second.
+///
+/// Rounded rather than compared exactly. The rate is a least-squares sum over a
+/// window of samples now rather than one subtraction between two of them, so
+/// the answer arrives with the last bits of a `Double` on it — and a second is
+/// four orders below anything the panel renders.
+private func secondsLeft(_ subject: BatteryTrajectory) -> TimeInterval? {
+    subject.reading?.timeRemaining.map { $0.rounded() }
+}
+
 private func stats(
     percent: Int, raw: Int?, uptime: Int? = 9_000, uid: String = "awtrix_a07f9c"
 ) -> DeviceStats {
@@ -27,9 +37,12 @@ private func stats(
 @Test func aFallingRawReadingReadsAsDischarging() {
     var subject = BatteryTrajectory()
 
-    // The percentage does not move. 648 raw is 91%, so about seven raw steps
-    // buy one percent — a trend read off `bat` would see nothing here for two
-    // minutes, which is six polls of having nothing to say.
+    // The percentage is held still while the raw figure moves, so an
+    // implementation reading `bat` has nothing to go on and this test says
+    // which of the two fields the trend is computed from. How many raw steps
+    // the firmware actually spends on a percent is not assumed anywhere — the
+    // clock on this desk answers 665 at 100% and 648 at 91%, which is about
+    // two, and the map is undocumented and free to differ.
     subject.record(stats(percent: 50, raw: 400), at: at(0))
     subject.record(stats(percent: 50, raw: 396), at: at(20))
 
@@ -191,37 +204,39 @@ private func stats(
     var subject = BatteryTrajectory()
     subject.record(stats(percent: 50, raw: 400), at: at(0))
 
-    // Ten minutes is span enough, and the raw reading has moved by two — inside
-    // what the reading jitters by on its own.
-    subject.record(stats(percent: 49, raw: 398), at: at(600))
+    // Fifteen minutes is span enough, and the raw reading has moved by two —
+    // inside what the reading jitters by on its own.
+    subject.record(stats(percent: 49, raw: 398), at: at(900))
     #expect(subject.reading?.direction == .discharging)
     #expect(subject.reading?.timeRemaining == nil)
 
-    // Four is the line, and the same window now clears it.
-    subject.record(stats(percent: 49, raw: 396), at: at(900))
+    // Four is the line, and a longer window now clears it.
+    subject.record(stats(percent: 49, raw: 396), at: at(1_200))
     #expect(subject.reading?.timeRemaining != nil)
 }
 
 @Test func theEtaIsPercentOverTheObservedRate() {
     var subject = BatteryTrajectory()
     subject.record(stats(percent: 50, raw: 400), at: at(0))
-    subject.record(stats(percent: 48, raw: 380), at: at(600))
+    subject.record(stats(percent: 48, raw: 380), at: at(900))
 
-    // Six hundred seconds bought two percent, and forty-eight are left:
-    // 48 × 600 ÷ 2 is four hours.
-    #expect(subject.reading?.timeRemaining == 14_400)
+    // Nine hundred seconds bought two percent, and forty-eight are left:
+    // 48 × 900 ÷ 2 is six hours. Two samples are the case where the fit and the
+    // endpoints agree by construction — a line through two points passes
+    // through both — which is what makes this readable as arithmetic.
+    #expect(secondsLeft(subject) == 21_600)
 }
 
 @Test func noEtaIsShownWhileTheBatteryIsCharging() {
     var subject = BatteryTrajectory()
     subject.record(stats(percent: 50, raw: 400), at: at(0))
-    subject.record(stats(percent: 48, raw: 380), at: at(600))
+    subject.record(stats(percent: 48, raw: 380), at: at(900))
     #expect(subject.reading?.timeRemaining != nil)
 
     // The window still ends lower than it started, so every other gate is still
     // clear and only the direction has changed. Time to empty for something
     // filling up is not a number that means anything.
-    subject.record(stats(percent: 48, raw: 385), at: at(620))
+    subject.record(stats(percent: 48, raw: 385), at: at(920))
 
     #expect(subject.reading?.direction == .charging)
     #expect(subject.reading?.timeRemaining == nil)
@@ -232,9 +247,10 @@ private func stats(
     subject.record(stats(percent: 50, raw: 400), at: at(0))
 
     // The raw reading has moved plenty and the span is long, but `bat` is where
-    // it was: the rate the estimate divides by is zero, and dividing by it
+    // it was: one distinct percentage is no slope to scale the raw figure by,
+    // and the percentage arithmetic it falls back to divides by zero — which
     // reads as "forever".
-    subject.record(stats(percent: 50, raw: 390), at: at(600))
+    subject.record(stats(percent: 50, raw: 390), at: at(900))
 
     #expect(subject.reading?.direction == .discharging)
     #expect(subject.reading?.timeRemaining == nil)
@@ -242,19 +258,107 @@ private func stats(
 
 @Test func theRateIsMeasuredOverTheWindowRatherThanTheWholeHistory() {
     var subject = BatteryTrajectory()
-    // Forty minutes of readings, and the first ten of them fell twice as fast
-    // as the rest — the clock was showing something bright, or the room was
-    // cold. Only the last half hour is inside the window.
-    subject.record(stats(percent: 60, raw: 600), at: at(0))
-    subject.record(stats(percent: 55, raw: 550), at: at(600))
-    subject.record(stats(percent: 50, raw: 500), at: at(1_200))
-    subject.record(stats(percent: 45, raw: 450), at: at(1_800))
-    subject.record(stats(percent: 44, raw: 440), at: at(2_400))
+    // Two hours of readings whose first half hour fell two and a half times as
+    // fast as the rest — the clock was showing something bright, or the room
+    // was cold. Only the last ninety minutes are inside the window, and inside
+    // it the readings are on one line.
+    subject.record(stats(percent: 70, raw: 700), at: at(0))
+    subject.record(stats(percent: 60, raw: 600), at: at(1_800))
+    subject.record(stats(percent: 56, raw: 560), at: at(3_600))
+    subject.record(stats(percent: 52, raw: 520), at: at(5_400))
+    subject.record(stats(percent: 48, raw: 480), at: at(7_200))
 
-    // 44% over the 11 the window watched go, across its 1800 seconds. Reading
-    // right back to the start would answer 6600 instead — an estimate carrying
-    // a rate that stopped applying half an hour ago.
-    #expect(subject.reading?.timeRemaining == 7_200)
+    // 48% at the 120 raw steps the window watched go across its 5400 seconds,
+    // ten of them to the percent: six hours. Reading right back to the start
+    // would answer 15709 instead — an estimate carrying a rate that stopped
+    // applying half an hour before the window opened.
+    #expect(secondsLeft(subject) == 21_600)
+}
+
+// MARK: - What the rate is read off
+
+@Test func theWindowAndTheSpanAreTheOnesTheCadenceCanFill() {
+    // Ninety minutes is ninety samples at the shipped minute, and no rate is
+    // read off less than fifteen of them. Both are used symbolically everywhere
+    // else in this file, so lowering either one leaves the rest of it green.
+    #expect(BatteryTrajectory.window == 90 * 60)
+    #expect(BatteryTrajectory.minimumSpan == 15 * 60)
+}
+
+@Test func aCleanLinearDischargeAnswersTheRateThatGeneratedIt() {
+    var subject = BatteryTrajectory()
+    // Ninety minutes of readings from one rule: a percent every two minutes,
+    // eight raw steps to the percent. Every sample is on the line, so the fit
+    // has exactly one right answer, and 55% left at a percent per two minutes
+    // is 110 minutes of it.
+    for step in 0...45 {
+        subject.record(
+            stats(percent: 100 - step, raw: 800 - 8 * step), at: at(Double(step) * 120)
+        )
+    }
+
+    #expect(secondsLeft(subject) == 6_600)
+}
+
+@Test func aWindowWhereOnePercentMovedIsReadOffTheRawFigureNotThatOnePercent() {
+    var subject = BatteryTrajectory()
+    // Ninety minutes in which `bat` steps exactly once, 50 to 49, while the raw
+    // figure walks 407 down to 392 — eight steps to the percent, so what
+    // actually went is one and seven eighths of a percent. The endpoints of an
+    // integer percentage cannot see that: they answer "one percent in ninety
+    // minutes", and 49 of them at that rate is 73 and a half hours. The fit
+    // answers 39.2, which is what the readings say.
+    for step in 0...15 {
+        let raw = 407 - step
+        subject.record(
+            stats(percent: raw >= 400 ? 50 : 49, raw: raw), at: at(Double(step) * 360)
+        )
+    }
+
+    #expect(secondsLeft(subject) == 141_120)
+    // Named rather than left implicit, so a fixture cannot drift into agreeing
+    // with the arithmetic this replaced.
+    #expect(secondsLeft(subject) != 264_600)
+}
+
+@Test func aFitTheReadingsCannotSupportFallsBackToThePercentageRatherThanToNothing() {
+    var subject = BatteryTrajectory()
+    // A full clock. The firmware caps `bat` at 100, so the raw figure falls for
+    // most of the window with the percentage pinned and the step to 99 lands at
+    // the end of it. Fitted, that reads as 32 raw steps to the percent — the
+    // map's slope is nothing of the sort, and an estimate divided by it would
+    // be wrong by that factor.
+    for step in 0...15 {
+        let raw = 700 - 4 * step
+        subject.record(
+            stats(percent: raw >= 648 ? 100 : 99, raw: raw), at: at(Double(step) * 360)
+        )
+    }
+
+    // Refused, and the coarse percentage arithmetic answers in its place: one
+    // percent in ninety minutes, 99 of them left. A number nobody should plan
+    // around, and still better than the panel saying it is working it out
+    // ninety minutes into a discharge.
+    #expect(secondsLeft(subject) == 534_600)
+}
+
+@Test func aRebootPartWayThroughTheWindowTakesTheEstimateWithTheHistory() {
+    var subject = BatteryTrajectory()
+    for step in 0...45 {
+        subject.record(
+            stats(percent: 100 - step, raw: 800 - 8 * step, uptime: 9_000 + step * 120),
+            at: at(Double(step) * 120)
+        )
+    }
+    #expect(secondsLeft(subject) == 6_600)
+
+    // Somebody unplugged the clock and plugged it in again. Ninety minutes of
+    // fitted history is exactly the thing that would carry the situation before
+    // the reboot across into the one after it.
+    subject.record(stats(percent: 55, raw: 440, uptime: 5), at: at(5_520))
+
+    #expect(subject.reading?.timeRemaining == nil)
+    #expect(subject.reading?.percent == 55)
 }
 
 // MARK: - Warnings

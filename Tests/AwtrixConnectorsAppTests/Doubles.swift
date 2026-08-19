@@ -432,7 +432,7 @@ func testModel(
     // wall clock: the quiet window is only consulted while this app is NOT
     // allowed to ask, and a default of `.notDetermined` would have every test
     // in this target pass or fail depending on the hour it was run at.
-    focus: FocusGate = FocusGate(status: StubFocusStatus(access: .authorized)),
+    focus: FocusGate = focusGate(StubFocusStatus(access: .authorized)),
     quietHours: QuietWindow = .default,
     // Nothing capturing, so nothing in the suite is held by whatever is plugged
     // into the machine running it. A default reading the REAL inputs would have
@@ -748,7 +748,7 @@ func modelOverRealHost(
     connector: any Connector = StubConnector(),
     transport: any Transport,
     anecdotes: (any AnecdoteReplaying)? = nil,
-    focus: FocusGate = FocusGate(status: StubFocusStatus(access: .authorized)),
+    focus: FocusGate = focusGate(StubFocusStatus(access: .authorized)),
     quietHours: QuietWindow = .default,
     microphone: MicrophoneGate = MicrophoneGate(inputs: StubAudioInputs()),
     watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
@@ -953,6 +953,24 @@ func atHour(_ hour: Int, calendar: Calendar = .current) -> Date {
     components.minute = 30
     components.second = 0
     return calendar.date(from: components)!
+}
+
+/// A gate on a stopped clock, for every test whose subject is the CENTRE rather
+/// than the hour.
+///
+/// The hour is not decoration and this default must never go back to
+/// `Date.init`. `FocusGate` applies the user's quiet window whatever the centre
+/// answers, and the window every model here gets by default is 23:00–08:00 — so
+/// a gate reading the wall clock gives one answer by day and the opposite one
+/// by night. A suite that is green until eleven in the evening is worse than a
+/// suite that is simply red, because the failure arrives on somebody else's
+/// machine at somebody else's hour with nothing in the diff to point at.
+///
+/// Noon is outside every window the suite sets. The tests whose subject IS the
+/// hour hand `FocusGate` their own clock instead, and read as the exceptions
+/// they are.
+func focusGate(_ status: any FocusStatusReading, at hour: Int = 12) -> FocusGate {
+    FocusGate(status: status, now: { atHour(hour) })
 }
 
 // MARK: - Microphones

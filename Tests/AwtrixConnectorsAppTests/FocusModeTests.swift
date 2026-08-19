@@ -166,7 +166,8 @@ import Testing
             activeMode: DoNotDisturbDatabase.activeMode(
                 inAssertions: Data(CapturedFocusDatabase.noFocus.utf8)
             )
-        )
+        ),
+        now: { atHour(12) }
     )
 
     #expect(idle.silence(quietHours: .default) == nil)
@@ -179,10 +180,12 @@ import Testing
 // morning.
 @Test func aDatabaseThisAppCannotReadFallsBackToTheBoolean() {
     let focused = FocusGate(
-        status: StubFocusStatus(access: .authorized, isFocused: true, activeMode: .cannotTell)
+        status: StubFocusStatus(access: .authorized, isFocused: true, activeMode: .cannotTell),
+        now: { atHour(12) }
     )
     let idle = FocusGate(
-        status: StubFocusStatus(access: .authorized, isFocused: false, activeMode: .cannotTell)
+        status: StubFocusStatus(access: .authorized, isFocused: false, activeMode: .cannotTell),
+        now: { atHour(12) }
     )
 
     #expect(focused.silence(quietHours: .default) == FocusGate.duringFocus)
@@ -232,18 +235,25 @@ import Testing
 
 // MARK: - Helpers
 
-/// A gate told that this mode is on, with everything else saying "be quiet".
+/// A gate told that this mode is on, with everything else that still can saying
+/// "be quiet".
 ///
-/// `isFocused` is true throughout and the clock reads three in the morning, so
-/// each expectation is a statement about the MODE alone: with the boolean and
-/// the hour both already arguing for silence, anything that speaks can only be
-/// speaking because of the identifier.
+/// `isFocused` is true throughout, so each expectation below is a statement
+/// about the MODE alone: with the boolean already arguing for silence, anything
+/// that speaks can only be speaking because of the identifier.
+///
+/// The clock reads noon, and it read three in the morning until the quiet
+/// window started applying whatever the centre says. A hostile hour used to
+/// sharpen these tests — one more thing arguing for silence that the mode had
+/// to override — and now it simply decides them: every expectation here would
+/// pass at three with the identifier ignored entirely. Noon is the hour at
+/// which the mode is still the thing being measured.
 private func gate(inMode identifier: String) -> FocusGate {
     FocusGate(
         status: StubFocusStatus(
             access: .authorized, isFocused: true, activeMode: .mode(identifier)
         ),
-        now: { atHour(3) }
+        now: { atHour(12) }
     )
 }
 

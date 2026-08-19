@@ -86,8 +86,25 @@ import Testing
     )
 
     #expect(unauthorized.silence(quietHours: night) == FocusGate.duringQuietHours)
-    // The control: identical answer from the centre, and the schedule speaks.
-    #expect(authorized.silence(quietHours: night) == nil)
+    // Identical answer from the centre, and now the identical silence. This
+    // line read `== nil` while the authorized branch dropped the window — which
+    // was the app speaking at three in the morning on the first build macOS
+    // ever answered, and is what task 49 took away.
+    #expect(authorized.silence(quietHours: night) == FocusGate.duringQuietHours)
+
+    // The discrimination the line above used to carry, at the hour where it is
+    // still expressible. At noon the window has nothing to say, so the only
+    // thing left that can answer is whether the centre may be believed — and
+    // both of these report a Focus while only one of them is evidence.
+    let unauthorizedDuringAFocus = FocusGate(
+        status: StubFocusStatus(access: .notDetermined, isFocused: true), now: { atHour(12) }
+    )
+    let authorizedDuringAFocus = FocusGate(
+        status: StubFocusStatus(access: .authorized, isFocused: true), now: { atHour(12) }
+    )
+
+    #expect(unauthorizedDuringAFocus.silence(quietHours: night) == nil)
+    #expect(authorizedDuringAFocus.silence(quietHours: night) == FocusGate.duringFocus)
 }
 
 // A refusal is an answer, and it is not permission. `.denied` reaching the
@@ -119,13 +136,16 @@ import Testing
     #expect(gate.silence(quietHours: night) == nil)
 }
 
-// While the app IS allowed to ask, the window is not consulted at all. The
-// system's own state is the better answer and the whole reason for preferring
-// it — three in the morning with no Focus set is somebody who is awake.
-@Test func anAuthorizedCenterDecidesWithoutTheWindow() {
+// While the app IS allowed to ask, the system's own state is the better answer
+// — and outside the window it is the only gate with anything to say, so it
+// decides alone. Read at noon and not at three, which is where this used to
+// stand: the window is consulted now whatever the centre says, and the same
+// centre at three is `theQuietWindowHoldsWhileTheCenterIsAuthorizedAndNothingIs
+// On` giving the opposite answer.
+@Test func anAuthorizedCenterDecidesAloneOutsideTheWindow() {
     let night = QuietWindow(startHour: 23, endHour: 8)
     let gate = FocusGate(
-        status: StubFocusStatus(access: .authorized, isFocused: false), now: { atHour(3) }
+        status: StubFocusStatus(access: .authorized, isFocused: false), now: { atHour(12) }
     )
 
     #expect(gate.rule(quietHours: night) == .focus)
@@ -141,6 +161,98 @@ import Testing
     #expect(FocusGate.duringFocus != FocusGate.duringQuietHours)
 }
 
+// MARK: - Both gates, not one of them
+
+// The defect, and it shipped. The exclusive choice this replaces was written
+// while `INFocusStatusCenter` had never once answered `.authorized` on this
+// machine, so the branch that dropped the window could not be reached and read
+// as harmless. A self-signed identity revived the centre — measured `status=3,
+// authorized` — and the user's own 23:00–08:00 stopped applying on the build
+// they are running, at the one hour nobody is awake to notice.
+@Test func theQuietWindowHoldsWhileTheCenterIsAuthorizedAndNothingIsOn() {
+    let night = QuietWindow(startHour: 23, endHour: 8)
+    let gate = FocusGate(
+        status: StubFocusStatus(access: .authorized, isFocused: false, activeMode: .noFocus),
+        now: { atHour(3) }
+    )
+
+    #expect(gate.silence(quietHours: night) == FocusGate.duringQuietHours)
+}
+
+// A Focus this app speaks through does not reopen the night. Работа at three in
+// the morning is somebody working late, and the hours they set aside are about
+// the hour rather than about what they are doing in it.
+@Test func aFocusThisAppSpeaksThroughDoesNotReopenTheQuietWindow() {
+    let night = QuietWindow(startHour: 23, endHour: 8)
+    let gate = FocusGate(
+        status: StubFocusStatus(
+            access: .authorized, isFocused: true, activeMode: .mode("com.apple.focus.work")
+        ),
+        now: { atHour(3) }
+    )
+
+    #expect(gate.silence(quietHours: night) == FocusGate.duringQuietHours)
+}
+
+// The same Работа one gate over, and the window is still a window rather than a
+// mute. This is the rule the user asked for and the one this change leaves
+// exactly where it was.
+@Test func aFocusThisAppSpeaksThroughStillSpeaksOutsideTheWindow() {
+    let night = QuietWindow(startHour: 23, endHour: 8)
+    let gate = FocusGate(
+        status: StubFocusStatus(
+            access: .authorized, isFocused: true, activeMode: .mode("com.apple.focus.work")
+        ),
+        now: { atHour(12) }
+    )
+
+    #expect(gate.silence(quietHours: night) == nil)
+}
+
+// Both gates want silence, and the WINDOW is the reason given. Not a coin toss:
+// `AppModel.duringTheQuietWindow` compares this very string to decide whether
+// the nightly refresh may SPEND, so a 3 a.m. Sleep reported as the Focus would
+// let it load a 1.8 GB model and spin the fans inside the hours somebody set
+// aside for not being disturbed.
+@Test func insideTheWindowTheWindowIsTheReasonEvenWhenAFocusAgrees() {
+    let night = QuietWindow(startHour: 23, endHour: 8)
+    let gate = FocusGate(
+        status: StubFocusStatus(
+            access: .authorized, isFocused: true, activeMode: .mode("com.apple.sleep.sleep-mode")
+        ),
+        now: { atHour(3) }
+    )
+
+    #expect(gate.silence(quietHours: night) == FocusGate.duringQuietHours)
+}
+
+// The shipping app's own state, and it is not a corner case. Signed, the centre
+// answers; Full Disk Access is still refused, so the mode is `.cannotTell` and
+// the boolean is all there is. The window stands beside it either way — the two
+// permissions are granted separately and this app holds one of them.
+@Test func anUnreadableModeLeavesTheWindowInForce() {
+    let night = QuietWindow(startHour: 23, endHour: 8)
+    let gate = FocusGate(
+        status: StubFocusStatus(access: .authorized, isFocused: false, activeMode: .cannotTell),
+        now: { atHour(3) }
+    )
+
+    #expect(gate.silence(quietHours: night) == FocusGate.duringQuietHours)
+}
+
+// And the fallback keeps the direction it was given: told nothing about the
+// mode, every Focus silences. Read at noon, so the answer is the boolean's and
+// not the hour's — the window would say the same thing for the wrong reason.
+@Test func anUnreadableModeStillLetsEveryFocusSilence() {
+    let night = QuietWindow(startHour: 23, endHour: 8)
+    let gate = FocusGate(
+        status: StubFocusStatus(access: .authorized, isFocused: true, activeMode: .cannotTell),
+        now: { atHour(12) }
+    )
+
+    #expect(gate.silence(quietHours: night) == FocusGate.duringFocus)
+}
+
 // MARK: - The schedule
 
 // Two models alike in everything — same connector, same spy, same beat, same
@@ -154,14 +266,14 @@ import Testing
     let focused = testModel(
         host: focusedHost,
         sleep: focusedSchedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: true))
+        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
     )
     let freeHost = SpyHost()
     let freeSchedule = Metronome()
     let free = testModel(
         host: freeHost,
         sleep: freeSchedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: false))
+        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: false))
     )
 
     focused.start()
@@ -194,7 +306,7 @@ import Testing
     let host = SpyHost()
     let schedule = Metronome()
     let centre = StubFocusStatus(access: .authorized, isFocused: true)
-    let subject = testModel(host: host, sleep: schedule.sleep, focus: FocusGate(status: centre))
+    let subject = testModel(host: host, sleep: schedule.sleep, focus: focusGate(centre))
 
     subject.start()
     #expect(await waitUntil { host.calls == ["maintain:stub"] })
@@ -267,7 +379,7 @@ import Testing
     let subject = testModel(
         host: host,
         sleep: schedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: true))
+        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
     )
 
     subject.start()
@@ -399,7 +511,7 @@ import Testing
     let subject = testModel(
         host: host,
         sleep: schedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: true))
+        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
     )
 
     subject.start()
@@ -426,7 +538,7 @@ import Testing
     let wiring = modelOverRealHost(
         connector: BrokenConnector(),
         transport: StubTransport(body: onlineStats),
-        focus: FocusGate(status: centre),
+        focus: focusGate(centre),
         sleep: schedule.sleep
     )
 
@@ -464,7 +576,7 @@ import Testing
     let schedule = Metronome()
     let focused = testModel(
         sleep: schedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: true))
+        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
     )
     let quiet = Metronome()
     let atNight = testModel(
@@ -493,7 +605,7 @@ import Testing
 @Test @MainActor func macOSIsAskedForFocusAccessOnceAtLaunch() async {
     let centre = StubFocusStatus(access: .notDetermined)
     let schedule = Metronome()
-    let subject = testModel(sleep: schedule.sleep, focus: FocusGate(status: centre))
+    let subject = testModel(sleep: schedule.sleep, focus: focusGate(centre))
 
     #expect(centre.accessRequests == 0)
 

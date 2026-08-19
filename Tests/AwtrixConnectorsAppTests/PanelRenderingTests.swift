@@ -1194,10 +1194,10 @@ private func openSettings(focus: FocusGate, quietHours: QuietWindow) -> AppModel
 @Test @MainActor func thePanelSaysWhichRuleIsInForce() {
     let night = QuietWindow(startHour: 23, endHour: 8)
     let system = openSettings(
-        focus: FocusGate(status: StubFocusStatus(access: .authorized)), quietHours: night
+        focus: focusGate(StubFocusStatus(access: .authorized)), quietHours: night
     )
     let window = openSettings(
-        focus: FocusGate(status: StubFocusStatus(access: .denied)), quietHours: night
+        focus: focusGate(StubFocusStatus(access: .denied)), quietHours: night
     )
 
     // Bound rather than re-drawn per expectation, and that is not tidiness.
@@ -1223,7 +1223,7 @@ private func openSettings(focus: FocusGate, quietHours: QuietWindow) -> AppModel
 // surfaces whose ONLY difference is the hours in the pickers must not draw the
 // same.
 @Test @MainActor func theQuietHoursAreVisibleAndEditableInTheSettings() {
-    let refused = FocusGate(status: StubFocusStatus(access: .denied))
+    let refused = focusGate(StubFocusStatus(access: .denied))
     let night = openSettings(focus: refused, quietHours: QuietWindow(startHour: 23, endHour: 8))
     let noon = openSettings(focus: refused, quietHours: QuietWindow(startHour: 11, endHour: 14))
 

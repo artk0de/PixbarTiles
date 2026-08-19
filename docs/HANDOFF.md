@@ -350,27 +350,129 @@ NON-clear overlay, because the sky was clear throughout.
     happening. It is ratcheted to the direction of travel; the underlying
     reading is what the warnings still read.
 
-## Signing, and three Apple APIs that are inert without it
+### Added by the panel width
 
-This machine has **zero code-signing identities** and the bundle is ad-hoc
-signed by the linker. Three authorization APIs were probed and all three refuse:
+14. The ↔ glyph sits at the bottom right of the panel, beside the gear, and the
+    pointer over it becomes a horizontal resize cursor. Drag right: the panel
+    widens as you drag, the rows lay out at the new width, and nothing runs off
+    the edge.
+15. Let go, click somewhere else, click the menu bar item again — it opens at
+    the width you left. Then quit and relaunch: still that width. This is the
+    whole of what was asked for.
+16. Drag left, hard, past where you started. It stops at 320 and will not go
+    narrower, so there is always a handle left to grab. A panel dragged to
+    nothing would be recoverable only from the command line.
+17. Only the panel is wide. Widen it, then open the gear or the History: **they
+    are still 320 and the window narrows under you.** Two lines are outstanding
+    for that (below) — what a person is being asked here is whether the jump is
+    as bad as it reads, since the window already changes height by 400 points
+    between those same surfaces and nobody has complained about that.
+18. Where the menu bar item sits changes which way the panel grows. With the
+    item near the RIGHT of the bar the window is right-anchored and grows
+    leftwards, so the handle stays put while the pointer moves. Dragging right
+    still widens it — that is measured off the pointer's screen position, not
+    off the window — but say whether the handle failing to follow reads as
+    broken.
+19. If the panel ever opens at a width you cannot work with:
+    `defaults write dev.artk0re.awtrix-connectors panelWidth -int 320`, then
+    relaunch. Deleting the key does the same.
 
-- `UNUserNotificationCenter.requestAuthorization` → refused, `UNErrorDomain` 1.
-  System notifications never arrive; **the dialog is the only channel**.
-- `INFocusStatusCenter.requestAuthorization` → the handler is never called and
-  the status stays `notDetermined` for ever. **The user-set quiet window is what
-  actually silences the schedule**, not Focus.
-- CoreLocation → `requestLocation` fails `kCLErrorDenied`. Typed coordinates are
-  the path that works.
+## The panel's width belongs to the content, not to the window
 
-Each has a fallback that was designed in from the start precisely because the
-brief said not to trust an unprobed capability. Sign the app and all three light
-up; none of them is wired to a stub.
+Route one — make the real window resizable — was probed on the running app
+before the handle was written, and it does not hold. The measurement, from a
+launch with the schedules skipped so nothing reached TCC:
 
-Also: running the binary **directly** rather than through the bundle aborts on a
-TCC privacy violation — LaunchServices, not the path on disk, is what attributes
-`Info.plist`. And `open` forwards the calling shell's environment, so launching
-from a terminal is **not** a faithful reproduction of a Finder launch.
+- `MenuBarExtra` in `.window` style puts the panel on a `MenuBarExtraWindow`,
+  style mask 32896: borderless, non-activating, full-size content view. Not
+  resizable.
+- `.resizable` goes into the mask without complaint — `AppDelegate` has held the
+  panel's `NSWindow` since `ee2c7c1`, so this is one line — and the window then
+  accepts `setContentSize(500 x 198)`. Its frame reads 500 wide immediately
+  afterwards.
+- **Half a second later it reads 320 again.** SwiftUI keeps that window at its
+  content's fitting size, pins `contentMinSize` there as well, and re-imposes
+  both on the next layout pass. With the content at a fixed `.frame(width:)`
+  there is nowhere for a dragged size to survive, style mask or no style mask.
+
+The same run showed why the handle works. Opening the gear took the window from
+320x198 to 320x615 unasked, and moved it to stay under its menu bar item. The
+window follows the CONTENT and does its own anchoring — so a width the content
+carries is a width the window adopts, which is what `.frame(width:)` off a
+stored value now does.
+
+Outstanding, and it is two lines: `SettingsSheet.swift:29` and
+`HistoryMenu.swift:58` still read `.frame(width: 320)`. Each wants
+`.frame(width: PanelWidth.stored(in: .standard).points)` — the same single
+stored number the panel reads, which is what makes the three surfaces share a
+width. They were left alone because other work was in flight in both files.
+
+Wrapping the two from outside was tried and does not substitute: an outer
+`.frame(width: 500)` around `SettingsSheet` gives a 500-wide host with the
+sheet's 320 of content centred in it — measured, the fields sit at x=104 with
+90 points of nothing on each side. A child's fixed frame cannot be overridden by
+its parent, which is why the literal has to go rather than be wrapped.
+
+## Signing — and the three APIs that turned out not to be dead
+
+**This section replaces an earlier one that was wrong.** It said this machine
+has no signing identity and that three Apple authorization APIs refuse here.
+The first half is still true of what the toolchain produces; the conclusion drawn
+from it was not.
+
+`./Scripts/bundle.sh` leaves the linker's **ad-hoc** signature, and an ad-hoc
+signature has no stable identity — it changes with every build, so TCC has
+nothing to remember a grant against. That, not the absence of an Apple
+certificate, is what the three refusals were measuring.
+
+A **self-signed** code-signing certificate is enough to fix it, costs nothing,
+and needs no Apple ID. One was created in the login keychain as
+`AwtrixConnectors Local Signing`. macOS does not report it under
+`security find-identity -p codesigning`, because that lists TRUSTED identities
+and this one is not trusted — trust is needed to VERIFY a signature, not to make
+one. Sign by its SHA-1 instead:
+
+```bash
+codesign --force --deep --sign 6417A281BC7E103BB9B4A4EA69F831F5211A89A5 build/AwtrixConnectors.app
+```
+
+### Probed again, signed, 2026-08-19 — all three answer
+
+Each was a separate minimal bundle, signed with that identity and launched
+through LaunchServices, writing its result to a file.
+
+| API | Ad-hoc, as first measured | Signed |
+| --- | --- | --- |
+| `CLLocationManager` | `requestLocation` fails `kCLErrorDenied` | authorization goes notDetermined → authorized; **fix returned to 55 m** |
+| `UNUserNotificationCenter` | refused, `UNErrorDomain` 1 | `granted=true`, status `authorized` |
+| `INFocusStatusCenter` | handler never called, stays `notDetermined` for ever | handler called, status `authorized`, `isFocused` readable |
+
+The location result is the one that changes a product decision. Its 55 metres
+beat both alternatives on the only axis that matters here: IP geolocation put
+this machine in **Amsterdam**, 2,000 km out, because of a VPN — corroborated
+across three services — and the Open-Meteo geocoder knows settlements but not
+districts, which cannot tell one side of a 40 km city from the other.
+
+`NSLocationWhenInUseUsageDescription` is required for any of that and is now in
+`Scripts/bundle.sh`. Without the key CoreLocation refuses whatever the signature
+says.
+
+### What this does NOT change
+
+- `bundle.sh` still does not sign. Signing is a machine-local step with a
+  machine-local certificate hash; baking one developer's identity into the
+  script would break every other checkout.
+- The fallbacks stay. The user-set quiet window, the dialog, and typed
+  coordinates all still work and are still what an unsigned build uses. Nothing
+  was rewired to depend on a signature.
+- `SMAppService` was probed alongside them and is **not** in this family: it
+  registers a login item under an ad-hoc signature just as happily. Four
+  variants, all identical, verified against `sfltool dumpbtm`.
+- Running the binary **directly** rather than through the bundle still aborts on
+  a TCC privacy violation — LaunchServices, not the path on disk, is what
+  attributes `Info.plist`. And `open` forwards the calling shell's environment,
+  so launching from a terminal is not a faithful reproduction of a Finder
+  launch.
 
 ## Deferred findings
 

@@ -635,14 +635,22 @@ private func drawnEntry(
 
 // MARK: - The menu opens on the panel
 
-/// A launched delegate over `model`, hearing only what this test posts.
+/// A launched delegate over `model`, hearing only what this test posts, with
+/// `panel` standing in for the window the menu bar panel is on.
 ///
-/// Its own notification centre, because the observer is not filtered by window:
-/// posted into `.default`, one test's window closing would shut the surface of
-/// every other model alive in the suite.
+/// Its own notification centre, because one test's windows are not another's:
+/// posted into `.default`, a window built here would reach every other delegate
+/// alive in the suite, and each of them would have to tell it apart from its
+/// own. Which window is the panel's is a separate question, and it is the one
+/// the tests below turn on — the centre isolates them, it does not answer it.
+///
+/// The panel is handed over after the launch rather than through the
+/// initialiser, because that is the only order production can manage: the
+/// window belongs to `MenuBarExtra`, which builds it on the first open — long
+/// after `applicationDidFinishLaunching` has come and gone.
 @MainActor
 private func launched(
-    _ model: AppModel, hearing notifications: NotificationCenter
+    _ model: AppModel, hearing notifications: NotificationCenter, panelOn panel: NSWindow
 ) -> AppDelegate {
     let delegate = AppDelegate(
         model: model,
@@ -651,20 +659,58 @@ private func launched(
         notifications: notifications
     )
     delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    delegate.panelMoved(to: panel)
     return delegate
 }
 
-/// The window going away, as AppKit says it: a menu bar extra is dismissed by
-/// losing focus, and it is ordered out rather than closed.
+/// One of the app's windows. Which one it is, is decided by what it is passed
+/// to: a window is the panel's because the delegate was told so, and anything
+/// else built here is the alert, the authorization prompt, or whatever else in
+/// this process can take focus.
 @MainActor
-private func closeTheWindow(_ notifications: NotificationCenter) {
-    notifications.post(
-        name: NSWindow.didResignKeyNotification,
-        object: NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 700),
-            styleMask: [.titled], backing: .buffered, defer: true
-        )
+private func aWindow() -> NSWindow {
+    NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 320, height: 700),
+        styleMask: [.titled], backing: .buffered, defer: true
     )
+}
+
+/// A window losing focus, as AppKit says it: a menu bar extra is dismissed by
+/// losing key, and it is ordered out rather than closed.
+@MainActor
+private func loseFocus(_ window: NSWindow, through notifications: NotificationCenter) {
+    notifications.post(name: NSWindow.didResignKeyNotification, object: window)
+}
+
+/// What the reader reported, by reference: the closure it is given outlives the
+/// call that builds it, and a local array captured there would be a copy the
+/// test cannot read back.
+///
+/// Nils are dropped here for the same reason `AppDelegate.panelMoved(to:)` drops
+/// them — what is being asked is which window the panel landed on, and a view
+/// that has not landed anywhere has no answer.
+@MainActor
+private final class WindowsReported {
+    private(set) var seen: [NSWindow] = []
+
+    func record(_ window: NSWindow?) {
+        guard let window else { return }
+        seen.append(window)
+    }
+}
+
+/// Returns once whatever the last post queued has run.
+///
+/// A settle point for an assertion that nothing happened, which polling cannot
+/// give: `waitUntil` returns the moment its condition holds, and "the History is
+/// still open" holds before the observer has run at all — so a test built on it
+/// would pass against the very defect it is for. The observer is registered on
+/// `OperationQueue.main`, so a block put on that queue afterwards runs after it.
+@MainActor
+private func afterTheQueuedObserversHaveRun() async {
+    await withCheckedContinuation { resumed in
+        OperationQueue.main.addOperation { resumed.resume() }
+    }
 }
 
 // A menu bar item is clicked to answer "is the clock alive, and what is next".
@@ -700,15 +746,16 @@ private func closeTheWindow(_ notifications: NotificationCenter) {
 
 @Test @MainActor func theHistorySurfaceDoesNotSurviveAWindowClose() async {
     let notifications = NotificationCenter()
+    let panel = aWindow()
     let model = testModel(
         sleep: Metronome().sleep, pollSleep: Metronome().sleep,
         anecdotes: StubAnecdotes(id: "stub")
     )
-    let delegate = launched(model, hearing: notifications)
+    let delegate = launched(model, hearing: notifications, panelOn: panel)
     model.openHistory()
     #expect(model.historyIsOpen)
 
-    closeTheWindow(notifications)
+    loseFocus(panel, through: notifications)
 
     #expect(await waitUntil { model.historyIsOpen == false })
     // Held to the end deliberately: the observer's block holds the delegate
@@ -717,16 +764,98 @@ private func closeTheWindow(_ notifications: NotificationCenter) {
     await model.teardown()
 }
 
+// The other half of the same rule, and the half the observer used to get wrong.
+// This process has more windows than the panel: `BatteryAlert` raises an
+// `NSAlert`, and an authorization prompt is a window too. Every one of them
+// resigns key when it is dismissed, and heard unfiltered that shut whichever
+// surface the user had open — a History that closes itself with nobody near it.
+//
+// Told apart from the test above by identity alone: same centre, same
+// notification, a different window. Separating them by notification centre
+// instead would prove nothing about production, where every window in the
+// process posts into `.default`.
+@Test @MainActor func theHistorySurvivesAWindowThatIsNotThePanelLosingFocus() async {
+    let notifications = NotificationCenter()
+    let panel = aWindow()
+    let model = testModel(
+        sleep: Metronome().sleep, pollSleep: Metronome().sleep,
+        anecdotes: StubAnecdotes(id: "stub")
+    )
+    let delegate = launched(model, hearing: notifications, panelOn: panel)
+    model.openHistory()
+    #expect(model.historyIsOpen)
+
+    loseFocus(aWindow(), through: notifications)
+
+    await afterTheQueuedObserversHaveRun()
+    #expect(model.historyIsOpen)
+    // Held to the end deliberately: the observer's block holds the delegate
+    // weakly, so a released one hears nothing and the test would pass on a
+    // delegate that was never listening.
+    withExtendedLifetime(delegate) {}
+    await model.teardown()
+}
+
+// Which window the panel is on is the whole of what the filter above works
+// from, and a delegate that is never told has none — every close would then be
+// ignored, including the one that must not be. Nothing can tell it at launch:
+// the window is `MenuBarExtra`'s, built on the first open, so the only thing
+// that can see it is a view inside the panel.
+//
+// Hosted in a plain `NSHostingView` rather than in the shipped scene, because a
+// menu bar extra cannot be opened from a test. What that leaves unproven is
+// SwiftUI's half — that the panel's background really is in the panel's window —
+// and what it does prove is the mechanism the app depends on: a view put into a
+// window reports which one.
+@Test @MainActor func aViewInThePanelReportsTheWindowItWasPutOn() {
+    let reported = WindowsReported()
+    let panel = aWindow()
+    let host = NSHostingView(
+        rootView: Color.clear.background(PanelWindowReader { reported.record($0) })
+    )
+    host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
+
+    panel.contentView = host
+    host.layoutSubtreeIfNeeded()
+
+    #expect(reported.seen.last === panel)
+}
+
+// The other end of the same wire, and a rule that only production exercises:
+// the panel is taken off its window as part of going away, so the report that
+// arrives with the window gone lands AFTER the resign that says the panel
+// closed and BEFORE the queued observer reads it. Recorded, that nil would
+// leave the observer with nothing to compare against and the surface open —
+// the whole pinned behaviour lost to an event the tests never sent.
+@Test @MainActor func thePanelLeavingItsWindowDoesNotMakeTheDelegateForgetIt() async {
+    let notifications = NotificationCenter()
+    let panel = aWindow()
+    let model = testModel(
+        sleep: Metronome().sleep, pollSleep: Metronome().sleep,
+        anecdotes: StubAnecdotes(id: "stub")
+    )
+    let delegate = launched(model, hearing: notifications, panelOn: panel)
+    model.openHistory()
+
+    delegate.panelMoved(to: nil)
+    loseFocus(panel, through: notifications)
+
+    #expect(await waitUntil { model.historyIsOpen == false })
+    withExtendedLifetime(delegate) {}
+    await model.teardown()
+}
+
 // The two surfaces were consistent with each other, which is how this got here.
 // Consistent is not the same as right, and both of them go.
 @Test @MainActor func theSettingsSurfaceDoesNotSurviveAWindowClose() async {
     let notifications = NotificationCenter()
+    let panel = aWindow()
     let model = testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep)
-    let delegate = launched(model, hearing: notifications)
+    let delegate = launched(model, hearing: notifications, panelOn: panel)
     model.openSettings()
     #expect(model.settingsAreOpen)
 
-    closeTheWindow(notifications)
+    loseFocus(panel, through: notifications)
 
     #expect(await waitUntil { model.settingsAreOpen == false })
     // Held to the end deliberately: the observer's block holds the delegate

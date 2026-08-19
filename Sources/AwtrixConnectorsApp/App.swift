@@ -16,10 +16,65 @@ struct AwtrixConnectorsApp: App {
                 monitor: delegate.model.monitor,
                 discovery: delegate.discovery
             )
+            // Behind the panel rather than inside `MenuPanel`, because it is
+            // not the panel's business which window it is on — it is the
+            // delegate's, and this scene is where the two already meet.
+            //
+            // Taken out of hit testing, because an `NSView` is in it by
+            // default: this one is laid out across the whole panel and answers
+            // no click, so anywhere the panel does not draw a control it would
+            // be what the click reached.
+            .background(
+                PanelWindowReader { delegate.panelMoved(to: $0) }
+                    .allowsHitTesting(false)
+            )
         } label: {
             MenuBarGlyph(model: delegate.model)
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// Reports the window the panel was put on.
+///
+/// A view, because a view is the only thing that can answer: `MenuBarExtra` in
+/// `.window` style builds the panel's window itself, on the first open, and
+/// returns it to nobody — there is nothing for the delegate to hold at launch,
+/// which is where its observer is set up. `NSView.viewDidMoveToWindow` fires
+/// when the panel is put on screen, and `window` is then the panel's own.
+///
+/// Internal rather than private so a test can put one in a window of its own:
+/// the mechanism is what the whole filter rests on, and a menu bar extra cannot
+/// be opened from a test.
+struct PanelWindowReader: NSViewRepresentable {
+    /// Called with the window on every move, `nil` included. What a nil means is
+    /// the reader's caller's business, not the reader's.
+    let report: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView { WindowReportingView(report: report) }
+
+    /// Nothing to update: the view draws nothing and reads nothing from SwiftUI.
+    /// What it reports comes from AppKit moving it, not from the state changing.
+    func updateNSView(_ view: NSView, context: Context) {}
+}
+
+/// The AppKit half of `PanelWindowReader`.
+private final class WindowReportingView: NSView {
+    private let report: (NSWindow?) -> Void
+
+    init(report: @escaping (NSWindow?) -> Void) {
+        self.report = report
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("never unarchived: this view exists only where SwiftUI builds it")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        report(window)
     }
 }
 
@@ -153,6 +208,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notifications: NotificationCenter
     /// The subscription that puts the menu back on the panel.
     private var windowClosings: (any NSObjectProtocol)?
+    /// The window the panel is on, once it is on one.
+    ///
+    /// Weak, because the window is SwiftUI's rather than this type's: holding it
+    /// would keep an ordered-out panel alive past the point its owner is done
+    /// with it. What that costs is one event — a window released between the
+    /// resign and the block that hears it takes its own close with it — and the
+    /// alternative costs a window nobody can see, kept by a reference nobody
+    /// reads.
+    private weak var panelWindow: NSWindow?
 
     override init() {
         self.model = .live()
@@ -188,6 +252,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watchForTheWindowClosing()
     }
 
+    /// Told which window the panel was put on, by the panel itself.
+    ///
+    /// Learned rather than held from the start, because there is nothing to hold
+    /// at launch: `MenuBarExtra` in `.window` style builds the window on the
+    /// first open and hands it to nobody. A view inside the panel is the one
+    /// thing that can see it, which is what `PanelWindowReader` is for.
+    ///
+    /// A nil is not recorded, deliberately. Being taken off its window is part
+    /// of how the panel goes away, and the resign that says so is already in
+    /// flight by then — forgetting the window here would drop the very close it
+    /// describes.
+    func panelMoved(to window: NSWindow?) {
+        guard let window else { return }
+        panelWindow = window
+    }
+
     /// Puts the menu back on the panel whenever its window goes away.
     ///
     /// Losing key IS how a menu bar extra closes. Its window is dismissed by
@@ -201,14 +281,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Launching` is: translating what AppKit says into what the model does is
     /// this type's whole job, and the model has no window to watch.
     ///
-    /// Unfiltered by window because this app has exactly one. A second window
-    /// would want the filter; there is nothing to filter against until then.
+    /// Filtered to the panel's own window, because this app has more than one.
+    /// `BatteryAlert` raises an `NSAlert` and an authorization prompt is a
+    /// window too; each of them takes key when it appears and resigns it when it
+    /// is dismissed, and heard unfiltered, either one silently shut whichever
+    /// surface the user had open. A window that is not the panel's going quiet
+    /// says nothing about the panel.
+    ///
+    /// `NSApplication.didResignActiveNotification` was the alternative, and it
+    /// is rejected for answering a different question: the app can stay active
+    /// while the panel goes away — clicking the menu bar item a second time
+    /// dismisses it with no other app taking over — and putting the menu back on
+    /// the panel is precisely what would then stop happening.
+    ///
+    /// One subscription that compares, rather than one re-registered on
+    /// `object: panelWindow` whenever the panel gets a window. The window does
+    /// not exist here, at launch; a re-registering observer would have to be
+    /// right about tearing the old one down as well as putting the new one up,
+    /// and this one only has to be right about which window it is looking at.
     private func watchForTheWindowClosing() {
         guard windowClosings == nil else { return }
         windowClosings = notifications.addObserver(
             forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.model.windowDidClose() }
+        ) { [weak self] notification in
+            let window = notification.object as? NSWindow
+            MainActor.assumeIsolated {
+                // Both halves named, rather than `window === self?.panelWindow`:
+                // two nils are identical, so an unrecognisable notification
+                // arriving before the panel has ever been opened would read as
+                // the panel's own.
+                guard let self, let window, window === self.panelWindow else { return }
+                self.model.windowDidClose()
+            }
         }
     }
 

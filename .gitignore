@@ -11,3 +11,6 @@ DerivedData/
 .superpowers/
 .build/
 prototype/cache/
+
+# Stray runtime logs from tooling, never part of the product.
+logs/

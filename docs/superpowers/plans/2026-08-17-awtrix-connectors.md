@@ -22,7 +22,12 @@
 - Cyrillic renders on the device font as-is. Do not transliterate, do not strip diacritics.
 - Anything the app writes to device flash must be namespaced and removable, and the app removes what it created.
 - All source comments, identifiers, commit messages and documentation are English.
-- No third-party dependencies. Foundation and SwiftUI only.
+- **No third-party dependencies** — nothing in `Package.swift`'s dependency list,
+  ever. Apple's own frameworks are not dependencies in that sense and are in
+  scope as the work needs them: Foundation and SwiftUI throughout, AppKit for
+  the menu bar item and the terminate hook, Network for Bonjour discovery. The
+  earlier wording said "Foundation and SwiftUI only", which the plan's own
+  Tasks 14 and 16 contradict; the rule it was reaching for is the one above.
 
 ---
 
@@ -3221,6 +3226,7 @@ git commit -m "feat: device monitor publishing reachability and battery"
 - Create: `Sources/AwtrixConnectorsApp/AppModel.swift`
 - Create: `Sources/AwtrixConnectorsApp/MenuPanel.swift`
 - Create: `Scripts/bundle.sh`
+- Already written (controller-supplied, do not redesign): `Scripts/MakeIcon.swift`
 
 **Interfaces:**
 - Consumes: every earlier task
@@ -3345,12 +3351,84 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(settings.interval))
                 guard let self else { return }
+                // Top up BEFORE the run, never inside it. `produce()` only
+                // awaits a refill when the queue is empty, so a timer that
+                // never maintains turns every firing into a 70-second model
+                // load on the play path — the whole reason the queue exists.
+                await self.host.maintain(connectorId: id)
                 await self.record(await self.host.runOnce(connectorId: id), for: id)
             }
         }
     }
 }
 ```
+
+**Wiring the composition root (this task owns it).** `ConnectorHost` holds no
+output directory, so two wires that earlier tasks deliberately refused to invent
+land here, where `outputDirectory` and `storeURL` are both chosen anyway:
+
+- pass that same `outputDirectory` to `AnecdoteQueue` as a **required**
+  `clipRoot`. Task 10's reaper proves only that a directory is NAMED for its
+  anecdote; a root it can be checked against is the containment that was left
+  undone, and a default value would read as a guarantee while supplying none.
+- read `Connector.defaultInterval` when the store has never saved settings for
+  that connector. `IntervalScale.position(for:)` already exists; what is missing
+  is a `SettingsStore` read that can answer "never saved" rather than handing
+  back a hardcoded 30 minutes. Two methods, not a shape to guess.
+
+**Quit must not hang.** Cancelling a queued run stops its work but does not
+release its caller, so tearing down timers on quit can wait out a playing
+anecdote. Measure it; if quit is slow, that is where it gets fixed.
+
+> **Amended by the user, after seeing it in the tray: remove the "Remove icons
+> this app uploaded" button for now.** The machinery stays — `UploadedIconStore`,
+> the record written at the upload site, and `AwtrixDevice.removeIcon` are all
+> built and tested — only the menu item goes. Two consequences, stated rather
+> than buried: the icons this app has already uploaded stay on the device with no
+> user-facing way to remove them, so the global constraint "the app removes what
+> it created" is **temporarily unmet by deliberate choice**, not by oversight;
+> and whatever surface returns later should reuse the existing store rather than
+> re-deriving what to delete, because the plain `<id>.gif` naming still makes
+> "delete everything with our prefix" impossible.
+
+**Installed icons are the only thing this app writes to device flash, and
+nothing removes them.** `CatalogueIconInstaller` uploads `/ICONS/<id>.gif` and
+skips ids already present; there is no caller of `removeIcon` anywhere in
+`Sources/`, and the plan's own constraint says the app removes what it created.
+Two facts shape the fix rather than an arbitrary choice:
+
+- The bare `<id>.gif` name is deliberate, not an oversight. It is what lets the
+  skip-by-name check reuse an icon the user already installed themselves, which
+  a prefix like `awx-` would forfeit. Do not rename.
+- So removal cannot be "delete everything with our prefix". Track what this app
+  uploaded — the installer knows, because it only uploads on a miss — and offer
+  the user an explicit action that removes exactly that set.
+
+A menu item is the honest shape: the icons must survive quit and relaunch, so a
+teardown hook would be wrong. Do not remove an icon the app found already
+present.
+
+**The app's own icon is drawn, not borrowed.** AWTRIX 3 publishes no square
+logo — the only mark in its repository is a wide AI-rendered cover banner whose
+wordmark is illegible below roughly 64pt, and the project is CC BY-NC-SA, so
+shipping a crop of it would drag attribution and ShareAlike onto the artwork for
+a worse result. `Scripts/MakeIcon.swift` therefore renders the mark from code:
+the thing AWTRIX actually is, a dark slab with a 32x8 LED panel across its face.
+
+Three details in that generator are load-bearing, so read it before changing it:
+
+- Every lit pixel comes from a hash of its own coordinates, never from a random
+  source. Two runs are byte-identical, so a diff in the art means someone
+  changed the design.
+- The art is drawn once at 1024 and resampled down for every other size, not
+  redrawn per size. That was settled by rendering both and looking: the
+  resampled wordmark still reads at 32px, while art drawn directly at 32px
+  aliases into noise. `build/icon/preview-small-comparison.png` is that
+  comparison, kept so nobody re-opens the question.
+- The menu bar glyph is a separate, much coarser drawing, and a template image:
+  macOS discards its colour and recolours the shape, so it has to read as a
+  silhouette at 18pt. Online and offline are two glyphs, a panel with pixels and
+  an empty one, rather than one glyph plus a badge.
 
 - [ ] **Step 3: Write the panel**
 
@@ -3436,10 +3514,34 @@ struct AwtrixConnectorsApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        MenuBarExtra("AWTRIX", systemImage: model.isDeviceOnline ? "clock.fill" : "clock.badge.xmark") {
+        MenuBarExtra {
             MenuPanel(model: model, monitor: model.monitor)
+        } label: {
+            Image(nsImage: Self.glyph(lit: model.isDeviceOnline))
         }
         .menuBarExtraStyle(.window)
+    }
+
+    /// The menu bar mark, as a template image so macOS recolours it for light,
+    /// dark and the highlighted state. Offline is the same panel with nothing
+    /// lit on it.
+    ///
+    /// `NSImage(named:)` reads `Contents/Resources`, which only exists once
+    /// `Scripts/bundle.sh` has assembled the .app — under a bare `swift run`
+    /// there is no bundle and this returns nil. The SF Symbol fallback is what
+    /// keeps the unbundled binary usable rather than showing an empty slot.
+    private static func glyph(lit: Bool) -> NSImage {
+        let name = lit ? "MenuBarIcon" : "MenuBarIconOffline"
+        let image = NSImage(named: name)
+            ?? NSImage(systemSymbolName: lit ? "square.grid.3x2.fill" : "square.grid.3x2",
+                       accessibilityDescription: "AWTRIX")!
+        image.isTemplate = true
+        // 30x18, not square: the menu bar caps an item's HEIGHT at the bar's,
+        // but not its width, and the glyph is a wide device. The generator
+        // emits it at this aspect, so the size here must match or macOS
+        // stretches it.
+        image.size = NSSize(width: 30, height: 18)
+        return image
     }
 }
 ```
@@ -3458,8 +3560,14 @@ swift build -c "$CONFIG" --product AwtrixConnectorsApp
 BINARY="$(swift build -c "$CONFIG" --show-bin-path)/AwtrixConnectorsApp"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/AwtrixConnectors"
+
+# The artwork is generated, never committed: build/ is git-ignored, so the only
+# thing under version control is the code that draws it.
+swift Scripts/MakeIcon.swift
+iconutil -c icns build/icon/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
+cp build/icon/MenuBarIcon*.png "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -3469,6 +3577,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>AwtrixConnectors</string>
   <key>CFBundleIdentifier</key><string>dev.artk0re.awtrix-connectors</string>
   <key>CFBundleName</key><string>AwtrixConnectors</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
@@ -3490,7 +3599,7 @@ chmod +x Scripts/bundle.sh
 open build/AwtrixConnectors.app
 ```
 
-Expected: a clock icon appears in the menu bar with no Dock icon. Clicking it shows connection status against `192.168.1.72`, an Anecdotes row with a toggle and an interval slider reading `30 min`, and a "Run now" button.
+Expected: the AWTRIX panel glyph appears in the menu bar with no Dock icon, and `AwtrixConnectors.app` shows the AWTRIX icon in Finder. Clicking it shows connection status against `192.168.1.72`, an Anecdotes row with a toggle and an interval slider reading `30 min`, and a "Run now" button.
 
 - [ ] **Step 7: Verify the full suite still passes**
 
@@ -3500,13 +3609,32 @@ Expected: PASS, all tests from Tasks 1–13.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add Package.swift Sources/AwtrixConnectorsApp Scripts/bundle.sh
+git add Package.swift Sources/AwtrixConnectorsApp Scripts/bundle.sh Scripts/MakeIcon.swift
 git commit -m "feat: menu bar app wiring status, connector toggles and interval slider"
 ```
 
 ---
 
 ### Task 15: Retry policy and offline pause
+
+> **Ruling, after implementation, on a contradiction the implementer surfaced
+> rather than silently resolving.** The formula `min(backoff, interval)` makes a
+> failing connector retry *sooner* than its cadence, not later — 30s, 60s, …
+> ramping back up to the interval — which reads as the opposite of "back off".
+> It stands, and the framing that called it "stop hammering the feed" was wrong.
+> This is a desktop app polling one RSS document; at worst it makes one request
+> every thirty seconds during an outage, roughly six extra requests across a
+> half-hour blip. **Correction, from Task 15's review:** requests are not what
+> this policy actually spends. `produce()` pops and `retire()`s an anecdote
+> *before* delivery, so a run that fails to reach the clock burns a prepared
+> anecdote the user never hears — about six per half-hour outage instead of one,
+> which also drops the queue below its refill threshold and buys an extra
+> synthesis batch. That cost is real, and it is bounded by Task 20 rather than by
+> changing this formula. What the cap actually buys is the thing that matters here: a
+> feed that recovers at 10:01 shows an anecdote at 10:02 instead of at 10:30.
+> `interval + backoff` would trade a load problem nobody has for a staleness
+> problem every user would notice. `theBackoffNeverWaitsLongerThanTheConnectorsOwnInterval`
+> is the test that encodes this, and it is deliberate, not incidental.
 
 **Files:**
 - Create: `Sources/AwtrixKit/Scheduling/RetryPolicy.swift`
@@ -3664,7 +3792,10 @@ public func nextDelay(connectorId: String, interval: TimeInterval) -> TimeInterv
 
 In `runOnce`, record the outcome — set `failureCounts[connectorId] = 0` on the
 `.delivered` path and increment it in the `catch` before returning `.failed`.
-Leave `.skipped` untouched: a disabled connector has not failed.
+Leave `.skipped` untouched: a disabled connector has not failed. **`.cancelled`
+is untouched too, and it now shares that `catch`** — a run the app itself tore
+down is not evidence the feed is sick, and counting it would back off a
+connector for being interrupted. Only a genuine error advances the counter.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -3824,6 +3955,976 @@ Expected: the panel lists `awtrix_a07f9c` within a few seconds.
 git add Sources/AwtrixKit/Device/DeviceDiscovery.swift Sources/AwtrixConnectorsApp/MenuPanel.swift Tests/AwtrixKitTests/DeviceDiscoveryTests.swift
 git commit -m "feat: Bonjour discovery of AWTRIX instances on the local network"
 ```
+
+---
+
+### Task 17: Clips outlive the play, and expire on their own
+
+**Files:**
+- Modify: `Sources/AwtrixKit/Anecdotes/AnecdoteQueue.swift`
+- Modify: `Sources/AwtrixKit/Anecdotes/PreparedAnecdote.swift`
+- Test: `Tests/AwtrixKitTests/AnecdoteQueueTests.swift`
+
+**Interfaces:**
+- Produces:
+  - `public struct PlayedAnecdote: Sendable, Codable, Equatable { let anecdote: PreparedAnecdote; let playedAt: Date }`
+  - `AnecdoteQueue.init(storeURL:clipRoot:retention:)` — `retention: TimeInterval`, required
+  - `func history() -> [PlayedAnecdote]` — newest first
+  - `func reapExpired(now: Date) -> Int` — deletes expired clip trees, drops their entries, returns how many went
+
+Two requirements arrive as one change. Clips must survive being played, because
+History has nothing to replay otherwise; and they must not accumulate forever,
+because nothing else bounds them once the one-behind reaper is gone. Retention
+IS the bound.
+
+**What replaces what.** `retire(_:)` currently parks the played anecdote's clip
+directory in `spentClipDirectory` and deletes it on the NEXT retire. That
+one-behind reaper goes. In its place `retire` appends a `PlayedAnecdote` to
+`history` with the moment it played, and clips are removed only by age.
+
+**Three constraints that decide the shape:**
+
+- **`played` stays exactly as it is.** It is the never-repeat identity and the
+  file's own comment says a played id is never forgotten. History expires;
+  `played` does not. Do not fold one into the other — an anecdote that left
+  History must still never play twice.
+- **The store must decode old files.** Swift's synthesised `init(from:)` does
+  NOT fall back to a property's default value for a missing key, which is why
+  `SalvagedPlayed` exists at all. Adding `history` as a plain field would make
+  every existing store fail to decode and take the played set with it. Write an
+  explicit `init(from:)` for `Store` using `decodeIfPresent` for every field,
+  once, so this class of break cannot recur. Old stores also carry
+  `spentClipDirectory`: read it, delete that directory if it is still there and
+  still inside `clipRoot`, then drop the field. Leaking it would be a silent
+  regression from today's behaviour.
+- **`reapExpired` takes `now` as a parameter.** A test cannot wait ten days, and
+  a clock abstraction for one call site is ceremony. The caller supplies the
+  instant; the app passes `Date()`.
+
+Reaping obeys the containment rule Task 10 established and Task 14 hardened:
+delete a directory only when it lies inside `clipRoot` AND is named
+`PreparedAnecdote.namespace(for:)` of the entry that owns it. An entry whose
+directory fails either test is dropped from history WITHOUT a delete — the
+record is ours, the directory may not be.
+
+- [ ] **Step 1: Write the failing tests**
+
+Name them for the rules, not for the mechanism:
+
+- `aPlayedAnecdoteKeepsItsClipsUntilTheyExpire`
+- `clipsOlderThanTheRetentionWindowAreDeleted`
+- `clipsInsideTheRetentionWindowSurviveAReap`
+- `reapingDropsTheHistoryEntryItDeleted`
+- `aHistoryEntryOutsideTheClipRootIsDroppedWithoutDeleting`
+- `aHistoryEntryWhoseDirectoryIsMisnamedIsDroppedWithoutDeleting`
+- `expiringFromHistoryDoesNotMakeAnAnecdotePlayableAgain`
+- `aStoreWrittenBeforeHistoryExistedStillDecodes`
+- `anOldStoresSpentClipDirectoryIsReclaimedOnce`
+- `historyIsNewestFirst`
+
+The boundary test matters: an entry exactly at the retention age. Pick the side
+deliberately and let the test name say which.
+
+- [ ] **Step 2: Run them and watch them fail**
+- [ ] **Step 3: Implement**
+- [ ] **Step 4: Green, zero warnings, and mutate**
+
+Mutations this task must survive, one site at a time: invert the age
+comparison; drop the containment check; drop the namespace check; delete the
+entry but not the directory; delete the directory but not the entry; remove a
+reaped id from `played`.
+
+- [ ] **Step 5: Commit** — `feat: keep played clips until they expire, then reap by age`
+
+---
+
+### Task 18: Ten ready, refreshed daily, played best-first
+
+**Files:**
+- Modify: `Sources/AwtrixKit/Anecdotes/AnecdoteSource.swift` (`Anecdote` gains `rank`)
+- Modify: `Sources/AwtrixKit/Anecdotes/PreparedAnecdote.swift` (gains `rank`, `preparedAt`)
+- Modify: `Sources/AwtrixKit/Anecdotes/AnecdoteQueue.swift` (play order)
+- Modify: `Sources/AwtrixKit/Connectors/AnecdoteConnector.swift` (depth policy, daily refresh)
+- Modify: `Sources/AwtrixConnectorsApp/AppModel.swift` (top up at launch, maintain after a run)
+- Test: `Tests/AwtrixKitTests/AnecdoteQueueTests.swift`, `AnecdoteConnectorTests.swift`, `AnecdoteSourceTests.swift`
+
+**The measured fact this task is built on.** `export_top.xml` carries no rating,
+no vote count, no score — its elements are `title`, `pubDate`, `link`,
+`description`, `guid` and nothing else. Fetched and inspected, not assumed. What
+the feed *is*, by its own definition and by the note already in
+`AnecdoteSource`, is **ranked by reader votes**. So popularity is available for
+free as **position in the feed**, and only as that. Do not fetch each
+anecdote's HTML page to recover a number; that is a request per anecdote against
+a page whose markup nobody controls, to obtain an ordering the feed already
+gave.
+
+**Play order** is therefore two keys, in this order:
+
+1. **Generation, newest first** — the calendar day the anecdote was prepared.
+   Today's batch outranks yesterday's leftovers entirely.
+2. **Feed rank, ascending** — within one generation, the most-voted plays first.
+
+Both keys are needed and neither is optional: rank alone would let a
+high-ranked leftover from last week outrank everything new forever, and
+generation alone would play today's batch in arbitrary order.
+
+**Depth policy:**
+
+- Target **10**, threshold **5**. A run that leaves five prepared triggers a
+  refill back to ten — five at a time rather than two, which is the balance the
+  user asked for. It is cheap either way: `SidecarSpeechSynthesizer` runs the
+  model as a long-lived `--serve` process, so the 70-second load is paid once
+  per process, not once per refill.
+- **At launch, top up to ten** before the first timer ever fires. Starting with
+  an empty queue makes the first anecdote wait on synthesis.
+- The app calls `maintain(connectorId:)` **after** every completed run, manual
+  or timed, in addition to Task 14's call before each timer-driven run. A manual
+  "Run now" that drains the queue must not wait for the next timer. `maintain`
+  returns early above the threshold, so the extra call costs nothing.
+- The refill must never block a run's completion.
+
+**Daily refresh.** When no anecdote in the queue was prepared today, prepare a
+fresh batch of ten, regardless of current depth. Yesterday's leftovers are kept
+— they simply rank below everything new. This needs no timer of its own: it is
+a condition `maintain` checks, and `maintain` already runs before and after
+every run.
+
+**Two consequences to handle, not discover:**
+
+- `Anecdote` and `PreparedAnecdote` both gain fields. `PreparedAnecdote` is
+  persisted, and its own file warns that one added non-optional field makes
+  every existing store fail to decode. Use the tolerant `init(from:)` Task 17
+  introduces — `decodeIfPresent` for the new fields, with a stored anecdote that
+  predates them treated as generation "before today" and rank "worst", so old
+  entries sort last instead of crashing or jumping the queue.
+- Unplayed anecdotes now accumulate across days. Task 17's reaper must bound
+  **pending** clips by the same retention window it applies to history, or the
+  leftovers grow without limit. An unplayed anecdote older than the window goes,
+  clips and all — ten days stale is not worth the disk.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `theFeedsOrderIsCarriedThroughAsRank`
+- `todaysBatchPlaysBeforeYesterdaysLeftovers`
+- `withinOneGenerationTheBestRankedPlaysFirst`
+- `aHighRankedLeftoverDoesNotOutrankAnythingPreparedToday`
+- `aRunThatLeavesFivePreparedTriggersARefill`
+- `aRunThatLeavesSixPreparedDoesNotRefill`
+- `theRefillTopsUpToTenNotToTheThreshold`
+- `aQueueWithNothingPreparedTodayGetsAFreshBatchEvenWhenItIsFull`
+- `aQueueAlreadyRefreshedTodayIsNotRefreshedAgain`
+- `theAppTopsUpToTenAtLaunch`
+- `aManualRunRefillsWithoutWaitingForTheTimer`
+- `theRefillDoesNotDelayTheRunsOwnCompletion`
+- `aStoredAnecdoteWithoutARankSortsLastRatherThanFirst`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations, one site at a time: swap the two sort keys; sort rank descending;
+change `<=` to `<` at the threshold; refill to the threshold instead of the
+target; move the refill onto the produce path; drop the post-run maintain and
+keep only the pre-run one; make the daily-refresh check compare instants rather
+than calendar days; treat a missing rank as best rather than worst.
+
+- [ ] **Step 5: Commit** — `feat: ten ready, refreshed daily, played best-first`
+
+---
+
+### Task 19: History in the menu — replay and copy
+
+**Files:**
+- Create: `Sources/AwtrixConnectorsApp/HistoryMenu.swift`
+- Modify: `Sources/AwtrixKit/Scheduling/ConnectorHost.swift`
+- Modify: `Sources/AwtrixKit/Connectors/AnecdoteConnector.swift`
+- Modify: `Sources/AwtrixConnectorsApp/MenuPanel.swift`, `AppModel.swift`
+- Test: `Tests/AwtrixKitTests/ConnectorHostTests.swift`, `Tests/AwtrixConnectorsAppTests/`
+
+**Interfaces:**
+- Produces:
+  - `ConnectorHost.deliver(_ output: ConnectorOutput) async -> RunResult`
+  - `AnecdoteConnector.output(for anecdote: PreparedAnecdote) -> ConnectorOutput`
+
+The Anecdotes row gains its **own History button**, and the history it opens
+lists what is still on disk — which Task 17 already bounds to the retention
+window, so nothing here needs its own limit. Each entry shows **when it played**
+and offers **Play again** and **Copy text**.
+
+The played-at time lives here and nowhere else. It is the answer to "what was
+that one this morning", which is a question asked while browsing history, not
+while glancing at a menu — and the panel is already carrying the *next* run's
+time, which is the one worth seeing at a glance.
+
+**The split that makes replay honest.** `runOnce` today is produce-then-deliver
+welded together. Factor the second half out as `deliver(_:)` and have `runOnce`
+call it. Replay is then `deliver(connector.output(for: anecdote))` — the same
+banner, the same jingle, the same audio serialisation, the same failure
+handling. Anything that re-implements delivery for replay will drift from it.
+
+**Four rules the implementation must hold:**
+
+- A replay is NOT a run. It must not touch `played`, must not advance or reset
+  the failure counter Task 15 owns, and must not be counted as a run for the
+  purposes of the refill in Task 18. Replaying an anecdote from a week ago
+  cannot make tomorrow's schedule behave differently.
+- A replay respects the same serialisation as a run. Two replays, or a replay
+  during a scheduled run, queue rather than overlap — the audio path and the
+  banner both assume one at a time.
+- An entry whose clips are gone is still listed and still copyable, but Play
+  again is disabled. `PreparedAnecdote.isPlayable` already answers this; do not
+  invent a second answer.
+- Copy puts the anecdote's `text` on the pasteboard — the text, not the banner,
+  not the laughter marker, not a formatted dump.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `deliverSendsTheBannerWithoutAskingTheConnectorToProduce`
+- `runOnceStillDeliversWhatItProduced`
+- `aReplayDoesNotAddToThePlayedSet`
+- `aReplayDoesNotAdvanceTheFailureCounter`
+- `aReplayWaitsForARunInFlightRatherThanOverlapping`
+- `anEntryWithMissingClipsCannotBeReplayed`
+- `copyingPutsTheAnecdoteTextOnThePasteboard`
+- `historyListsNewestFirstAndStopsAtTheRetentionWindow`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: have replay write to `played`; have replay bump the failure counter;
+let a replay bypass the serialisation; enable Play again for an unplayable
+entry; copy the banner instead of the text.
+
+- [ ] **Step 5: Commit** — `feat: anecdote history with replay and copy`
+
+---
+
+### Task 20: Pause the schedule while the device is unreachable
+
+**Files:**
+- Modify: `Sources/AwtrixConnectorsApp/AppModel.swift`
+- Test: `Tests/AwtrixConnectorsAppTests/AppModelTests.swift`
+
+Half of Task 15's title was "offline pause", the design doc asks for it, and
+Task 15's six steps never mentioned it — so it was never built. That is a gap in
+the plan, not in the work; this task closes it.
+
+**This is not housekeeping — it is the bound on a policy that has already
+shipped.** Task 15's review established what a retry actually costs: `produce()`
+pops and `retire()`s an anecdote *before* delivery, so every retry against an
+unreachable clock permanently consumes a prepared anecdote the user never hears.
+With the backoff in place that is roughly six per half-hour outage rather than
+one, and it drags the queue under its refill threshold, buying a synthesis batch
+on top. Pausing the schedule turns six burnt anecdotes into zero runs.
+
+The alternative — returning an undelivered anecdote to the queue — was
+considered and rejected. It would mean removing an id from `played`, and
+`played` is the never-repeat guarantee; a restore path that is subtly wrong
+brings back repeats, which is a worse failure than losing one anecdote to a
+transient error. Not running at all while the device is unreachable removes the
+cost without touching that guarantee. A delivery failure that is *not* an
+outage still burns one anecdote, and that is accepted.
+
+Running a connector against a clock that is not answering costs the whole
+preparation — a feed fetch, a model load, a batch of synthesis — to deliver a
+banner nobody receives, and then records a failure that the retry policy takes
+as evidence about the *feed*. The device being unreachable is not the feed's
+fault and must not be counted against it.
+
+**The rule:** while `DeviceMonitor` reports the device offline, the timer does
+not run connectors. It keeps ticking and it keeps polling the device, so the
+moment the device answers the schedule resumes; nothing about the pause is
+sticky.
+
+**Four things this must not do:**
+
+- It must not touch the failure counter, in either direction. A pause is neither
+  a failure nor a success — resuming after an outage must not reset a backoff
+  that a genuinely broken feed had earned.
+- It must not pause `maintain`. Preparing anecdotes needs the feed and the
+  sidecar, neither of which is the clock; an outage is exactly when the queue
+  should be filling, so that recovery has something to show immediately.
+- It must not swallow a manual "Run now". If the user presses it while the
+  device is offline, the run happens and fails honestly, with the reason on the
+  panel. Silence would read as the button being broken, which is precisely the
+  defect this branch already shipped once.
+- It must not treat `.unknown` as offline. Before the first poll answers, the
+  state is unknown, and pausing on it would mean the app never runs anything at
+  launch until a poll lands.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `theScheduleDoesNotRunConnectorsWhileTheDeviceIsOffline`
+- `theScheduleResumesAsSoonAsTheDeviceAnswers`
+- `anOfflinePauseDoesNotAdvanceTheFailureCounter`
+- `anOfflinePauseDoesNotResetAnEarnedBackoff`
+- `maintenanceStillRunsWhileTheDeviceIsOffline`
+- `aManualRunStillRunsWhileTheDeviceIsOffline`
+- `anUnknownDeviceStateDoesNotPauseTheSchedule`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: gate on `!isOnline` so `.unknown` pauses too; pause `maintain` as
+well; let the pause reset the failure counter; gate the manual path too; make
+the pause sticky until a run succeeds.
+
+- [ ] **Step 5: Commit** — `feat: pause the schedule while the clock is unreachable`
+
+---
+
+### Task 21: The sidecar gets an environment, not the app's
+
+**Files:**
+- Modify: `Sources/AwtrixKit/Speech/SidecarSpeechSynthesizer.swift`
+- Test: `Tests/AwtrixKitTests/SpeechTests.swift`
+
+**A live defect, diagnosed and reproduced.** Pressing "Run now" in the bundled
+app fails with `synthesisFailed` carrying `[Errno 2] No such file or directory:
+'ffmpeg'`. The mechanism, confirmed rather than inferred:
+
+- `speak.py` normalises every clip through `ffmpeg`, which lives in
+  `/opt/homebrew/bin` on this machine.
+- An app launched from Finder inherits its environment from launchd, and
+  `launchctl getenv PATH` is empty — so the process gets the default
+  `/usr/bin:/bin:/usr/sbin:/sbin`, with no homebrew on it.
+- `SidecarSpeechSynthesizer` sets no `process.environment` at all, so the Python
+  child inherits that stripped `PATH`. `subprocess.run(["ffmpeg", …])` raises
+  `FileNotFoundError`, `speak.py`'s `serve` catches it and answers
+  `{"ok": false, "error": "[Errno 2] …"}`, and the Swift side reports
+  `synthesisFailed`.
+
+Reproduced directly: with `PATH=/usr/bin:/bin:/usr/sbin:/sbin` the call raises
+that exact string; with `/opt/homebrew/bin` on the path it exits 0.
+
+**Why no test caught it, and what that means for the fix.** The suite runs from
+a terminal, where `PATH` is whatever the developer's shell has. Any test that
+merely calls the synthesizer inherits a working environment and passes. The test
+for this must therefore **assert what the child is given**, not what happens to
+work — the environment handed to the process, not the outcome of a synthesis.
+
+**The fix:**
+
+- Build the child's environment explicitly rather than inheriting it: take
+  `ProcessInfo.processInfo.environment` and ensure `PATH` contains the
+  directories the sidecar's own tools live in, `/opt/homebrew/bin` and
+  `/usr/local/bin` among them. Prepend rather than replace: a developer running
+  from a shell must keep whatever they had.
+- **Fail early and by name.** Resolve `ffmpeg` at sidecar start, the way the
+  script path is already checked, and throw `sidecarUnavailable("ffmpeg not
+  found on PATH")` rather than letting it surface mid-synthesis as an opaque
+  errno. An unresolvable tool is a startup fact, not a per-clip accident.
+- Do **not** edit `speak.py`. Its JSONL contract is depended on by Swift code
+  and by the prototype; the missing environment is the app's fault, not the
+  script's.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `theSidecarIsGivenAPathThatIncludesTheToolsItShellsOutTo`
+- `theSidecarKeepsTheDevelopersOwnPathEntries`
+- `anUnresolvableFfmpegFailsAtStartupWithItsOwnName`
+- `theSidecarInheritsTheRestOfTheEnvironmentUnchanged`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: drop the environment assignment entirely; replace the inherited
+environment instead of extending it; append the tool directories after the
+inherited `PATH` rather than before; remove the startup resolution so the
+failure returns to being a mid-synthesis errno.
+
+- [ ] **Step 5: Commit** — `fix: give the speech sidecar a PATH that reaches its own tools`
+
+---
+
+### Task 22: Battery trajectory, warnings, and the tray glyph
+
+**Files:**
+- Create: `Sources/AwtrixKit/Device/BatteryTrajectory.swift`
+- Modify: `Sources/AwtrixKit/Device/AwtrixDevice.swift` (`DeviceStats` gains `batRaw`, `uptime`)
+- Modify: `Sources/AwtrixKit/Device/DeviceMonitor.swift` (feed each poll into the trajectory)
+- Modify: `Sources/AwtrixConnectorsApp/AppModel.swift`, `MenuPanel.swift`
+- Create: `Sources/AwtrixConnectorsApp/BatteryAlert.swift`
+- Test: `Tests/AwtrixKitTests/BatteryTrajectoryTests.swift`, `Tests/AwtrixConnectorsAppTests/`
+
+**Two facts established against the live device and a probe, before any design.**
+
+The firmware exposes **no charging or mains-power field**. `/api/stats` on the
+real clock returns `bat`, `bat_raw`, `type`, `lux`, `ldr_raw`, `ram`, `bri`,
+`temp`, `hum`, `uptime`, `wifi_signal`, `messages`, `version`, `indicator1..3`,
+`app`, `uid`, `matrix`, `ip_address` — and nothing else. So "is it plugged in"
+is not readable; it is **inferred from the trend**, which is what the whole task
+turns on.
+
+`UNUserNotificationCenter` works from a locally built, unsigned bundle: it
+resolves without throwing and reports `notDetermined`, so authorization can be
+requested. System notifications are therefore real here, not theoretical.
+
+**Inferring the state.** `bat_raw` (648 at 91%) is finer than the integer
+percent, so the slope is computed on **raw** and everything the user sees uses
+**percent**. Rising means charging, falling means discharging, flat holds the
+previous verdict rather than flapping. Three reset conditions, each of which
+would otherwise poison the estimate:
+
+- `uptime` going backwards — the device rebooted, and a reboot is exactly when
+  someone unplugs and replugs it. Discard the history.
+- `uid` changing — a different clock entirely.
+- A gap in sampling longer than the window — the app was asleep or quit, and the
+  two samples either side of it say nothing about a rate.
+
+**ETA.** Time to empty is percent over rate, and it is worthless from two
+samples twenty seconds apart. Require a minimum observed span and a minimum raw
+delta before showing a number at all; until then the panel says it is still
+estimating. **Never render a confident duration derived from noise** — a clock
+that claims "4 h 20 m" and means "I have two samples" is worse than one that
+says nothing.
+
+**Warnings.** Thresholds at **20% (yellow), 10%, 5%, 1% (red)**. Each fires a
+dialog from the tray **and** a system notification.
+
+- **Edge-triggered, with hysteresis.** Fire once per crossing. A device resting
+  at 9% must not alert every poll — that is 180 alerts an hour. Re-arm a
+  threshold only after the battery climbs back above it by a margin.
+- **Only while discharging.** The user asked for warnings when the battery is
+  draining; a clock charging up through 4% must not scream.
+- **The in-app path must not depend on the system one.** If notification
+  authorization is denied, the dialog still appears. Ask for authorization
+  lazily — the first time a warning would fire, not at launch. A menu bar toy
+  that demands notification permission on first run gets denied before the user
+  knows what it wants.
+- Trade-off flagged rather than decided away: a modal dialog steals focus, which
+  is right at 5% and intrusive at 20%. Built as asked — dialog on all four — and
+  worth revisiting by eye.
+
+**The tray glyph.** The panel shows an emoji for the current state beside the
+percentage and the ETA. This is the **panel**, not the menu bar item: that item
+is a template image whose monochrome silhouette and offline variant are
+load-bearing, and an emoji there would break both.
+
+There is **no "battery charging" emoji in Unicode** — the battery family is
+`\u{1F50B}` and `\u{1FAAB}`, and neither has a charging variant. Charging is
+therefore shown with the plug, which is the closest thing that exists and reads
+unambiguously next to a percentage:
+
+| State                          | Glyph          |
+| ------------------------------ | -------------- |
+| Charging (raw reading rising)  | `\u{1F50C}` 🔌 |
+| Discharging, 20% or above      | `\u{1F50B}` 🔋 |
+| Discharging, below 20%         | `\u{1FAAB}` 🪫 |
+| Discharging, below 10%         | `\u{1FAAB}` 🪫, with the text carrying the urgency |
+| Not yet established            | no glyph — the percentage alone, and the ETA still estimating |
+
+Urgency is carried by the surrounding text and colour, not by a second emoji:
+there is no red variant of these glyphs, and stacking `\u{26A0}` beside them
+reads as clutter rather than as escalation. The "not yet established" row is
+deliberate — a glyph implying a verdict the trajectory has not reached yet is
+the same lie as a confident ETA from two samples.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `aFallingRawReadingReadsAsDischarging`
+- `aRisingRawReadingReadsAsCharging`
+- `aFlatReadingHoldsThePreviousVerdictRatherThanFlapping`
+- `aRebootDiscardsTheHistory`
+- `aDifferentDeviceDiscardsTheHistory`
+- `aGapLongerThanTheWindowDiscardsTheHistory`
+- `noEtaIsShownBeforeTheMinimumSpanIsObserved`
+- `theEtaIsPercentOverTheObservedRate`
+- `crossingTwentyPercentWarnsOnce`
+- `sittingBelowAThresholdDoesNotWarnAgain`
+- `recoveringAboveAThresholdRearmsIt`
+- `chargingThroughAThresholdDoesNotWarn`
+- `theDialogStillAppearsWhenNotificationsAreDenied`
+- `theGlyphFollowsTheStateNotThePercentageAlone`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: level-trigger instead of edge-trigger; drop the hysteresis; warn
+while charging; compute the slope on `bat` instead of `bat_raw`; keep history
+across a reboot; show an ETA from two samples; make the dialog conditional on
+notification authorization.
+
+- [ ] **Step 5: Commit** — `feat: battery trajectory, threshold warnings and the tray glyph`
+
+---
+
+### Task 23: Stay quiet when macOS says the user is busy
+
+**Files:**
+- Create: `Sources/AwtrixConnectorsApp/FocusGate.swift`
+- Modify: `Sources/AwtrixConnectorsApp/AppModel.swift`, `MenuPanel.swift`
+- Test: `Tests/AwtrixConnectorsAppTests/`
+
+This app **speaks out loud** on a thirty-minute schedule. Nothing currently
+stops it telling a joke at three in the morning. A quiet window of its own would
+duplicate what the system already knows, so the gate is macOS's own Focus state.
+
+**What was established by probe, not assumed:**
+
+- `~/Library/DoNotDisturb/DB/` — the file-based route every blog post
+  recommends — is **TCC-protected**. Reading it answers `Operation not
+  permitted` and would require Full Disk Access, which is an absurd ask for a
+  menu bar toy. That route is closed.
+- `INFocusStatusCenter` **works from an unsigned local build**: a bare binary
+  reports `authorizationStatus` `notDetermined` and returns a non-nil
+  `focusStatus.isFocused`. No entitlement, no signing, no Full Disk Access.
+
+**The trap this creates, and the rule that closes it.** An unauthorized center
+answers `isFocused == false` — the same answer as a genuinely idle Mac. Trusting
+it would mean an app that believes no Focus is ever on and speaks at 3 a.m.
+forever, silently and by construction. So:
+
+- Request authorization once, and gate on `authorizationStatus == .authorized`.
+- While not authorized, `isFocused` is **not evidence** and must not be read as
+  permission to speak. Fall back to an explicit quiet window the user sets in
+  the panel — hours, not guesses.
+- Surface which of the two is in force. A user who denied the prompt should be
+  able to see that the app is running on its own window rather than on the
+  system's state.
+
+**What the API can and cannot tell us.** `INFocusStatusCenter` reports *whether*
+a Focus is active, never *which one*. Distinguishing Sleep from Work needs the
+TCC-protected database, and that trade is not worth Full Disk Access. So the
+rule is: **any active Focus silences the schedule.** If the user has set a
+Focus at all, a clock making jokes is not what they asked for — and Sleep, the
+case that prompted this, is covered by the same test.
+
+**Four rules, the same shape as Task 20's:**
+
+- Silence the **schedule**, not `maintain`. An outage of attention is not an
+  outage of preparation, and the queue should be full when the user comes back.
+- A manual "Run now" is never silenced. The user pressing a button IS the
+  consent; refusing it would read as a broken button.
+- The gate must not touch the failure counter in either direction.
+- The state is not sticky: the moment Focus ends, the next tick runs normally.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `anActiveFocusSilencesTheSchedule`
+- `theScheduleResumesWhenFocusEnds`
+- `anUnauthorizedCenterIsNotTreatedAsPermissionToSpeak`
+- `theQuietWindowAppliesWhenFocusAuthorizationWasDenied`
+- `aManualRunIsNeverSilenced`
+- `maintenanceStillRunsDuringFocus`
+- `aFocusPauseDoesNotAdvanceOrResetTheFailureCounter`
+- `thePanelSaysWhichRuleIsInForce`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: read `isFocused` without checking authorization; silence `maintain`
+too; silence the manual path; make the pause sticky until a run succeeds; treat
+`.denied` as `.authorized`.
+
+- [ ] **Step 5: Commit** — `feat: stay quiet while macOS reports a Focus`
+
+---
+
+### Task 24: Wait out the meeting, do not talk over it
+
+**Files:**
+- Create: `Sources/AwtrixConnectorsApp/MicrophoneGate.swift`
+- Modify: `Sources/AwtrixConnectorsApp/AppModel.swift`, `MenuPanel.swift`
+- Test: `Tests/AwtrixConnectorsAppTests/`
+
+Speech and the clock's jingle both land in the room the user is talking in. If a
+microphone is capturing, the app **waits** — it does not skip. A joke deferred
+by twenty minutes is still a joke; one skipped is gone, and the anecdote was
+already paid for in synthesis.
+
+**`kAudioDevicePropertyDeviceIsRunningSomewhere` answers without any permission**
+— we never open a stream or read a sample, so this costs no microphone access
+and raises no TCC prompt. Probed and working.
+
+**The trap the probe caught, which would otherwise have shipped as "the app
+never speaks and nobody knows why".** On this machine the naive check —
+*is any input device capturing* — answers **true right now, with no meeting in
+progress**. Four inputs are present, and `Universal Audio Thunderbolt`, an
+always-on audio interface, reports `capturing=true` permanently. A gate written
+against that reading is a permanent mute.
+
+So the rule is a **watched set of devices**, chosen by the user — not "any
+device", and not "the default input" either, since a conferencing app does not
+always take the default:
+
+- Default watch set: **MacBook Pro Microphone** and **iPhone Microphone**. Those
+  are the two a human actually talks into on this machine; the Thunderbolt
+  interface and Serato's virtual input are excluded by construction rather than
+  by a heuristic that has to be right.
+- The panel lists every input the system reports, with the watched ones marked,
+  so the set is visible and editable. A gate the user cannot inspect is a gate
+  they will eventually fight.
+- **Match by device UID, not by name.** Names are user-visible and unstable —
+  "iPhone Microphone" appears and vanishes as the phone comes and goes, and two
+  identical models collide. Store the UID with the name beside it for display,
+  match on UID, and fall back to the name only when no UID matches.
+- A watched device that is **absent** is simply not capturing. Its absence is
+  not an error and must not disable the gate.
+- **No launch baseline.** An earlier draft excluded devices already capturing at
+  startup, to dodge the always-on interface; with an explicit watch set that
+  heuristic is not only unnecessary but wrong — a watched microphone already
+  capturing when the app launches means a meeting is already in progress, and
+  the correct response is to hold, not to decide it is furniture.
+- Show the verdict in the panel with the device that caused it. "Waiting: the
+  microphone is in use (MacBook Pro Microphone)" is diagnosable; silence is not.
+
+**Deferral, not suppression:**
+
+- A scheduled run that arrives while the mic is hot is **held**, and released
+  when capture stops — not dropped, and not counted as a failure.
+- At most one run is held. A two-hour meeting must not queue four anecdotes and
+  fire them in a burst the moment it ends.
+- The jingle is part of the deferral. Pushing the banner without its sound, or
+  the sound without the banner, is worse than waiting.
+- A manual "Run now" is never held — the press is the consent, and the user can
+  see the mic indicator in their own menu bar.
+- `maintain` is never held: preparation makes no sound.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `aWatchedDeviceCapturingAtLaunchIsAMeetingAlreadyInProgress`
+- `anUnwatchedDeviceCapturingIsIgnoredHoweverLongItRuns`
+- `aWatchedDeviceThatIsAbsentDoesNotDisableTheGate`
+- `theWatchSetIsMatchedByUidNotByName`
+- `aScheduledRunDuringAMeetingIsHeldNotDropped`
+- `theHeldRunFiresWhenCaptureStops`
+- `atMostOneRunIsHeldAcrossALongMeeting`
+- `aHeldRunIsNotCountedAsAFailure`
+- `aManualRunIsNeverHeld`
+- `maintenanceIsNeverHeld`
+- `thePanelNamesTheDeviceThatCausedTheWait`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: gate on every input rather than the watched set; match the watch set
+by name instead of UID; treat an absent watched device as capturing; drop the
+held run instead of releasing it; release more than one; count a held run as a
+failure; hold the manual path.
+
+- [ ] **Step 5: Commit** — `feat: hold speech while a microphone is capturing`
+
+---
+
+### Task 25: A voice per connector
+
+**Files:**
+- Modify: `Sources/AwtrixKit/Connectors/Connector.swift`, `AnecdoteConnector.swift`
+- Modify: `Sources/AwtrixKit/Anecdotes/VoiceCaster.swift`
+- Test: `Tests/AwtrixKitTests/VoiceCasterTests.swift`
+
+`VoiceCaster` already assigns voices to speakers inside one anecdote. Giving
+each connector its own narrator costs little and changes how the thing feels:
+the weather is read by one character, a broken build announced by another.
+
+- `Connector` gains a narrator voice, defaulting to the current one so nothing
+  existing changes sound.
+- The caster takes the connector's narrator as the voice for `narrator` lines,
+  and keeps its existing per-speaker casting inside the text unchanged.
+- The reserved female voice rule is not touched — a connector narrator must not
+  steal the voice reserved for female speakers, or dialogue casting degrades.
+- An unknown or missing voice falls back to the current default rather than
+  failing the run. A connector naming a voice that was deleted from the pack
+  directory should sound wrong, not break.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `aConnectorsNarratorVoiceIsUsedForItsNarratorLines`
+- `perSpeakerCastingInsideTheTextIsUnchanged`
+- `aConnectorNarratorDoesNotConsumeTheReservedFemaleVoice`
+- `anUnknownNarratorFallsBackRatherThanFailing`
+- `connectorsWithoutANarratorSoundExactlyAsBefore`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+- [ ] **Step 5: Commit** — `feat: each connector gets its own narrator`
+
+---
+
+### Task 26: The clock wears the weather
+
+**Files:**
+- Create: `Sources/AwtrixKit/Connectors/WeatherConnector.swift`, `Sources/AwtrixKit/Weather/OpenMeteoSource.swift`, `WeatherTheme.swift`
+- Modify: `Sources/AwtrixKit/Device/AwtrixDevice.swift` (custom-app endpoint)
+- Test: `Tests/AwtrixKitTests/WeatherThemeTests.swift`, `OpenMeteoSourceTests.swift`
+
+The clock should show the weather where the user is — rain on the matrix when it
+rains.
+
+**The firmware has weather overlays built in.** `GET /api/settings` carries a
+global `OVERLAY` key, and the device accepts exactly **`clear`, `rain`,
+`snow`, `storm`, `thunder`, `drizzle`, `frost`** — enumerated by setting each
+one on the real clock and reading it back, then restoring `clear`. An
+unrecognised value is silently coerced to `clear`, so **validation is entirely
+ours**: a typo produces no overlay and no error, which is the worst possible
+failure to debug from the outside.
+
+An earlier draft of this task proposed building rain out of a LaMetric catalogue
+GIF plus the `Matrix` effect. That was wrong and it is recorded here so nobody
+rebuilds it: the effects list (`Fade`, `MovingLine`, `Pacifica`, `Matrix` and
+sixteen others, from `GET /api/effects`) is decorative and belongs to custom
+apps, while `OVERLAY` is the real, literal, device-wide weather layer that
+draws over everything on screen. Rain is one setting, not an animation we ship.
+
+**`OVERLAY` is global device state, and that has consequences the task must
+handle.** It is not scoped to an app, so this connector is writing a setting the
+user can also change by hand:
+
+- Read and remember the value that was there **before** the connector first set
+  it, and restore it when the connector is disabled or the app quits. The plan's
+  own constraint — the app removes what it created — covers settings as much as
+  flash.
+- Never write it when the weather has not changed. A repeated identical write is
+  a needless flash cycle on a device that lives on a shelf for years.
+- A user who sets an overlay by hand while the connector is on will have it
+  overwritten at the next poll. Say so in the panel rather than letting it read
+  as a bug.
+
+**Temperature still wants a custom app** — the overlay draws weather, not
+numbers — and that is where the effects list and a catalogue icon are legitimate.
+Keep the two separate: the overlay is the weather, the custom app is the reading.
+
+**The source: Open-Meteo, verified live.** No key, no signup, no account, no
+dependency — a plain `URLSession` GET returning WMO `weather_code`, `is_day`,
+`precipitation`, `temperature_2m`, `wind_speed_10m`. WeatherKit was not chosen
+because it needs a paid developer account and a signed app, neither of which
+this build has.
+
+- `is_day` splits clear-sky into two themes; a clear night rendered as bright
+  sun is the kind of wrongness that gets noticed immediately.
+- The response's own `interval` is **900 seconds**. Poll every fifteen minutes
+  and no faster — this is a free public API and the weather does not move
+  quicker than its own update cadence.
+
+**Location.** A desk clock does not travel, so coordinates in settings are the
+default and CoreLocation is an optional convenience that fills them in once. The
+framework and its permission prompt are not required for a value the user can
+type, and asking for location access on first launch of a menu bar toy is how an
+app gets denied everything.
+
+**Where it renders.** A **custom app** in the clock's own loop, not a
+notification: weather is ambient, and the loop is exactly the mechanism for
+something that should be there when you glance at it. Notifications from the
+anecdote connector overlay the loop and the two coexist without arbitration.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `eachWmoGroupMapsToOneOfTheSixOverlaysTheFirmwareAccepts`
+- `anUnknownWmoCodeFallsBackToClearRatherThanToAnInvalidOverlay`
+- `theOverlayIsNotRewrittenWhenTheWeatherHasNotChanged`
+- `thePriorOverlayIsRestoredWhenTheConnectorIsDisabled`
+- `thePriorOverlayIsRestoredOnQuit`
+- `clearSkyByDayAndByNightAreDifferentThemes`
+- `theSourceIsNotPolledFasterThanItsOwnInterval`
+- `aFailedWeatherFetchLeavesThePreviousOverlayInPlace`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: send an overlay name the firmware does not accept (it coerces to
+`clear`, so only our own validation can catch it); ignore `is_day`; poll faster
+than the interval; rewrite the overlay on every poll; forget the prior value so
+nothing is restored; clear the overlay on a failed fetch.
+
+- [ ] **Step 5: Commit** — `feat: mirror the local weather on the clock`
+
+---
+
+### Task 27: Restore the prototype's casting
+
+**Files:**
+- Modify: `Sources/AwtrixKit/Anecdotes/VoiceCaster.swift`
+- Modify: `Sources/AwtrixKit/Connectors/AnecdoteConnector.swift` (composition)
+- Test: `Tests/AwtrixKitTests/VoiceCasterTests.swift`
+
+**A regression the user heard before anyone measured it: the app casts worse
+than the prototype it was ported from.** Diagnosed against both sides.
+
+Five voices are installed — `acolyte`, `arthas`, `batrak`, `crystal`, `peon`.
+The prototype narrates with `arthas`, **reserves `crystal` for speakers it
+detects as female**, and draws the remaining three plus the narrator for
+everyone else. `Voice` in Swift declares **two** — `arthas` and `peon` — and the
+default pool is `[.arthas, .peon]`.
+
+Three consequences, all audible:
+
+- Women speak in an orc grunt. The female rule was built, corpus-validated and
+  approved by ear in the prototype, and never ported.
+- Every third speaker wraps back to the narrator's own voice, so distinct
+  characters sound like the same person.
+- Three of the five installed voices never play at all.
+
+The synthesis parameters are **not** implicated and should not be touched: both
+sides send exactly `{"voice","text","out"}` and run on `speak.py`'s own
+`INFERENCE` defaults. `SpeechText.prepare` is an improvement over the prototype,
+not a regression — it fixes the trailing-stop tail. The casting is the whole
+defect.
+
+**The acceptance set already exists.** `prototype/test_gender.py` holds thirteen
+cases pinning the female rule, including the traps that made it hard: `Я сила!`
+(a noun that looks like a past-tense verb), `У меня сила воли` (the same noun in
+a phrase), and a feminine verb describing a third person rather than the
+speaker. Port those thirteen, do not invent new ones, and do not weaken any of
+them — they are what the rule was validated against.
+
+**The rule itself**, from the prototype: a speaker is female when, within two
+tokens of a first-person pronoun, they use a feminine past-tense form (`-ла`,
+`-лась`) that is not in the known-noun exclusion list. **A line carrying both a
+feminine and a masculine signal decides nothing** — that is reported speech, and
+guessing from it was a defect the prototype already fixed once.
+
+**What was checked and is NOT broken, so this task does not go looking there.**
+The pacing is faithful: `LEAD_ANNOUNCEMENT` 0.0, `LEAD_FIRST_LINE` 0.7,
+`LEAD_BETWEEN_LINES` 0.25, `LEAD_LAUGHTER` 0.7 on both sides, and the Swift
+`switch` produces the same sequence as the prototype's list assembly for every
+body length, including the two-clip case where both readings happen to give
+0.7. The laughter is faithful too — the same thresholds (12 words, 14 repeats,
+breathing at 9), the same `4 + words / 8`, the same detached three-`ХА` tail,
+the same three short variants chosen at random.
+
+**The one piece never compared: the dialogue parser.** If the Swift parser
+splits a joke into a different number of turns than `parse_turns` does, then
+every pause constant can be identical and the pauses will still land in the
+wrong places — indistinguishable by ear from broken pacing. This task settles it
+with a parity check rather than by reading both implementations: take a corpus
+of real anecdotes, run both parsers over it, and diff the turn splits. Any
+divergence is either a defect to fix or a deliberate improvement to write down
+— but it must not stay unknown, because it is the last place the port could have
+silently changed how the thing sounds.
+
+- [ ] **Step 1: Write the failing tests**
+
+Port the thirteen from `prototype/test_gender.py`, plus:
+
+- `theReservedFemaleVoiceIsNeverDrawnForAMaleOrUnknownSpeaker`
+- `everyInstalledVoiceIsReachable`
+- `aThirdSpeakerDoesNotReuseTheNarratorsVoiceWhileAnotherIsFree`
+- `castingIsStableAcrossOneAnecdote`
+- `theSwiftParserSplitsARealCorpusExactlyAsTheProtoypeDoes` (parity, driven from
+  a fixture of real anecdotes; a divergence fails with both splits printed)
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: put `crystal` back in the general pool; drop the two-token proximity
+window; let a line with both signals decide; shrink the pool to two; make the
+exclusion list empty.
+
+- [ ] **Step 5: Commit** — `fix: cast the way the prototype does, female voice included`
+
+---
+
+### Task 28: Settings behind a gear, not in the way
+
+**Files:**
+- Modify: `Sources/AwtrixConnectorsApp/MenuPanel.swift`
+- Create: `Sources/AwtrixConnectorsApp/SettingsSheet.swift`
+- Modify: `Sources/AwtrixConnectorsApp/AppModel.swift` if the sheet needs state
+- Test: `Tests/AwtrixConnectorsAppTests/`
+
+The panel that opens on a click is for the two things a user reaches for daily —
+is the clock alive, and run something now. Everything set once and forgotten
+belongs behind a gear.
+
+**What moves out of the panel:**
+
+- **The device address field.** It saves as it is typed; there is nothing to
+  confirm and nothing to press, so it has no business occupying a row in a menu
+  that opens dozens of times a day.
+- **"Remove icons this app uploaded."** An action taken once in the life of an
+  installation, sitting next to one taken constantly.
+
+**What replaces them:** a **gear button in the bottom-right corner of the
+panel, with no label** — the icon alone. Clicking it opens the settings, and
+the settings hold exactly those two things.
+
+**Also in the panel: when the next anecdote is due, to the right of "Run
+now".** The user asked for a time; the honest version is harder than a time.
+
+By the time this ships, four separate mechanisms can hold or move the next run:
+Task 15's failure backoff shortens the wait, Task 20 pauses the schedule while
+the clock is unreachable, Task 23 silences it during a macOS Focus, and Task 24
+holds it while a microphone is capturing. A label reading "next at 14:30" while
+any of those is in force is a lie the user will act on.
+
+So the label reports the **actual next attempt**, and when the schedule is held
+it says what is holding it rather than naming an hour that will not arrive. It
+follows the same clock the scheduler sleeps on — not a separately computed
+guess, which would drift the moment a backoff engages.
+
+**Four rules, because a settings surface is where UI defects hide:
+
+- The address still **saves as it is typed**, exactly as it does today. Moving a
+  control must not quietly add a save step the user has to discover.
+- The panel must not grow taller for the gear. It goes in the corner of what is
+  already there, not on a row of its own.
+- Opening the settings must not stop the schedule, the poll, or a run in
+  flight. A settings sheet is a view, not a mode.
+- Removing icons keeps its confirmation and its result line **inside the
+  settings**, not thrown back to the panel the user has just left.
+
+This supersedes the earlier amendment that removed the icon action outright.
+The machinery — `UploadedIconStore`, the record written at the upload site,
+`AwtrixDevice.removeIcon` — was never deleted, so this is a relocation, and the
+global constraint "the app removes what it created" is met again once it lands.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `theMainPanelHoldsNeitherTheAddressFieldNorTheIconAction`
+- `theGearOpensTheSettings`
+- `theSettingsHoldTheAddressFieldAndTheIconAction`
+- `theAddressStillSavesAsItIsTyped`
+- `openingTheSettingsDoesNotDisturbAScheduledRun`
+- `theIconRemovalResultIsShownInTheSettings`
+- `thePanelSaysWhenTheNextAnecdoteIsDue`
+- `theDueTimeFollowsABackoffRatherThanTheNominalInterval`
+- `aHeldScheduleSaysWhatIsHoldingItInsteadOfNamingATime`
+- `aDisabledConnectorNamesNoNextTime`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: leave the field in the panel as well; make the address save only on
+submit; let the gear tear down the schedule; report the removal result to the
+panel instead of the settings.
+
+- [ ] **Step 5: Commit** — `feat: put the address and the icon action behind a gear`
+
+---
+
+### Task 29: The menu opens on the panel, and a replay says something
+
+**Files:**
+- Modify: `Sources/AwtrixConnectorsApp/AppModel.swift`, `MenuPanel.swift`
+- Test: `Tests/AwtrixConnectorsAppTests/`
+
+Two consequences of Tasks 28 and 19 that only became visible once both existed.
+
+**The menu no longer reliably opens on the panel.** `settingsIsOpen` and
+`historyIsOpen` both survive the window closing, so clicking away while in
+History and clicking back returns to History. The two surfaces are consistent
+with each other, which is how it got here — and consistent is not the same as
+right. A menu bar item is clicked to answer "is the clock alive, and what is
+next"; returning to a list of old jokes answers a question nobody asked. Both
+surfaces reset when the window closes, so the first screen is always the panel.
+
+**A replay is silent.** `deliver`'s result is discarded on purpose — the run
+line must not be written to, because a replay is not a run and Task 15's counter
+must not move. But that leaves "Play again" against an unreachable clock doing
+nothing at all, with no explanation. **This branch has already shipped that exact
+defect once**: the user pressed "Run now", saw nothing for 37 seconds, and
+reported the button as broken. Do not ship it twice.
+
+So a replay reports its own outcome, **in the History surface**, not in the
+panel's run line. Whatever shape it takes, the discarded-result decision stays:
+the run line and the failure counter are untouched.
+
+- [ ] **Step 1: Write the failing tests**
+
+- `closingTheWindowReturnsTheMenuToThePanel`
+- `theHistorySurfaceDoesNotSurviveAWindowClose`
+- `theSettingsSurfaceDoesNotSurviveAWindowClose`
+- `aReplayReportsItsOutcomeInTheHistory`
+- `aFailedReplayIsVisibleRatherThanSilent`
+- `aReplayOutcomeNeverReachesTheRunLine`
+- `aReplayStillDoesNotMoveTheFailureCounter`
+
+- [ ] **Step 2–4: fail, implement, green + mutate**
+
+Mutations: keep either flag across the close; write the replay outcome to the
+run line; drop the outcome entirely; let a failed replay advance the counter.
+
+- [ ] **Step 5: Commit** — `fix: open on the panel, and say how a replay went`
 
 ---
 

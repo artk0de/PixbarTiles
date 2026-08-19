@@ -213,22 +213,82 @@ difference, not noise. An earlier claim that it did nothing came from comparing
 different sentences on single samples of a stochastic model, which is not a
 measurement.
 
-### Stress marking is impossible here, and the reason is the tokenizer
+### Stress marking works, but only after the vowel — and the reason is the tokenizer
 
 Russian needs stress to disambiguate homographs, and stock XTTS gets them wrong:
 `Он открыл замок` is read за́мок (the castle) where замо́к (the lock) is meant.
-Four conventions were tested by ear, and all four fail:
+It is also plainly wrong on words that are not homographs at all — `храпишь`
+comes out хра́пишь, and stays wrong with the word alone, with a full stop, and
+inside a longer sentence, so neither punctuation nor context is the cause.
+
+Four conventions were tested by ear:
 
 | Convention | Result |
 | --- | --- |
-| combining acute `замо́к` | stress moves correctly — and the following consonant is lost |
+| combining acute `замо́к`, `храпи́шь` | **the stress moves, and the word survives** |
 | `+` before the vowel, the RUAccent/Silero standard | the word breaks apart: "зам ок" |
 | capital `замОк` | lowercased before tokenization, ignored |
 | doubled vowel `замоок` | in-vocabulary, but sounds bad |
 
-The cause is that `+` and the combining acute are **absent from the XTTS BPE
-vocabulary** — both encode to `[UNK]`, which is what corrupts the neighbouring
-characters. That explains all four results at once.
+An earlier version of this section claimed the acute was absent from the BPE
+vocabulary, encoded to `[UNK]`, and ate the following consonant, and concluded
+that stress marking was impossible. **That was wrong**, and it was wrong because
+it reasoned from a symptom instead of reading the tokenizer. Encoding the
+strings settles it:
+
+```
+храпишь    х · ра · пи · шь
+храпи́шь    х · ра · пи · [UNK] · шь
+замо́к      за · мо · [UNK] · к
+зам+ок     за · м  · [UNK] · о · к
+```
+
+Every letter survives in all three marked forms. The acute does become `[UNK]`
+— it is genuinely not a Cyrillic token, and the only vocabulary entry carrying
+U+0301 is the Latin `é` — but `[UNK]` is **inserted between tokens rather than
+consuming one**. Position is what decides the outcome:
+
+- The acute goes **after** the stressed vowel, which in Russian ends a syllable,
+  so the `[UNK]` lands on a syllable boundary and the word stays intact.
+- `+` goes **before** the vowel, which is inside the syllable, so it splits
+  `мо` into `м` and `о` — and "зам ок" is exactly what that reads as.
+
+The RUAccent and Silero convention is therefore not merely unsupported here; it
+marks the one position that breaks the word. Precomposed accented Cyrillic
+(`ѝ` U+045D, `ѐ` U+0450) is absent from the vocabulary entirely and is not an
+escape route.
+
+Checked across ten words, an acute placed after a vowel never lost a letter. One
+word retokenized around it — `вертоле́те` splits `лет·е` into `ле·те` — which is
+a different segmentation, not damage.
+
+**DECISION 2026-08-18: no stress marking ships.** The user called the growing
+set of guards a crutch and was right. Marking was tried end to end — RUAccent
+placing marks, the acute moved across the vowel, guards for line length, for
+app-owned strings, for words whose final letter the mark would strand — and the
+balance measured negative by ear: over one session it corrected two words and
+degraded nine. The model is usually right, we cannot predict where it is wrong,
+and every rule that guesses is wrong on text nobody has heard.
+
+Two replacements were evaluated against the same five sentences and rejected.
+`omogr/xtts-ru-ipa` resolves stress from the phonemes themselves, so no mark is
+needed and `[UNK]` cannot arise — but it trails half a second of audible tail
+that `speed` does not shrink, it is non-commercial, and fed Cyrillic by mistake
+it does not fail: it emits four seconds of plausible babble in the speaker's own
+voice, which no metric distinguishes from a real line. `ResembleAI/chatterbox`
+(MIT, 23 languages, native Russian, tails at or below stock) is the strongest
+candidate seen and remains worth revisiting; it was set aside because the user
+concluded stress is not worth the change of engine.
+
+Wrong stress on a rare word is accepted as a cosmetic flaw. The two words this
+was ever about are храпишь and сосиску.
+
+**What this does not solve** is where the marks come from. Feed text is
+unmarked, so using this needs a Russian stress dictionary or accentuation model
+to mark the text before synthesis. That is a real subsystem and it is not built.
+A hand-maintained list of problem words was considered and rejected: it would be
+right about the words in it and silently wrong about everything else, which is
+the failure mode this project has spent the most effort avoiding.
 
 **No fine-tune can fix this.** `tensorbanana/xttsv2_banana` (to which
 `Ftfyhh/xttsv2_banana` redirects) ships a `vocab.json` byte-identical to stock,

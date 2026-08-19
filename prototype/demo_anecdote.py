@@ -76,7 +76,6 @@ ENTITIES = [("&quot;", '"'), ("&apos;", "'"), ("&lt;", "<"), ("&gt;", ">"),
 
 QUOTES = "«»“”„‟\"‘’`´"
 
-
 def speech_text(line: str) -> str:
     """Prepare one line for the synthesizer. Every rule here was settled by ear.
 
@@ -185,15 +184,93 @@ def parse_turns(text: str) -> list[tuple[str, str]]:
     return turns
 
 
-def cast(turns: list[tuple[str, str]], pool: list[str]) -> list[tuple[str, str]]:
+# The only sex marker Russian gives away for free is the past tense: a feminine
+# singular verb ends in -ла, -лась when reflexive, against -л and -лся for a
+# masculine one. The ending alone is not a signal — школа, сила and стрела end
+# the same way. What makes it usable is that we do not care whether the LINE
+# contains a feminine verb, only whether the SPEAKER uses one about HERSELF, so
+# the pronoun "я" has to sit within a couple of tokens of the verb. A noun two
+# clauses away never reaches that window.
+SELF_WINDOW = 2
+
+# -ла words that are never a verb. Only ones that could plausibly land beside
+# "я" are worth listing; the window does the rest of the work.
+NOT_A_VERB = {
+    "сила", "школа", "скала", "игла", "метла", "пчела", "стрела", "зола",
+    "смола", "юла", "мгла", "хвала", "весла", "дела", "тела", "числа",
+    "масла", "крыла", "тепла", "жерла", "кобыла", "вобла", "ветла",
+}
+
+NARRATOR_VOICE = "arthas"
+FEMALE_VOICE = "crystal"
+
+
+def _tokens(line: str) -> list[str]:
+    return re.findall(r"[а-яёa-z]+", line.lower())
+
+
+def _is_female_past(token: str) -> bool:
+    return (
+        len(token) >= 4
+        and token not in NOT_A_VERB
+        and (token.endswith("лась") or token.endswith("ла"))
+    )
+
+
+def _is_male_past(token: str) -> bool:
+    return len(token) >= 3 and (token.endswith("лся") or token.endswith("л"))
+
+
+def _speaks_of_self(tokens: list[str], marker) -> bool:
+    pronouns = [i for i, t in enumerate(tokens) if t == "я"]
+    if not pronouns:
+        return False
+    return any(
+        marker(token) and any(abs(i - p) <= SELF_WINDOW for p in pronouns)
+        for i, token in enumerate(tokens)
+    )
+
+
+def speaker_genders(turns: list[tuple[str, str]]) -> dict[str, str]:
+    """Actors who give their own sex away, by the first line that does it.
+
+    First signal wins, so an actor does not change sex halfway through an
+    anecdote because a later line quotes somebody else. A line carrying BOTH
+    signals decides nothing: that shape is reported speech — one person quoting
+    another of the opposite sex — and neither reading is safe. Skipping it lets
+    a cleaner line decide, which costs a miss; guessing costs a man speaking in
+    a woman's voice, and that is the louder failure.
+    """
+    verdict: dict[str, str] = {}
+    for speaker, line in turns:
+        if speaker == "narrator" or speaker in verdict:
+            continue
+        tokens = _tokens(line)
+        female = _speaks_of_self(tokens, _is_female_past)
+        male = _speaks_of_self(tokens, _is_male_past)
+        if female == male:
+            continue
+        verdict[speaker] = "female" if female else "male"
+    return verdict
+
+
+def cast(
+    turns: list[tuple[str, str]],
+    pool: list[str],
+    genders: dict[str, str] | None = None,
+) -> list[tuple[str, str]]:
+    genders = genders or {}
     assigned, cursor, out = {}, 0, []
     for speaker, line in turns:
         if speaker == "narrator":
-            out.append((pool[0], line))
+            out.append((NARRATOR_VOICE, line))
             continue
         if speaker not in assigned:
-            assigned[speaker] = pool[cursor % len(pool)]
-            cursor += 1
+            if genders.get(speaker) == "female":
+                assigned[speaker] = FEMALE_VOICE
+            else:
+                assigned[speaker] = pool[cursor % len(pool)]
+                cursor += 1
         out.append((assigned[speaker], line))
     return out
 
@@ -291,10 +368,19 @@ def main() -> None:
              + [LEAD_BETWEEN_LINES] * (len(body) - 1)
              + [LEAD_LAUGHTER])
 
-    pool = [v[:-4] for v in sorted(os.listdir(f"{TTS_DIR}/voices")) if v.endswith(".wav")]
-    pool = ["arthas"] + [v for v in pool if v != "arthas"]
-    print(f"\n=== voice pool: {pool} ===")
-    voiced = cast(turns, pool)
+    installed = [v[:-4] for v in sorted(os.listdir(f"{TTS_DIR}/voices")) if v.endswith(".wav")]
+    # Reserved: a male actor must never answer in the female voice. The narrator
+    # voice stays in the pool, which means actor(0) shares it — audible, but it
+    # is the casting every demo so far was approved with, so it is not changed
+    # on the way past.
+    pool = [NARRATOR_VOICE] + [
+        v for v in installed if v not in (NARRATOR_VOICE, FEMALE_VOICE)
+    ]
+    genders = speaker_genders(turns)
+    print(f"\n=== voice pool: {pool} · narrator {NARRATOR_VOICE} · female {FEMALE_VOICE} ===")
+    if genders:
+        print(f"=== detected: {genders} ===")
+    voiced = cast(turns, pool, genders)
 
     print("\n=== synthesizing ===")
     files = synthesize(voiced)

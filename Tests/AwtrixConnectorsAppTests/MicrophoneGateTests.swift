@@ -550,6 +550,209 @@ import Testing
     await subject.teardown()
 }
 
+// MARK: - What is owed, and what is merely missed
+
+// Only a microphone hold is a WAIT. An outage of the clock is a SKIP: nothing is
+// spent, nothing is owed, and the next beat delivers. Queueing one would fire an
+// anecdote the instant the clock answered, and a burst of them on every device
+// recovery.
+//
+// The schedule is never ticked again after the outage, so a run appearing here
+// could only have come from the release loop.
+@Test @MainActor func aBeatMissedWhileTheClockWasDownIsNotOwedAfterwards() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let mic = Metronome()
+    let poll = Metronome()
+    let clock = SwitchableTransport(answering: false)
+    let subject = testModel(
+        host: host,
+        transport: clock,
+        sleep: schedule.sleep,
+        pollSleep: poll.sleep,
+        micSleep: mic.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(host.calls.contains("run:stub") == false)
+
+    clock.nowAnswers()
+    poll.tick()
+    #expect(await waitUntil { subject.isDeviceOnline })
+    for _ in 0..<4 {
+        mic.tick()
+        #expect(await waitUntil { mic.parked == 1 })
+    }
+
+    // Four turns of the loop that releases held runs, with nothing holding
+    // anything. Nothing was owed, so nothing comes out.
+    #expect(host.calls.contains("run:stub") == false)
+    await subject.teardown()
+}
+
+// The same for a quiet rule. Held beats through a nine-hour night would arrive
+// as an anecdote at exactly 08:00 every morning — which is the alarm clock
+// nobody asked this app to be.
+@Test @MainActor func aBeatMissedDuringQuietHoursIsNotOwedWhenTheyEnd() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let mic = Metronome()
+    let centre = StubFocusStatus(access: .authorized, isFocused: true)
+    let subject = testModel(
+        host: host, sleep: schedule.sleep, focus: FocusGate(status: centre), micSleep: mic.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(host.calls.contains("run:stub") == false)
+
+    centre.nowFocused(false)
+    for _ in 0..<4 {
+        mic.tick()
+        #expect(await waitUntil { mic.parked == 1 })
+    }
+
+    #expect(host.calls.contains("run:stub") == false)
+    await subject.teardown()
+}
+
+// And the control at the far end, so the two above are a refusal rather than a
+// release loop nothing can reach: the identical shape with a MICROPHONE holding
+// the beat does deliver.
+@Test @MainActor func aBeatMissedForAMicrophoneIsTheOneThatIsOwed() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let mic = Metronome()
+    let system = StubAudioInputs(duringAMeeting)
+    let subject = testModel(
+        host: host,
+        sleep: schedule.sleep,
+        microphone: MicrophoneGate(inputs: system),
+        micSleep: mic.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(host.calls.contains("run:stub") == false)
+
+    system.nowReports(afterTheMeeting)
+    mic.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:stub") })
+    await subject.teardown()
+}
+
+// Releasing into a clock that is not answering is worse than not releasing at
+// all: `produce()` pops an anecdote and RETIRES it before the banner goes out,
+// so the user permanently loses something they never heard and the failure
+// counter advances for a device outage. That is the exact cost this hold exists
+// to remove, through the one path it did not cover — a meeting that ends during
+// an outage.
+//
+// The schedule is not ticked after the hold, so the run at the end is the
+// release rather than a later beat.
+@Test @MainActor func aRunHeldIntoAnOutageStaysHeldUntilTheClockAnswers() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let mic = Metronome()
+    let poll = Metronome()
+    let system = StubAudioInputs(duringAMeeting)
+    let clock = SwitchableTransport()
+    let subject = testModel(
+        host: host,
+        transport: clock,
+        sleep: schedule.sleep,
+        pollSleep: poll.sleep,
+        microphone: MicrophoneGate(inputs: system),
+        micSleep: mic.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { subject.isDeviceOnline })
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    // The meeting ends, but the clock has gone down in the meantime.
+    clock.nowFails()
+    poll.tick()
+    #expect(await waitUntil { isOffline(subject) })
+    system.nowReports(afterTheMeeting)
+    for _ in 0..<3 {
+        mic.tick()
+        #expect(await waitUntil { mic.parked == 1 })
+    }
+    #expect(host.calls.contains("run:stub") == false)
+
+    clock.nowAnswers()
+    poll.tick()
+    #expect(await waitUntil { subject.isDeviceOnline })
+    mic.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:stub") })
+    await subject.teardown()
+}
+
+// MARK: - When two of them hold at once
+
+// The order is what the user is told, and until now nothing in the suite ever
+// put two gates in force at the same time — so reversing the whole precedence
+// left 653 tests green.
+//
+// The clock first, because an unreachable device is what the panel's own status
+// line one row up is already about.
+@Test @MainActor func anUnreachableClockOutranksAMicrophoneOnThePanel() async {
+    let schedule = Metronome()
+    let subject = testModel(
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        sleep: schedule.sleep,
+        microphone: MicrophoneGate(inputs: StubAudioInputs(duringAMeeting))
+    )
+
+    subject.start()
+
+    #expect(await waitUntil { subject.nextRun["stub"] == .held(AppModel.deviceUnreachable) })
+    await subject.teardown()
+}
+
+@Test @MainActor func anUnreachableClockOutranksAQuietRuleOnThePanel() async {
+    let schedule = Metronome()
+    let subject = testModel(
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        sleep: schedule.sleep,
+        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: true))
+    )
+
+    subject.start()
+
+    #expect(await waitUntil { subject.nextRun["stub"] == .held(AppModel.deviceUnreachable) })
+    await subject.teardown()
+}
+
+// And the quiet rules before the microphone, because they are about the room
+// rather than about a device the user can look at.
+@Test @MainActor func aQuietRuleOutranksAMicrophoneOnThePanel() async {
+    let schedule = Metronome()
+    let subject = testModel(
+        sleep: schedule.sleep,
+        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: true)),
+        microphone: MicrophoneGate(inputs: StubAudioInputs(duringAMeeting))
+    )
+
+    subject.start()
+
+    #expect(await waitUntil { subject.nextRun["stub"] == .held(FocusGate.duringFocus) })
+    await subject.teardown()
+}
+
 // A beat that lands WHILE a release is in flight must not have its hold
 // swallowed by the release finishing. The meeting resumes, a scheduled run is
 // held against it, and the release that was already running finishes on top —

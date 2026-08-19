@@ -156,6 +156,10 @@ private func hostedHistory(
     return host
 }
 
+// Isolated to the main actor, because `subviews` is: an `NSView`'s tree is
+// AppKit state and reading it from anywhere else is a data race Swift 6 warns
+// about. Every caller is already a `@MainActor` test, so this costs nothing.
+@MainActor
 private func scrollView(in view: NSView) -> NSScrollView? {
     if let found = view as? NSScrollView { return found }
     for sub in view.subviews {

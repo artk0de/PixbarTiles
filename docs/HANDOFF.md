@@ -350,32 +350,65 @@ NON-clear overlay, because the sky was clear throughout.
     happening. It is ratcheted to the direction of travel; the underlying
     reading is what the warnings still read.
 
-### Added by the panel width
+### Added by the resizable border
 
-14. The ↔ glyph sits at the bottom right of the panel, beside the gear, and the
-    pointer over it becomes a horizontal resize cursor. Drag right: the panel
-    widens as you drag, the rows lay out at the new width, and nothing runs off
-    the edge.
+The ↔ glyph these items used to be about is gone. It was one spot to reach for,
+and what was asked for is the gesture every other window has: put the pointer on
+an edge and pull. There is nothing to see now — the grips are six points of the
+surface's own padding — so the cursor is the entire affordance, and item 14 is
+as much about whether it can be FOUND as about whether it works.
+
+14. Bring the pointer slowly onto the right-hand edge of the panel. Within a few
+    points of the edge it becomes a horizontal resize cursor. Drag right: the
+    panel widens as you drag, the rows lay out at the new width, and nothing
+    runs off the edge. Then the same on the LEFT edge, pulled left — the same
+    widening, because outward is outward on both sides.
 15. Let go, click somewhere else, click the menu bar item again — it opens at
-    the width you left. Then quit and relaunch: still that width. This is the
-    whole of what was asked for.
-16. Drag left, hard, past where you started. It stops at 320 and will not go
-    narrower, so there is always a handle left to grab. A panel dragged to
+    the width you left. Then quit and relaunch: still that width.
+16. Drag inwards, hard, past where you started. It stops at 320 and will not go
+    narrower, so there is always a border left to grab. A panel dragged to
     nothing would be recoverable only from the command line.
-17. Only the panel is wide. Widen it, then open the gear or the History: **they
-    are still 320 and the window narrows under you.** Two lines are outstanding
-    for that (below) — what a person is being asked here is whether the jump is
-    as bad as it reads, since the window already changes height by 400 points
-    between those same surfaces and nobody has complained about that.
+17. **The three surfaces are one width now.** Widen the panel, then press the
+    gear, then Back and History. All three open at what you left, and the window
+    stops resizing itself when you change surface. (It still changes HEIGHT
+    between them, by 400 points or so between the panel and the settings, since
+    each is as tall as its content.)
 18. Where the menu bar item sits changes which way the panel grows. With the
     item near the RIGHT of the bar the window is right-anchored and grows
-    leftwards, so the handle stays put while the pointer moves. Dragging right
-    still widens it — that is measured off the pointer's screen position, not
-    off the window — but say whether the handle failing to follow reads as
-    broken.
-19. If the panel ever opens at a width you cannot work with:
-    `defaults write dev.artk0re.awtrix-connectors panelWidth -int 320`, then
-    relaunch. Deleting the key does the same.
+    leftwards, so the edge you are dragging stays put while the pointer moves
+    away from it. Dragging outward still widens it — that is measured off the
+    pointer's screen position, not off the window — but say whether the edge
+    failing to follow reads as broken.
+19. With something in the History, bring the pointer onto its BOTTOM edge: an
+    up-and-down resize cursor. Drag down and the list gets taller. Scroll it —
+    the entries below the fold are still reachable, so the height is a viewport
+    and not a pair of scissors.
+20. Drag the History's bottom edge up, hard. It stops with about two entries
+    showing, so there is always a bottom edge left to pull back down.
+21. The History's TOP edge is the counter-intuitive one, and it is worth a look
+    rather than a fix. The surface hangs from the menu bar, so the top boundary
+    cannot move: pulling the top edge UP makes the surface taller by moving its
+    BOTTOM down. The size changes in the direction the gesture asks for; the
+    boundary that moves is the other one. Say whether that reads as broken —
+    the same question as 18, on the other axis.
+22. The four corners move both axes at once, on the History. On macOS 14 they
+    show a horizontal cursor rather than a diagonal one, because AppKit had no
+    public diagonal resize cursor until 15; on this machine they should show the
+    real corner cursor. Worth confirming which you get.
+23. Open the History with **nothing played yet**. The top and bottom edges do
+    nothing there and offer no cursor — there is no list to resize — while the
+    left and right edges still work. Confirm the sides still resize it.
+24. If a surface ever opens at a size you cannot work with:
+
+    ```sh
+    defaults write dev.artk0re.awtrix-connectors panelWidth -int 320
+    defaults write dev.artk0re.awtrix-connectors historyHeight -int 280
+    ```
+
+    then relaunch. Deleting either key does the same. Both are read back through
+    their clamp, so a value typed outside the range is corrected rather than
+    honoured — and `historyHeight` is clamped against the screen it is READ on,
+    which is what makes a height saved on a big display safe on a laptop.
 
 ## The panel's width belongs to the content, not to the window
 
@@ -407,17 +440,36 @@ to 480 with it, where route one's hand-set 500 had collapsed back to 320 inside
 half a second. Same window class, same style mask; the difference is entirely
 which side of SwiftUI's layout the number is on.
 
-Outstanding, and it is two lines: `SettingsSheet.swift:29` and
-`HistoryMenu.swift:58` still read `.frame(width: 320)`. Each wants
-`.frame(width: PanelWidth.stored(in: .standard).points)` — the same single
-stored number the panel reads, which is what makes the three surfaces share a
-width. They were left alone because other work was in flight in both files.
+Both literals are gone. `SettingsSheet` and `HistoryMenu` carry the shared width
+themselves, through the one `panelWidth(from:)` modifier all three surfaces use,
+so there is one place that reads the key and one that writes it.
 
-Wrapping the two from outside was tried and does not substitute: an outer
+Wrapping the two from outside was tried first and does not substitute: an outer
 `.frame(width: 500)` around `SettingsSheet` gives a 500-wide host with the
 sheet's 320 of content centred in it — measured, the fields sit at x=104 with
 90 points of nothing on each side. A child's fixed frame cannot be overridden by
-its parent, which is why the literal has to go rather than be wrapped.
+its parent, which is why the literal had to go rather than be wrapped, and why
+the width arrives on each surface rather than round all three.
+
+### The height, and why only one surface has one
+
+The same measurement decides it. The panel and the settings are their content's
+fitting height — 198 and 615 — and SwiftUI re-imposes that every layout pass, so
+a stored height there would clip a form that does not scroll or pad it with
+nothing. The History is different because it has a `ScrollView` in it: a height
+given to a scroll view is a viewport, and the entries under the fold are a
+scroll away rather than gone. So `HistoryHeight` exists and no equivalent for
+the other two does.
+
+Its ceiling is the screen's rather than a constant, which is where it parts
+company with the width. The width grows sideways off a menu bar item and 1200
+points fits inside the narrowest display macOS 14 runs on. A height hangs
+DOWNWARDS from the menu bar, so how much room there is depends entirely on what
+is under it — and a History grown past the bottom of the display has taken the
+edge that would shrink it off the screen too, with scrolling no help because it
+is the viewport that has gone. The chrome allowance is measured rather than
+guessed: 69 points for the padding, header, divider and spacing, about 115 once
+a failed replay has put its two-line answer under the title, rounded up to 120.
 
 ## Signing — and the three APIs that turned out not to be dead
 

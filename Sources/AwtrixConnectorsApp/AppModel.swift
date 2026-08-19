@@ -133,7 +133,23 @@ final class AppModel: ObservableObject {
     static let defaultDeviceHost = "192.168.1.72"
     /// How often reachability is re-asked. Not a user setting: it costs one
     /// request and the answer drives a glyph, not a delivery.
-    static let monitorInterval: TimeInterval = 20
+    ///
+    /// A minute, down from three requests a minute. Nothing the answer feeds
+    /// moves faster than that: the glyph, the schedule's hold reason, and a
+    /// battery trend measured over an hour and a half. What twenty seconds
+    /// bought was 4,320 requests a day at a clock that spends them on its own
+    /// battery — and the one case it really did buy, a panel showing a reading
+    /// older than the person looking at it, is bought outright by
+    /// `refreshOnPanelOpen` for one request per open.
+    static let monitorInterval: TimeInterval = 60
+    /// How close together two panel opens have to be to count as one.
+    ///
+    /// SwiftUI hands `.onAppear` out per appearance rather than per user
+    /// gesture — a rebuild, or a bounce out to the settings and back, is
+    /// another one — and the panel is a surface somebody opens, reads and
+    /// reopens. Five seconds is long enough to swallow that and short enough
+    /// that a deliberate second look still gets a reading of its own.
+    static let panelRefreshFloor: TimeInterval = 5
     /// How often a held run asks whether the meeting is over.
     ///
     /// Five seconds. Not a user setting, and not the schedule's interval: what
@@ -281,6 +297,20 @@ final class AppModel: ObservableObject {
     private let microphone: MicrophoneGate
     private var timers: [String: Task<Void, Never>] = [:]
     private var monitorLoop: Task<Void, Never>?
+    /// The one-off reading a panel open asked for, still going.
+    ///
+    /// Owned rather than detached, for the reason every other task here is:
+    /// teardown can only wait for a task it holds, and this one writes
+    /// `isDeviceOnline` and can raise a battery dialog. A quit that did not
+    /// wait for it is a dialog arriving after the app is gone.
+    private var panelRefresh: Task<Void, Never>?
+    /// When the last panel open was honoured, or nil while none has been.
+    ///
+    /// The instant rather than a flag, because "already running" is not the
+    /// question: the request takes milliseconds against a healthy clock, so a
+    /// guard on the task alone would let a panel opened twice in a second
+    /// through twice.
+    private var lastPanelRefresh: Date?
     /// Runs the user asked for, still going. Keyed by nothing meaningful: two
     /// presses of the same button are two runs, and the host queues them behind
     /// each other rather than one replacing the other.
@@ -332,8 +362,8 @@ final class AppModel: ObservableObject {
     /// Kept apart from the published label, because the two answer different
     /// questions on different cadences. The due time changes once per turn of
     /// a schedule — half an hour on the shipped one. What is HOLDING that
-    /// schedule changes on the reachability poll's twenty seconds, on the
-    /// microphone watch's five, and on the wall clock as quiet hours begin and
+    /// schedule changes on the reachability poll's minute, on the microphone
+    /// watch's five seconds, and on the wall clock as quiet hours begin and
     /// end. Folded into one stored label, the slowest of those clocks decided
     /// all of them: the panel went on naming a microphone that had stopped
     /// capturing half an hour earlier, after the run it held had already
@@ -828,7 +858,8 @@ final class AppModel: ObservableObject {
         monitorLoop = nil
         let running = Array(timers.values) + Array(manualRuns.values) + Array(replays.values)
             + Array(restores.values)
-            + [iconRemoval, launchRestock, historyLoad, microphoneWatch].compactMap { $0 }
+            + [iconRemoval, launchRestock, historyLoad, microphoneWatch, panelRefresh]
+            .compactMap { $0 }
         timers.removeAll()
         manualRuns.removeAll()
         replays.removeAll()
@@ -839,6 +870,7 @@ final class AppModel: ObservableObject {
         // Awaited with the rest, not merely cancelled: a release in flight puts
         // the same held banner on the clock as any other run.
         microphoneWatch = nil
+        panelRefresh = nil
         for task in running { task.cancel() }
         for task in running { await task.value }
         // Last, and only once everything above has stopped. The clock is given
@@ -858,29 +890,69 @@ final class AppModel: ObservableObject {
         monitorLoop = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                // The instant is spelled out here rather than defaulted inside
-                // the monitor: this loop is what decides when a reading was
-                // taken, and the trajectory's whole answer is a function of when
-                // as much as of what.
-                let crossed = await self.monitor.refresh(at: Date())
-                self.isDeviceOnline = self.monitor.isOnline
-                // The clock going down or coming back changes what is holding
-                // every schedule, and this loop is what learns it. Without the
-                // refresh the panel kept naming an hour right through an
-                // outage until the next beat — up to half an hour of a time the
-                // app had no intention of honouring. This turn also stands in
-                // for the wall clock: quiet hours begin and end without any
-                // loop being told, and twenty seconds is close enough for a
-                // label about a nine-hour window.
-                self.refreshScheduleLabels()
-                // Awaited inside the loop rather than detached. The dialog does
-                // not block — it schedules itself — and what is awaited here is
-                // the authorization request, which happens once. A detached task
-                // would be one more thing teardown cannot wait for, for a
-                // warning that fires four times in the life of a charge.
-                if let crossed { await self.alerts.warn(crossed) }
+                await self.poll()
                 do { try await self.pollSleep(Self.monitorInterval) } catch { return }
             }
+        }
+    }
+
+    /// Asks the clock how it is, once, and hands on everything that answer
+    /// changes.
+    ///
+    /// Lifted out of the loop rather than duplicated into `refreshOnPanelOpen`,
+    /// because the reading is only half of what a poll is: the glyph's mirror,
+    /// the schedules' hold reasons and the battery dialog all hang off it, and
+    /// a second caller that took the reading alone would leave a panel showing
+    /// a fresh percentage beside a stale hold reason.
+    private func poll() async {
+        // The instant is spelled out here rather than defaulted inside the
+        // monitor: this app is what decides when a reading was taken, and the
+        // trajectory's whole answer is a function of when as much as of what.
+        let crossed = await monitor.refresh(at: Date())
+        isDeviceOnline = monitor.isOnline
+        // The clock going down or coming back changes what is holding every
+        // schedule, and this is what learns it. Without the refresh the panel
+        // kept naming an hour right through an outage until the next beat — up
+        // to half an hour of a time the app had no intention of honouring. This
+        // also stands in for the wall clock: quiet hours begin and end without
+        // any loop being told, and a minute is close enough for a label about a
+        // nine-hour window.
+        refreshScheduleLabels()
+        // Awaited here rather than detached. The dialog does not block — it
+        // schedules itself — and what is awaited is the authorization request,
+        // which happens once. A detached task would be one more thing teardown
+        // cannot wait for, for a warning that fires four times in the life of a
+        // charge.
+        if let crossed { await alerts.warn(crossed) }
+    }
+
+    /// Takes one reading because the panel is about to show it.
+    ///
+    /// The poll is a minute apart, so what the panel draws about the clock can
+    /// be fifty-nine seconds old by the time somebody reads it. This buys the
+    /// freshness back for one request per open, which is what makes the minute
+    /// affordable in the first place.
+    ///
+    /// It does NOT restart the poll: a loop restarted on every open is a loop
+    /// per open until one of them is cancelled, and the cadence the whole
+    /// change is about would be whatever the last gesture set it to.
+    ///
+    /// Coalesced on the wall clock rather than on whether one is still in
+    /// flight. Against a healthy clock the request is over in milliseconds, so
+    /// an in-flight guard alone would let two opens a second apart through as
+    /// two requests — while an unreachable one takes the transport's full
+    /// fifteen, which is exactly when a second task must not be started.
+    /// Checking both is one guard each and covers both ends.
+    func refreshOnPanelOpen() {
+        let now = Date()
+        if let last = lastPanelRefresh, now.timeIntervalSince(last) < Self.panelRefreshFloor {
+            return
+        }
+        guard panelRefresh == nil else { return }
+        lastPanelRefresh = now
+        panelRefresh = Task { [weak self] in
+            await self?.poll()
+            self?.panelRefresh = nil
         }
     }
 
@@ -1023,8 +1095,8 @@ final class AppModel: ObservableObject {
     /// Brings every scheduled connector's line up to date with the gates.
     ///
     /// Called from the two loops that already turn faster than a schedule does
-    /// — the reachability poll at twenty seconds and the microphone watch at
-    /// five — rather than from a clock of its own. Nothing here runs a
+    /// — the reachability poll at a minute and the microphone watch at five
+    /// seconds — rather than from a clock of its own. Nothing here runs a
     /// connector or touches a gate's decision; it only re-reads the answer the
     /// panel is showing.
     private func refreshScheduleLabels() {

@@ -451,6 +451,63 @@ import Testing
     await subject.teardown()
 }
 
+// MARK: - How often, and who else can ask
+
+@Test @MainActor func theClockIsAskedHowItIsOnceAMinute() async {
+    let poll = Metronome()
+    let subject = testModel(transport: StubTransport(body: onlineStats), pollSleep: poll.sleep)
+
+    subject.start()
+
+    // Read off the interval the loop actually asked its clock for, rather than
+    // off the constant: a poll that slept on a number of its own would leave an
+    // assertion about `monitorInterval` green while shipping three requests a
+    // minute.
+    #expect(await waitUntil { poll.durations.isEmpty == false })
+    #expect(poll.durations.first == 60)
+    await subject.teardown()
+}
+
+@Test @MainActor func openingThePanelTakesAReadingRatherThanShowingAMinuteOldOne() async {
+    let poll = Metronome()
+    let clock = ScriptedTransport(bodies: [statsBody(percent: 80, raw: 800)])
+    let subject = testModel(transport: clock, pollSleep: poll.sleep)
+    subject.start()
+    #expect(await waitUntil { poll.parked == 1 })
+    #expect(clock.responses == 1)
+
+    subject.refreshOnPanelOpen()
+
+    #expect(await waitUntil { clock.responses == 2 })
+    // And the poll was not restarted to get it. A refresh spelled
+    // `startMonitoring()` would answer this file's other reachability tests
+    // just as well, while leaving two loops asking the clock — measurable here
+    // as a second sleeper, and on the desk as a doubling every time the panel
+    // is opened.
+    #expect(poll.durations.count == 1)
+    #expect(poll.parked == 1)
+    await subject.teardown()
+}
+
+@Test @MainActor func twoOpensInASecondAreOneReadingRatherThanTwo() async {
+    let poll = Metronome()
+    let clock = ScriptedTransport(bodies: [statsBody(percent: 80, raw: 800)])
+    let subject = testModel(transport: clock, pollSleep: poll.sleep)
+    subject.start()
+    #expect(await waitUntil { poll.parked == 1 })
+
+    // Closed and opened again, or a SwiftUI rebuild handing the same panel a
+    // second `.onAppear`. Neither is a second question worth asking the clock.
+    subject.refreshOnPanelOpen()
+    subject.refreshOnPanelOpen()
+
+    // Teardown waits for whatever the opens started, so this counts what
+    // actually went out rather than what had gone out by the time it looked.
+    await subject.teardown()
+
+    #expect(clock.responses == 2)
+}
+
 // MARK: - Battery warnings
 
 @Test @MainActor func aThresholdCrossedByThePollReachesTheAlert() async {
@@ -829,13 +886,21 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
 
     subject.start()
     #expect(await waitUntil { subject.nextRun["stub"] != nil })
+    let answered = Date()
 
     guard case let .due(when) = subject.nextRun["stub"] else {
         Issue.record("expected a due time, got \(String(describing: subject.nextRun["stub"]))")
         return
     }
     // The stub's default interval is five minutes and nothing is failing.
-    #expect(abs(when.timeIntervalSince(asked) - 5 * 60) < 2)
+    //
+    // Bracketed between the two instants rather than measured against a
+    // tolerance. The schedule computes its due time from whenever it got to run,
+    // which on a suite sharing one main actor with several hundred other tests
+    // is up to a few seconds after the call — and a tolerance wide enough to
+    // cover that is one that no longer says which interval was used.
+    #expect(when >= asked.addingTimeInterval(5 * 60))
+    #expect(when <= answered.addingTimeInterval(5 * 60))
     await subject.teardown()
 }
 
@@ -853,12 +918,17 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
 
     subject.start()
     #expect(await waitUntil { subject.nextRun["stub"] != nil })
+    let answered = Date()
 
     guard case let .due(when) = subject.nextRun["stub"] else {
         Issue.record("expected a due time")
         return
     }
-    #expect(abs(when.timeIntervalSince(asked) - 30) < 2)
+    // Bracketed for the reason `theModelKnowsWhenTheNextRunIsDue` brackets: the
+    // schedule computes this from whenever it got to run, and on a loaded main
+    // actor that is seconds rather than milliseconds after the call.
+    #expect(when >= asked.addingTimeInterval(30))
+    #expect(when <= answered.addingTimeInterval(30))
     // And emphatically not the interval the settings name.
     #expect(when.timeIntervalSince(asked) < 5 * 60)
     await subject.teardown()

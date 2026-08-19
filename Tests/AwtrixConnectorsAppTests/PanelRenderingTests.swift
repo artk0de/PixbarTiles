@@ -273,6 +273,21 @@ private func drawn(_ model: AppModel) -> Data? {
     bitmap(hostedPanel(model))?.representation(using: .png, properties: [:])
 }
 
+/// The panel, drawn once the reading its own opening asked for has landed.
+///
+/// Drawing the panel is an event the model reacts to: `.onAppear` asks for one
+/// reading, because the poll behind it is a minute apart. An unstarted model has
+/// nothing else that would ask, so the FIRST drawing is taken before that
+/// reading and every later one after it — a difference of device state that has
+/// nothing to do with the surface under test. Settled here instead, and the
+/// model coalesces repeats, so no drawing after this one asks again.
+@MainActor
+private func drawnAfterTheOpeningReading(_ model: AppModel) async -> Data? {
+    _ = drawn(model)
+    #expect(await waitUntil { model.isDeviceOnline })
+    return drawn(model)
+}
+
 @MainActor
 private func panelControls(_ model: AppModel) -> [String] {
     let browsing = FakeBonjourBrowser()
@@ -523,7 +538,7 @@ private func drawnEntry(
         playedAt: Date()
     )
     let model = testModel(anecdotes: StubAnecdotes(history: [played]))
-    let panel = drawn(model)
+    let panel = await drawnAfterTheOpeningReading(model)
 
     model.openHistory()
     #expect(await waitUntil { model.history.isEmpty == false })
@@ -631,8 +646,9 @@ private func closeTheWindow(_ notifications: NotificationCenter) {
 //
 // The model is left unstarted and the close is its own, for the reason
 // `openingTheHistoryReplacesThePanelWithIt` leaves it unstarted: a started one
-// polls and schedules, so the two drawings would differ by a device state and
-// an hour as well as by the surface. What carries the AppKit event into this
+// schedules, so the two drawings would differ by an hour as well as by the
+// surface. The device state is settled by the drawing helper instead — opening
+// the panel is itself a reading now. What carries the AppKit event into this
 // call is the pair of tests below.
 @Test @MainActor func closingTheWindowReturnsTheMenuToThePanel() async throws {
     let played = PlayedAnecdote(
@@ -640,7 +656,7 @@ private func closeTheWindow(_ notifications: NotificationCenter) {
         playedAt: Date()
     )
     let model = testModel(anecdotes: StubAnecdotes(history: [played]))
-    let panel = drawn(model)
+    let panel = await drawnAfterTheOpeningReading(model)
     model.openHistory()
     #expect(await waitUntil { model.history.isEmpty == false })
     let history = drawn(model)
@@ -979,4 +995,29 @@ private func drawnSettings(_ model: AppModel) -> Data? {
     #expect(said.contains("first launch"))
     // And where to go to stop it, or the warning is one a reader cannot act on.
     #expect(said.contains("Switch it off"))
+}
+
+// MARK: - What opening the panel asks for
+
+// The reachability poll is a minute apart, so whatever the panel draws about
+// the clock can be fifty-nine seconds old by the time somebody looks at it.
+// `AppModel.refreshOnPanelOpen` is well covered on its own and proves nothing
+// about the panel: deleting the `.onAppear` that calls it leaves every one of
+// those tests green, and the panel back to showing a minute-old reading. This
+// is the one that notices.
+@Test @MainActor func openingThePanelIsWhatAsksForTheFreshReading() async {
+    let poll = Metronome()
+    let clock = ScriptedTransport(bodies: [statsBody(percent: 80, raw: 800)])
+    let model = testModel(transport: clock, pollSleep: poll.sleep)
+    model.start()
+    #expect(await waitUntil { poll.parked == 1 })
+    #expect(clock.responses == 1)
+
+    let panel = hostedPanel(model)
+
+    #expect(await waitUntil { clock.responses == 2 })
+    // Held to the end: a hosting view nobody references is torn down, and a
+    // torn-down one has nothing to appear.
+    withExtendedLifetime(panel) {}
+    await model.teardown()
 }

@@ -5,9 +5,9 @@ import SwiftUI
 /// What the dot and the line above it say about the device.
 ///
 /// Three states, not two. `isOnline` is false for `.unknown` as much as for
-/// `.offline`, so a panel opened in the first twenty seconds after launch —
-/// before the first poll has answered — announced a disconnection it had no
-/// grounds for. That conflation is the same one `DeviceState` exists to prevent.
+/// `.offline`, so a panel opened before the first poll has answered announced a
+/// disconnection it had no grounds for. That conflation is the same one
+/// `DeviceState` exists to prevent.
 enum DeviceStatusLine {
     static func title(for state: DeviceState) -> String {
         switch state {
@@ -156,7 +156,7 @@ enum BatteryLine {
     ///
     /// Nothing at all until the trend is established, deliberately. A glyph
     /// implying a verdict the readings have not reached is the same lie as a
-    /// confident estimate from two samples twenty seconds apart.
+    /// confident estimate from the first two samples of a discharge.
     static func glyph(for reading: BatteryReading?) -> String? {
         switch reading?.direction {
         case .charging: "\u{1F50C}"
@@ -253,6 +253,13 @@ struct MenuPanel: View {
         }
         .padding(14)
         .frame(width: 320)
+        // On this branch rather than on `body`, and that is the point: the
+        // settings and the History are drawn by the same view, and a panel that
+        // asked for a reading every time somebody came back from the gear would
+        // spend a request on a surface that draws no battery at all. The model
+        // coalesces repeats, so a SwiftUI rebuild handing out a second
+        // appearance costs nothing.
+        .onAppear { model.refreshOnPanelOpen() }
     }
 
     /// Quit, and the gear.

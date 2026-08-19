@@ -184,6 +184,11 @@ public struct BatteryTrajectory: Sendable {
     /// Where a warning fires, in percent. Ordered high to low, and read as a
     /// set rather than in order — a poll can find the battery below several at
     /// once.
+    ///
+    /// The lowest of them carries a rule the others do not: it is the one
+    /// `crossing(at:)` fires without waiting for a direction. That rule reads
+    /// it back out with `min()` rather than naming the number, so the last line
+    /// is written down once and moving it moves the emergency with it.
     public static let thresholds = [20, 10, 5, 1]
     /// How far back over a threshold the battery has to climb before that
     /// threshold can fire again.
@@ -214,7 +219,8 @@ public struct BatteryTrajectory: Sendable {
     private var shown: Int?
     /// Thresholds that may still fire. Everything to begin with: a first poll
     /// finding the battery already at 4% has news, and it is only the direction
-    /// gate that holds it back until there is a trend to gate on.
+    /// gate that holds it back until there is a trend to gate on — down to the
+    /// last line, which that gate no longer holds at all.
     private var armed: Set<Int> = Set(BatteryTrajectory.thresholds)
 
     public init() {}
@@ -469,15 +475,12 @@ public struct BatteryTrajectory: Sendable {
     ///
     /// In that order, and both halves are deliberate about what they skip.
     /// Re-arming runs whatever the direction is, because it is about where the
-    /// battery is rather than where it is going. Firing runs only while
-    /// discharging — and, crucially, so does the DISARMING: a clock charging up
-    /// through 4% must neither warn nor spend the crossing, or the discharge
-    /// that follows would pass the same threshold in silence.
+    /// battery is rather than where it is going. Firing reads the direction, and
+    /// reads all three of its answers rather than folding two of them together.
     private mutating func crossing(at percent: Int) -> BatteryWarning? {
         for threshold in Self.thresholds where percent >= threshold + Self.rearmMargin {
             armed.insert(threshold)
         }
-        guard direction == .discharging else { return nil }
         let crossed = Self.thresholds.filter { percent <= $0 && armed.contains($0) }
         // The lowest, not the first. A poll can find the battery a long way
         // below where it left it — the Mac slept, or the clock was off the
@@ -485,6 +488,47 @@ public struct BatteryTrajectory: Sendable {
         // the information. The ones it fell past go with it rather than
         // queueing up to fire on the next poll.
         guard let fired = crossed.min() else { return nil }
+        switch direction {
+        case .discharging:
+            break
+        // A clock KNOWN to be filling up has no news however low it reads, and
+        // it must not spend the crossing either: one charging up through 4%
+        // that DISARMED the 5% line would let the discharge that follows pass
+        // the same threshold in silence.
+        case .charging:
+            return nil
+        // No verdict yet, and on the last line: fire anyway.
+        //
+        // The gate above exists to stop a charging clock warning on its way up
+        // through 20%, which is a real nuisance and worth a wait. At the last
+        // line the trade inverts. A verdict costs 22 minutes from a standing
+        // start and up to 55 straight off a charge — the fall is read over an
+        // hour because it is smaller than the reading's own wander over
+        // anything less — while the last line is ten to seventeen minutes of
+        // runtime. Waiting to be sure means the warning that matters most is
+        // the one that cannot arrive before the clock goes dark. A spurious
+        // dialog about a clock that turns out to be charging costs one dismissal;
+        // the missing one costs the thing going dark with no word.
+        //
+        // The last line ALONE, and that is what keeps this from being "warn
+        // whenever we do not know": 20% unverified is hours of runtime, and
+        // firing the upper lines on no evidence is how a warning becomes noise
+        // people learn to ignore.
+        //
+        // Shortening the fall window was the alternative, and it is closed:
+        // `steadyBand` is already within 1.4x of the slowest measured discharge,
+        // so a window short enough to answer in ten minutes cannot tell that
+        // discharge from the wander at all. The gap is in what the readings can
+        // support, not in how they are read, and no window arithmetic removes
+        // it.
+        //
+        // What it SPENDS is the whole crossed set, exactly as a discharging
+        // crossing does. Firing the last line and leaving the ones above it
+        // armed would have the verdict, twenty minutes later, announce 5% at a
+        // battery reading 1%.
+        case .unknown:
+            guard fired == Self.thresholds.min() else { return nil }
+        }
         armed.subtract(crossed)
         return BatteryWarning(threshold: fired, percent: percent)
     }

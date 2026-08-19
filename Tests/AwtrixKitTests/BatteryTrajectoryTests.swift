@@ -807,12 +807,18 @@ private func fillUpThroughFourPercent(_ subject: inout BatteryTrajectory) -> [Ba
     #expect(fired == [5])
 }
 
-@Test func aReadingWhoseDirectionIsNotEstablishedDoesNotWarn() {
+@Test func aReadingAboveTheLastLineDoesNotWarnWithoutADirection() {
     var subject = BatteryTrajectory()
 
     // The first poll of a launch, against a clock already down at 4%. One
     // reading cannot say whether it is draining or filling, and a dialog on a
     // charging clock is the thing the direction gate is for.
+    //
+    // Named for the 4 rather than for the missing verdict, because the missing
+    // verdict stopped being the whole rule: three points lower the same reading
+    // fires. This is the tighter of the two guards on that — the last section
+    // of this file makes the same claim at 15%, and 4% is the one a point of
+    // slack in the comparison would break.
     #expect(subject.record(stats(percent: 4, raw: raw(at: 4)), at: at(0)) == nil)
 }
 
@@ -834,4 +840,87 @@ private func fillUpThroughFourPercent(_ subject: inout BatteryTrajectory) -> [Ba
         subject.record(stats(percent: 4, raw: raw(at: 4)), at: at(Double(settled + 2) * 60))
             == nil
     )
+}
+
+// MARK: - The last line, before there is a direction to gate on
+
+// A verdict is not free any more. A fall is read over an hour, because on this
+// clock it is smaller than the reading's own wander over anything shorter, so
+// from a standing start — a launch, a reboot, a gap — the direction takes 22
+// minutes on the measured series and up to 55 straight off a charge. The last
+// line is ten to seventeen minutes of runtime. The four tests below are the
+// whole of the exception that buys, and the middle two are what stop it
+// spreading.
+
+@Test func theLastLineFiresWithoutWaitingForADirection() throws {
+    var subject = BatteryTrajectory()
+    let lastLine = try #require(BatteryTrajectory.thresholds.min())
+
+    // One poll, no trend, and a clock already on the last line. Holding this
+    // back until the fit agrees is holding it back past the point the clock
+    // has any runtime left to be warned about.
+    #expect(
+        subject.record(stats(percent: lastLine, raw: raw(at: lastLine)), at: at(0))
+            == BatteryWarning(threshold: lastLine, percent: lastLine)
+    )
+    #expect(subject.reading?.direction == .unknown)
+}
+
+@Test func theTwentyPercentLineIsNotUrgentEnoughToFireUnverified() {
+    var subject = BatteryTrajectory()
+
+    // 15% is through the 20 line and hours clear of the last one, so there is
+    // time to be sure and a reason to want to be: a clock that turns out to be
+    // filling up would have warned for nothing. This is the test that fails if
+    // the exception is ever read as "warn whenever we do not know".
+    #expect(subject.record(stats(percent: 15, raw: raw(at: 15)), at: at(0)) == nil)
+    #expect(subject.reading?.direction == .unknown)
+}
+
+@Test func theLastLineDoesNotFireWhileTheClockIsKnownToBeCharging() throws {
+    var subject = BatteryTrajectory()
+    let lastLine = try #require(BatteryTrajectory.thresholds.min())
+
+    // Eleven minutes of the raw figure climbing two steps a minute, which is a
+    // charge by the third of them. `bat` reads a point lower for the last five
+    // — the same wander that has this clock reporting 100, 99, 100 with nothing
+    // changing behind it — and lands on the last line while the trend is
+    // unambiguous. Unproven is not the same as contradicted: the exception is
+    // for the first case only, and this is the second.
+    let fired = (0...10).compactMap { minute in
+        subject.record(
+            stats(percent: minute < 6 ? lastLine + 1 : lastLine, raw: 478 + 2 * minute),
+            at: at(Double(minute) * 60)
+        )
+    }
+
+    #expect(subject.reading?.direction == .charging)
+    #expect(fired.isEmpty)
+}
+
+@Test func firingWithoutADirectionStillSpendsTheThreshold() throws {
+    var subject = BatteryTrajectory()
+    let lastLine = try #require(BatteryTrajectory.thresholds.min())
+    #expect(
+        subject.record(stats(percent: lastLine, raw: raw(at: lastLine)), at: at(0)) != nil
+    )
+
+    // A minute later, still on the last line and still with nothing to go on.
+    // The threshold was spent by firing early, exactly as it would have been by
+    // firing late; a warning that skipped the direction gate must not also skip
+    // the edge trigger, or a clock sitting at 1% is a dialog a minute for as
+    // long as it lasts.
+    #expect(
+        subject.record(stats(percent: lastLine, raw: raw(at: lastLine)), at: at(60)) == nil
+    )
+    #expect(subject.reading?.direction == .unknown)
+
+    // And it stays spent once the fit does have something to say.
+    let later = (2...5).compactMap { minute in
+        subject.record(
+            stats(percent: lastLine, raw: raw(at: lastLine)), at: at(Double(minute) * 60)
+        )
+    }
+
+    #expect(later.isEmpty)
 }

@@ -181,6 +181,24 @@ struct SettingsSheet: View {
 struct WeatherSettings: View {
     @ObservedObject var model: AppModel
 
+    /// The place search's own state — what is in its box, what came back, and
+    /// what is wrong with it.
+    ///
+    /// `@StateObject` rather than `@ObservedObject`, because it must survive
+    /// the redraws that every keystroke in the OTHER field on this surface
+    /// causes: observed, a half-typed search and its results would be thrown
+    /// away each time the location box changed.
+    @StateObject private var places: PlaceSearchModel
+
+    /// An autoclosure so the shipped default is not BUILT on every redraw. A
+    /// plain default argument is evaluated at each call of this initializer,
+    /// and `StateObject` would then discard a freshly made `URLSessionTransport`
+    /// on every one of them; deferred, it is built once, when the state is.
+    init(model: AppModel, places: @autoclosure @escaping () -> PlaceSearchModel = PlaceSearchModel()) {
+        _model = ObservedObject(wrappedValue: model)
+        _places = StateObject(wrappedValue: places())
+    }
+
     /// What the weather costs on a device this app shares.
     ///
     /// Held as a constant so a test can name the rule it is checking rather
@@ -246,11 +264,57 @@ struct WeatherSettings: View {
             if let note = model.locationNote {
                 Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
+            placeSearch
             Text(Self.overlayIsSharedWithTheDevice)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(Self.weatherStartsSwitchedOn)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Finding the pair by name, for whoever does not know it as two numbers.
+    ///
+    /// It reads the LOCATION BOX rather than a search box of its own, so that
+    /// one field takes either form: a pair saves as it always has, and a name
+    /// is what this hands to the geocoder. A second text field would hold a
+    /// copy of the same text, and the surface behind the gear is dense enough
+    /// already. Nothing here is stored, and nothing is chosen automatically —
+    /// see `PlaceSearchModel` for why a "locate me" button is not what this is.
+    private var placeSearch: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button("Find by name") {
+                Task { await places.search(for: model.typedLocation) }
+            }
+            .controlSize(.small)
+            .disabled(places.isSearching)
+            ForEach(places.candidates) { candidate in
+                Button { places.choose(candidate, into: $model.typedLocation) } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(candidate.name)
+                        // The region, the country AND the coordinates. The first
+                        // two are what separate "Москва, Россия" from "Айдахо,
+                        // США"; the third is what separates the four Митино that
+                        // are all in Вологодская Область and are otherwise
+                        // character-for-character identical.
+                        Text("\(candidate.label) · \(LocationField.text(for: candidate.coordinates))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+            if let note = places.note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(PlaceSearchModel.findsSettlementsNotAddresses)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

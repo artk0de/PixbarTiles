@@ -787,21 +787,22 @@ import Testing
     let poll = Metronome()
     let subject = testModel(
         transport: ScriptedTransport(
-            bodies: (0...5).map { statsBody(percent: 25, raw: 522 - $0) }
-                + [statsBody(percent: 25, raw: 516), statsBody(percent: 19, raw: 511)]
+            bodies: (0...25).map { statsBody(percent: 25, raw: 547 - $0) }
+                + [statsBody(percent: 25, raw: 521), statsBody(percent: 19, raw: 511)]
         ),
         pollSleep: poll.sleep,
         alerts: alerts
     )
 
-    // Six minutes of discharge fed in before the loop starts, at instants
-    // ending just before now. The warnings are gated on a direction, the
-    // direction is a line fitted across a window, and the poll takes its own
-    // instant off the wall clock — so two ticks a millisecond apart establish
-    // nothing on their own and no crossing could ever reach the alert.
+    // Twenty-six minutes of discharge fed in before the loop starts, at
+    // instants ending just before now. The warnings are gated on a direction,
+    // a fall is a line fitted across an hour and is not believed off less than
+    // twenty minutes of it, and the poll takes its own instant off the wall
+    // clock — so two ticks a millisecond apart establish nothing on their own
+    // and no crossing could ever reach the alert.
     let base = Date()
-    for minute in 0...5 {
-        await subject.monitor.refresh(at: base.addingTimeInterval(Double(minute - 6) * 60))
+    for minute in 0...25 {
+        await subject.monitor.refresh(at: base.addingTimeInterval(Double(minute - 26) * 60))
     }
 
     subject.start()

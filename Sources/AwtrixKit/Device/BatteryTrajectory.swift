@@ -73,16 +73,49 @@ public struct BatteryTrajectory: Sendable {
     /// Fifteen minutes, which at the shipped cadence is fifteen samples for the
     /// fit to run through. A rate read off five of them is noise wearing a
     /// number.
-    public static let minimumSpan: TimeInterval = 15 * 60
-    /// How far back the DIRECTION is read over, as against the rate.
     ///
-    /// A tenth of the window, and separate from it because the two answer
-    /// different questions. The rate wants every sample it can get; the
-    /// direction wants to notice a charger being plugged in. Fitted across the
-    /// whole ninety minutes, a clock plugged in now would go on reading as
-    /// discharging for most of an hour — the shape of the reported defect
-    /// again, arriving more slowly.
-    public static let trendWindow: TimeInterval = 10 * 60
+    /// Nothing reaches the estimate through less than this any more, because a
+    /// discharge is not believed off less than `minimumFallSpan` and that is
+    /// longer. Kept rather than deleted: it is the estimate's OWN precondition,
+    /// and an estimate whose only guard lives in the direction rule is one that
+    /// silently loosens the day somebody shortens the fall's span.
+    public static let minimumSpan: TimeInterval = 15 * 60
+    /// How far back a RISE is read over, as against the rate.
+    ///
+    /// Short, because a charge is loud. Measured on this clock: 664, and 669
+    /// two minutes later — twenty-five raw steps per ten minutes. Ten minutes
+    /// of that is twenty-five steps of signal against the two the reading
+    /// wanders by, so watching longer buys nothing and a charger plugged in now
+    /// is seen within a few readings. Fitted across the whole ninety the RATE
+    /// uses, a clock plugged in now would go on reading as discharging for most
+    /// of an hour.
+    ///
+    /// It was the window for BOTH answers until the discharge was measured, and
+    /// that WAS the defect: a real fall over ten minutes is smaller than the
+    /// wander over the same ten minutes, so no threshold on this window could
+    /// ever have found one, and every discharge read as a charge.
+    public static let riseWindow: TimeInterval = 10 * 60
+    /// How far back a FALL is read over.
+    ///
+    /// Six times the rise's window, because the two signals are nothing like
+    /// the same size. Measured on the same clock, on battery: 646 to 642 across
+    /// 30.1 minutes — 1.33 raw steps per ten minutes, a twentieth of the
+    /// charge, and smaller than the two steps the same series wanders by inside
+    /// ten. Across an hour that rate spends about seven steps, which clears the
+    /// wander with room to spare.
+    ///
+    /// An hour and not the ninety minutes the rate is fitted over. Sixty is
+    /// already twice what the band needs at the measured rate, and every extra
+    /// minute is a minute a charge that has just ended stays inside the window
+    /// slowing the next discharge down.
+    ///
+    /// What it costs is stated plainly: a clock unplugged now goes on saying
+    /// charging for about half an hour, and for the best part of an hour if it
+    /// was unplugged straight off a charge, because the charge's rise is still
+    /// inside this window. That is the price of not calling every wobble a
+    /// discharge, and the wobble is real — this clock's own series drops three
+    /// steps in two minutes and takes them back four minutes later.
+    public static let fallWindow: TimeInterval = 60 * 60
     /// How much of that has to have been watched before there is a verdict at
     /// all.
     ///
@@ -91,22 +124,46 @@ public struct BatteryTrajectory: Sendable {
     /// stops being the likely one. `.unknown` stays a real state until then: a
     /// verdict the readings cannot support is worse than none.
     public static let minimumTrendSpan: TimeInterval = 2 * 60
-    /// How far the fitted trend has to carry the raw figure across
-    /// `trendWindow` before it counts as a fall rather than as the reading
-    /// wandering.
+    /// How much has to have been watched before a FALL is believed, whatever
+    /// the fit says about it.
     ///
-    /// Three raw steps, sized against the clock at rest. Settled on the float
-    /// it answers between 667 and 669, and the line fitted through twenty of
-    /// those readings drifts under two steps DOWNWARD — so a rule reading any
-    /// fall as a discharge calls a clock on mains a discharge, which is the
-    /// reported defect. A real discharge spends about ten steps across a
-    /// `trendWindow`, an order of magnitude clear of that wander; three sits
-    /// between the two and is past inside five readings.
+    /// Twenty minutes. At the measured 1.33 steps per ten minutes a fall worth
+    /// the band takes about twenty-five to accumulate anyway, so this costs a
+    /// real discharge nothing at the rate this clock actually runs at.
     ///
-    /// Applied to the fit and not to consecutive samples, which is what it
-    /// replaces. The same clock, charging, answered 665 665 664 664 666 667 668
-    /// 669 — four changes of direction across four minutes, every one of them
-    /// on screen.
+    /// What it buys is margin the band has none of at short spans. The measured
+    /// series' own worst moment — 644 for nine samples, then 641 — is three
+    /// steps inside two minutes, and a fit over just those readings falls
+    /// exactly three: level with the band, and a step deeper than any wobble
+    /// yet measured would be past it. The band cannot be the only thing between
+    /// a wobble and a verdict when the worst wobble lands on it exactly.
+    ///
+    /// Widening the band was the alternative. Rejected because the band is also
+    /// what the SLOWEST measured discharge has to clear, and at 4.2 steps in an
+    /// hour against three it has 1.4x of room and no more.
+    public static let minimumFallSpan: TimeInterval = 20 * 60
+    /// How far the fitted trend has to carry the raw figure, in either
+    /// direction, before it counts as more than the reading wandering.
+    ///
+    /// Three raw steps, and NOT changed by the discharge measurement — it was
+    /// the window that was wrong, not the number. Sized against the clock at
+    /// rest: settled on the float it answers between 667 and 669, and the worst
+    /// line fitted through any trailing part of that window falls 1.73 steps,
+    /// against which three is 1.7x clear. The ceiling is the other end: the
+    /// slowest discharge ever measured here loses 4.2 raw steps an hour, so a
+    /// band of four leaves it a fifth of a step of margin across the whole
+    /// window and a band of five would not see it at all.
+    ///
+    /// Symmetric on purpose. The wander is the ADC's and reads the same in both
+    /// directions; it is the SIGNALS that are twenty to one, and that asymmetry
+    /// is carried by the two windows above. Two bands were the alternative, and
+    /// they would have had to be re-derived together every time either window
+    /// moved.
+    ///
+    /// Not made smaller for the longer window, though a fit over sixty samples
+    /// averages the wander down further than one over ten: there is no
+    /// hour-long measurement of the float to size a smaller band against, and
+    /// the clock cannot be asked for one without plugging it in.
     public static let steadyBand = 3
     /// What the raw figure reads at 0%.
     ///
@@ -237,17 +294,32 @@ public struct BatteryTrajectory: Sendable {
 
     /// Charging, discharging, or whatever it was.
     ///
-    /// A line fitted across the last `trendWindow` of readings, and the rule it
-    /// applies is the physics: a charger holds a float voltage, so raw rising
-    /// OR steady is charging and only raw falling is a battery being spent.
-    /// Rising and steady collapsing into one verdict is what makes the deadband
-    /// safe — inside it the wander can only ever move the answer between two
-    /// readings of the same thing.
+    /// Two questions over two windows rather than one rule over one, and the
+    /// physics is what splits them: a charger holds a float voltage, so a
+    /// charge is loud and a discharge is a slow leak. Measured on this clock
+    /// the two differ by twenty to one — twenty-five raw steps per ten minutes
+    /// against 1.33 — so one window cannot serve both. Wide enough to hear the
+    /// fall it takes twenty minutes to notice a charger; quick enough to notice
+    /// the charger it cannot hear the fall at all, which is the reported
+    /// defect: a discharge on this clock never spends three raw steps inside
+    /// ten minutes, so the fall gate never tripped and every discharge read as
+    /// a charge.
     ///
-    /// Not the last two samples, which is what this replaces: the reading
-    /// wanders a step or two on its own, so consecutive comparison changes its
-    /// mind every few polls, and did so four times across four minutes of a
-    /// measured charge.
+    /// The rise is asked FIRST, and that ordering is what keeps a charge from
+    /// being read off the fall it interrupted: the hour behind a clock plugged
+    /// in a minute ago is still falling, while the ten minutes in front of it
+    /// climb twenty times faster.
+    ///
+    /// Steady is charging, and so is a fall that fails either of its gates.
+    /// Answering `.unknown` to everything unproven was the alternative, and it
+    /// would blank the glyph for the whole of the clock's life on the charger,
+    /// which is most of it.
+    ///
+    /// Both answers come off a fitted line and neither off the last two
+    /// samples, which is what the fit originally replaced: the reading wanders
+    /// a step or two on its own, so consecutive comparison changes its mind
+    /// every few polls, and did so four times across four minutes of a measured
+    /// charge.
     ///
     /// Holds the previous verdict when there is not enough window — a poll or
     /// two into a launch, or on the far side of a long gap. A glyph blanked
@@ -255,16 +327,32 @@ public struct BatteryTrajectory: Sendable {
     private static func direction(
         of samples: [Sample], holding previous: BatteryDirection
     ) -> BatteryDirection {
-        guard let last = samples.last else { return previous }
-        let recent = samples.filter { last.at.timeIntervalSince($0.at) <= trendWindow }
-        guard let first = recent.first else { return previous }
-        let span = last.at.timeIntervalSince(first.at)
-        guard span >= minimumTrendSpan, let slope = rawSlope(of: recent) else { return previous }
-        // The fall the fit accounts for across what was actually watched, rather
-        // than the rate itself. A deadband on a rate would have to be re-derived
-        // for every window length; this one is directly the raw steps the
-        // reading is allowed to have wandered by.
-        return slope * span < -Double(steadyBand) ? .discharging : .charging
+        guard let rise = fittedChange(of: samples, over: riseWindow, needing: minimumTrendSpan)
+        else { return previous }
+        if rise > Double(steadyBand) { return .charging }
+        guard let fall = fittedChange(of: samples, over: fallWindow, needing: minimumFallSpan)
+        else { return .charging }
+        return fall < -Double(steadyBand) ? .discharging : .charging
+    }
+
+    /// How many raw steps the fitted line accounts for across the readings
+    /// inside `window`, or nil when fewer than `span` seconds of them have been
+    /// watched.
+    ///
+    /// The change across what was ACTUALLY watched rather than the rate itself,
+    /// which is what lets one band serve two windows: `steadyBand` is directly
+    /// the raw steps the reading is allowed to have wandered by. A band on a
+    /// rate would have to be a different number for each window, and moving one
+    /// window would silently change what the other one believed.
+    private static func fittedChange(
+        of samples: [Sample], over window: TimeInterval, needing span: TimeInterval
+    ) -> Double? {
+        guard let last = samples.last else { return nil }
+        let inside = samples.filter { last.at.timeIntervalSince($0.at) <= window }
+        guard let first = inside.first else { return nil }
+        let watched = last.at.timeIntervalSince(first.at)
+        guard watched >= span, let slope = rawSlope(of: inside) else { return nil }
+        return slope * watched
     }
 
     /// Seconds to empty, or nil while there is not enough observed to say.

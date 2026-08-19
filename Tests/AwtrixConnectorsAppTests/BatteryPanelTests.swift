@@ -213,10 +213,15 @@ private func panelPixels(percent: Int, raw: [Int]) async -> Data? {
     return target.representation(using: .png, properties: [:])
 }
 
-/// Twelve minutes of a raw figure climbing two steps a minute, and twelve of it
-/// falling one — a charge and the rate a full discharge actually runs at.
+/// Twelve minutes of a raw figure climbing two steps a minute, and half an hour
+/// of it falling one.
+///
+/// The two are not the same length because the two answers are not read off the
+/// same window: a charge is twenty-five raw steps per ten minutes and is
+/// believed almost at once, while a fall is a twentieth of that and is not
+/// believed until twenty minutes of it have been watched.
 private let climbing = (0..<12).map { 640 + 2 * $0 }
-private let falling = (0..<12).map { 600 - $0 }
+private let falling = (0..<31).map { 600 - $0 }
 
 @Test @MainActor func whatTheTrajectorySaysIsDrawnOnThePanel() async {
     // The same percentage, drawn twice, differing only in which way the raw

@@ -67,19 +67,30 @@ private func ramp(
     return start + minutes
 }
 
-/// Puts `subject` on an established discharge, and answers the minute it got
-/// there.
+/// Puts `subject` on an established discharge ending at `raw`, and answers the
+/// minute it got there.
 ///
-/// Six readings with the raw figure falling one step a minute, which is the
-/// rate a full discharge runs at — 190 steps over about three hours. The
-/// warnings are gated on the direction, and the direction is now a fit, so the
-/// crossings below need a real discharge underneath them rather than one
-/// downward step.
+/// Half an hour of it, spending four raw steps on the way — the rate this clock
+/// was actually measured discharging at. The six readings this used to be
+/// establish nothing now: a fall is a twentieth of the size of a charge, so it
+/// cannot be told from the reading's own wander until it has run long enough to
+/// spend more than that wander.
+///
+/// The percentage is held still throughout, as everywhere else in this file, so
+/// that an implementation reading `bat` rather than `bat_raw` has nothing to go
+/// on. The four steps land at minutes 8, 15, 23 and 30, which is what a real
+/// discharge looks like at this cadence: flat for a while, then a step.
 @discardableResult
 private func settleOnDischarge(
     _ subject: inout BatteryTrajectory, at percent: Int, raw: Int
 ) -> Int {
-    ramp(&subject, from: raw, by: -1, minutes: 5, percent: percent)
+    for minute in 0...30 {
+        subject.record(
+            stats(percent: percent, raw: raw + 4 - (4 * minute) / 30),
+            at: at(Double(minute) * 60)
+        )
+    }
+    return 30
 }
 
 // MARK: - Which way it is going
@@ -87,9 +98,12 @@ private func settleOnDischarge(
 @Test func aFallingRawTrendReadsAsDischarging() {
     var subject = BatteryTrajectory()
 
-    // The percentage is held still while the raw figure walks down, so this
-    // says which of the two fields the trend is computed from.
-    ramp(&subject, from: 570, by: -1, minutes: 6, percent: 50)
+    // Half an hour of the raw figure walking down at the measured rate, with
+    // the percentage held still throughout, so this says which of the two
+    // fields the trend is computed from. The six minutes it used to be say
+    // nothing: over ten minutes this clock's discharge is smaller than its own
+    // wander, which is the whole of the defect.
+    settleOnDischarge(&subject, at: 50, raw: 566)
 
     #expect(subject.reading?.direction == .discharging)
 }
@@ -230,21 +244,78 @@ private let settledOnFloat = [
     #expect(subject.reading?.direction == .charging)
 }
 
-@Test func aRealDischargeIsStillCaughtWithinFiveReadings() {
+/// The same clock again, unplugged, sampled every two minutes for half an hour
+/// while it ran on battery. Real readings, and the ones the reported defect was
+/// drawn from: the panel drew the plug for the whole of this.
+///
+/// Four raw steps across 30.1 minutes — 1.33 steps per ten minutes, which puts
+/// the whole 190-step range at about a day. And it is NOT monotonic: 644 holds
+/// for nine consecutive samples, drops to 641 and rebounds to 643. Over any ten
+/// minutes of it the wander is BIGGER than the fall, which is the whole reason
+/// the fall cannot be read off a ten-minute window.
+private let dischargingOnBattery = [
+    646, 646, 645, 644, 644, 644, 644, 644,
+    644, 644, 644, 641, 643, 643, 643, 642,
+]
+
+@Test func theMeasuredDischargeIsReadAsADischarge() {
     var subject = BatteryTrajectory()
     var caught: Int?
 
-    // One raw step a minute at the shipped cadence: a full discharge is about
-    // 190 steps over three hours, so this is the rate the app has to catch.
-    for minute in 0...20 {
-        subject.record(stats(percent: 50, raw: 570 - minute), at: at(Double(minute) * 60))
-        if caught == nil, subject.reading?.direction == .discharging { caught = minute + 1 }
+    for (step, reading) in dischargingOnBattery.enumerated() {
+        subject.record(
+            stats(percent: percent(at: reading), raw: reading), at: at(Double(step) * 120)
+        )
+        if caught == nil, subject.reading?.direction == .discharging { caught = step }
     }
 
-    // Bounded rather than pinned, so the deadband can be re-tuned — but not so
-    // far that a draining clock goes unnoticed for a quarter of an hour. This
-    // is the assertion that stops a widening from silently blinding the app.
-    #expect((caught ?? .max) <= 5)
+    // The defect, exactly: this is a discharge, and the app called it a charge
+    // for every one of these thirty minutes.
+    #expect(subject.reading?.direction == .discharging)
+    // Inside the half hour that was measured. Not sooner, and the float window
+    // above is why: at this rate a fall worth believing takes twenty minutes to
+    // accumulate, and anything quicker than that is the wander.
+    #expect((caught ?? .max) <= 15)
+}
+
+@Test func theEstimateFromTheMeasuredDischargeIsAboutADay() {
+    var subject = BatteryTrajectory()
+    for (step, reading) in dischargingOnBattery.enumerated() {
+        subject.record(
+            stats(percent: percent(at: reading), raw: reading), at: at(Double(step) * 120)
+        )
+    }
+
+    // An order, not a precision. Half a day to two days is what a 32x8 matrix
+    // at brightness 3 should be expected to do, and it is what 167 raw steps
+    // above empty at the measured rate works out to — the point of the
+    // assertion is that the answer is a day and not the three hours the old
+    // premise implied.
+    let left = subject.reading?.timeRemaining ?? 0
+    #expect(left > 12 * 3_600)
+    #expect(left < 48 * 3_600)
+}
+
+@Test func aFastDischargeWaitsOnTheSpanRatherThanOnTheBand() {
+    var subject = BatteryTrajectory()
+    var caught: Int?
+
+    // One raw step a minute — ten times what this clock was measured doing, and
+    // what the old premise thought every discharge looked like. A clock running
+    // something bright could do it.
+    for minute in 0...30 {
+        subject.record(stats(percent: 50, raw: 570 - minute), at: at(Double(minute) * 60))
+        if caught == nil, subject.reading?.direction == .discharging { caught = minute }
+    }
+
+    // It clears the band inside four minutes and is still not believed until
+    // twenty have been watched. That is the span floor doing its job: the
+    // measured series' own three-step wobble fits to exactly the band, so the
+    // band alone has no margin over it at a short span.
+    // Bounded rather than pinned, so the constants can be re-tuned — but not so
+    // far that a draining clock goes unnoticed for half an hour.
+    #expect((caught ?? .max) <= 20)
+    #expect(caught == Int(BatteryTrajectory.minimumFallSpan) / 60)
 }
 
 @Test func aClockPluggedInPartWayThroughTheWindowFlipsWithoutWaitingItOut() {
@@ -289,16 +360,16 @@ private let settledOnFloat = [
 
 @Test func aDischargingFlickerDoesNotPushTheShownFigureUp() {
     var subject = BatteryTrajectory()
-    let last = ramp(&subject, from: 570, by: -1, minutes: 10, percent: 50)
+    let last = settleOnDischarge(&subject, at: 50, raw: 566)
     #expect(subject.reading?.direction == .discharging)
 
-    subject.record(stats(percent: 49, raw: 559), at: at(Double(last + 1) * 60))
+    subject.record(stats(percent: 49, raw: 565), at: at(Double(last + 1) * 60))
     #expect(subject.reading?.shownPercent == 49)
 
     // Back up a percent on the same wander. A discharge does not go up, and a
     // figure that climbed and fell back would read as a clock nobody can
     // explain.
-    subject.record(stats(percent: 50, raw: 560), at: at(Double(last + 2) * 60))
+    subject.record(stats(percent: 50, raw: 566), at: at(Double(last + 2) * 60))
 
     #expect(subject.reading?.direction == .discharging)
     #expect(subject.reading?.shownPercent == 49)
@@ -310,11 +381,13 @@ private let settledOnFloat = [
     let unplugged = ramp(&subject, from: 645, by: 2, minutes: 10, percent: 100)
     #expect(subject.reading?.shownPercent == 100)
 
-    // Off the charger at the top and draining a raw step a minute. Without a
-    // release on the change of direction the panel would still read 100 an hour
-    // into this — pinned by a charge the clock is no longer on, which is worse
-    // than the flicker the ratchet exists to stop.
-    for minute in 1...12 {
+    // Off the charger at the top and draining a raw step a minute. It takes
+    // most of half an hour to be believed, and that is the charge's own doing:
+    // the rise it just made is still inside the window the fall is fitted over.
+    // Without a release on the change of direction the panel would still read
+    // 100 an hour into this — pinned by a charge the clock is no longer on,
+    // which is worse than the flicker the ratchet exists to stop.
+    for minute in 1...25 {
         let reading = 665 - minute
         subject.record(
             stats(percent: percent(at: reading), raw: reading),
@@ -329,7 +402,7 @@ private let settledOnFloat = [
 
 @Test func goingBackOnChargeReleasesItInTheOtherDirectionToo() {
     var subject = BatteryTrajectory()
-    let plugged = ramp(&subject, from: 540, by: -1, minutes: 10, percent: 34)
+    let plugged = settleOnDischarge(&subject, at: 34, raw: 540)
     #expect(subject.reading?.direction == .discharging)
     #expect(subject.reading?.shownPercent == 34)
 
@@ -337,7 +410,7 @@ private let settledOnFloat = [
     // hold a clock at the figure it bottomed out at for the whole of the charge
     // that follows.
     for minute in 1...12 {
-        let reading = 530 + 2 * minute
+        let reading = 540 + 2 * minute
         subject.record(
             stats(percent: percent(at: reading), raw: reading),
             at: at(Double(plugged + minute) * 60)
@@ -353,7 +426,10 @@ private let settledOnFloat = [
 
 @Test func aRebootDiscardsTheHistory() {
     var subject = BatteryTrajectory()
-    for minute in 0...5 {
+    // Twenty-five minutes of it, because a fall is not believed off less than
+    // twenty. Faster than this clock discharges, which only makes the point
+    // sharper: even a discharge ten times the measured one needs the span.
+    for minute in 0...25 {
         subject.record(
             stats(percent: 50, raw: 570 - minute, uptime: 9_000 + minute * 60),
             at: at(Double(minute) * 60)
@@ -365,7 +441,7 @@ private let settledOnFloat = [
     // would still say discharging — which is the point. A reboot is exactly
     // when somebody unplugged the clock and plugged it in again, and the
     // readings either side of it describe two different situations.
-    subject.record(stats(percent: 50, raw: 564, uptime: 5), at: at(6 * 60))
+    subject.record(stats(percent: 50, raw: 544, uptime: 5), at: at(26 * 60))
 
     #expect(subject.reading?.direction == .unknown)
     #expect(subject.reading?.percent == 50)
@@ -374,7 +450,7 @@ private let settledOnFloat = [
 @Test func anUptimeThatKeepsClimbingKeepsTheHistory() {
     // The other half of the reboot rule: the ordinary case must survive it.
     var subject = BatteryTrajectory()
-    for minute in 0...6 {
+    for minute in 0...25 {
         subject.record(
             stats(percent: 50, raw: 570 - minute, uptime: 9_000 + minute * 60),
             at: at(Double(minute) * 60)
@@ -386,7 +462,7 @@ private let settledOnFloat = [
 
 @Test func aDifferentDeviceDiscardsTheHistory() {
     var subject = BatteryTrajectory()
-    for minute in 0...5 {
+    for minute in 0...25 {
         subject.record(
             stats(percent: 50, raw: 570 - minute, uid: "awtrix_a07f9c"),
             at: at(Double(minute) * 60)
@@ -397,20 +473,20 @@ private let settledOnFloat = [
     // A different clock entirely — the address in the defaults was repointed,
     // or two of them answer on the same address in turn. Its readings say
     // nothing about the first one's rate.
-    subject.record(stats(percent: 50, raw: 564, uid: "awtrix_ffffff"), at: at(6 * 60))
+    subject.record(stats(percent: 50, raw: 544, uid: "awtrix_ffffff"), at: at(26 * 60))
 
     #expect(subject.reading?.direction == .unknown)
 }
 
 @Test func aGapLongerThanTheWindowDiscardsTheHistory() {
     var subject = BatteryTrajectory()
-    let last = ramp(&subject, from: 570, by: -1, minutes: 5, percent: 50)
+    let last = ramp(&subject, from: 570, by: -1, minutes: 25, percent: 50)
     #expect(subject.reading?.direction == .discharging)
 
     // The Mac was asleep, or the app was quit. The two readings either side of
     // the gap say nothing about a rate: everything between them is unobserved.
     subject.record(
-        stats(percent: 50, raw: 564),
+        stats(percent: 50, raw: 544),
         at: at(Double(last) * 60 + BatteryTrajectory.window + 1)
     )
 
@@ -424,10 +500,10 @@ private let settledOnFloat = [
     // and blanking the glyph because a poll was late is a worse answer than
     // carrying the last real one.
     var subject = BatteryTrajectory()
-    let last = ramp(&subject, from: 570, by: -1, minutes: 5, percent: 50)
+    let last = ramp(&subject, from: 570, by: -1, minutes: 25, percent: 50)
 
     subject.record(
-        stats(percent: 50, raw: 564),
+        stats(percent: 50, raw: 544),
         at: at(Double(last) * 60 + BatteryTrajectory.window - 1)
     )
 
@@ -474,18 +550,20 @@ private let settledOnFloat = [
     #expect(secondsLeft(flickering) == secondsLeft(tracking))
 }
 
-@Test func noEstimateIsShownBeforeTheMinimumSpanIsObserved() {
+@Test func noEstimateIsShownBeforeThereIsEnoughWatchedToFitOne() {
     var subject = BatteryTrajectory()
     let last = ramp(&subject, from: 600, by: -1, minutes: 10, percent: 50)
 
-    // Ten minutes and a direction is not a rate. "1 h 35 m" here would mean "I
-    // have ten samples", and a number nobody can trust is worse than the panel
-    // saying it is still working it out.
-    #expect(subject.reading?.direction == .discharging)
+    // Ten minutes is not a rate, and since the fall was measured it is not a
+    // direction either. "1 h 35 m" here would mean "I have ten samples", and a
+    // number nobody can trust is worse than the panel saying it is still
+    // working it out.
+    #expect(subject.reading?.direction != .discharging)
     #expect(subject.reading?.timeRemaining == nil)
 
-    ramp(&subject, from: 589, by: -1, minutes: 5, percent: 50, startingAt: last + 1)
+    ramp(&subject, from: 589, by: -1, minutes: 15, percent: 50, startingAt: last + 1)
 
+    #expect(subject.reading?.direction == .discharging)
     #expect(subject.reading?.timeRemaining != nil)
 }
 
@@ -553,13 +631,23 @@ private let settledOnFloat = [
     // and this is the test that notices.
     #expect(BatteryTrajectory.window == 90 * 60)
     #expect(BatteryTrajectory.minimumSpan == 15 * 60)
-    // The direction is read off a tenth of the rate's window, which is what
-    // lets a clock plugged in now be seen as plugged in now.
-    #expect(BatteryTrajectory.trendWindow == 10 * 60)
+    // A rise is read off a tenth of the rate's window, which is what lets a
+    // clock plugged in now be seen as plugged in now: it climbs twenty-five raw
+    // steps in those ten minutes.
+    #expect(BatteryTrajectory.riseWindow == 10 * 60)
     #expect(BatteryTrajectory.minimumTrendSpan == 2 * 60)
-    // Three raw steps: the settled window above wanders inside three and its
-    // fitted drift is under two, while a real discharge spends about ten across
-    // a trend window.
+    // A fall is read off six times that, because it is a twentieth of the size:
+    // 1.33 raw steps per ten minutes measured, so an hour is the shortest window
+    // that carries the fall clear of the band.
+    #expect(BatteryTrajectory.fallWindow == 60 * 60)
+    // And no fall is believed off less than twenty minutes of it, whatever the
+    // fit says: the measured series drops three steps in two minutes and takes
+    // them back.
+    #expect(BatteryTrajectory.minimumFallSpan == 20 * 60)
+    // Three raw steps, either way. The float window above wanders inside three
+    // and its worst fitted drift is 1.73; the slowest measured discharge loses
+    // 4.2 steps an hour, so four would already be inside the noise of the thing
+    // it has to catch.
     #expect(BatteryTrajectory.steadyBand == 3)
     // The firmware's own map, `map(raw, 475, 665, 0, 100)`.
     #expect(BatteryTrajectory.rawAtEmpty == 475)

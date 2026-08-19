@@ -519,27 +519,212 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
     #expect(browsing.liveBrowses == 0)
 }
 
-@Test @MainActor func launchingTheAppLooksForTheDeviceOnTheNetwork() {
-    let browsing = FakeBonjourBrowser()
+/// A delegate that has launched, with a clock a test can take down and a browse
+/// it can count.
+///
+/// Everything with a beat of its own is parked: the schedule and the poll sleep
+/// on metronomes, so nothing here moves until a test moves it. The poll's is
+/// handed in rather than made here, because the tests that take the clock down
+/// and put it back have to be able to tick it.
+@MainActor
+private func launchedForBrowsing(
+    _ browsing: FakeBonjourBrowser,
+    clock: any Transport = StubTransport(body: onlineStats),
+    deviceHost: String = "10.0.0.5",
+    poll: Metronome = Metronome(),
+    settle: @escaping DeviceBrowser.Sleeping = { _ in },
+    notifications: NotificationCenter = NotificationCenter(),
+    budget: QuitBudget = QuitBudget()
+) -> AppDelegate {
     let delegate = AppDelegate(
-        model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
-        budget: QuitBudget(),
-        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+        model: testModel(
+            transport: clock,
+            sleep: Metronome().sleep,
+            pollSleep: poll.sleep,
+            deviceHost: deviceHost
+        ),
+        budget: budget,
+        discovery: DeviceBrowser(browsing: { browsing }, sleep: settle),
+        notifications: notifications
     )
-
     delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
-
-    #expect(browsing.liveBrowses == 1)
+    return delegate
 }
 
-@Test @MainActor func quittingStopsTheBrowse() {
+// The defect. `applicationDidFinishLaunching` used to call `discovery.start()`
+// and nothing ever called `stop()`, so the browse ran for the life of the
+// process — including every minute the configured address was answering
+// perfectly well. Multicast is the one kind of traffic that costs a Wi-Fi
+// network: every frame goes to every client on every band at the lowest basic
+// rate and wakes every power-saving device, the clock among them.
+@Test @MainActor func launchingTheAppDoesNotBrowse() {
     let browsing = FakeBonjourBrowser()
-    let delegate = AppDelegate(
-        model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
-        budget: QuitBudget(seconds: 0.01),
-        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+
+    let delegate = launchedForBrowsing(browsing)
+
+    #expect(browsing.liveBrowses == 0)
+    withExtendedLifetime(delegate) {}
+}
+
+// The steady state of a working installation, and the whole point of the task:
+// the app knows the address, the address answers, so there is nothing to look
+// for. Opening the panel does not change that.
+@Test @MainActor func aPanelOpenedOnAClockThatAnswersLooksForNothing() async {
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(browsing)
+    #expect(await waitUntil { delegate.model.isDeviceOnline })
+
+    delegate.panelMoved(to: aWindow())
+
+    #expect(browsing.liveBrowses == 0)
+    await delegate.model.teardown()
+}
+
+// The case discovery exists for: the clock has moved, or has never been found,
+// and the panel is where the user is looking for it.
+@Test @MainActor func aPanelOpenedOnAClockThatIsNotAnsweringLooksForIt() async {
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(browsing, clock: SwitchableTransport(answering: false))
+    #expect(await waitUntil { isOffline(delegate.model) })
+
+    delegate.panelMoved(to: aWindow())
+
+    #expect(browsing.liveBrowses == 1)
+    await delegate.model.teardown()
+}
+
+// A launch nobody has given an address is not a state of its own, and that is
+// worth pinning rather than assuming: `AppModel.live()` falls back to
+// `defaultDeviceHost` when the defaults key is unset, so an unconfigured app is
+// pointed at a guess. A guess nothing answers at is a clock that is not
+// answering, which is the case above — one rule covers both, and there is no
+// "is it configured" question anywhere in the delegate to get wrong.
+@Test @MainActor func aLaunchWithNoAddressOfItsOwnLooksForAClock() async {
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(
+        browsing,
+        clock: SwitchableTransport(answering: false),
+        deviceHost: AppModel.defaultDeviceHost
     )
-    delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    #expect(await waitUntil { isOffline(delegate.model) })
+
+    delegate.panelMoved(to: aWindow())
+
+    #expect(delegate.model.deviceHost == AppModel.defaultDeviceHost)
+    #expect(browsing.liveBrowses == 1)
+    await delegate.model.teardown()
+}
+
+// The answer the browse was waiting for can arrive from the other direction:
+// the clock is plugged back in and the poll finds it. The app now has what it
+// was looking for, so it stops looking — without this, a panel left open on an
+// outage browses for as long as the outage lasts.
+@Test @MainActor func theBrowseStopsAsSoonAsTheClockAnswers() async {
+    let browsing = FakeBonjourBrowser()
+    let clock = SwitchableTransport(answering: false)
+    let poll = Metronome()
+    let delegate = launchedForBrowsing(browsing, clock: clock, poll: poll)
+    #expect(await waitUntil { isOffline(delegate.model) })
+    delegate.panelMoved(to: aWindow())
+    #expect(browsing.liveBrowses == 1)
+
+    clock.nowAnswers()
+    #expect(await waitUntil { poll.parked == 1 })
+    poll.tick()
+
+    #expect(await waitUntil { delegate.model.isDeviceOnline })
+    #expect(browsing.liveBrowses == 0)
+    await delegate.model.teardown()
+}
+
+// A poll lands every minute and says the same thing every time, and each of
+// those answers reaches the rule that decides the browse. Acted on rather than
+// compared against what was already asked for, that is a browse torn down and
+// rebuilt once a minute — a fresh burst of multicast queries every time, which
+// is most of the traffic this task exists to stop.
+//
+// Read off `starts` rather than `liveBrowses`: a restart cancels and begins
+// again, so the count of LIVE browses is one either way and only the count of
+// beginnings can tell them apart.
+@Test @MainActor func theSameAnswerTwiceDoesNotRestartTheBrowse() async {
+    let browsing = FakeBonjourBrowser()
+    let poll = Metronome()
+    let delegate = launchedForBrowsing(
+        browsing, clock: SwitchableTransport(answering: false), poll: poll
+    )
+    #expect(await waitUntil { isOffline(delegate.model) })
+    delegate.panelMoved(to: aWindow())
+    #expect(browsing.starts == 1)
+
+    #expect(await waitUntil { poll.parked == 1 })
+    poll.tick()
+
+    // Parked again is the second poll over, answer published and all.
+    #expect(await waitUntil { poll.parked == 1 })
+    #expect(browsing.starts == 1)
+    #expect(browsing.liveBrowses == 1)
+    await delegate.model.teardown()
+}
+
+// What bounds the browse, and it is the strongest bound available: the
+// discovery row is drawn on the panel and nowhere else, so a closed panel is a
+// browse nobody can read. Losing key IS how a menu bar extra closes, and
+// becoming key is how it opens — the same event read from both ends.
+@Test @MainActor func closingThePanelStopsTheBrowseAndOpeningItAgainStartsOne() async {
+    let notifications = NotificationCenter()
+    let panel = aWindow()
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(
+        browsing, clock: SwitchableTransport(answering: false), notifications: notifications
+    )
+    #expect(await waitUntil { isOffline(delegate.model) })
+    delegate.panelMoved(to: panel)
+    #expect(browsing.liveBrowses == 1)
+
+    loseFocus(panel, through: notifications)
+    #expect(await waitUntil { browsing.liveBrowses == 0 })
+
+    takeFocus(panel, through: notifications)
+
+    #expect(await waitUntil { browsing.liveBrowses == 1 })
+    // Held to the end deliberately: the observers hold the delegate weakly, so a
+    // released one hears the window and does nothing about it.
+    withExtendedLifetime(delegate) {}
+    await delegate.model.teardown()
+}
+
+// The other half of the filter the close side already keeps. This process has
+// more windows than the panel — `BatteryAlert` raises an `NSAlert`, and an
+// authorization prompt is a window too — and every one of them takes key when
+// it appears. Heard unfiltered, an alert would put a browse on the network with
+// no panel to show what it found.
+@Test @MainActor func aWindowThatIsNotThePanelDoesNotStartABrowse() async {
+    let notifications = NotificationCenter()
+    let panel = aWindow()
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(
+        browsing, clock: SwitchableTransport(answering: false), notifications: notifications
+    )
+    #expect(await waitUntil { isOffline(delegate.model) })
+    delegate.panelMoved(to: panel)
+    loseFocus(panel, through: notifications)
+    #expect(await waitUntil { browsing.liveBrowses == 0 })
+
+    takeFocus(aWindow(), through: notifications)
+
+    await afterTheQueuedObserversHaveRun()
+    #expect(browsing.liveBrowses == 0)
+    withExtendedLifetime(delegate) {}
+    await delegate.model.teardown()
+}
+
+@Test @MainActor func quittingStopsTheBrowse() async {
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(
+        browsing, clock: SwitchableTransport(answering: false), budget: QuitBudget(seconds: 0.01)
+    )
+    #expect(await waitUntil { isOffline(delegate.model) })
+    delegate.panelMoved(to: aWindow())
     #expect(browsing.liveBrowses == 1)
 
     _ = delegate.beginTermination { _ in }
@@ -556,12 +741,14 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
 @Test @MainActor func quitAbandonsTheDiscoveryWindowRatherThanWaitingItOut() async {
     let window = Metronome()
     let browsing = FakeBonjourBrowser()
-    let delegate = AppDelegate(
-        model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
-        budget: QuitBudget(seconds: 0.01),
-        discovery: DeviceBrowser(browsing: { browsing }, sleep: window.sleep)
+    let delegate = launchedForBrowsing(
+        browsing,
+        clock: SwitchableTransport(answering: false),
+        settle: window.sleep,
+        budget: QuitBudget(seconds: 0.01)
     )
-    delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    #expect(await waitUntil { isOffline(delegate.model) })
+    delegate.panelMoved(to: aWindow())
     // The browse comes up, which is what opens the window in the first place.
     browsing.emit(.ready)
     #expect(await waitUntil { window.parked == 1 })
@@ -573,6 +760,11 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
 
 // Discovery has a clock of its own and it is the schedule's beat it must not
 // steal: a device appearing on the network is not a reason to deliver anything.
+//
+// The browse is started here rather than through the panel, and the clock is
+// left answering, because what is under test is what a REPORT does to a running
+// schedule — and a schedule paused by an outage would prove the same thing for
+// the wrong reason. How a browse comes to be running has its own tests above.
 @Test @MainActor func aDiscoveryReportDoesNotDisturbTheSchedule() async {
     let browsing = FakeBonjourBrowser()
     let schedule = Metronome()
@@ -584,6 +776,7 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
     )
     delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
     #expect(await waitUntil { schedule.parked == 1 })
+    delegate.discovery.start()
 
     browsing.emit(.results(["awtrix_a07f9c"]))
 
@@ -608,6 +801,9 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
         discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
     )
     delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    // Started directly for the reason the test above starts one: what a report
+    // must not do is written down here, not where a browse comes from.
+    delegate.discovery.start()
 
     browsing.emit(.results(["awtrix_a07f9c"]))
 

@@ -885,25 +885,6 @@ private func launched(
     return delegate
 }
 
-/// One of the app's windows. Which one it is, is decided by what it is passed
-/// to: a window is the panel's because the delegate was told so, and anything
-/// else built here is the alert, the authorization prompt, or whatever else in
-/// this process can take focus.
-@MainActor
-private func aWindow() -> NSWindow {
-    NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 320, height: 700),
-        styleMask: [.titled], backing: .buffered, defer: true
-    )
-}
-
-/// A window losing focus, as AppKit says it: a menu bar extra is dismissed by
-/// losing key, and it is ordered out rather than closed.
-@MainActor
-private func loseFocus(_ window: NSWindow, through notifications: NotificationCenter) {
-    notifications.post(name: NSWindow.didResignKeyNotification, object: window)
-}
-
 /// What the reader reported, by reference: the closure it is given outlives the
 /// call that builds it, and a local array captured there would be a copy the
 /// test cannot read back.
@@ -918,20 +899,6 @@ private final class WindowsReported {
     func record(_ window: NSWindow?) {
         guard let window else { return }
         seen.append(window)
-    }
-}
-
-/// Returns once whatever the last post queued has run.
-///
-/// A settle point for an assertion that nothing happened, which polling cannot
-/// give: `waitUntil` returns the moment its condition holds, and "the History is
-/// still open" holds before the observer has run at all — so a test built on it
-/// would pass against the very defect it is for. The observer is registered on
-/// `OperationQueue.main`, so a block put on that queue afterwards runs after it.
-@MainActor
-private func afterTheQueuedObserversHaveRun() async {
-    await withCheckedContinuation { resumed in
-        OperationQueue.main.addOperation { resumed.resume() }
     }
 }
 

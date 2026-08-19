@@ -1,5 +1,8 @@
 import AppKit
 import AwtrixKit
+// `AnyCancellable` is declared in Combine, which is also where the `@Published`
+// this delegate subscribes to comes from.
+import Combine
 import SwiftUI
 
 @main
@@ -206,8 +209,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// posts one into `.default` would be heard by every other model alive in
     /// the suite, and closing one window would shut another test's surface.
     private let notifications: NotificationCenter
-    /// The subscription that puts the menu back on the panel.
-    private var windowClosings: (any NSObjectProtocol)?
+    /// The subscriptions that hear the panel's window come and go.
+    private var windowWatchers: [any NSObjectProtocol] = []
+    /// The subscription that hears whether the clock is answering.
+    private var reachability: AnyCancellable?
+    /// Whether the panel is on screen.
+    ///
+    /// Kept here rather than asked of AppKit, because the question is "has this
+    /// delegate been told the panel opened and not yet told it closed" — which
+    /// is what the browse is allowed to depend on. `NSWindow.isKeyWindow` would
+    /// answer about a window that may not exist yet.
+    private var panelIsOpen = false
+    /// Whether a browse has been asked for.
+    ///
+    /// What this delegate INTENDED, not what the browser is doing — the browser
+    /// owns that, and it already makes a late report from a cancelled browse
+    /// harmless. Kept so that the same answer arriving twice, which is what a
+    /// poll every minute produces, costs nothing at all.
+    private var isBrowsing = false
     /// The window the panel is on, once it is on one.
     ///
     /// Weak, because the window is SwiftUI's rather than this type's: holding it
@@ -246,10 +265,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Where the schedules start. Not in `AppModel.init`, so that building the
     /// model reaches neither the network nor the clock.
+    ///
+    /// No browse is started here, and its absence is the point. This used to
+    /// call `discovery.start()` and nothing ever called `stop()`, so a Bonjour
+    /// browse ran for the whole life of the process — including every minute
+    /// the configured address was answering perfectly well. Multicast is the
+    /// one kind of traffic that costs a Wi-Fi network rather than a link: every
+    /// frame goes to every client on every band at the lowest basic rate, and
+    /// wakes every power-saving device on it. The clock is one of those, and
+    /// the app already knows the address it talks to. What decides a browse now
+    /// is `reconsiderBrowsing`.
+    ///
+    /// The clock's answers are subscribed to BEFORE the schedules start,
+    /// because `model.start()` fires the first poll and that answer is what a
+    /// panel opened seconds later has to be right about.
     func applicationDidFinishLaunching(_ notification: Notification) {
+        watchWhetherTheClockAnswers()
         model.start()
-        discovery.start()
-        watchForTheWindowClosing()
+        watchThePanelsWindow()
+    }
+
+    /// Starts or stops the browse, from the two things that decide it.
+    ///
+    /// One place rather than a decision at each edge. The edges arrive in any
+    /// order — a panel opened onto a clock that is already down, a clock that
+    /// comes back while the panel is open — and three call sites each making up
+    /// their own mind is three chances for them to disagree about whether a
+    /// browse is running.
+    ///
+    /// **What stops a browse:** the panel closing, or the clock answering.
+    /// **What starts one again:** the panel opening while the clock is not
+    /// answering. There is no state in which a browse outlives both, which is
+    /// what keeps an `NWBrowser` off the network for the whole of a working
+    /// installation's life. Nothing else is a bound worth having: an
+    /// unreachable-for-N-polls timer was the alternative and it is a browse
+    /// that runs for as long as the outage does, which for a clock left
+    /// unplugged over a holiday is the defect again with an extra counter.
+    ///
+    /// Two conditions and no third. "Is an address configured" is deliberately
+    /// not asked: `AppModel.live()` falls back to `defaultDeviceHost` when the
+    /// defaults key is unset, so an unconfigured app is pointed at a guess —
+    /// and a guess nothing answers at is already a clock that is not answering.
+    /// A separate check would be a second way to say the same thing, with its
+    /// own way of being wrong.
+    private func reconsiderBrowsing(clockIsAnswering: Bool) {
+        // A panel that is not on screen has nowhere to show what a browse
+        // found: the discovery row is drawn there and nowhere else.
+        let wanted = panelIsOpen && clockIsAnswering == false
+        guard wanted != isBrowsing else { return }
+        isBrowsing = wanted
+        if wanted { discovery.start() } else { discovery.stop() }
+    }
+
+    /// Hears every reachability answer, because one of them is a reason to stop
+    /// looking.
+    ///
+    /// The value is passed down rather than read back off the model: `@Published`
+    /// publishes in `willSet`, so at this point `model.isDeviceOnline` is still
+    /// the previous answer and the one that matters is the argument.
+    ///
+    /// `assumeIsolated` for the reason the window observer below uses it — the
+    /// mutation that publishes this happens on the main actor, so delivery does
+    /// too, and the compiler cannot see that through Combine.
+    private func watchWhetherTheClockAnswers() {
+        reachability = model.$isDeviceOnline.sink { [weak self] answering in
+            MainActor.assumeIsolated {
+                self?.reconsiderBrowsing(clockIsAnswering: answering)
+            }
+        }
+    }
+
+    /// The panel is on screen: browse if there is anything to look for.
+    private func panelDidOpen() {
+        panelIsOpen = true
+        reconsiderBrowsing(clockIsAnswering: model.isDeviceOnline)
+    }
+
+    /// The panel has gone: whatever the browse was for, nobody can read it now.
+    private func panelDidClose() {
+        panelIsOpen = false
+        reconsiderBrowsing(clockIsAnswering: model.isDeviceOnline)
     }
 
     /// Told which window the panel was put on, by the panel itself.
@@ -263,12 +358,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// of how the panel goes away, and the resign that says so is already in
     /// flight by then — forgetting the window here would drop the very close it
     /// describes.
+    ///
+    /// Learning the window IS the first open, and that is why the browse is
+    /// reconsidered here rather than only on `didBecomeKey` below. The window
+    /// is built when the panel is first shown and then reused, so the key
+    /// notification covers every open after this one and cannot cover this one:
+    /// it has to know which window is the panel's, and this is where that is
+    /// learned. Whichever of the two arrives first, the other costs nothing —
+    /// `reconsiderBrowsing` compares against what it has already asked for.
     func panelMoved(to window: NSWindow?) {
         guard let window else { return }
         panelWindow = window
+        panelDidOpen()
     }
 
-    /// Puts the menu back on the panel whenever its window goes away.
+    /// Hears the panel's window come and go: the menu goes back on the panel
+    /// when it goes, and the browse lives between the two.
     ///
     /// Losing key IS how a menu bar extra closes. Its window is dismissed by
     /// the click that lands somewhere else, and it is ordered out rather than
@@ -276,6 +381,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `onDisappear` is worse than silent: measured here, it fires when a
     /// hosting view is torn down, which every throwaway render does, and not
     /// when a window is ordered out at all.
+    ///
+    /// Becoming key is the same fact read the other way, and it is why the open
+    /// side is heard here rather than from a SwiftUI `.onAppear`: a window that
+    /// resigns key on every close became key on every open to have anything to
+    /// resign. The close half is already shipped and works, so the open half
+    /// cannot be missing. `.onAppear` would have been the alternative — it is
+    /// what `AppModel.refreshOnPanelOpen` rides — but it fires per appearance
+    /// rather than per open, it lives in a view that cannot reach this
+    /// delegate, and it would leave the two ends of one browse in two frameworks.
     ///
     /// Here rather than in `AppModel`, for the reason `applicationDidFinish
     /// Launching` is: translating what AppKit says into what the model does is
@@ -294,16 +408,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// dismisses it with no other app taking over — and putting the menu back on
     /// the panel is precisely what would then stop happening.
     ///
-    /// One subscription that compares, rather than one re-registered on
+    /// Subscriptions that compare, rather than ones re-registered on
     /// `object: panelWindow` whenever the panel gets a window. The window does
     /// not exist here, at launch; a re-registering observer would have to be
     /// right about tearing the old one down as well as putting the new one up,
-    /// and this one only has to be right about which window it is looking at.
-    private func watchForTheWindowClosing() {
-        guard windowClosings == nil else { return }
-        windowClosings = notifications.addObserver(
-            forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
-        ) { [weak self] notification in
+    /// and these only have to be right about which window they are looking at.
+    private func watchThePanelsWindow() {
+        guard windowWatchers.isEmpty else { return }
+        windowWatchers = [
+            whenThePanelsWindow(NSWindow.didBecomeKeyNotification) { $0.panelDidOpen() },
+            whenThePanelsWindow(NSWindow.didResignKeyNotification) { delegate in
+                delegate.model.windowDidClose()
+                delegate.panelDidClose()
+            },
+        ]
+    }
+
+    /// One observer of `name`, deaf to every window that is not the panel's.
+    ///
+    /// The filter written once rather than once per notification: it is the
+    /// half that was got wrong before, and two copies of it is two places for
+    /// the next one to be got wrong in.
+    private func whenThePanelsWindow(
+        _ name: Notification.Name, then act: @escaping @MainActor (AppDelegate) -> Void
+    ) -> any NSObjectProtocol {
+        notifications.addObserver(forName: name, object: nil, queue: .main) {
+            [weak self] notification in
             let window = notification.object as? NSWindow
             MainActor.assumeIsolated {
                 // Both halves named, rather than `window === self?.panelWindow`:
@@ -311,7 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // arriving before the panel has ever been opened would read as
                 // the panel's own.
                 guard let self, let window, window === self.panelWindow else { return }
-                self.model.windowDidClose()
+                act(self)
             }
         }
     }
@@ -339,11 +469,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // takes a held banner off the clock — and a settle window landing
         // inside it would be three more seconds of a quit with nothing left to
         // do.
+        //
+        // Unconditional, rather than routed through `reconsiderBrowsing`: quit
+        // is the one moment that does not care what this delegate believes it
+        // asked for.
         discovery.stop()
-        if let windowClosings {
-            notifications.removeObserver(windowClosings)
-            self.windowClosings = nil
-        }
+        panelIsOpen = false
+        isBrowsing = false
+        // Both wires cut, for the same reason: what is left of this app is a
+        // teardown, and neither a window taking key nor a last reading landing
+        // is a reason to put a browse back on the network during it.
+        for watcher in windowWatchers { notifications.removeObserver(watcher) }
+        windowWatchers = []
+        reachability = nil
         Task {
             _ = await budget.settle { await self.model.teardown() }
             reply(true)

@@ -434,6 +434,15 @@ struct MenuPanel: View {
     /// schedule. What this line is for is knowing WHICH name to write with
     /// `defaults write dev.artk0re.awtrix-connectors deviceHost …`, which
     /// previously meant knowing it by heart.
+    ///
+    /// Which is why the row is USUALLY not here at all. `AppDelegate` browses
+    /// only while this panel is open and the clock is not answering, so a
+    /// working installation draws no line: `.idle` renders nothing, and there
+    /// is nothing to say to somebody whose clock is answering at the address
+    /// they already have. The row appears exactly when it is worth reading —
+    /// the clock has moved, or has never been found — and it is the browse that
+    /// is conditional here, not the row. `DiscoveryStatusLine` still words all
+    /// six states, and stopping the browse is what puts it back to `.idle`.
     private var discoverySection: some View {
         Group {
             if let line = DiscoveryStatusLine.text(for: discovery.state) {

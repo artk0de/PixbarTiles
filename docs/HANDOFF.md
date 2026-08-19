@@ -410,6 +410,20 @@ as much about whether it can be FOUND as about whether it works.
     honoured — and `historyHeight` is clamped against the screen it is READ on,
     which is what makes a height saved on a big display safe on a laptop.
 
+### Added by wave 3
+
+24. **The cadence survives a relaunch.** Quit the app part-way through an
+    interval and reopen it: the panel must name the REMAINDER, not a fresh full
+    interval. This is the defect that was reported — five relaunches inside an
+    hour meant the hourly anecdote never arrived, because each launch started
+    the hour again.
+25. **A long absence owes one delivery, not a queue.** Leave the app closed for
+    several intervals and reopen: exactly one anecdote, then the normal cadence.
+    A burst here would be the app punishing the user for having shut the laptop.
+26. **A connector that has never run still waits a full interval.** On a fresh
+    install nothing is owed, so the first anecdote is one interval away and not
+    immediate. Deliberate — verify it did not become eager.
+
 ## The panel's width belongs to the content, not to the window
 
 Route one — make the real window resizable — was probed on the running app

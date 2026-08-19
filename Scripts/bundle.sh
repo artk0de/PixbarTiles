@@ -66,6 +66,17 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
        the day the app is signed. -->
   <key>NSFocusStatusUsageDescription</key>
   <string>AwtrixConnectors checks whether a Focus is on, so it stays quiet instead of reading a joke out loud while you are busy.</string>
+  <!-- Without this key CoreLocation refuses whatever the signature says, so it
+       has to be here before location is worth attempting at all. It IS worth
+       attempting: measured on a signed probe from this bundle's own signing
+       identity, `requestWhenInUseAuthorization` moved the status from
+       notDetermined to authorized and `requestLocation` returned a fix to 55
+       metres. That defeats the two things that make the alternatives useless
+       here — a VPN, which puts IP geolocation 2,000 km out, and a geocoder that
+       only knows settlements, which cannot tell one side of a 40 km city from
+       the other. -->
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>AwtrixConnectors reads this Mac's location once, when you ask it to, so the clock shows the weather where you actually are.</string>
 </dict>
 </plist>
 PLIST

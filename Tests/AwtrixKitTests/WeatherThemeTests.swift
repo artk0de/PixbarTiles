@@ -105,6 +105,43 @@ private let groups: [Group] = [
     #expect(WeatherTheme(code: 3, isDay: true) == WeatherTheme(code: 3, isDay: false))
 }
 
+// Code 2 is broken cloud, and the catalogue draws exactly that: a cloud with
+// the sun behind it. Collapsing it into the clear day put a bare sun over an
+// afternoon of cloud — the kind of wrongness a display meant to be glanced at
+// states loudest.
+@Test func aPartlyCloudyDayIsItsOwnSkyRatherThanAClearOne() {
+    let partlyCloudy = WeatherTheme(code: 2, isDay: true)
+
+    #expect(partlyCloudy != WeatherTheme(code: 0, isDay: true))
+    #expect(partlyCloudy != WeatherTheme(code: 1, isDay: true))
+    #expect(
+        partlyCloudy.icon == .catalogue(53802),
+        "WMO 2 by day drew \(partlyCloudy.icon)"
+    )
+    // Same overlay as before, and no information is lost by that: the firmware
+    // has no layer for cloud, so the eight pixels beside the number are the
+    // only place the difference can appear at all.
+    #expect(partlyCloudy.overlay == .clear)
+}
+
+// And there is deliberately no night half to it. The catalogue has no moon
+// behind a cloud — both weather packs were swept whole to check — so a
+// `partlyCloudyNight` would draw the same moon as `clearNight`, over the same
+// `clear` overlay, in the same temperature-derived colour. This test is what
+// records that the asymmetry was chosen: a sky the device cannot draw
+// differently is a branch nobody can ever see, and the next reader should not
+// "fix" it.
+@Test func aPartlyCloudyNightStaysAClearNightBecauseNothingCouldDrawItApart() {
+    #expect(WeatherTheme(code: 2, isDay: false) == .clearNight)
+
+    // The codes either side of it are untouched in both lighting conditions: 0
+    // and 1 are a bare sun or a bare moon, which is what they look like.
+    #expect(WeatherTheme(code: 0, isDay: true) == .clearDay)
+    #expect(WeatherTheme(code: 1, isDay: true) == .clearDay)
+    #expect(WeatherTheme(code: 0, isDay: false) == .clearNight)
+    #expect(WeatherTheme(code: 1, isDay: false) == .clearNight)
+}
+
 // WMO separates 51–55 from 61–65 because drizzle is not rain, and the firmware
 // separates them too — `drizzle` is one of the seven values it accepts,
 // enumerated by setting each on the real clock and reading it back:
@@ -137,10 +174,11 @@ private let groups: [Group] = [
 ///
 /// This is also the record of what was verified: the catalogue has no public
 /// search, so every id below cost a download and a look at its frames, and all
-/// ten are 8x8 animated GIFs, which is the only thing the device draws.
+/// eleven are 8x8 animated GIFs, which is the only thing the device draws.
 private let verifiedIcons: [WeatherTheme: Int] = [
     .clearDay: 2282,
     .clearNight: 12181,
+    .partlyCloudyDay: 53802,
     .cloud: 53384,
     .fog: 17056,
     .drizzle: 2284,
@@ -180,7 +218,7 @@ private func catalogueId(_ reference: IconReference) -> Int? {
     }
 }
 
-// Three of the ten borrow a neighbour's picture, and it is a decision rather
+// Three of the eleven borrow a neighbour's picture, and it is a decision rather
 // than an oversight: the catalogue has nothing of its own for them yet, and
 // inventing an id means shipping whatever art happens to sit at that number.
 // What keeps the three distinguishable on the clock is the overlay, which is a
@@ -200,7 +238,7 @@ private func catalogueId(_ reference: IconReference) -> Int? {
     #expect(WeatherTheme.frost.overlay != WeatherTheme.snow.overlay)
     #expect(WeatherTheme.storm.overlay != WeatherTheme.thunder.overlay)
 
-    // Ten skies, seven pictures. Stated as a count so that a copy-paste that
+    // Eleven skies, eight pictures. Stated as a count so that a copy-paste that
     // gave a fourth sky somebody else's id fails here rather than on the clock.
-    #expect(Set(WeatherTheme.allCases.compactMap { catalogueId($0.icon) }).count == 7)
+    #expect(Set(WeatherTheme.allCases.compactMap { catalogueId($0.icon) }).count == 8)
 }

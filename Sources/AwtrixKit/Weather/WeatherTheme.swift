@@ -49,6 +49,10 @@ public enum DeviceOverlay: String, Sendable, Equatable, CaseIterable {
 public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
     case clearDay
     case clearNight
+    /// Daylight only, and the name says so on purpose. There is no
+    /// `partlyCloudyNight` beside it — see the WMO 2 branch below for why the
+    /// asymmetry is the decision rather than the omission it looks like.
+    case partlyCloudyDay
     case cloud
     case fog
     case drizzle
@@ -66,9 +70,18 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
     /// fallback may as well be the one this app can also reason about.
     public init(code: Int, isDay: Bool) {
         switch code {
-        // 0 clear, 1 mainly clear, 2 partly cloudy — the sun or the moon is
-        // still the thing being drawn, so the hour decides which.
-        case 0, 1, 2: self = isDay ? .clearDay : .clearNight
+        // 0 clear, 1 mainly clear — a bare sun or a bare moon, so the hour
+        // decides which.
+        case 0, 1: self = isDay ? .clearDay : .clearNight
+        // 2 partly cloudy: broken cloud with the sun behind it, which the
+        // catalogue draws and a bare sun overstates for a whole afternoon.
+        // By night it goes back to `clearNight`, and that is the
+        // decision rather than a missing case: the catalogue has no moon behind
+        // a cloud — both weather packs were swept whole to check — so a
+        // `partlyCloudyNight` would draw the same moon, over the same `clear`
+        // overlay, in the same temperature-derived colour as a clear night. A
+        // sky the device cannot draw differently is a branch nobody can see.
+        case 2: self = isDay ? .partlyCloudyDay : .clearNight
         // 3 overcast. Nothing behind it to have set.
         case 3: self = .cloud
         case 45: self = .fog
@@ -98,14 +111,14 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
 
     /// The device-wide layer this sky draws.
     ///
-    /// Four skies share `clear`, and that is not a mapping that lost
+    /// Five skies share `clear`, and that is not a mapping that lost
     /// information: the firmware has no layer for cloud, fog or night, and
     /// drawing rain over an overcast afternoon would be a lie about the
     /// weather. What tells them apart is the theme itself, which is what an
     /// icon is chosen from.
     public var overlay: DeviceOverlay {
         switch self {
-        case .clearDay, .clearNight, .cloud, .fog: .clear
+        case .clearDay, .clearNight, .partlyCloudyDay, .cloud, .fog: .clear
         case .drizzle: .drizzle
         case .rain: .rain
         case .snow: .snow
@@ -123,7 +136,7 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
     /// beside whatever the previous one in the loop left on the matrix, which
     /// nothing on the device or in this app would report.
     ///
-    /// Every id below was fetched and its frames counted: all ten are 8x8
+    /// Every id below was fetched and its frames counted: all eleven are 8x8
     /// animated GIFs, which is the only thing the clock draws. The catalogue
     /// has no public search, so an id costs a download and a look — do not
     /// invent one, and do not go hunting for a better one.
@@ -137,16 +150,17 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
     /// table.
     public var icon: IconReference {
         switch self {
-        case .clearDay: .catalogue(2282)      // sun, 7 frames
-        case .clearNight: .catalogue(12181)   // crescent moon with stars, 4 frames
-        case .cloud: .catalogue(53384)        // a cloud drifting across, 16 frames
-        case .fog: .catalogue(17056)          // horizontal grey bars, 2 frames
-        case .drizzle: .catalogue(2284)       // shared with rain, awaiting its own art
-        case .rain: .catalogue(2284)          // cloud with blue drops, 5 frames
-        case .snow: .catalogue(2289)          // cloud with white flakes, 9 frames
-        case .frost: .catalogue(2289)         // shared with snow, awaiting its own art
-        case .thunder: .catalogue(49299)      // rain with a bolt on frames 2 and 4, 7 frames
-        case .storm: .catalogue(49299)        // shared with thunder, awaiting its own art
+        case .clearDay: .catalogue(2282)          // sun, 7 frames
+        case .clearNight: .catalogue(12181)       // crescent moon with stars, 4 frames
+        case .partlyCloudyDay: .catalogue(53802)  // a cloud with the sun behind it, 16 frames
+        case .cloud: .catalogue(53384)            // a cloud drifting across, 16 frames
+        case .fog: .catalogue(17056)              // horizontal grey bars, 2 frames
+        case .drizzle: .catalogue(2284)           // shared with rain, awaiting its own art
+        case .rain: .catalogue(2284)              // cloud with blue drops, 5 frames
+        case .snow: .catalogue(2289)              // cloud with white flakes, 9 frames
+        case .frost: .catalogue(2289)             // shared with snow, awaiting its own art
+        case .thunder: .catalogue(49299)          // rain with a bolt on frames 2 and 4, 7 frames
+        case .storm: .catalogue(49299)            // shared with thunder, awaiting its own art
         }
     }
 }

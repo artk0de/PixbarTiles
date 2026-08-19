@@ -131,7 +131,15 @@ struct HistoryMenu: View {
             // cannot know about. Saved before the state is let go of, for the
             // same reason and in the same order: the moment `draggedHeight` is
             // nil the list is reading the defaults again.
-            HistoryHeight(height, fittingInto: screenHeight).save(to: defaults)
+            //
+            // And only when a height drag is what ended. This runs after every
+            // drag, the side edges included, and writing the height back after
+            // one of those would turn "nobody has ever set this" into "set to
+            // 280" — which reads the same today only because 280 is also the
+            // default, and would pin somebody to the old number the day that
+            // moves.
+            guard let reached = draggedHeight else { return }
+            HistoryHeight(reached, fittingInto: screenHeight).save(to: defaults)
             draggedHeight = nil
         }
     }

@@ -100,6 +100,25 @@ public protocol Connector: Sendable {
     /// about the speakers INSIDE the text — those are cast by `VoiceCaster`
     /// from its pool, and naming a narrator here does not move them.
     var narrator: Voice { get }
+    /// Whether this connector can put sound in the room.
+    ///
+    /// What the quiet rules are FOR. A macOS Focus and a busy microphone stop
+    /// the app SPEAKING — both were built because speech and the clock's
+    /// jingle land in the room the user is talking in. A connector that draws
+    /// into the device's own loop and says nothing has nothing to stop, and
+    /// holding one through the shipped 23:00–08:00 window freezes whatever it
+    /// last drew on the matrix for nine hours, with the panel blaming a
+    /// microphone the reader cannot connect to a temperature.
+    ///
+    /// Declared rather than read off an output, because the answer is needed
+    /// BEFORE `produce()` is called: not paying for the output is the whole
+    /// point of a hold. It is a promise about what this connector's outputs can
+    /// carry — `localAudio`, or a jingle the clock plays out loud.
+    ///
+    /// Says nothing about the offline pause, which applies to every connector:
+    /// a clock that is not answering cannot receive a drawing any more than it
+    /// can receive a banner.
+    var isAudible: Bool { get }
     func produce() async throws -> ConnectorOutput
 }
 
@@ -110,4 +129,11 @@ extension Connector {
     /// existed goes on sounding exactly as it did. A connector wanting its own
     /// character declares one and overrides this.
     public var narrator: Voice { VoiceCaster.defaultNarrator }
+
+    /// What a connector that does not answer is assumed to be, and the
+    /// direction is deliberate: one that forgets to declare itself is SILENCED
+    /// during a Focus rather than left speaking through one. Being quiet when
+    /// you could have spoken is recoverable; the other way round is what wakes
+    /// somebody up.
+    public var isAudible: Bool { true }
 }

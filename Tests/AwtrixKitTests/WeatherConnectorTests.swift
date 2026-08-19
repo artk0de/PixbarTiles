@@ -500,6 +500,26 @@ private struct PassThroughIcons: IconInstalling {
     #expect(transport.requests.allSatisfy { $0.url?.host == "api.open-meteo.com" })
 }
 
+// Nothing this connector produces can be heard, and it says so. The two quiet
+// rules — a macOS Focus, and the window that stands in for it — exist to stop
+// the app SPEAKING; holding a drawing through the shipped 23:00–08:00 default
+// froze the temperature on the matrix for nine hours a night, and left the sky
+// raining until morning if it had been raining at 22:55.
+@Test func theWeatherIsSilentAndSaysSo() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk }
+    )
+
+    #expect(connector.isAudible == false)
+    // And the claim is honest about the output: no clips, no jingle. A
+    // connector that declared silence and then spoke would be silenced by
+    // nothing at three in the morning.
+    let output = try await connector.produce()
+    #expect(output.localAudio.isEmpty)
+    #expect(output.jingle == nil)
+}
+
 // The cadence the schedule offers by default is the source's own, so a user who
 // never touches the slider polls a free public service at exactly the rate it
 // updates.

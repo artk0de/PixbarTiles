@@ -910,21 +910,27 @@ final class AppModel: ObservableObject {
 
     /// Lets go of the runs a meeting held, once nothing is holding them.
     ///
-    /// Gated on the whole of `scheduleHold`, not only on the microphone. A run
-    /// held through a meeting that ends inside a Focus would otherwise speak
-    /// into the Focus — and holding on costs nothing, because this loop is
-    /// still turning and lets it go the moment both are clear. Nothing here is
-    /// sticky in either direction.
+    /// Gated on the whole of `scheduleHold(for:)`, not only on the microphone.
+    /// A run held through a meeting that ends inside a Focus would otherwise
+    /// speak into the Focus; one released into a clock that is not answering
+    /// would be worse still, because `produce()` retires an anecdote before the
+    /// banner goes out and the user permanently loses something they never
+    /// heard. Holding on costs nothing — this loop is still turning and lets it
+    /// go the moment every gate is clear. Nothing here is sticky in either
+    /// direction.
     ///
-    /// Emptied BEFORE the runs, never after them. Not for re-entrancy — the
-    /// watch loop awaits each release, so there is no second turn to defend
-    /// against — but because a scheduled beat can land while a release is in
-    /// flight: the meeting resumes, that beat records its own hold, and an
-    /// `removeAll()` below the loop would take the new one with it.
+    /// Asked per connector, because the gates are: only what is still held for
+    /// this one stays behind.
+    ///
+    /// Removed from the set BEFORE the runs, never after them. Not for
+    /// re-entrancy — the watch loop awaits each release, so there is no second
+    /// turn to defend against — but because a scheduled beat can land while a
+    /// release is in flight: the meeting resumes, that beat records its own
+    /// hold, and a subtraction below the loop would take the new one with it.
     private func releaseHeldRuns() async {
-        guard heldRuns.isEmpty == false, scheduleHold == nil else { return }
-        let due = heldRuns
-        heldRuns.removeAll()
+        let due = heldRuns.filter { scheduleHold(for: $0) == nil }
+        guard due.isEmpty == false else { return }
+        heldRuns.subtract(due)
         for id in due { await runAndReport(id) }
     }
 
@@ -1003,7 +1009,7 @@ final class AppModel: ObservableObject {
     /// has turned off.
     private func publishNextRun(_ id: String) {
         guard timers[id] != nil else { return }
-        if let hold = scheduleHold {
+        if let hold = scheduleHold(for: id) {
             nextRun[id] = .held(hold)
         } else if let due = scheduledDue[id] {
             nextRun[id] = .due(due)
@@ -1034,7 +1040,8 @@ final class AppModel: ObservableObject {
         return false
     }
 
-    /// What is holding the schedule right now, or nil when nothing is.
+    /// What is holding this connector's schedule right now, or nil when nothing
+    /// is.
     ///
     /// One question asked in two places — before the sleep, to label the panel,
     /// and at the top of the tick, to decide — and asking it twice is the
@@ -1046,10 +1053,28 @@ final class AppModel: ObservableObject {
     /// once. The clock first, because an unreachable device is the one the
     /// panel's own status line is already about; the quiet rules after it,
     /// because they are about the room rather than the hardware.
-    private var scheduleHold: String? {
+    ///
+    /// Per connector rather than for the app, because the two halves answer to
+    /// different things. An unreachable clock stops every delivery, drawn or
+    /// spoken. The quiet rules stop the app being HEARD, so they are asked only
+    /// of a connector that can be — the weather draws into the device's own
+    /// loop and says nothing, and silencing it froze the temperature on the
+    /// matrix for the whole shipped 23:00–08:00 window while the panel blamed a
+    /// microphone.
+    private func scheduleHold(for connectorId: String) -> String? {
         if deviceIsUnreachable { return Self.deviceUnreachable }
+        guard isAudible(connectorId) else { return nil }
         if let quiet = focus.silence(quietHours: quietHours) { return quiet }
         return busyMicrophone.map { MicrophoneGate.inUse($0.name) }
+    }
+
+    /// Whether this connector can be heard.
+    ///
+    /// An id nothing is registered under answers `true`, which is the same
+    /// direction `Connector`'s own default takes: the recoverable mistake is
+    /// staying quiet.
+    private func isAudible(_ connectorId: String) -> Bool {
+        registry.connector(id: connectorId)?.isAudible ?? true
     }
 
     /// The watched microphone that is capturing right now, or nil.
@@ -1097,8 +1122,14 @@ final class AppModel: ObservableObject {
         // synthesis. So the run is written down here and released by
         // `releaseHeldRuns` when the room is quiet again — at most one per
         // connector, so a two-hour meeting does not end in a burst of four.
-        guard scheduleHold == nil else {
-            if busyMicrophone != nil { heldRuns.insert(id) }
+        //
+        // And Task 26's weather is neither, because it cannot be heard at all.
+        // The quiet rules are not asked of it — see `scheduleHold(for:)` — so
+        // there is nothing for it to be held by here except the clock, and an
+        // unreachable clock is a SKIP for a drawing exactly as it is for a
+        // banner.
+        guard scheduleHold(for: id) == nil else {
+            if isAudible(id), busyMicrophone != nil { heldRuns.insert(id) }
             await restock(id)
             return
         }

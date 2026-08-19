@@ -701,6 +701,162 @@ import Testing
     await subject.teardown()
 }
 
+// MARK: - A connector that makes no sound
+
+// The quiet rules exist to stop the app SPEAKING. Task 26 then added a
+// connector that speaks nothing, draws into the device's own loop, and is
+// enabled by default — and it inherited all three gates without anyone
+// re-asking the question.
+//
+// On shipped defaults that is not marginal. `INFocusStatusCenter` never grants
+// authorization on this machine, so the quiet window is the shipping rule: nine
+// hours a night in which the clock's temperature froze at whatever it read
+// before 23:00.
+@Test @MainActor func aConnectorThatMakesNoSoundKeepsDrawingThroughAFocus() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [silentConnector],
+        host: host,
+        sleep: schedule.sleep,
+        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: true))
+    )
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:silent") })
+    await subject.teardown()
+}
+
+@Test @MainActor func aConnectorThatMakesNoSoundKeepsDrawingWhileAMicrophoneIsCapturing() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [silentConnector],
+        host: host,
+        sleep: schedule.sleep,
+        microphone: MicrophoneGate(inputs: StubAudioInputs(duringAMeeting))
+    )
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:silent") })
+    await subject.teardown()
+}
+
+// And the row says a time rather than blaming a microphone, which on a weather
+// line is a non-sequitur the reader cannot act on.
+@Test @MainActor func aSilentConnectorsRowNeverBlamesTheRoom() async {
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [silentConnector],
+        sleep: schedule.sleep,
+        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: true)),
+        microphone: MicrophoneGate(inputs: StubAudioInputs(duringAMeeting))
+    )
+
+    subject.start()
+
+    #expect(await waitUntil { isDue(subject.nextRun["silent"]) })
+    await subject.teardown()
+}
+
+// The offline pause is a different question and still applies: a clock that is
+// not answering cannot receive a drawing any more than it can receive a banner.
+@Test @MainActor func aConnectorThatMakesNoSoundStillPausesWhileTheClockIsDown() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [silentConnector],
+        host: host,
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        sleep: schedule.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { schedule.parked == 1 })
+
+    #expect(host.calls.contains("run:silent") == false)
+    #expect(subject.nextRun["silent"] == .held(AppModel.deviceUnreachable))
+    await subject.teardown()
+}
+
+// A silent connector owes nothing either, and the case that decides it is the
+// only one where the two gates overlap: the clock is down AND a microphone is
+// capturing. The clock is what holds this connector; the microphone has nothing
+// to do with it, so the beat is a SKIP and must not be queued against the
+// meeting ending.
+//
+// Both are cleared before the release loop turns, and the schedule is never
+// ticked again — so a run appearing here could only be a beat that was owed.
+@Test @MainActor func aSilentConnectorsBeatIsNeverOwedToAMeeting() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let mic = Metronome()
+    let poll = Metronome()
+    let system = StubAudioInputs(duringAMeeting)
+    let clock = SwitchableTransport(answering: false)
+    let subject = testModel(
+        connectors: [silentConnector],
+        host: host,
+        transport: clock,
+        sleep: schedule.sleep,
+        pollSleep: poll.sleep,
+        microphone: MicrophoneGate(inputs: system),
+        micSleep: mic.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+    #expect(await waitUntil { schedule.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(host.calls.contains("run:silent") == false)
+
+    clock.nowAnswers()
+    poll.tick()
+    #expect(await waitUntil { subject.isDeviceOnline })
+    system.nowReports(afterTheMeeting)
+    for _ in 0..<4 {
+        mic.tick()
+        #expect(await waitUntil { mic.parked == 1 })
+    }
+
+    #expect(host.calls.contains("run:silent") == false)
+    await subject.teardown()
+}
+
+// Two connectors, one audible and one not, under the same Focus. The gate is a
+// property of what is being scheduled, not of the app — and this is the shape
+// the shipped app actually runs.
+@Test @MainActor func aFocusSilencesTheSpeakingConnectorAndLeavesTheSilentOneRunning() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let subject = testModel(
+        connectors: [StubConnector(), silentConnector],
+        host: host,
+        sleep: schedule.sleep,
+        focus: FocusGate(status: StubFocusStatus(access: .authorized, isFocused: true))
+    )
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 2 })
+    schedule.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:silent") })
+    #expect(host.calls.contains("run:stub") == false)
+    #expect(subject.nextRun["stub"] == .held(FocusGate.duringFocus))
+    #expect(isDue(subject.nextRun["silent"]))
+    await subject.teardown()
+}
+
 // MARK: - When two of them hold at once
 
 // The order is what the user is told, and until now nothing in the suite ever

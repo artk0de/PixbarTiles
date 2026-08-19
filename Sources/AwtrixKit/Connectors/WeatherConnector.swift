@@ -26,6 +26,13 @@ public struct WeatherConnector: Connector {
     /// The service's own cadence, so a user who never touches the slider polls
     /// a free public API at exactly the rate it updates.
     public let defaultInterval: TimeInterval = OpenMeteoSource.defaultInterval
+    /// Nothing here is heard. The reading is drawn into the device's own loop
+    /// and the sky is a setting on the matrix — no speech, no jingle, nothing
+    /// that reaches the room. So the two quiet rules do not apply to it: a
+    /// Focus and a busy microphone exist to stop the app SPEAKING, and holding
+    /// this connector through the shipped nine-hour window froze the
+    /// temperature on the clock until morning.
+    public let isAudible = false
 
     private let source: OpenMeteoSource
     /// Read on every produce rather than held, so a location typed into the

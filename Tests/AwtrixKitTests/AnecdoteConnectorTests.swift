@@ -540,6 +540,27 @@ private struct SeededGenerator: RandomNumberGenerator {
     #expect(output.jingle == AnecdoteConnector.nokiaJingle)
 }
 
+// The other side of the audibility split, and the reason the protocol's default
+// is `true`: this one speaks, so the quiet rules are exactly what it is for
+// them to hold. Read off the output as well as off the declaration, because a
+// connector that claimed silence and then spoke would speak through a Focus.
+@Test func theAnecdoteConnectorIsAudibleAndSpeaks() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let preparer = AnecdotePreparer(
+        source: makeSource(dialogueFeed), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    _ = try await preparer.refill(target: 1)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    #expect(connector.isAudible)
+
+    let output = try await connector.produce()
+    #expect(output.localAudio.isEmpty == false)
+    #expect(output.jingle != nil)
+}
+
 @Test func connectorPacesTheClipsWithLeadIns() async throws {
     let queue = AnecdoteQueue(
         storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention

@@ -10,15 +10,31 @@ struct StubConnector: Connector {
     let id: String
     let displayName: String
     let defaultInterval: TimeInterval
+    /// Whether the quiet rules apply to this one. Defaulted to the same `true`
+    /// the protocol defaults to, so every test written before a silent
+    /// connector existed poses exactly what it posed then.
+    let isAudible: Bool
 
-    init(id: String = "stub", displayName: String = "Stub", defaultInterval: TimeInterval = 5 * 60) {
+    init(
+        id: String = "stub",
+        displayName: String = "Stub",
+        defaultInterval: TimeInterval = 5 * 60,
+        isAudible: Bool = true
+    ) {
         self.id = id
         self.displayName = displayName
         self.defaultInterval = defaultInterval
+        self.isAudible = isAudible
     }
 
     func produce() async throws -> ConnectorOutput { ConnectorOutput(text: "hello") }
 }
+
+/// A connector shaped like `WeatherConnector`: it draws into the device's own
+/// loop and makes no sound at all.
+let silentConnector = StubConnector(
+    id: "silent", displayName: "Silent", defaultInterval: 900, isAudible: false
+)
 
 // MARK: - Host
 

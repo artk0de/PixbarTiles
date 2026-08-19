@@ -34,6 +34,11 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     private let parkInRun: Gate?
     private let parkInMaintain: Gate?
     private let parkInDeliver: Gate?
+    /// Holds the schedule inside the question it asks before every sleep. The
+    /// shipped host answers it from an actor, so a connector switched off while
+    /// the answer is in flight is a state the real app reaches and a
+    /// straight-through double cannot pose.
+    private let parkInDelay: Gate?
     private let delay: TimeInterval?
     /// How a replay ends. A clock that is not answering is the case the History
     /// has to say something about, and a double that always succeeds cannot
@@ -46,12 +51,14 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
         parkInRun: Gate? = nil,
         parkInMaintain: Gate? = nil,
         parkInDeliver: Gate? = nil,
+        parkInDelay: Gate? = nil,
         delay: TimeInterval? = nil,
         deliverResult: RunResult = .delivered
     ) {
         self.parkInRun = parkInRun
         self.parkInMaintain = parkInMaintain
         self.parkInDeliver = parkInDeliver
+        self.parkInDelay = parkInDelay
         self.delay = delay
         self.deliverResult = deliverResult
     }
@@ -74,6 +81,7 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
 
     func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval {
         lock.withLock { delayCalls += 1 }
+        await parkInDelay?.enter()
         return delay ?? interval
     }
 

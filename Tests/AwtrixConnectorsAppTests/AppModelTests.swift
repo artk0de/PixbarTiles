@@ -892,6 +892,40 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
     #expect(line.contains(where: \.isNumber) == false)
 }
 
+// A row the user has switched off keeps saying so, even when its old schedule
+// is still in the middle of asking how long to wait.
+//
+// The question is asked across an await, and `reschedule` writes `off` and
+// cancels the timer while the answer is in flight. The cancelled turn still
+// comes back and still has a time in its hand, and publishing it there would put
+// an hour on a row that is never going to run — the one label a live clock must
+// not be allowed to overwrite.
+//
+// The metronome is the positive evidence rather than a quiet interval: the
+// resumed turn reaches its sleep, which records the duration it asked for, so
+// the assertion below is made after the dangerous moment has demonstrably
+// passed.
+@Test @MainActor func aConnectorSwitchedOffWhileItsScheduleIsAskingKeepsSayingOff() async {
+    let gate = Gate()
+    let schedule = Metronome()
+    let connector = StubConnector()
+    let subject = testModel(
+        connectors: [connector], host: SpyHost(parkInDelay: gate), sleep: schedule.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { gate.enteredCount == 1 })
+    subject.setEnabled(false, for: connector)
+    #expect(subject.nextRun["stub"] == .held(AppModel.switchedOff))
+
+    gate.open()
+
+    // The turn that was parked has come all the way back and reached its sleep.
+    #expect(await waitUntil { schedule.durations.isEmpty == false })
+    #expect(subject.nextRun["stub"] == .held(AppModel.switchedOff))
+    await subject.teardown()
+}
+
 @Test func nothingScheduledYetNamesNothing() {
     #expect(NextRunLine.text(for: nil) == nil)
 }
@@ -1543,8 +1577,10 @@ private func historyAfterReaping(
     subject.start()
     #expect(await waitUntil { isOffline(subject) })
     #expect(await waitUntil { schedule.parked == 1 })
-    // The label is decided once per turn, before the sleep, so the first one
-    // decided with the poll's answer in hand is the one after this beat.
+    // The beat is kept here rather than needed: the poll refreshes the hold on
+    // its own twenty seconds now, and `anOutageReachesThePanelOnThePollRather
+    // ThanAtTheNextBeat` is the test that says so. What this one still pins is
+    // the words a beat writes when it finds the clock down.
     schedule.tick()
 
     #expect(await waitUntil { subject.nextRun["stub"] == .held(AppModel.deviceUnreachable) })
@@ -1552,6 +1588,62 @@ private func historyAfterReaping(
     #expect(line.isEmpty == false)
     #expect(line.contains(where: \.isNumber) == false)
     await subject.teardown()
+}
+
+// The label the schedule wrote is a snapshot taken up to an interval ago, and
+// the gate behind it moves on its own clock. Before the poll refreshed it, the
+// panel went on naming an hour right through an outage the app had already
+// observed — half an hour of it on the shipped cadence, with the status line one
+// row up saying Disconnected at the same time.
+//
+// The schedule is deliberately NOT ticked after the outage: the only thing that
+// can write the label here is the reachability poll.
+@Test @MainActor func anOutageReachesThePanelOnThePollRatherThanAtTheNextBeat() async {
+    let schedule = Metronome()
+    let poll = Metronome()
+    let clock = SwitchableTransport()
+    let subject = testModel(transport: clock, sleep: schedule.sleep, pollSleep: poll.sleep)
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(await waitUntil { poll.parked == 1 })
+    guard case .due = subject.nextRun["stub"] else {
+        Issue.record("expected a due time, got \(String(describing: subject.nextRun["stub"]))")
+        return
+    }
+
+    clock.nowFails()
+    poll.tick()
+
+    #expect(await waitUntil { subject.nextRun["stub"] == .held(AppModel.deviceUnreachable) })
+    await subject.teardown()
+}
+
+// And back again. A clock that answers again puts a TIME on the panel without
+// waiting for a beat, or the row stays stuck on "clock unreachable" for the rest
+// of the interval while the app is perfectly happy.
+@Test @MainActor func aClockThatComesBackPutsATimeOnThePanelWithoutWaitingForABeat() async {
+    let schedule = Metronome()
+    let poll = Metronome()
+    let clock = SwitchableTransport(answering: false)
+    let subject = testModel(transport: clock, sleep: schedule.sleep, pollSleep: poll.sleep)
+
+    subject.start()
+    #expect(await waitUntil { subject.nextRun["stub"] == .held(AppModel.deviceUnreachable) })
+    #expect(await waitUntil { poll.parked == 1 })
+
+    clock.nowAnswers()
+    poll.tick()
+
+    #expect(await waitUntil { isDue(subject.nextRun["stub"]) })
+    await subject.teardown()
+}
+
+/// Whether the panel is naming a time rather than a reason.
+@MainActor
+func isDue(_ next: NextRun?) -> Bool {
+    if case .due = next { return true }
+    return false
 }
 
 // MARK: - What a replay says for itself

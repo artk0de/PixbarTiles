@@ -322,6 +322,19 @@ final class AppModel: ObservableObject {
     /// moment it ends. A second beat arriving while one is already held inserts
     /// nothing.
     private var heldRuns: Set<String> = []
+    /// When each scheduled connector's loop will next wake, as the turn that
+    /// went to sleep computed it.
+    ///
+    /// Kept apart from the published label, because the two answer different
+    /// questions on different cadences. The due time changes once per turn of
+    /// a schedule — half an hour on the shipped one. What is HOLDING that
+    /// schedule changes on the reachability poll's twenty seconds, on the
+    /// microphone watch's five, and on the wall clock as quiet hours begin and
+    /// end. Folded into one stored label, the slowest of those clocks decided
+    /// all of them: the panel went on naming a microphone that had stopped
+    /// capturing half an hour earlier, after the run it held had already
+    /// played.
+    private var scheduledDue: [String: Date] = [:]
     /// The loop that lets them go.
     private var microphoneWatch: Task<Void, Never>?
     private var iconRemoval: Task<Void, Never>?
@@ -847,6 +860,15 @@ final class AppModel: ObservableObject {
                 // as much as of what.
                 let crossed = await self.monitor.refresh(at: Date())
                 self.isDeviceOnline = self.monitor.isOnline
+                // The clock going down or coming back changes what is holding
+                // every schedule, and this loop is what learns it. Without the
+                // refresh the panel kept naming an hour right through an
+                // outage until the next beat — up to half an hour of a time the
+                // app had no intention of honouring. This turn also stands in
+                // for the wall clock: quiet hours begin and end without any
+                // loop being told, and twenty seconds is close enough for a
+                // label about a nine-hour window.
+                self.refreshScheduleLabels()
                 // Awaited inside the loop rather than detached. The dialog does
                 // not block — it schedules itself — and what is awaited here is
                 // the authorization request, which happens once. A detached task
@@ -875,6 +897,12 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.releaseHeldRuns()
+                // After the release, not before it. The label the run was held
+                // under is only stale once the run has gone out, and this is
+                // the turn that sends it — so the panel stops blaming a
+                // microphone in the same five seconds the anecdote is heard,
+                // rather than at the next beat.
+                self.refreshScheduleLabels()
                 do { try await self.micSleep(Self.microphoneInterval) } catch { return }
             }
         }
@@ -902,6 +930,10 @@ final class AppModel: ObservableObject {
 
     private func reschedule(_ connector: any Connector) {
         timers.removeValue(forKey: connector.id)?.cancel()
+        // Whatever the replaced schedule was going to wake at is not what the
+        // new one will, and a refresh landing between here and the first
+        // `noteNextRun` would otherwise publish the old loop's time.
+        scheduledDue[connector.id] = nil
         let settings = settings(for: connector)
         guard settings.isEnabled else {
             nextRun[connector.id] = .held(Self.switchedOff)
@@ -950,13 +982,43 @@ final class AppModel: ObservableObject {
         // panel is told — naming an hour for a run that will not happen is the
         // failure `.held` exists to avoid, and the user plans around it.
         //
-        // The single writer of this label during a schedule's turn. Written in
-        // the tick's pause branch as well, it would be overwritten by the very
-        // next turn of the loop and the panel would name an hour for the whole
-        // of the sleep that follows.
-        nextRun[id] = scheduleHold.map(NextRun.held)
-            ?? .due(Date().addingTimeInterval(delay))
+        // The single writer of the DUE TIME, and only of that. The hold half of
+        // the label has three other clocks that can change it, and they refresh
+        // it themselves through `publishNextRun` below.
+        scheduledDue[id] = Date().addingTimeInterval(delay)
+        publishNextRun(id)
         return delay
+    }
+
+    /// Writes one connector's line from what is true now.
+    ///
+    /// The single place `nextRun` is written for a connector that has a
+    /// schedule, so the label cannot disagree with itself depending on which of
+    /// the three loops last ticked. A hold outranks the time, because a time
+    /// named while something is in force is the lie the user plans around.
+    ///
+    /// A connector with no timer is one the user switched off, and that line
+    /// belongs to `reschedule`: it is the only state a live clock cannot
+    /// change, and overwriting it here would put an hour back on a row the user
+    /// has turned off.
+    private func publishNextRun(_ id: String) {
+        guard timers[id] != nil else { return }
+        if let hold = scheduleHold {
+            nextRun[id] = .held(hold)
+        } else if let due = scheduledDue[id] {
+            nextRun[id] = .due(due)
+        }
+    }
+
+    /// Brings every scheduled connector's line up to date with the gates.
+    ///
+    /// Called from the two loops that already turn faster than a schedule does
+    /// — the reachability poll at twenty seconds and the microphone watch at
+    /// five — rather than from a clock of its own. Nothing here runs a
+    /// connector or touches a gate's decision; it only re-reads the answer the
+    /// panel is showing.
+    private func refreshScheduleLabels() {
+        for id in timers.keys { publishNextRun(id) }
     }
 
     /// Whether the clock has been asked and did not answer.

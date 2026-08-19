@@ -311,6 +311,71 @@ import Testing
     await subject.teardown()
 }
 
+// What the panel blames, once the microphone has stopped. The reason was written
+// once per turn of the SCHEDULE — half an hour on the shipped cadence — so the
+// row went on naming a microphone that had gone quiet long before, and it did so
+// AFTER the run it held had already played. The watch loop that releases the run
+// is the one that clears the words.
+//
+// The schedule is deliberately not ticked after the meeting, so nothing but the
+// watch loop can have written either the run or the label.
+@Test @MainActor func theHeldReasonLeavesThePanelWhenTheMicrophoneGoesQuiet() async {
+    let host = SpyHost()
+    let schedule = Metronome()
+    let mic = Metronome()
+    let system = StubAudioInputs(duringAMeeting)
+    let subject = testModel(
+        host: host,
+        sleep: schedule.sleep,
+        microphone: MicrophoneGate(inputs: system),
+        micSleep: mic.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(await waitUntil { mic.parked == 1 })
+    schedule.tick()
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(subject.nextRun["stub"] == .held(MicrophoneGate.inUse(Inputs.builtIn.name)))
+
+    system.nowReports(afterTheMeeting)
+    mic.tick()
+
+    #expect(await waitUntil { host.calls.contains("run:stub") })
+    #expect(await waitUntil { isDue(subject.nextRun["stub"]) })
+    await subject.teardown()
+}
+
+// The other direction, and the one that makes the refresh a fix rather than a
+// race: a microphone that starts capturing between beats is named on the panel
+// before the beat it will hold. Without it the row promised an hour it had
+// already decided not to honour.
+@Test @MainActor func aMicrophoneThatStartsCapturingIsNamedBeforeTheBeatItHolds() async {
+    let schedule = Metronome()
+    let mic = Metronome()
+    let system = StubAudioInputs(afterTheMeeting)
+    let subject = testModel(
+        sleep: schedule.sleep,
+        microphone: MicrophoneGate(inputs: system),
+        micSleep: mic.sleep
+    )
+
+    subject.start()
+    #expect(await waitUntil { schedule.parked == 1 })
+    #expect(await waitUntil { mic.parked == 1 })
+    #expect(isDue(subject.nextRun["stub"]))
+
+    system.nowReports(duringAMeeting)
+    mic.tick()
+
+    #expect(
+        await waitUntil {
+            subject.nextRun["stub"] == .held(MicrophoneGate.inUse(Inputs.builtIn.name))
+        }
+    )
+    await subject.teardown()
+}
+
 // A two-hour meeting must not queue four anecdotes and fire them in a burst the
 // moment it ends. Four beats go by held; exactly one run comes out.
 @Test @MainActor func atMostOneRunIsHeldAcrossALongMeeting() async {

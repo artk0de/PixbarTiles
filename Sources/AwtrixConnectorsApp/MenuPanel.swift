@@ -124,29 +124,36 @@ enum DeviceHostField {
 /// wrong quietly: rename the id and the match stops matching, the row comes
 /// back, and nothing anywhere says so.
 ///
-/// The question is `isAudible`, and it is the honest one rather than the
-/// convenient one. A row carries a switch and a "Run now", and both are about
-/// something that INTERRUPTS: a connector whose outputs can be heard is one you
-/// want to trigger on demand and to silence in a hurry. A connector that says
-/// nothing draws into the device's own loop and is on the matrix already — its
-/// "Run now" repaints a value that is on screen, and its switch is a setting,
-/// which is what the gear is for. That is the same split `isAudible` was
-/// declared for: the quiet rules exist to stop the app SPEAKING, and the thing
-/// they do not apply to is exactly the thing this panel is not for.
+/// The question is `isAmbient`, and it is a question about the connector rather
+/// than about this panel. An ambient connector keeps a value fresh in the
+/// device's own loop: it is on the matrix already, so its "Run now" repaints
+/// what is on screen, and its switch is a setting, which is what the gear is
+/// for. Nothing to trigger and nothing to witness, which is the two things a
+/// row is made of.
 ///
-/// The rejected alternative was a second property — `showsOnThePanel`, or
-/// `isRunnableByHand` — declared beside `isAudible`. Two flags about one
-/// connector can disagree, and nothing would notice: a connector declaring
-/// itself silent and panel-worthy would get a row whose switch no quiet rule
-/// applies to. It would also put a menu bar's layout into `Connector`, which is
-/// a source of content in a kit that has never heard of a panel.
+/// This filtered on `isAudible` before, and that argument is worth keeping in
+/// view rather than deleting: one flag cannot disagree with itself, and two
+/// flags about one connector can drift apart with nothing anywhere to notice.
+/// What overturned it is the work already asked for. Slack, calendar meetings
+/// and GitHub stars are all coming in silent — nothing but the anecdotes is
+/// ever spoken — and all three are precisely what somebody opens this panel to
+/// fire by hand. Filtering on audibility would have hidden every one of them,
+/// and hidden them quietly. A drifted pair costs a row a reader can see and
+/// argue with; the reused flag costs three connectors that vanish. Being
+/// silent was never the reason the weather leaves — it is a consequence of
+/// what the weather is, and the panel now asks about that instead.
 ///
-/// The default direction carries over unchanged: `isAudible` defaults to
-/// `true`, so a connector that declares nothing keeps its row. Only a connector
-/// that has said out loud that it cannot be heard loses one.
+/// The other half of the old argument does still stand, and it is why the
+/// property is not called `showsOnThePanel` or `isRunnableByHand`: a menu bar's
+/// layout has no business inside `Connector`. `isAmbient` describes the
+/// connector, and that this view happens to read it is this view's business.
+///
+/// The default direction inverts with the property, to the same end: `isAmbient`
+/// defaults to `false`, so a connector that declares nothing still keeps its
+/// row, and only one that has said out loud that it is ambient loses one.
 enum PanelRows {
     static func drawn(from connectors: [any Connector]) -> [any Connector] {
-        connectors.filter(\.isAudible)
+        connectors.filter { $0.isAmbient == false }
     }
 }
 

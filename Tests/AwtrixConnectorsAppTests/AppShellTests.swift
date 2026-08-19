@@ -155,7 +155,7 @@ private func scratchStore() -> URL {
 // And of the two it registers, only the anecdotes are offered a row. The rule
 // is `PanelRows`, applied here to the connectors the app ACTUALLY ships rather
 // than to a pair made up for the test: `thePanelDrawsNoRowForAConnectorThat
-// SaysNothing` proves the rule reaches the screen, and this proves the shipped
+// IsAmbient` proves the rule reaches the screen, and this proves the shipped
 // weather is on the wrong side of it while the shipped anecdotes stay on the
 // right one.
 //

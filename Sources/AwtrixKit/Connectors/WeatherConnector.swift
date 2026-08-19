@@ -34,6 +34,21 @@ public struct WeatherConnector: Connector {
     /// temperature on the clock until morning.
     public let isAudible = false
 
+    /// Ambient, and this is the property the panel reads. The reading is kept
+    /// fresh in the device's own loop, which means it is on the matrix already:
+    /// there is nothing here to trigger — running it by hand asks the sky for
+    /// the same number a quarter of an hour early — and nothing to witness,
+    /// because the result of a poll IS what the clock is showing. A row would
+    /// carry a "Run now" that repaints what is on screen and a switch that is a
+    /// setting, which is what the gear is for.
+    ///
+    /// A separate claim from `isAudible` above rather than a restatement of it.
+    /// That one is about the room and answers the Focus and the microphone;
+    /// this one is about the panel. Silence happens to follow from being
+    /// ambient here, but it does not run the other way: the connectors coming
+    /// next are silent WITHOUT being ambient, and they keep their rows.
+    public let isAmbient = true
+
     private let source: OpenMeteoSource
     /// Read on every produce rather than held, so a location typed into the
     /// settings takes effect at the next poll instead of at the next launch.

@@ -530,32 +530,62 @@ private func drawnEntry(
 
 // MARK: - Which connectors get a row
 
-// The panel answers "is the clock alive, and run something now". A connector
-// that says nothing answers neither: it is already drawn in the device's own
-// loop, so "Run now" repaints a value that is on screen already, and there is
-// nothing to switch off in a hurry.
+// The panel answers "is the clock alive, and run something now". An ambient
+// connector answers neither: it keeps a value fresh in the device's own loop,
+// so "Run now" repaints what is on screen already, and its switch is a setting
+// rather than something to reach for in a hurry.
 //
 // Three models rather than two, and the third is what makes the first
 // comparison mean anything: without it, a panel that had stopped drawing
 // connector rows AT ALL would satisfy the equality. The two added connectors
 // are alike in everything the row draws — same displayed name, same interval,
 // so the same slider position and the same label — and differ only in whether
-// they declare themselves audible.
-@Test @MainActor func thePanelDrawsNoRowForAConnectorThatSaysNothing() {
+// they declare themselves ambient.
+@Test @MainActor func thePanelDrawsNoRowForAConnectorThatIsAmbient() {
     let alone = testModel(connectors: [StubConnector()])
-    let andASilentOne = testModel(connectors: [StubConnector(), silentConnector])
-    let andAnAudibleOne = testModel(
+    let andAnAmbientOne = testModel(connectors: [StubConnector(), ambientConnector])
+    let andANonAmbientOne = testModel(
         connectors: [
             StubConnector(),
-            StubConnector(id: "second", displayName: "Silent", defaultInterval: 900),
+            StubConnector(id: "second", displayName: "Ambient", defaultInterval: 900),
         ]
     )
 
     let oneRow = drawn(alone)
 
     #expect(oneRow != nil)
-    #expect(drawn(andASilentOne) == oneRow)
-    #expect(drawn(andAnAudibleOne) != oneRow)
+    #expect(drawn(andAnAmbientOne) == oneRow)
+    #expect(drawn(andANonAmbientOne) != oneRow)
+}
+
+// And being silent, on its own, costs a connector nothing. The three connectors
+// already asked for — Slack, calendar meetings, GitHub stars — are every one of
+// them silent, because the standing rule is that nothing but the anecdotes is
+// ever spoken, and every one of them is something a person opens the panel to
+// fire by hand. This is that case in miniature: a connector that says nothing
+// and is not ambient keeps its row.
+//
+// The audible twin is what makes the inequality mean a ROW rather than any
+// difference at all. It is alike in everything a row draws — same displayed
+// name, same interval, so the same label and the same slider position — and
+// differs only in declaring itself audible, so the two panels are the same
+// pixels. Without it, a silent connector drawn as a greyed-out stub would
+// satisfy the inequality just as well.
+@Test @MainActor func thePanelDrawsARowForAConnectorThatIsSilentButNotAmbient() {
+    let alone = testModel(connectors: [StubConnector()])
+    let andASilentOne = testModel(connectors: [StubConnector(), silentConnector])
+    let andAnAudibleTwin = testModel(
+        connectors: [
+            StubConnector(),
+            StubConnector(id: "twin", displayName: "Silent", defaultInterval: 900),
+        ]
+    )
+
+    let oneRow = drawn(alone)
+
+    #expect(oneRow != nil)
+    #expect(drawn(andASilentOne) != oneRow)
+    #expect(drawn(andASilentOne) == drawn(andAnAudibleTwin))
 }
 
 // A menu bar window dismisses when it loses focus and takes any sheet over it

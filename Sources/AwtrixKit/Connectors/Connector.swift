@@ -119,6 +119,32 @@ public protocol Connector: Sendable {
     /// a clock that is not answering cannot receive a drawing any more than it
     /// can receive a banner.
     var isAudible: Bool { get }
+    /// Whether this connector only keeps a value fresh, with nothing to trigger
+    /// and nothing to witness.
+    ///
+    /// The weather is the one that is: it draws a reading into the device's own
+    /// loop, so the number is on the matrix already and running it by hand asks
+    /// the sky for the same number a quarter of an hour early. A menu bar panel
+    /// is opened to answer "is the clock alive, and run something now", and an
+    /// ambient connector answers neither.
+    ///
+    /// A separate claim from `isAudible`, and the separation is paid for. The
+    /// panel filtered on `isAudible` first, and that reasoning was sound as far
+    /// as it went: one flag cannot disagree with itself, two can drift apart
+    /// with nothing anywhere to notice, and a connector calling itself silent
+    /// and non-ambient gets a row whose switch no quiet rule applies to. What
+    /// outweighed it is the connectors already asked for. Slack, calendar
+    /// meetings and GitHub stars are all silent — nothing but the anecdotes is
+    /// ever spoken — and all three are exactly what somebody opens the panel to
+    /// fire by hand. Reading audibility would have hidden every one of them,
+    /// and hidden them quietly. A drifted pair costs one row a reader can see
+    /// and argue with; the reused flag costs three connectors that vanish.
+    ///
+    /// Being quiet is a CONSEQUENCE of being ambient rather than the reason for
+    /// it, which is why this is not the same sentence twice. `isAudible` goes on
+    /// answering its own question untouched: it is what a Focus and a busy
+    /// microphone are asked before a run is held.
+    var isAmbient: Bool { get }
     func produce() async throws -> ConnectorOutput
 }
 
@@ -136,4 +162,20 @@ extension Connector {
     /// you could have spoken is recoverable; the other way round is what wakes
     /// somebody up.
     public var isAudible: Bool { true }
+
+    /// What a connector that does not answer is assumed to be, and the
+    /// direction is the OPPOSITE of `isAudible`'s just above. That is not an
+    /// oversight: both defaults take the recoverable mistake, and the
+    /// recoverable mistake points opposite ways. A connector wrongly assumed
+    /// audible is held through a Focus it had nothing to say in — quiet when it
+    /// could have spoken, and nobody is woken up. A connector wrongly assumed
+    /// ambient has no row: no switch, no "Run now", no last result, and nothing
+    /// anywhere saying why. A row nobody wanted is a nuisance in plain sight
+    /// that somebody removes; a connector that quietly vanishes is a bug nobody
+    /// thinks to report.
+    ///
+    /// So a connector written before this existed, and any written after it
+    /// that says nothing, keeps its row. Only one that has declared itself
+    /// ambient out loud loses one.
+    public var isAmbient: Bool { false }
 }

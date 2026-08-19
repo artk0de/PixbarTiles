@@ -14,26 +14,49 @@ struct StubConnector: Connector {
     /// the protocol defaults to, so every test written before a silent
     /// connector existed poses exactly what it posed then.
     let isAudible: Bool
+    /// Whether this one only keeps a value fresh. Defaulted to the same `false`
+    /// the protocol defaults to, so every test written before an ambient
+    /// connector existed still poses a connector the panel draws a row for.
+    let isAmbient: Bool
 
     init(
         id: String = "stub",
         displayName: String = "Stub",
         defaultInterval: TimeInterval = 5 * 60,
-        isAudible: Bool = true
+        isAudible: Bool = true,
+        isAmbient: Bool = false
     ) {
         self.id = id
         self.displayName = displayName
         self.defaultInterval = defaultInterval
         self.isAudible = isAudible
+        self.isAmbient = isAmbient
     }
 
     func produce() async throws -> ConnectorOutput { ConnectorOutput(text: "hello") }
 }
 
-/// A connector shaped like `WeatherConnector`: it draws into the device's own
-/// loop and makes no sound at all.
+/// A connector that makes no sound at all, and claims nothing beyond that.
+///
+/// The shape the next connectors have — Slack, calendar meetings, GitHub stars
+/// — so it keeps its panel row. What it is FOR is the quiet rules, which are
+/// asked of audibility alone.
 let silentConnector = StubConnector(
     id: "silent", displayName: "Silent", defaultInterval: 900, isAudible: false
+)
+
+/// A connector shaped like `WeatherConnector`: it keeps a value fresh in the
+/// device's own loop, so there is nothing to trigger AND nothing to hear.
+///
+/// Two declarations rather than one, because they are two claims read by two
+/// different things: the panel asks whether it is ambient, and the Focus and
+/// the microphone ask whether it can be heard.
+let ambientConnector = StubConnector(
+    id: "ambient",
+    displayName: "Ambient",
+    defaultInterval: 900,
+    isAudible: false,
+    isAmbient: true
 )
 
 // MARK: - Host

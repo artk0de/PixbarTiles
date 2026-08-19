@@ -1,0 +1,180 @@
+import Foundation
+
+/// Where the clock is.
+///
+/// A pair the user types rather than a place the app asks for. A desk clock
+/// does not travel, so the coordinates are set once; and demanding location
+/// access on first launch of a menu bar toy is how an app gets denied
+/// everything, including the permissions it actually needs.
+public struct Coordinates: Sendable, Equatable, Codable {
+    public let latitude: Double
+    public let longitude: Double
+
+    public init(latitude: Double, longitude: Double) {
+        self.latitude = latitude
+        self.longitude = longitude
+    }
+}
+
+/// What the sky is doing right now, as Open-Meteo reports it.
+public struct WeatherReading: Sendable, Equatable {
+    /// A WMO present-weather code. `WeatherTheme` is what turns it into
+    /// something the clock can draw.
+    public let code: Int
+    /// Whether the sun is up where the clock is. Arrives as 1 or 0 rather than
+    /// as a JSON boolean.
+    public let isDay: Bool
+    /// Degrees Celsius.
+    public let temperature: Double
+    /// Millimetres in the last hour.
+    public let precipitation: Double
+    /// Kilometres per hour.
+    public let windSpeed: Double
+    /// How often the service says this value changes — 900 seconds live.
+    ///
+    /// Carried on the reading rather than assumed, because it is the poll
+    /// cadence: this is a free public service and the weather does not move
+    /// faster than its own updates.
+    public let interval: TimeInterval
+
+    public init(
+        code: Int, isDay: Bool, temperature: Double, precipitation: Double,
+        windSpeed: Double, interval: TimeInterval
+    ) {
+        self.code = code
+        self.isDay = isDay
+        self.temperature = temperature
+        self.precipitation = precipitation
+        self.windSpeed = windSpeed
+        self.interval = interval
+    }
+}
+
+public enum WeatherError: Error, Sendable, Equatable {
+    case invalidLocation(Coordinates)
+    case http(status: Int)
+}
+
+extension WeatherError: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case let .invalidLocation(place):
+            return "invalid location: \(place.latitude), \(place.longitude)"
+        case let .http(status):
+            return "open-meteo -> HTTP \(status)"
+        }
+    }
+}
+
+extension WeatherError: LocalizedError {
+    /// Routed to `description` for the reason `AwtrixError`'s is: whoever has
+    /// to render an arbitrary `Error` reaches for `localizedDescription`, and
+    /// the default there names an enum case number.
+    public var errorDescription: String? { description }
+}
+
+/// The current weather, from a service that needs no key, no signup and no
+/// dependency — a plain GET returning the WMO code and the readings beside it.
+///
+/// An actor because it remembers its last answer. The remembering is the point:
+/// the schedule's interval belongs to the user, who may drag it down to a
+/// minute, and this must not turn that into a request a minute against a free
+/// public API for a value that changes every fifteen.
+public actor OpenMeteoSource {
+    /// The floor a first call uses, before there is a response to read the real
+    /// cadence off. The live service answers 900.
+    public static let defaultInterval: TimeInterval = 900
+
+    public static let endpoint = "https://api.open-meteo.com/v1/forecast"
+
+    /// The five fields the request asks for, verified against the live service.
+    public static let fields =
+        "weather_code,is_day,precipitation,temperature_2m,wind_speed_10m"
+
+    private let transport: any Transport
+    /// Injected so a test can step over a quarter of an hour rather than wait
+    /// one out. The shipped value is the only one that reads the clock.
+    private let now: @Sendable () -> Date
+    /// The last answer, when it was given, and what it was about.
+    ///
+    /// The place is part of it. The coordinates are a setting the user can
+    /// edit, and a cache that ignored them would go on answering about the
+    /// place they just left for the whole of an interval.
+    private var cached: (reading: WeatherReading, at: Date, of: Coordinates)?
+
+    public init(transport: any Transport, now: @escaping @Sendable () -> Date = Date.init) {
+        self.transport = transport
+        self.now = now
+    }
+
+    /// What the sky is doing at these coordinates, fetching only when the last
+    /// answer has aged past the cadence that answer itself declared.
+    public func reading(at place: Coordinates) async throws -> WeatherReading {
+        if let cached, cached.of == place,
+            now().timeIntervalSince(cached.at) < cached.reading.interval {
+            return cached.reading
+        }
+
+        let reading = try await fetch(place)
+        // Written only on success, so one outage is not served as the weather
+        // for the whole of the next interval.
+        cached = (reading, now(), place)
+        return reading
+    }
+
+    private func fetch(_ place: Coordinates) async throws -> WeatherReading {
+        var components = URLComponents(string: Self.endpoint)
+        components?.queryItems = [
+            URLQueryItem(name: "latitude", value: String(place.latitude)),
+            URLQueryItem(name: "longitude", value: String(place.longitude)),
+            URLQueryItem(name: "current", value: Self.fields),
+        ]
+        guard let url = components?.url else { throw WeatherError.invalidLocation(place) }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        let (data, response) = try await transport.send(request)
+        guard (200..<300).contains(response.statusCode) else {
+            throw WeatherError.http(status: response.statusCode)
+        }
+        return try JSONDecoder().decode(Forecast.self, from: data).reading
+    }
+}
+
+/// The response, as the service shapes it: everything under a `current` object
+/// that carries its own update interval beside the readings.
+private struct Forecast: Decodable {
+    let current: Current
+
+    struct Current: Decodable {
+        let code: Int
+        let isDay: Int
+        let temperature: Double
+        let precipitation: Double
+        let windSpeed: Double
+        /// Optional so a response that stops carrying it reads as "use the
+        /// floor" rather than as a malformed answer — the cadence is a courtesy
+        /// of the service, not a reading.
+        let interval: TimeInterval?
+
+        private enum CodingKeys: String, CodingKey {
+            case interval
+            case code = "weather_code"
+            case isDay = "is_day"
+            case temperature = "temperature_2m"
+            case precipitation
+            case windSpeed = "wind_speed_10m"
+        }
+    }
+
+    var reading: WeatherReading {
+        WeatherReading(
+            code: current.code,
+            isDay: current.isDay != 0,
+            temperature: current.temperature,
+            precipitation: current.precipitation,
+            windSpeed: current.windSpeed,
+            interval: current.interval ?? OpenMeteoSource.defaultInterval
+        )
+    }
+}

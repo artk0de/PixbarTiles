@@ -28,6 +28,20 @@ public enum IconReference: Sendable, Equatable {
     case catalogue(Int)
 }
 
+/// Where an output is drawn on the clock.
+///
+/// Two surfaces, and they are not settings of one thing. A notification
+/// interrupts whatever the loop is showing and then goes away; an app IS the
+/// loop, and stays there until it is replaced or removed. An anecdote is an
+/// interruption; the weather is ambient and should be there when you glance at
+/// the clock. The two coexist without arbitration — a notification draws over
+/// the loop, which is exactly what it is for.
+public enum DeliverySurface: Sendable, Equatable {
+    case notification
+    /// An app in the device's own loop, under this name.
+    case app(String)
+}
+
 public struct ConnectorOutput: Sendable, Equatable {
     public var text: String
     public var icon: IconReference?
@@ -39,6 +53,17 @@ public struct ConnectorOutput: Sendable, Equatable {
     public var holdUntilAudioEnds: Bool
     public var duration: Int?
     public var color: String?
+    /// Where this is drawn. Defaulted to the notification, which is what every
+    /// output was before there was a choice.
+    public var surface: DeliverySurface
+    /// The device-wide weather layer this output wants, or nil to leave
+    /// whatever is on the device alone.
+    ///
+    /// Carried on the output rather than written by the connector, because a
+    /// connector produces and returns and never talks to the device. It is
+    /// global state with one borrower and a value to put back afterwards, which
+    /// is `DeviceCustody`'s job and not a producer's.
+    public var overlay: DeviceOverlay?
 
     public init(
         text: String,
@@ -47,7 +72,9 @@ public struct ConnectorOutput: Sendable, Equatable {
         localAudio: [SpokenClip] = [],
         holdUntilAudioEnds: Bool = false,
         duration: Int? = nil,
-        color: String? = nil
+        color: String? = nil,
+        surface: DeliverySurface = .notification,
+        overlay: DeviceOverlay? = nil
     ) {
         self.text = text
         self.icon = icon
@@ -56,6 +83,8 @@ public struct ConnectorOutput: Sendable, Equatable {
         self.holdUntilAudioEnds = holdUntilAudioEnds
         self.duration = duration
         self.color = color
+        self.surface = surface
+        self.overlay = overlay
     }
 }
 

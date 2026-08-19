@@ -91,6 +91,11 @@ private func fields(in view: NSView) -> [String] {
     return found
 }
 
+/// What the location box holds on a launch nobody has typed into. Every model
+/// here gets a defaults suite of its own, so it is always the shipped default.
+@MainActor
+private var seededLocation: String { LocationField.text(for: .default) }
+
 @MainActor
 private func panelFields(deviceHost: String) -> [String] {
     let browsing = FakeBonjourBrowser()
@@ -123,13 +128,13 @@ private func panelFields(deviceHost: String) -> [String] {
 
     model.typedHost = "10.0.0.9"
 
-    #expect(fields(in: hosted(SettingsSheet(model: model))) == ["10.0.0.9"])
+    #expect(fields(in: hosted(SettingsSheet(model: model))) == ["10.0.0.9", seededLocation])
     #expect(model.deviceHost == "192.168.1.72")
 }
 
 @Test @MainActor func theAddressThisLaunchUsesIsInTheFieldInTheSettings() {
-    #expect(settingsFields(deviceHost: "192.168.1.72") == ["192.168.1.72"])
-    #expect(settingsFields(deviceHost: "10.0.0.9") == ["10.0.0.9"])
+    #expect(settingsFields(deviceHost: "192.168.1.72") == ["192.168.1.72", seededLocation])
+    #expect(settingsFields(deviceHost: "10.0.0.9") == ["10.0.0.9", seededLocation])
 }
 
 // A browse that cannot run has to look different from a network with nothing
@@ -266,7 +271,7 @@ private func panelControls(_ model: AppModel) -> [String] {
 }
 
 @Test @MainActor func theSettingsHoldTheAddressFieldAndTheIconAction() async {
-    #expect(settingsFields(deviceHost: "10.0.0.5") == ["10.0.0.5"])
+    #expect(settingsFields(deviceHost: "10.0.0.5") == ["10.0.0.5", seededLocation])
 
     let quiet = testModel(deviceHost: "10.0.0.5")
     let reported = testModel(deviceHost: "10.0.0.5")
@@ -305,7 +310,7 @@ private func panelControls(_ model: AppModel) -> [String] {
 
     model.openSettings()
 
-    #expect(panelControls(model) == ["10.0.0.5"])
+    #expect(panelControls(model) == ["10.0.0.5", seededLocation])
 
     model.closeSettings()
 
@@ -853,4 +858,92 @@ private func openSettings(
     #expect(all.microphoneListing.count == 4)
     #expect(everything != nil)
     #expect(everything != drawn(onlyWatched))
+}
+
+// MARK: - Where the weather is read from
+
+/// The weather section alone, as pixels.
+///
+/// The SECTION rather than the whole settings surface, and the reason is
+/// measured: laying the surface out costs 57 ms of synchronous main-actor work,
+/// mostly the two 24-hour pickers, and this file already spends that budget
+/// seventeen times over. Drawing what the test is about costs 5 ms and says the
+/// same thing. That the section is ON the settings surface is a separate claim,
+/// proved by reading the location box off the control tree above.
+@MainActor
+private func drawnSettings(_ model: AppModel) -> Data? {
+    bitmap(hosted(WeatherSettings(model: model)))?.representation(using: .png, properties: [:])
+}
+
+// The field is read off the control by `theSettingsHoldTheAddressFieldAndThe
+// IconAction`, which names both boxes. What that cannot say is that the ANSWER
+// to what was typed is drawn: a note computed and never rendered leaves
+// somebody typing nonsense into a box that accepts it silently.
+@Test @MainActor func whatTheLocationFieldSaysAboutWhatWasTypedIsDrawn() {
+    let quiet = testModel(deviceHost: "10.0.0.5")
+    let answered = testModel(deviceHost: "10.0.0.5")
+
+    answered.typedLocation = "52.52, 13.405"
+
+    // Bound rather than re-rendered per expectation: laying this surface out
+    // costs 57 ms of synchronous main-actor work, measured, and every
+    // millisecond of it is taken out of the budget of whatever poll is waiting
+    // beside it.
+    let before = drawnSettings(quiet)
+    let after = drawnSettings(answered)
+
+    #expect(quiet.locationNote == nil)
+    #expect(answered.locationNote == LocationField.takesEffectAtTheNextPoll)
+    #expect(before != nil)
+    #expect(before != after)
+}
+
+// And a refusal has to look different from a save, or the box accepts nonsense
+// with the same reassuring line under it.
+@Test @MainActor func aRefusedLocationLooksDifferentFromASavedOne() {
+    let saved = testModel(deviceHost: "10.0.0.5")
+    let refused = testModel(deviceHost: "10.0.0.5")
+
+    saved.typedLocation = "52.52, 13.405"
+    refused.typedLocation = "somewhere warm"
+
+    let accepted = drawnSettings(saved)
+    let rejected = drawnSettings(refused)
+
+    #expect(refused.locationNote == LocationField.unreadable)
+    #expect(accepted != nil)
+    #expect(accepted != rejected)
+}
+
+// `OVERLAY` is one device-wide setting rather than something scoped to an app,
+// so a user who sets one by hand while the weather connector is on will see it
+// replaced. That is a documented consequence when the settings say so, and a
+// bug in the firmware when they do not.
+//
+// The words are checked here; that the standing sentence is DRAWN is on the
+// list only a person can check, as "the gear opens the settings" is. SwiftUI
+// backs a `Text` with no control and builds no accessibility tree outside a
+// window — measured — so the only instrument left is a pixel comparison, and
+// a sentence that is always on the surface cannot differ from itself.
+@Test @MainActor func theSettingsSayThatTheOverlayIsSharedWithTheWholeDevice() {
+    let said = WeatherSettings.overlayIsSharedWithTheDevice
+
+    #expect(said.contains("overlay"))
+    #expect(said.contains("device-wide"))
+    #expect(said.contains("by hand"))
+    #expect(said.contains("replaced"))
+    // And that it comes back, which is the half a user cannot see for
+    // themselves until they quit.
+    #expect(said.contains("put back"))
+}
+
+// The connector ships switched ON, so the first launch takes the device-wide
+// overlay without anybody asking for it. That is the design; discovering it
+// from the clock is not.
+@Test @MainActor func theSettingsSayTheWeatherIsOnFromTheFirstLaunch() {
+    let said = WeatherSettings.weatherStartsSwitchedOn
+
+    #expect(said.contains("first launch"))
+    // And where to go to stop it, or the warning is one a reader cannot act on.
+    #expect(said.contains("Switch it off"))
 }

@@ -57,6 +57,12 @@ public actor ConnectorHost {
     private let audio: any AudioPlaying
     private let iconInstaller: any IconInstalling
     private let retryPolicy: RetryPolicy
+    /// What this app has borrowed or added on the device, and how to give it
+    /// back. Here rather than on a connector, because a connector produces and
+    /// returns and never talks to the device — and because the overlay it
+    /// borrows is global, so the record of it belongs beside the device rather
+    /// than beside any one producer.
+    private let custody: DeviceCustody
 
     /// The last delivery to have claimed a place. Deliveries run one at a time
     /// by waiting on it — see `queued(_:)` for how, and `runOnce(connectorId:)`
@@ -83,6 +89,25 @@ public actor ConnectorHost {
         self.audio = audio
         self.iconInstaller = iconInstaller
         self.retryPolicy = retryPolicy
+        self.custody = DeviceCustody(device: device)
+    }
+
+    /// Puts back the device-wide state this app borrowed.
+    ///
+    /// - Parameter connectorId: only what this connector took, or nil for
+    ///   everything outstanding — which is what a quit wants.
+    ///
+    /// Deliberately NOT on the delivery chain. It is what a quit runs after
+    /// everything else has been cancelled and awaited, and queueing it behind a
+    /// delivery that is being torn down would be waiting for the one thing that
+    /// is already over.
+    ///
+    /// The outcome is not reported, and there is nowhere for it to go: on quit
+    /// there is nobody left to tell, and on a connector switched off the row
+    /// already says so. A failure is not swallowed either — `DeviceCustody`
+    /// keeps what it could not give back, so the next restore still knows.
+    public func restoreDeviceState(borrowedBy connectorId: String?) async {
+        try? await custody.restore(borrowedBy: connectorId)
     }
 
     /// How many deliveries this connector has failed in a row.
@@ -205,7 +230,7 @@ public actor ConnectorHost {
     /// direction. There is no connector id to record against, and that is the
     /// point rather than an omission.
     public func deliver(_ output: ConnectorOutput) async -> RunResult {
-        await queued { [self] in await send(output) }
+        await queued { [self] in await send(output, from: nil) }
     }
 
     /// Takes a place in the delivery chain, waits for whatever is ahead, and
@@ -282,17 +307,27 @@ public actor ConnectorHost {
     /// would put a whole batch of synthesis in front of the run behind it.
     private func produceAndSend(_ connector: any Connector) async -> RunResult {
         do {
-            return await send(try await connector.produce())
+            return await send(try await connector.produce(), from: connector.id)
         } catch {
             return classify(error)
         }
     }
 
-    private func send(_ output: ConnectorOutput) async -> RunResult {
+    /// - Parameter connectorId: who this output is for, or nil on the replay
+    ///   path, which has no connector to be for. Only a run can borrow device
+    ///   state, because only a run has somebody to give it back on behalf of.
+    private func send(_ output: ConnectorOutput, from connectorId: String?) async -> RunResult {
         do {
             var iconName: String?
             if let icon = output.icon {
                 iconName = try await iconInstaller.ensureInstalled(icon)
+            }
+
+            // The backdrop before the reading. The overlay draws over
+            // everything on screen, so setting it after the app has appeared is
+            // a visible flicker of the old weather under the new number.
+            if let wanted = output.overlay, let connectorId {
+                try await custody.apply(wanted, for: connectorId)
             }
 
             // Held only when there is audio whose end can release it. `hold`
@@ -300,20 +335,43 @@ public actor ConnectorHost {
             // below is the only thing that will — so holding with nothing to
             // play leaves the clock stuck on that banner until somebody walks
             // over and presses the middle button.
+            //
+            // An app in the loop is never held: there is no banner over
+            // anything, and nothing to dismiss.
             let holding = output.holdUntilAudioEnds && !output.localAudio.isEmpty
-            try await device.notify(
-                NotifyPayload(
-                    text: output.text,
-                    icon: iconName,
-                    duration: output.duration,
-                    color: output.color,
-                    rtttl: output.jingle,
-                    hold: holding ? true : nil,
-                    // The icon travels with the text and comes back, rather
-                    // than sitting still or scrolling away for good.
-                    pushIcon: 2
+                && output.surface == .notification
+            switch output.surface {
+            case .notification:
+                try await device.notify(
+                    NotifyPayload(
+                        text: output.text,
+                        icon: iconName,
+                        duration: output.duration,
+                        color: output.color,
+                        rtttl: output.jingle,
+                        hold: holding ? true : nil,
+                        // The icon travels with the text and comes back, rather
+                        // than sitting still or scrolling away for good.
+                        pushIcon: 2
+                    )
                 )
-            )
+            case let .app(name):
+                // Through custody rather than straight to the device, because
+                // an app added to the loop stays in it: something has to know
+                // to take it out again.
+                try await custody.show(
+                    AppPayload(
+                        text: output.text, icon: iconName,
+                        color: output.color, duration: output.duration
+                    ),
+                    named: name,
+                    // Falling back to the app's own name rather than skipping
+                    // the record: an output delivered outside a run has no
+                    // connector to be given back on behalf of, but it is still
+                    // in the loop and a quit still has to take it out.
+                    for: connectorId ?? name
+                )
+            }
 
             // Strictly after the banner: the banner is the only thing standing
             // in for the speech on a clock that cannot decode audio, and a

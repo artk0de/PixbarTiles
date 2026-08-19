@@ -23,6 +23,16 @@ protocol ConnectorRunning: Sendable {
     /// The host owns this rather than the schedule, because the answer is a
     /// function of how the last runs went and the schedule does not watch them.
     func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval
+    /// Puts back the device-wide state this app borrowed — the weather overlay,
+    /// and anything it added to the clock's loop.
+    ///
+    /// On the schedule's protocol rather than on a connector, because a
+    /// connector never talks to the device and the overlay it borrows is one
+    /// global setting rather than a property of any one producer.
+    ///
+    /// - Parameter connectorId: only what this connector took, or nil for
+    ///   everything outstanding, which is what a quit wants.
+    func restoreDeviceState(borrowedBy connectorId: String?) async
 }
 
 extension ConnectorHost: ConnectorRunning {}
@@ -173,6 +183,19 @@ final class AppModel: ObservableObject {
         didSet { hostNote = DeviceHostField.save(typedHost, to: defaults) }
     }
     @Published private(set) var hostNote: String?
+    /// What is in the location field.
+    ///
+    /// Saved on every change, for the reason `typedHost` is. Unlike the
+    /// address, this one takes effect at the next poll rather than at the next
+    /// launch: the weather connector reads the stored pair every time it
+    /// produces, so there is nothing to rebuild.
+    ///
+    /// `didSet` does not run during initialization, which is what keeps seeding
+    /// the field from writing the stored location straight back to disk.
+    @Published var typedLocation: String {
+        didSet { locationNote = LocationField.save(typedLocation, to: defaults) }
+    }
+    @Published private(set) var locationNote: String?
     /// Whether the settings are showing instead of the panel.
     @Published private(set) var settingsAreOpen = false
     /// Whether the History is showing instead of the panel.
@@ -275,6 +298,13 @@ final class AppModel: ObservableObject {
     private var replays: [Int: Task<Void, Never>] = [:]
     private var nextReplayKey = 0
     private var historyLoad: Task<Void, Never>?
+    /// Restores the user asked for by switching a connector off, still going.
+    ///
+    /// Owned for the reason `replays` is: each one writes to the device, and a
+    /// quit that did not wait for one would kill the process part-way through
+    /// giving the clock's own overlay back.
+    private var restores: [Int: Task<Void, Never>] = [:]
+    private var nextRestoreKey = 0
     /// Runs still going, per connector.
     ///
     /// A count rather than a flag because two presses are two runs: 37 seconds
@@ -317,6 +347,7 @@ final class AppModel: ObservableObject {
     ) {
         self.deviceHost = deviceHost
         self.typedHost = deviceHost
+        self.typedLocation = LocationField.text(for: Coordinates.stored(in: defaults))
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.registry = registry
@@ -360,6 +391,18 @@ final class AppModel: ObservableObject {
 
         let anecdotes = anecdoteWiring(transport: transport, storeURL: anecdoteStore)
         registry.register(anecdotes.connector)
+        // The location is read on every produce rather than captured here, so a
+        // pair typed into the settings takes effect at the next poll instead of
+        // at the next launch. One source of weather for the whole app: the
+        // source caches its own answers, and a second instance would poll a
+        // free public service twice as often for the same reading.
+        let location = StoredLocation(defaults: defaults)
+        registry.register(
+            WeatherConnector(
+                source: OpenMeteoSource(transport: transport),
+                location: { location.current }
+            )
+        )
 
         return AppModel(
             deviceHost: deviceHost,
@@ -463,9 +506,33 @@ final class AppModel: ObservableObject {
     /// disk as thirty the first time its toggle was touched, and the default it
     /// declares would never be seen again.
     private func commit(_ settings: ConnectorSettings, for connector: any Connector) {
+        let wasEnabled = chosen[connector.id]?.isEnabled ?? true
         chosen[connector.id] = settings
         store.save(settings, for: connector.id)
         reschedule(connector)
+        // Only on the way OFF, and only on the edge. A connector switched off
+        // stops running, so nothing else will ever put back what it borrowed —
+        // where switching one ON borrows nothing until its first delivery, and
+        // a restore there would write a value that is already on the device.
+        // Dragging the interval slider is neither, and must not touch the clock
+        // at all.
+        if wasEnabled && !settings.isEnabled { giveBackDeviceState(connector.id) }
+    }
+
+    /// Puts back what one connector borrowed from the clock.
+    ///
+    /// The task is owned here rather than left detached, for the reason every
+    /// other one is: teardown can only wait for a task it holds, and this one
+    /// writes to the device. Keyed by nothing meaningful — switching a
+    /// connector off twice is two restores, and the second finds nothing left
+    /// to give back.
+    private func giveBackDeviceState(_ id: String) {
+        let key = nextRestoreKey
+        nextRestoreKey += 1
+        restores[key] = Task { [weak self] in
+            await self?.host.restoreDeviceState(borrowedBy: id)
+            self?.restores[key] = nil
+        }
     }
 
     /// Which rule decides whether the schedule may speak, right now.
@@ -737,10 +804,12 @@ final class AppModel: ObservableObject {
         monitorLoop?.cancel()
         monitorLoop = nil
         let running = Array(timers.values) + Array(manualRuns.values) + Array(replays.values)
+            + Array(restores.values)
             + [iconRemoval, launchRestock, historyLoad, microphoneWatch].compactMap { $0 }
         timers.removeAll()
         manualRuns.removeAll()
         replays.removeAll()
+        restores.removeAll()
         iconRemoval = nil
         launchRestock = nil
         historyLoad = nil
@@ -749,6 +818,16 @@ final class AppModel: ObservableObject {
         microphoneWatch = nil
         for task in running { task.cancel() }
         for task in running { await task.value }
+        // Last, and only once everything above has stopped. The clock is given
+        // back what this app borrowed — the weather overlay is a global setting
+        // written to flash, and leaving it behind is the same defect as leaving
+        // an icon on the device or a banner on the screen.
+        //
+        // After the cancellations rather than before them, or a delivery still
+        // in flight would put the overlay straight back on after the restore
+        // had taken it off. And unowned by any connector: a quit is not about
+        // one of them.
+        await host.restoreDeviceState(borrowedBy: nil)
     }
 
     private func startMonitoring() {

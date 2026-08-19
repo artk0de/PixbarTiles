@@ -1635,3 +1635,109 @@ private func historyAfterReaping(
 
     #expect(subject.replayResult == nil)
 }
+
+// MARK: - Giving the clock back
+
+// `OVERLAY` is GLOBAL device state: not scoped to an app, written to flash, and
+// changeable by hand from the clock's own web interface. Borrowing it is the
+// only way to draw weather on this firmware, so the two rules below are what
+// keeps borrowing from being taking — the app removes what it created, and a
+// setting is as much of a trace as a file on the flash.
+
+@Test @MainActor func thePriorOverlayIsRestoredWhenTheConnectorIsDisabled() async {
+    // Snow, not clear: what has to come back is what the device actually had,
+    // which the user may well have set by hand.
+    let transport = SkyAndClockTransport(overlayOnDevice: "snow")
+    let weather = weatherConnector(over: transport)
+    let wiring = modelOverRealHost(connector: weather, transport: transport)
+
+    wiring.model.runNow("weather")
+    #expect(await waitUntil { wiring.model.lastResults["weather"] == "delivered" })
+    #expect(transport.overlayWrites == ["rain"])
+
+    wiring.model.setEnabled(false, for: weather)
+
+    #expect(await waitUntil { transport.overlayWrites == ["rain", "snow"] })
+    await wiring.model.teardown()
+}
+
+@Test @MainActor func thePriorOverlayIsRestoredOnQuit() async {
+    let transport = SkyAndClockTransport(overlayOnDevice: "snow")
+    let weather = weatherConnector(over: transport)
+    let wiring = modelOverRealHost(connector: weather, transport: transport)
+
+    wiring.model.runNow("weather")
+    #expect(await waitUntil { wiring.model.lastResults["weather"] == "delivered" })
+    #expect(transport.overlayWrites == ["rain"])
+
+    await wiring.model.teardown()
+
+    #expect(transport.overlayWrites == ["rain", "snow"])
+}
+
+// Switching a connector ON is not a restore. It was the OFF that gave the
+// overlay back, and a restore on the way in would write the value that is
+// already there — the needless flash cycle this whole record exists to avoid.
+@Test @MainActor func switchingAConnectorOnGivesNothingBack() async {
+    let transport = SkyAndClockTransport(overlayOnDevice: "snow")
+    let weather = weatherConnector(over: transport)
+    let wiring = modelOverRealHost(connector: weather, transport: transport)
+
+    wiring.model.runNow("weather")
+    #expect(await waitUntil { wiring.model.lastResults["weather"] == "delivered" })
+
+    wiring.model.setEnabled(true, for: weather)
+
+    #expect(await waitUntil({ transport.overlayWrites.count > 1 }, limit: 0.1) == false)
+    #expect(transport.overlayWrites == ["rain"])
+    await wiring.model.teardown()
+}
+
+// A quit that arrives before anything was borrowed writes nothing at all. The
+// record is what decides, not the fact that a quit happened — a blanket
+// "set it to clear on the way out" would change a device this app never touched.
+@Test @MainActor func aQuitThatBorrowedNothingWritesNothingBack() async {
+    let transport = SkyAndClockTransport()
+    let wiring = modelOverRealHost(
+        connector: weatherConnector(over: transport), transport: transport
+    )
+
+    await wiring.model.teardown()
+
+    #expect(transport.overlayWrites.isEmpty)
+}
+
+// The quit path against a clock that has stopped answering — which is the
+// ordinary way a quit goes wrong, since the usual reason somebody quits is that
+// they are unplugging things.
+//
+// Two claims, and the second is the one worth having. The quit finishes: the
+// restore is the last thing teardown does and a refused write must not leave it
+// hanging. And what could not be given back is still owed — the record survives
+// the refusal, so a restore that reaches the clock later still knows what to put
+// back, rather than having quietly dropped the only copy of the user's own
+// overlay.
+@Test @MainActor func aQuitAgainstAnUnreachableClockStillFinishesAndStillOwesTheOverlay() async {
+    let transport = SkyAndClockTransport(overlayOnDevice: "snow")
+    let weather = weatherConnector(over: transport)
+    let wiring = modelOverRealHost(connector: weather, transport: transport)
+
+    wiring.model.runNow("weather")
+    #expect(await waitUntil { wiring.model.lastResults["weather"] == "delivered" })
+    #expect(transport.currentOverlay == "rain")
+
+    transport.stopAnswering()
+    await wiring.model.teardown()
+
+    // Reaching this line is the first claim. The restore was ATTEMPTED — it
+    // reached the clock and was refused — which is what stops this test
+    // passing on a teardown that never tried. And the clock still holds this
+    // app.s overlay, because a refused write changed nothing on it.
+    #expect(transport.overlayWrites == ["rain", "snow"])
+    #expect(transport.currentOverlay == "rain")
+
+    transport.startAnswering()
+    await wiring.host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(transport.currentOverlay == "snow")
+}

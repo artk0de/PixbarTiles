@@ -101,7 +101,9 @@ private func scratchStore() -> URL {
 
     let connector = try #require(subject.registry.all.first)
     #expect(connector.id == "anecdotes")
-    #expect(subject.registry.all.count == 1)
+    // First, and the order is the order the panel offers them in: the
+    // anecdotes are what this app is for, and the weather is what it also does.
+    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather"])
     // Deliberately not asserting the interval here. `AnecdoteConnector`'s own
     // default IS thirty minutes, so every such assertion holds equally through
     // the store's fallback and proves nothing about debt 2. The
@@ -511,4 +513,100 @@ private func scratchStore() -> URL {
     // And says which network problem, because "no network" has causes the user
     // can tell apart.
     #expect(unavailable?.contains("Network is down") == true)
+}
+
+// MARK: - Where the clock is
+
+// Typed, not asked for. Probed on this machine before the decision was made:
+// an unsigned binary calling `requestWhenInUseAuthorization` is left at
+// `.notDetermined` and `requestLocation` fails with kCLErrorDenied — the same
+// answer `UNUserNotificationCenter` and `INFocusStatusCenter` already give
+// here. So CoreLocation is not wired at all, and this is the path that works.
+
+@Test @MainActor func theLocationTypedIntoTheSettingsIsWhatTheNextPollUses() throws {
+    let suite = "location-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    LocationField.save("52.52, 13.405", to: defaults)
+
+    // Read back the way the connector reads it, not the way it was written: a
+    // field writing some other key would save happily and change nothing.
+    #expect(Coordinates.stored(in: defaults) == Coordinates(latitude: 52.52, longitude: 13.405))
+}
+
+@Test @MainActor func aLocationNobodyHasTypedFallsBackToSomewhereRatherThanNowhere() throws {
+    let suite = "location-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    // A connector with no coordinates has nothing to ask about and would report
+    // a failure on every poll until somebody opened the settings.
+    #expect(Coordinates.stored(in: defaults) == Coordinates.default)
+}
+
+// Open-Meteo answers a 400 for coordinates off the globe, so the panel says so
+// rather than the connector reporting a failure a quarter of an hour later.
+@Test @MainActor func coordinatesOffTheGlobeAreRefusedRatherThanSaved() throws {
+    let suite = "location-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    LocationField.save("52.52, 13.405", to: defaults)
+
+    for refused in ["91, 0", "-91, 0", "0, 181", "0, -181", "north, east", "52.52", "", "  "] {
+        #expect(LocationField.save(refused, to: defaults) == LocationField.unreadable, "\(refused)")
+    }
+
+    // And what was there is still there.
+    #expect(Coordinates.stored(in: defaults) == Coordinates(latitude: 52.52, longitude: 13.405))
+}
+
+@Test @MainActor func aLocationIsTypedTheWayItIsShown() throws {
+    let suite = "location-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let shown = LocationField.text(for: Coordinates(latitude: 52.52, longitude: 13.405))
+    #expect(LocationField.save(shown, to: defaults) == LocationField.takesEffectAtTheNextPoll)
+
+    #expect(Coordinates.stored(in: defaults) == Coordinates(latitude: 52.52, longitude: 13.405))
+}
+
+@Test @MainActor func theAppIsWiredWithTheWeatherConnector() throws {
+    let suite = "app-model-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let subject = AppModel.live(
+        defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore()
+    )
+
+    let weather = try #require(subject.registry.connector(id: "weather"))
+    // Its own cadence rather than the store's thirty-minute fallback: this is
+    // a free public API whose own response says it updates every fifteen.
+    #expect(weather.defaultInterval == 900)
+    #expect(subject.settings(for: weather).interval == 900)
+}
+
+// The location the shipped connector reads is the one the settings write, and
+// it is read on every poll rather than captured at launch — otherwise typing a
+// new one would do nothing until the app was restarted.
+@Test @MainActor func theShippedWeatherConnectorReadsTheLocationTheSettingsWrite() async throws {
+    let suite = "app-model-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let transport = SkyAndClockTransport()
+    let subject = AppModel.live(
+        defaults: defaults, transport: transport, anecdoteStore: scratchStore()
+    )
+    let weather = try #require(subject.registry.connector(id: "weather"))
+
+    subject.typedLocation = "52.52, 13.405"
+    _ = try await weather.produce()
+
+    let asked = try #require(
+        transport.requests.compactMap { $0.url }.first { $0.host == "api.open-meteo.com" }
+    )
+    #expect(asked.absoluteString.contains("latitude=52.52"))
+    #expect(asked.absoluteString.contains("longitude=13.405"))
 }

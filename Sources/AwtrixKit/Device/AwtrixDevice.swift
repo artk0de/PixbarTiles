@@ -61,6 +61,55 @@ public struct NotifyPayload: Sendable {
     }
 }
 
+/// One app in the device's own loop.
+///
+/// Fewer fields than a notification, and that is the difference between the two
+/// rather than an omission: `hold`, `stack`, `wakeup` and the repeat count are
+/// all about interrupting, and an app in the loop interrupts nothing.
+public struct AppPayload: Sendable, Equatable {
+    public var text: String
+    public var icon: String?
+    public var color: String?
+    /// How long the loop rests on this app. Left unset, the device uses its own
+    /// app time — which the user chose in its settings, and which this app has
+    /// no better answer than.
+    public var duration: Int?
+
+    public init(text: String, icon: String? = nil, color: String? = nil, duration: Int? = nil) {
+        self.text = text
+        self.icon = icon
+        self.color = color
+        self.duration = duration
+    }
+
+    /// Only set fields are emitted — the firmware rejects nulls.
+    var jsonObject: [String: Any] {
+        var object: [String: Any] = ["text": text]
+        if let icon { object["icon"] = icon }
+        if let color { object["color"] = color }
+        if let duration { object["duration"] = duration }
+        return object
+    }
+}
+
+/// The clock's own settings, of which this app reads exactly one.
+public struct DeviceSettings: Sendable, Equatable {
+    /// The device-wide weather layer.
+    ///
+    /// The raw string the device answered with, not a `DeviceOverlay`. A
+    /// firmware that knows a name this app does not must be handed back exactly
+    /// what it had — decoding it into the six this app understands would put
+    /// `clear` back over a setting the user chose.
+    ///
+    /// Optional because a firmware without the key at all is not a failure to
+    /// read: there is simply nothing there to put back.
+    public let overlay: String?
+
+    public init(overlay: String?) {
+        self.overlay = overlay
+    }
+}
+
 public struct DeviceStats: Sendable, Decodable, Equatable {
     public let version: String
     public let uid: String
@@ -143,6 +192,45 @@ public actor AwtrixDevice {
     public func stats() async throws -> DeviceStats {
         let data = try await perform("GET", "/api/stats")
         return try JSONDecoder().decode(DeviceStats.self, from: data)
+    }
+
+    /// Puts an app in the device's own loop, or replaces the one already there
+    /// under this name.
+    public func showApp(_ payload: AppPayload, named name: String) async throws {
+        _ = try await postJSON("/api/custom?name=\(name)", payload.jsonObject)
+    }
+
+    /// Takes an app back out of the loop. An empty body is how the firmware is
+    /// told to forget one.
+    public func removeApp(named name: String) async throws {
+        _ = try await perform(
+            "POST", "/api/custom?name=\(name)", body: Data(), contentType: "application/json"
+        )
+    }
+
+    // MARK: settings
+
+    /// The clock's settings, of which this app reads the overlay.
+    ///
+    /// Read through `JSONSerialization` rather than a `Decodable` of one field,
+    /// because the response is the device's whole settings object — three dozen
+    /// keys whose types are the firmware's business — and a struct naming one
+    /// of them would still have to be tolerant of every other.
+    public func settings() async throws -> DeviceSettings {
+        let data = try await perform("GET", "/api/settings")
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return DeviceSettings(overlay: object?["OVERLAY"] as? String)
+    }
+
+    /// Sets the device-wide weather layer.
+    ///
+    /// Takes the name rather than a `DeviceOverlay`, because putting back what
+    /// was there before means writing whatever the device had — including a
+    /// name this app does not know. Everything this app CHOOSES to write comes
+    /// from `DeviceOverlay`, which is the validation the firmware does not do:
+    /// it accepts any string, answers 200, and silently shows `clear`.
+    public func setOverlay(named overlay: String) async throws {
+        _ = try await postJSON("/api/settings", ["OVERLAY": overlay])
     }
 
     // MARK: transport plumbing

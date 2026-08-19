@@ -97,6 +97,12 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
         await parkInDeliver?.enter()
         return deliverResult
     }
+
+    /// Recorded as `restore:<id>` — or `restore:all` for the quit, which is
+    /// about no connector in particular.
+    func restoreDeviceState(borrowedBy connectorId: String?) async {
+        lock.withLock { recorded.append("restore:\(connectorId ?? "all")") }
+    }
 }
 
 /// A one-shot gate: callers park in `enter()` until the test calls `open()`.
@@ -475,6 +481,11 @@ final class QueueingHost: ConnectorRunning, @unchecked Sendable {
     }
 
     func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+
+    /// Nothing was borrowed, so there is nothing to give back. Spelled out
+    /// rather than defaulted on the protocol: a default would let the SHIPPED
+    /// host stop restoring and still compile.
+    func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }
 
 /// Answers `.cancelled` when its run is cancelled, as `ConnectorHost` does.
@@ -500,6 +511,8 @@ final class CancellingHost: ConnectorRunning, @unchecked Sendable {
     }
 
     func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+
+    func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }
 
 // MARK: - A real host, with the two collaborators a background pass never uses
@@ -592,6 +605,8 @@ final class RestockReportingHost: ConnectorRunning, @unchecked Sendable {
     func runOnce(connectorId: String) async -> RunResult { .delivered }
 
     func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+
+    func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }
 
 // MARK: - A clock that stops answering, and starts again
@@ -919,3 +934,84 @@ let duringAMeeting = [Inputs.capturing(Inputs.builtIn), Inputs.phone, Inputs.int
 
 /// And after it: only the interface, which is never evidence of anything.
 let afterTheMeeting = [Inputs.builtIn, Inputs.phone, Inputs.interface]
+
+// MARK: - Weather
+
+/// The weather service and the clock behind one door, because the app has one:
+/// `Transport` is how both are reached.
+///
+/// A second copy of the kit's own double rather than a shared one — test
+/// targets do not import each other — and a leaner one: what the app-level
+/// tests read is the overlay writes, in order.
+final class SkyAndClockTransport: Transport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [URLRequest] = []
+    private let sky: Data
+    private var answering = true
+    /// What the clock's `OVERLAY` setting currently holds. Written by a POST
+    /// and answered by a GET, as it is on the device — a double that kept
+    /// answering the original would let a custody that reads the prior value
+    /// after writing over it pass, with the value it promised to put back
+    /// already gone.
+    private var overlayOnDevice: String
+
+    init(sky: Data = liveSky, overlayOnDevice: String = "clear") {
+        self.sky = sky
+        self.overlayOnDevice = overlayOnDevice
+    }
+
+    var requests: [URLRequest] { lock.withLock { recorded } }
+
+    /// What the clock.s overlay setting holds right now.
+    var currentOverlay: String { lock.withLock { overlayOnDevice } }
+
+    /// The clock stops answering, the way one does when it is unplugged
+    /// mid-quit. A refused write changes nothing on it.
+    func stopAnswering() { lock.withLock { answering = false } }
+    func startAnswering() { lock.withLock { answering = true } }
+
+    /// Every overlay write that REACHED the clock, in order — including one it
+    /// refused, which is what tells an attempt apart from a restore that was
+    /// never made.
+    var overlayWrites: [String] {
+        requests
+            .filter { $0.url?.path == "/api/settings" && $0.httpMethod == "POST" }
+            .compactMap {
+                (try? JSONSerialization.jsonObject(with: $0.httpBody ?? Data()))
+                    .flatMap { $0 as? [String: Any] }?["OVERLAY"] as? String
+            }
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let body = try lock.withLock { () throws -> Data in
+            recorded.append(request)
+            guard answering else { throw URLError(.cannotConnectToHost) }
+            if request.url?.host == "api.open-meteo.com" { return sky }
+            if request.url?.path == "/api/stats" { return onlineStats }
+            guard request.url?.path == "/api/settings" else { return Data("OK".utf8) }
+            if request.httpMethod == "POST" {
+                let written = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()))
+                    .flatMap { $0 as? [String: Any] }?["OVERLAY"] as? String
+                if let written { overlayOnDevice = written }
+                return Data("OK".utf8)
+            }
+            return Data(#"{"BRI":2,"OVERLAY":"\#(overlayOnDevice)"}"#.utf8)
+        }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+        )!
+        return (body, response)
+    }
+}
+
+/// Rain over Moscow, in the shape the live service answers with.
+let liveSky = Data("""
+{"current":{"time":"2026-08-19T02:45","interval":900,"weather_code":61,"is_day":1,
+  "precipitation":0.4,"temperature_2m":4.2,"wind_speed_10m":9.0}}
+""".utf8)
+
+let aDesk = Coordinates(latitude: 55.7558, longitude: 37.6173)
+
+func weatherConnector(over transport: any Transport) -> WeatherConnector {
+    WeatherConnector(source: OpenMeteoSource(transport: transport), location: { aDesk })
+}

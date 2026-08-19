@@ -17,6 +17,8 @@ struct SettingsSheet: View {
             Divider()
             deviceHostSection
             Divider()
+            WeatherSettings(model: model)
+            Divider()
             quietHoursSection
             Divider()
             microphonesSection
@@ -151,6 +153,73 @@ struct SettingsSheet: View {
             if let status = model.iconStatus {
                 Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+        }
+    }
+}
+
+/// Where the weather is read from, and what showing it costs on a clock this
+/// app does not own alone.
+///
+/// One field holding both numbers rather than two holding halves of one place,
+/// and typed rather than asked for: CoreLocation cannot be authorized by an
+/// unsigned binary on this machine — probed, and `requestLocation` comes back
+/// `kCLErrorDenied` — and a desk clock does not travel anyway.
+///
+/// The line under it is the part that is not decoration. `OVERLAY` is a GLOBAL
+/// device setting, the same one the clock's own web interface writes, so an
+/// overlay set by hand is replaced the next time the weather changes. Said
+/// here, that is a documented consequence; unsaid, it is somebody chasing a bug
+/// in the firmware.
+///
+/// A view of its own rather than a section inside `SettingsSheet`, and the
+/// reason is measurable: laying the whole settings surface out costs 57 ms of
+/// SYNCHRONOUS main-actor work — the two 24-hour pickers are most of it — and
+/// every rendering test spends that out of the budget of whatever poll is
+/// running beside it. A test about this section can now draw this section. What
+/// keeps that honest is that the section being ON the settings surface is
+/// proved separately, by reading the location box off the control tree.
+struct WeatherSettings: View {
+    @ObservedObject var model: AppModel
+
+    /// What the weather costs on a device this app shares.
+    ///
+    /// Held as a constant so a test can name the rule it is checking rather
+    /// than the sentence, and so the sentence can be reworded without hunting
+    /// for whoever asserted it.
+    static let overlayIsSharedWithTheDevice =
+        "The clock's weather overlay is set from here. It is one device-wide "
+            + "setting, so an overlay you set by hand is replaced when the weather "
+            + "next changes, and put back as you left it when this connector is "
+            + "switched off."
+
+    /// Said because the connector ships switched ON.
+    ///
+    /// The first launch puts weather on the clock and takes the device-wide
+    /// overlay without anybody having asked for either. That is the design —
+    /// an app that showed nothing until it was configured would be a menu bar
+    /// item with nothing behind it — but it is not something a user should
+    /// discover from the clock.
+    static let weatherStartsSwitchedOn =
+        "Weather is on from the first launch. Switch it off on the main panel to "
+            + "stop it and hand the overlay back."
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Weather location").font(.caption).foregroundStyle(.secondary)
+            TextField("Latitude, longitude", text: $model.typedLocation)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+            if let note = model.locationNote {
+                Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Text(Self.overlayIsSharedWithTheDevice)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(Self.weatherStartsSwitchedOn)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

@@ -401,6 +401,12 @@ window follows the CONTENT and does its own anchoring — so a width the content
 carries is a width the window adopts, which is what `.frame(width:)` off a
 stored value now does.
 
+Confirmed on the shipped build rather than argued: with `panelWidth` written to
+480, the panel opened at **480x198 and stayed there** — `contentMinSize` moved
+to 480 with it, where route one's hand-set 500 had collapsed back to 320 inside
+half a second. Same window class, same style mask; the difference is entirely
+which side of SwiftUI's layout the number is on.
+
 Outstanding, and it is two lines: `SettingsSheet.swift:29` and
 `HistoryMenu.swift:58` still read `.frame(width: 320)`. Each wants
 `.frame(width: PanelWidth.stored(in: .standard).points)` — the same single

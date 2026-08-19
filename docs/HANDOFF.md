@@ -118,6 +118,21 @@ separate them; only a longer baseline can, which is why the fall window is an
 hour and the rise window is ten minutes. The asymmetry is 20:1 in the signals,
 not in the noise.
 
+**A clock that has just booted answers `bat_raw = 0`**, measured 2026-08-20
+through a power-on: `uptime=25` gave `bat=0, bat_raw=0`, `uptime=42` gave
+`bat=98, bat_raw=662`, `uptime=50` gave `bat=97, bat_raw=661`. Nothing crosses
+98 points in seventeen seconds — the firmware answers before it has read the
+converter. The window is roughly the first twenty to forty seconds of uptime
+against a poll every sixty, so about one reboot in two lands a poll inside it.
+Both fields are wrong in that reply and only the raw one is diagnostic, `bat`
+being derived from it and clamped, so `record(_:at:)` drops any reading whose raw
+figure falls below `rawAtEmpty` before it can become a sample or a percentage.
+475 itself is kept: that is where the map puts 0%, and a battery genuinely run
+down to nothing is the last thing the app gets to warn about. Untreated, the zero
+costs twice — the lowest threshold fires without waiting for a direction, so it
+is a false red warning on the first poll after a reboot, and the +662 that
+follows it is an instant confident "charging".
+
 Anyone re-tuning these numbers: take a fresh series first. The clock's rate
 depends on its brightness, and `BRI` was 2–3 for every measurement above.
 

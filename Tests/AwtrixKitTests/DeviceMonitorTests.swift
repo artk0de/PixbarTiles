@@ -321,6 +321,18 @@ private struct UnreachableTransport: Transport {
 private let trendingJSON = #"{"bat":83,"bat_raw":648,"uptime":9000,"ram":139112,"version":"0.98","uid":"awtrix_a07f9c","ip_address":"192.168.1.72"}"#
 
 /// One `/api/stats` body with the two fields the trajectory reads.
+///
+/// Every raw figure below is one the firmware could answer with — above
+/// `BatteryTrajectory.rawAtEmpty`, and around where its own `map(raw, 475, 665,
+/// 0, 100)` puts the percentage beside it. They used to be roughly eight times
+/// `bat`, which came from reading 648/91 as a slope rather than as one point on
+/// a line, and the trajectory now discards anything off the bottom of that scale
+/// as a converter it has not read yet. A fixture below 475 does not test a low
+/// battery; it tests a clock that has just been switched on.
+///
+/// `bat` is deliberately NOT moved in step with the raw figure through the
+/// ramps: holding it still is what makes a monitor that fed the trajectory a
+/// percentage instead of the whole report have nothing to go on.
 private func trendJSON(bat: Int, raw: Int, uptime: Int = 9_000) -> Data {
     Data(
         ("{\"bat\":\(bat),\"bat_raw\":\(raw),\"uptime\":\(uptime),\"ram\":139112,"
@@ -366,7 +378,7 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
 
 @Test @MainActor func aRefreshFeedsTheReadingIntoTheTrajectory() async {
     let transport = RecordingTransport()
-    transport.body = trendJSON(bat: 50, raw: 400)
+    transport.body = trendJSON(bat: 50, raw: 570)
     let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
 
     await monitor.refresh(at: origin)
@@ -378,7 +390,7 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
     // fitted across an hour now, so nothing shorter than twenty minutes of it
     // says anything either.
     for minute in 1...25 {
-        transport.body = trendJSON(bat: 50, raw: 400 - minute)
+        transport.body = trendJSON(bat: 50, raw: 570 - minute)
         await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60))
     }
 
@@ -388,10 +400,10 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
 
 @Test @MainActor func aDeviceThatStopsAnsweringReportsNoBattery() async {
     let transport = RecordingTransport()
-    transport.body = trendJSON(bat: 50, raw: 400)
+    transport.body = trendJSON(bat: 50, raw: 570)
     let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
     await monitor.refresh(at: origin)
-    transport.body = trendJSON(bat: 50, raw: 396)
+    transport.body = trendJSON(bat: 50, raw: 566)
     await monitor.refresh(at: origin.addingTimeInterval(20))
     #expect(monitor.battery != nil)
 
@@ -412,11 +424,11 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
     // line fitted across an hour — so a crossing handed in before twenty
     // minutes have been watched is a crossing nobody is told about.
     for minute in 0...25 {
-        transport.body = trendJSON(bat: 25, raw: 250 - minute)
+        transport.body = trendJSON(bat: 25, raw: 547 - minute)
         #expect(await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60)) == nil)
     }
 
-    transport.body = trendJSON(bat: 19, raw: 190)
+    transport.body = trendJSON(bat: 19, raw: 511)
 
     #expect(
         await monitor.refresh(at: origin.addingTimeInterval(26 * 60))
@@ -438,7 +450,7 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
 
 @Test @MainActor func aRefreshRedrawsExactlyOnceEvenNowThereIsABatteryToDraw() async {
     let transport = RecordingTransport()
-    transport.body = trendJSON(bat: 50, raw: 400)
+    transport.body = trendJSON(bat: 50, raw: 570)
     let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
     let changes = ChangeCounter()
     let subscription = monitor.objectWillChange.sink { _ in changes.bump() }
@@ -454,11 +466,11 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
 
 @Test @MainActor func theInstantTheCallerSuppliesIsTheOneTheTrajectoryUses() async {
     let transport = RecordingTransport()
-    transport.body = trendJSON(bat: 50, raw: 400)
+    transport.body = trendJSON(bat: 50, raw: 570)
     let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
     await monitor.refresh(at: origin)
     for minute in 1...25 {
-        transport.body = trendJSON(bat: 50, raw: 400 - minute)
+        transport.body = trendJSON(bat: 50, raw: 570 - minute)
         await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60))
     }
     #expect(monitor.battery?.direction == .discharging)
@@ -467,7 +479,7 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
     // and a half apart — which is what a Mac waking from sleep looks like. A
     // monitor reading the wall clock instead of its argument would see no gap
     // at all and carry the trend straight across it.
-    transport.body = trendJSON(bat: 50, raw: 374)
+    transport.body = trendJSON(bat: 50, raw: 544)
     await monitor.refresh(at: origin.addingTimeInterval(1_500 + BatteryTrajectory.window + 1))
 
     #expect(monitor.battery?.direction == .unknown)
@@ -485,7 +497,7 @@ private func watchADischarge(
         device: AwtrixDevice(host: "10.0.0.5", transport: transport), history: history
     )
     for minute in 0...25 {
-        transport.body = trendJSON(bat: 50, raw: 400 - minute)
+        transport.body = trendJSON(bat: 50, raw: 570 - minute)
         await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60))
     }
     return monitor
@@ -506,7 +518,7 @@ private func watchADischarge(
     // gated on the device answering, and a restored series is not an answer.
     #expect(after.battery == nil)
 
-    transport.body = trendJSON(bat: 50, raw: 374)
+    transport.body = trendJSON(bat: 50, raw: 544)
     await after.refresh(at: origin.addingTimeInterval(26 * 60))
 
     // One poll, and there is a direction. Without the series behind it this is
@@ -516,7 +528,7 @@ private func watchADischarge(
 
 @Test @MainActor func aMonitorWithNothingStoredStartsColdAsItAlwaysDid() async {
     let transport = RecordingTransport()
-    transport.body = trendJSON(bat: 50, raw: 400)
+    transport.body = trendJSON(bat: 50, raw: 570)
     let monitor = DeviceMonitor(
         device: AwtrixDevice(host: "10.0.0.5", transport: transport),
         history: InMemoryBatteryHistoryStore()

@@ -228,6 +228,12 @@ public struct BatteryTrajectory: Sendable {
     /// and the steps the reading wanders by arrive on the answer multiplied by
     /// the same factor. It is also undefined exactly where the percentage is
     /// pinned.
+    ///
+    /// Read twice, and as the same fact both times: it is where the estimate
+    /// stops counting down, and it is the floor `record(_:at:)` will accept a
+    /// reading at all above. Below the bottom of the firmware's own scale there
+    /// is nothing to interpret in either direction — which is why the guard
+    /// there names this rather than a number of its own.
     public static let rawAtEmpty = 475
     /// Where a warning fires, in percent. Ordered high to low, and read as a
     /// set rather than in order — a poll can find the battery below several at
@@ -327,6 +333,51 @@ public struct BatteryTrajectory: Sendable {
     /// reader can see through.
     @discardableResult
     public mutating func record(_ stats: DeviceStats, at now: Date) -> BatteryWarning? {
+        // A raw figure below the firmware's own empty is not a reading, and is
+        // turned away before it can become one. Sampled through a power-on of the
+        // clock on this desk: `uptime=25` answered `bat=0, bat_raw=0`, and
+        // seventeen seconds later `uptime=42` answered `bat=98, bat_raw=662`. No
+        // battery crosses 98 points in seventeen seconds — the firmware answers
+        // the request before it has read the converter. The window is twenty to
+        // forty seconds against a poll of sixty, so every reboot of the clock is
+        // a coin toss on catching one.
+        //
+        // First statement of the whole method, which is what "not a reading"
+        // means: no sample, no `latest`, no warning, no verdict disturbed, not
+        // even the uid and uptime. Anything later in the method leaves a trace
+        // of a reading that never happened.
+        //
+        // This belongs with the rule above it rather than after it. `thresholds`
+        // fires its lowest line while the direction is still `.unknown`, because
+        // a verdict costs twenty-two minutes and the last line is ten of
+        // runtime — and the first poll after a reboot is precisely a moment when
+        // the direction is necessarily `.unknown`. One rule spends the evidence
+        // gate on the emergency; the other is what keeps a non-reading from
+        // walking through the gap it opened. Left in, the zero is also +662
+        // against the next real reading, which is six hundred steps against a
+        // band of three: an instant, confident, wrong `.charging`.
+        //
+        // On the RAW figure, though both halves of this report are wrong. `bat`
+        // is derived from the raw one and clamped, so a firmware answering a bad
+        // percentage over a good raw reading would be second-guessed for
+        // nothing; the raw figure is the diagnostic half of the pair. The
+        // boundary belongs to the battery: `rawAtEmpty` IS zero percent by the
+        // firmware's own map and is recorded as one, and only what falls off the
+        // bottom of that scale — absent hardware, or a converter not yet read —
+        // is dropped.
+        //
+        // Dropped, and pointedly not handed to `invalidates(_:at:)`. That rule
+        // is for a reading describing a DIFFERENT situation and it answers by
+        // discarding the history, which was the alternative here and is the
+        // wrong shape twice over: this clock is the same clock, and throwing
+        // away twenty minutes of established trend over one bad reading spends
+        // exactly what the last line's exception exists to protect. The reboot
+        // that produced the zero is still there to be caught, by the first real
+        // reading that follows it — which is the reading that can be checked.
+        //
+        // A firmware omitting `bat_raw` altogether is untouched and stays the
+        // case it already was: a percentage and no trend.
+        if let raw = stats.batRaw, raw < Self.rawAtEmpty { return nil }
         if invalidates(stats, at: now) { discardHistory() }
         latest = stats
         seriesUid = stats.uid

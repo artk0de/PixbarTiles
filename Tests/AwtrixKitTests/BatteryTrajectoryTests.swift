@@ -1077,3 +1077,103 @@ private func fillUpThroughFourPercent(_ subject: inout BatteryTrajectory) -> [Ba
 
     #expect(later.isEmpty)
 }
+
+// MARK: - The zero a clock answers with before it has read the converter
+
+// Sampled off the clock on this desk through a power-on:
+//
+//     uptime=25  bat=0   bat_raw=0
+//     uptime=42  bat=98  bat_raw=662
+//     uptime=50  bat=97  bat_raw=661
+//
+// A battery does not cross 98 points in seventeen seconds. The zero is the
+// firmware answering before it has read the converter, and the poll is a minute
+// against a window of twenty to forty seconds, so every reboot of the clock is
+// a coin toss on catching one.
+//
+// These four are the whole of the guard, and they pull in opposite directions
+// on purpose: the first two say a zero must leave nothing behind, the third says
+// the guard stops exactly at the empty mark, and the last says a bad reading is
+// not a new situation. The 1% warning is guarded by
+// `theLastLineFiresWithoutWaitingForADirection` above, which fires at raw 476 —
+// a guard reaching one step higher than the empty mark would kill it, and that
+// warning is the reason this one has to be precise.
+
+@Test func theZeroFromABootingClockIsNotAReading() {
+    var subject = BatteryTrajectory()
+
+    #expect(subject.record(stats(percent: 0, raw: 0, uptime: 25), at: at(25)) == nil)
+
+    // Nothing was recorded at all, and that is the whole claim: `reading` is nil
+    // only before a clock has answered, and as far as the trajectory is
+    // concerned one has not. Without the guard this is a 0% reading, and 0% on
+    // the first poll of a launch fires the last line — the one warning that does
+    // not wait for a direction.
+    #expect(subject.reading == nil)
+    #expect(subject.history == nil)
+
+    subject.record(stats(percent: 98, raw: 662, uptime: 42), at: at(42))
+    subject.record(stats(percent: 97, raw: 661, uptime: 50), at: at(50))
+
+    #expect(subject.reading?.percent == 97)
+    #expect(subject.reading?.direction == .unknown)
+    #expect(subject.history?.samples.map(\.raw) == [662, 661])
+}
+
+@Test func theBootZeroDoesNotReadAsAChargeAgainstTheReadingsThatFollowIt() {
+    var subject = BatteryTrajectory()
+
+    subject.record(stats(percent: 0, raw: 0, uptime: 25), at: at(25))
+
+    // Half an hour of the measured discharge, from the reading the clock
+    // answered with once it had sampled the converter. The verdict is the one
+    // the readings actually support — and the zero left in would invert it: 662
+    // steps of rise against a band of three swamps the four steps an hour of
+    // this clock's discharge spends, so the fall never clears the band and a
+    // draining clock reads as charging for the whole of the fall window.
+    for minute in 0...30 {
+        subject.record(
+            stats(
+                percent: percent(at: 662), raw: 662 - (4 * minute) / 30,
+                uptime: 42 + minute * 60
+            ),
+            at: at(42 + Double(minute) * 60)
+        )
+    }
+
+    #expect(subject.reading?.direction == .discharging)
+}
+
+@Test func aReadingAtTheEmptyMarkIsAReading() throws {
+    var subject = BatteryTrajectory()
+    let empty = BatteryTrajectory.rawAtEmpty
+    let lastLine = try #require(BatteryTrajectory.thresholds.min())
+
+    // 475 is where the firmware's map puts 0%, not where it stops answering.
+    // The boundary belongs to the battery: a clock genuinely run down to nothing
+    // reads this, and it is the last thing the app ever gets to warn about. A
+    // guard written `<=` here would throw away the emergency it exists to
+    // protect.
+    let fired = subject.record(stats(percent: percent(at: empty), raw: empty), at: at(0))
+
+    #expect(fired == BatteryWarning(threshold: lastLine, percent: 0))
+    #expect(subject.reading?.percent == 0)
+    #expect(subject.history?.samples.map(\.raw) == [empty])
+}
+
+@Test func aZeroArrivingMidSeriesLeavesTheTrendAndTheReadingsWhereTheyWere() {
+    var subject = BatteryTrajectory()
+    let last = settleOnDischarge(&subject, at: 50, raw: 566)
+    #expect(subject.reading?.direction == .discharging)
+    let established = subject.history?.samples
+
+    // Same clock, uptime still climbing, no gap — none of the three rules that
+    // discard a history is tripped, and none should be. This is one bad reading
+    // from a clock whose history is still good, not a different situation, and
+    // the difference is twenty minutes of established trend.
+    #expect(subject.record(stats(percent: 0, raw: 0), at: at(Double(last) * 60 + 60)) == nil)
+
+    #expect(subject.reading?.direction == .discharging)
+    #expect(subject.reading?.percent == 50)
+    #expect(subject.history?.samples == established)
+}

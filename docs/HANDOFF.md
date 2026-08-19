@@ -44,7 +44,9 @@ best-first by feed rank; speaks them in five cloned voices with the female one
 reserved; shows a History with replay and copy; pauses when the clock is
 unreachable, when macOS reports a Focus, and while a watched microphone is
 capturing; warns on battery thresholds with a discharge ETA; mirrors the local
-weather onto the clock's own overlay; and finds the device over Bonjour.
+weather onto the clock's own overlay; and finds the device over Bonjour — while
+the panel is open and the clock is not answering, and at no other time, because
+a browse left running puts multicast on the network for the life of the process.
 
 ## How this branch finds defects
 

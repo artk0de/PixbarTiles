@@ -11,6 +11,21 @@ import SwiftUI
 struct SettingsSheet: View {
     @ObservedObject var model: AppModel
 
+    /// Handed down rather than built in `LoginItemSettings`'s own default, so a
+    /// test can prove the section is on THIS surface without touching the real
+    /// login-item database. An autoclosure for the reason `WeatherSettings`
+    /// takes one: it must not be evaluated on every redraw of a sheet whose
+    /// other fields save as they are typed.
+    private let loginItem: () -> LoginItemModel
+
+    init(
+        model: AppModel,
+        loginItem: @autoclosure @escaping () -> LoginItemModel = LoginItemModel()
+    ) {
+        _model = ObservedObject(wrappedValue: model)
+        self.loginItem = loginItem
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -24,6 +39,12 @@ struct SettingsSheet: View {
             microphonesSection
             Divider()
             iconSection
+            Divider()
+            // Last, beside the icon removal, because the two are the same kind
+            // of thing: settings above this line are changed while the app is
+            // being used, and these two are set once in the life of an
+            // installation.
+            LoginItemSettings(item: loginItem())
         }
         .padding(14)
         .frame(width: 320)
@@ -152,6 +173,54 @@ struct SettingsSheet: View {
                 .controlSize(.small)
             if let status = model.iconStatus {
                 Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+    }
+}
+
+/// Whether macOS starts this app when the user logs in.
+///
+/// The tick is drawn from what the system reports, not from anything this app
+/// stored — see `LoginItemModel` for why that is the whole design rather than a
+/// refinement. What the section adds on top of the model is the one thing a
+/// model cannot do: putting the failure on screen. A registration that is
+/// refused has to be visible, or a box that would not stay ticked is
+/// indistinguishable from a click that never landed.
+///
+/// A view of its own rather than a section inside `SettingsSheet`, for the
+/// reason `WeatherSettings` is one: the settings surface costs 57 ms of
+/// synchronous main-actor work to lay out, mostly the two 24-hour pickers, and
+/// a test about this checkbox has no business spending it.
+struct LoginItemSettings: View {
+    /// `@StateObject` rather than `@ObservedObject`, because what it holds must
+    /// survive the redraws every keystroke in the address and location boxes
+    /// causes: observed, the words explaining a refused registration would be
+    /// thrown away by the next character typed two sections up.
+    @StateObject private var item: LoginItemModel
+
+    /// An autoclosure so the shipped model — which reads the login-item
+    /// database on construction — is not built on every redraw of the surface
+    /// this sits on. A plain default argument is evaluated at each call, and
+    /// `StateObject` would discard all but the first.
+    init(item: @autoclosure @escaping () -> LoginItemModel = LoginItemModel()) {
+        _item = StateObject(wrappedValue: item())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(
+                "Open at login",
+                isOn: Binding(
+                    get: { item.opensAtLogin },
+                    set: { item.setOpensAtLogin($0) }
+                )
+            )
+            .controlSize(.small)
+            if let note = item.note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

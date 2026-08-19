@@ -159,6 +159,15 @@ private func elapsed(_ body: () async -> Void) async -> Duration {
     let card = SoundCard()
     let player = SequentialAudioPlayer(load: card.loader(["a": 0.01, "b": 0.01, "c": 0.01]))
 
+    // Off the clock, and not through `player`: a task's first ever
+    // `Task.sleep` pays a one-time scheduling cost no later one does, measured
+    // at up to ~100 ms under full-suite parallel load versus single-digit ms
+    // once paid — and clip "a" below would be the one to pay it, since its
+    // lead-in is the first suspension point `play()` reaches. That is noise
+    // about this test's own task getting its first timeslice, not about
+    // anything the player waited for, so it is paid here instead, where it
+    // cannot be mistaken for a stuck announcement.
+    try? await Task.sleep(for: .seconds(0))
     let start = ContinuousClock.now
     await player.play([clip("a"), clip("b", leadIn: 0.1), clip("c", leadIn: 0.3)])
 
@@ -172,8 +181,20 @@ private func elapsed(_ body: () async -> Void) async -> Duration {
     // shape of it is the thing worth pinning, not its sum.
     let began = try (0..<3).map { try #require(card.startInstant(of: ["a", "b", "c"][$0])) }
 
-    // The announcement leads nothing and waits for nothing.
-    #expect(began[0] - start < .seconds(0.07))
+    // The announcement leads nothing and waits for nothing — checked against
+    // the gap in front of "b", the smallest DELIBERATE gap in the series,
+    // rather than a fixed millisecond bound. A hardcoded bound (the previous
+    // shape here) measures the MACHINE: with the one-time scheduling cost
+    // already paid above, whatever ordinary load remains inflates both gaps
+    // together, so a fixed bound tight enough to catch a stuck announcement
+    // was also tight enough for that ordinary load alone to trip it — exactly
+    // the flake this replaces. Halved rather than compared outright: the gap
+    // before "b" is "a"'s own wait-out plus "b"'s lead-in, so without the
+    // margin a real lead-in stuck in front of "a" lands close enough to that
+    // gap to pass by luck of the noise instead of failing — confirmed by
+    // mutating a 0.1 s lead-in onto "a" and watching this fail every time
+    // under full-suite load, then reverting it.
+    #expect(began[0] - start < (began[1] - began[0]) / 2)
     // 0.1 s in front of the second clip, and nowhere near the third one's 0.3 s.
     #expect(began[1] - began[0] >= .seconds(0.1))
     #expect(began[1] - began[0] < .seconds(0.25))

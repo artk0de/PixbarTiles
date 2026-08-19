@@ -322,6 +322,34 @@ one look or one click.
 7. The weather overlay actually appears, and hands back the value that was
    there before.
 
+### Confirmed by observation, 2026-08-19 — no longer owed
+
+Half of item 7 is settled. After the app's process ended, `GET /api/loop`
+listed only the four firmware built-ins with no `weather`, and `OVERLAY` read
+`clear`. So a clean quit does take this app's own app back out of the rotation
+and does put the overlay back. What is still unwitnessed is a hand-back of a
+NON-clear overlay, because the sky was clear throughout.
+
+### Added by wave 2
+
+8. The History opens on the FIRST press. This is the defect that was reported;
+   the fix it received addresses a real defect in the window observer but was
+   never proven to be that symptom's cause. If it still takes two presses, say
+   so — the diagnosis is then wrong, not the fix incomplete.
+9. Clicking away from the panel still returns the menu to the panel next time.
+   This is the one that would break if the panel's window is never identified:
+   the reader that learns it cannot be exercised headlessly, and if it comes
+   back nil, NO surface ever closes. Open panel, open History, click another
+   app, reopen — it must show the panel.
+10. The weather app on the clock carries an animated icon, and the temperature
+    is coloured from how it feels rather than from the sky.
+11. The panel has no weather row, and the gear has the weather toggle.
+12. On mains the line reads plug and percentage, with no time estimate and no
+    trend word beside it.
+13. The percentage does not flicker between two values while nothing is
+    happening. It is ratcheted to the direction of travel; the underlying
+    reading is what the warnings still read.
+
 ## Signing, and three Apple APIs that are inert without it
 
 This machine has **zero code-signing identities** and the bundle is ad-hoc

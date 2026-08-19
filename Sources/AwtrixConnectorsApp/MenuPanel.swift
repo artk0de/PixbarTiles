@@ -129,6 +129,8 @@ struct MenuPanel: View {
     var body: some View {
         if model.settingsAreOpen {
             SettingsSheet(model: model)
+        } else if model.historyIsOpen {
+            HistoryMenu(model: model)
         } else {
             panel
         }
@@ -236,6 +238,14 @@ struct MenuPanel: View {
             HStack {
                 Button("Run now") { model.runNow(connector.id) }
                     .controlSize(.small)
+                // In this row rather than behind the gear, and only on the row
+                // whose connector keeps one. History is not a setting: it is
+                // what this connector has already done, and the gear is for
+                // what is set once and forgotten.
+                if model.hasHistory(connector) {
+                    Button("History") { model.openHistory() }
+                        .controlSize(.small)
+                }
                 // Beside the button that overrides it, because the two answer
                 // the same question from opposite ends: when will this happen,
                 // and make it happen now.

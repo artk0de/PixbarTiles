@@ -59,7 +59,9 @@ public actor ConnectorHost {
     private let retryPolicy: RetryPolicy
 
     /// The last delivery to have claimed a place. Deliveries run one at a time
-    /// by waiting on it; see `runOnce(connectorId:)` for why they must.
+    /// by waiting on it — see `queued(_:)` for how, and `runOnce(connectorId:)`
+    /// for why they must. Runs and replays share it, which is the whole point:
+    /// two chains would be no serialisation at all.
     private var tail: Task<Void, Never>?
 
     /// Deliveries failed in a row, per connector. An id that is not in here has
@@ -113,7 +115,7 @@ public actor ConnectorHost {
     /// transport reporting `URLError(.cancelled)`, and a delivery that got all
     /// the way through only to find the task torn down. Deciding here, on the
     /// one value all three become, is what stops the next guard added to
-    /// `deliver` from quietly re-classifying one of them.
+    /// `send` from quietly re-classifying one of them.
     private func record(_ result: RunResult, for connectorId: String) {
         switch result {
         case .delivered:
@@ -147,8 +149,9 @@ public actor ConnectorHost {
     /// banner is showing, not the one this run put up — so two overlapping
     /// deliveries end with the first one's dismiss clearing the second one's
     /// banner while its speech is still running, and both anecdotes talking
-    /// over each other. A timer tick and a "run now" from the menu are the two
-    /// callers that produce it.
+    /// over each other. A timer tick, a "run now" from the menu and a "play
+    /// again" from the History are the three callers that produce it, and all
+    /// three take their turn in the same chain.
     ///
     /// The background pass is deliberately NOT on this chain: it can be a
     /// minute long, and making the banner wait behind it is the trade the queue
@@ -174,31 +177,69 @@ public actor ConnectorHost {
         }
         guard store.settings(for: connectorId).isEnabled else { return .skipped }
 
-        let predecessor = tail
-        let work = Task { [self] () -> RunResult in
-            await predecessor?.value
-            // Checked on the far side of the wait. Cancellation cannot break
-            // `predecessor?.value`, so without this a run cancelled while
-            // queued goes on to put a banner up that nobody is waiting for.
-            if Task.isCancelled { return .cancelled }
-            return await deliver(connector)
-        }
-        tail = Task { _ = await work.value }
-
-        // `work` is unstructured, so it inherits neither the caller's
-        // cancellation nor breaks on it when awaited. Forwarded by hand, or a
-        // caller that gives up gets neither the work stopped nor itself back.
-        let result = await withTaskCancellationHandler {
-            await work.value
-        } onCancel: {
-            work.cancel()
-        }
+        let result = await queued { [self] in await produceAndSend(connector) }
         // Awaiting a task is not interrupted by cancellation, so this is
         // reached even when the caller gave up — which is the point. A run torn
         // down still has an outcome, and the backoff has to be told it was a
         // cancellation rather than left reading the last failure.
         record(result, for: connectorId)
         return result
+    }
+
+    /// Puts something already produced on the clock and speaks it.
+    ///
+    /// The replay path. What it exists for is that a second anecdote heard from
+    /// the History is the SAME delivery as a scheduled one — the same banner,
+    /// the same jingle, the same held-banner release, the same classification of
+    /// whatever goes wrong — because it is literally the same code below the
+    /// produce. Anything that re-implemented delivery for replaying would drift
+    /// from this one, and the drift would be silent.
+    ///
+    /// It is queued exactly as a run is. `dismissNotification` is global to the
+    /// device and the audio path plays one thing at a time, so a replay pressed
+    /// while an anecdote is speaking waits its turn rather than talking over it.
+    ///
+    /// What it deliberately is NOT is a run. Nothing here touches the failure
+    /// counts: the backoff describes how the FEED is behaving, and hearing this
+    /// morning's anecdote again is not evidence about anekdot.ru in either
+    /// direction. There is no connector id to record against, and that is the
+    /// point rather than an omission.
+    public func deliver(_ output: ConnectorOutput) async -> RunResult {
+        await queued { [self] in await send(output) }
+    }
+
+    /// Takes a place in the delivery chain, waits for whatever is ahead, and
+    /// runs `work` when it gets there.
+    ///
+    /// Claiming a place is a single actor-isolated step — there is no
+    /// suspension between reading `tail` and writing it — so no caller can slip
+    /// between the two and take the same place twice.
+    ///
+    /// Shared by both entry points rather than written twice, because a second
+    /// copy is a second chain the moment one of them is edited, and two chains
+    /// are no serialisation at all.
+    private func queued(
+        _ work: @escaping @Sendable () async -> RunResult
+    ) async -> RunResult {
+        let predecessor = tail
+        let claimed = Task { () -> RunResult in
+            await predecessor?.value
+            // Checked on the far side of the wait. Cancellation cannot break
+            // `predecessor?.value`, so without this a delivery cancelled while
+            // queued goes on to put a banner up that nobody is waiting for.
+            if Task.isCancelled { return .cancelled }
+            return await work()
+        }
+        tail = Task { _ = await claimed.value }
+
+        // `claimed` is unstructured, so it inherits neither the caller's
+        // cancellation nor breaks on it when awaited. Forwarded by hand, or a
+        // caller that gives up gets neither the work stopped nor itself back.
+        return await withTaskCancellationHandler {
+            await claimed.value
+        } onCancel: {
+            claimed.cancel()
+        }
     }
 
     /// Runs a connector's background pass — restock, and confirm durability.
@@ -232,9 +273,23 @@ public actor ConnectorHost {
         }
     }
 
-    private func deliver(_ connector: any Connector) async -> RunResult {
+    /// Asks the connector for something, then delivers it.
+    ///
+    /// The produce stays inside the chain, which is where it has always been:
+    /// `AnecdoteConnector.produce()` pops an anecdote and retires it as played,
+    /// and a produce that ran ahead of its turn would spend anecdotes on
+    /// deliveries that had not happened yet — and, when the queue is empty,
+    /// would put a whole batch of synthesis in front of the run behind it.
+    private func produceAndSend(_ connector: any Connector) async -> RunResult {
         do {
-            let output = try await connector.produce()
+            return await send(try await connector.produce())
+        } catch {
+            return classify(error)
+        }
+    }
+
+    private func send(_ output: ConnectorOutput) async -> RunResult {
+        do {
             var iconName: String?
             if let icon = output.icon {
                 iconName = try await iconInstaller.ensureInstalled(icon)
@@ -274,19 +329,28 @@ public actor ConnectorHost {
             // banner was already taken down above.
             if Task.isCancelled { return .cancelled }
             return .delivered
-        } catch is CancellationError {
-            return .cancelled
-        } catch let error as URLError where error.code == .cancelled {
-            // The transport naming this specific event, not the ambient task
-            // state: `URLSession` reports a request killed by its task's
-            // cancellation this way, and app quit killing an in-flight notify
-            // is the ordinary producer. As typed as `CancellationError`, and it
-            // cannot swallow a device fault — those arrive as
-            // `AwtrixError.http`, never as a `URLError`.
-            return .cancelled
         } catch {
-            return .failed(String(describing: error))
+            return classify(error)
         }
+    }
+
+    /// What a thrown error means for the delivery that raised it.
+    ///
+    /// One reading, shared by the produce and by the delivery, because the two
+    /// halves must not classify the same error differently — a connector
+    /// throwing `CancellationError` and a notify killed by the same quit are
+    /// the same event seen from two places.
+    ///
+    /// `URLError(.cancelled)` is the transport naming this specific event
+    /// rather than the ambient task state: `URLSession` reports a request
+    /// killed by its task's cancellation that way, and app quit killing an
+    /// in-flight notify is the ordinary producer. As typed as
+    /// `CancellationError`, and it cannot swallow a device fault — those arrive
+    /// as `AwtrixError.http`, never as a `URLError`.
+    private func classify(_ error: any Error) -> RunResult {
+        if error is CancellationError { return .cancelled }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return .cancelled }
+        return .failed(String(describing: error))
     }
 
     /// Takes the held banner down.

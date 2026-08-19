@@ -267,7 +267,23 @@ public struct AnecdoteConnector: Connector {
         guard let anecdote else { throw Failure.nothingPrepared }
         await queue.retire(anecdote)
 
-        return ConnectorOutput(
+        return output(for: anecdote)
+    }
+
+    /// What playing this anecdote puts on the clock.
+    ///
+    /// Its own function because the History plays one again, and a replay that
+    /// built its own output would drift from this one — silently, since a
+    /// missing icon or a missing hold looks like nothing at all until the
+    /// banner is left up with no audio to end it. The two callers are
+    /// `produce()` and the replay, and they get the same value.
+    ///
+    /// Nothing here touches the queue, and that is the rule rather than an
+    /// accident: `retire` is what makes an anecdote played, it belongs to
+    /// `produce()` above, and a replay must not spend an anecdote nobody has
+    /// heard.
+    public func output(for anecdote: PreparedAnecdote) -> ConnectorOutput {
+        ConnectorOutput(
             text: Self.banner,
             icon: Self.laughIcon,
             jingle: Self.nokiaJingle,
@@ -275,6 +291,16 @@ public struct AnecdoteConnector: Connector {
             holdUntilAudioEnds: true,
             color: "#FFD200"
         )
+    }
+
+    /// What has played recently and can still be heard again, newest first.
+    ///
+    /// A pass-through to the queue, which owns the record and the window that
+    /// bounds it. Here rather than reached for directly, so the app has one
+    /// collaborator for anecdotes instead of two — and so nothing outside this
+    /// type needs to know that the History and the played set are the same file.
+    public func history() async -> [PlayedAnecdote] {
+        await queue.history()
     }
 
     /// Pops until an anecdote whose audio is still on disk turns up.

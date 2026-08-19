@@ -1,3 +1,4 @@
+import AppKit
 import AwtrixKit
 import Foundation
 import Testing
@@ -32,17 +33,29 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     private var delayCalls = 0
     private let parkInRun: Gate?
     private let parkInMaintain: Gate?
+    private let parkInDeliver: Gate?
     private let delay: TimeInterval?
 
     /// `delay` stands in for a connector that is failing: nil answers with the
     /// interval it was asked about, which is what a healthy one gets.
-    init(parkInRun: Gate? = nil, parkInMaintain: Gate? = nil, delay: TimeInterval? = nil) {
+    init(
+        parkInRun: Gate? = nil,
+        parkInMaintain: Gate? = nil,
+        parkInDeliver: Gate? = nil,
+        delay: TimeInterval? = nil
+    ) {
         self.parkInRun = parkInRun
         self.parkInMaintain = parkInMaintain
+        self.parkInDeliver = parkInDeliver
         self.delay = delay
     }
 
-    /// One entry per call, in call order: `maintain:<id>` / `run:<id>`.
+    /// One entry per call, in call order: `maintain:<id>` / `run:<id>` /
+    /// `deliver:<text>`.
+    ///
+    /// A replay is keyed by what it put on the clock rather than by a connector
+    /// id, because it does not have one: `deliver` takes an output and nothing
+    /// else. That is also what lets a test say WHICH entry was replayed.
     ///
     /// `nextDelay` is deliberately not in here. It is asked once per turn of
     /// every schedule, including the turns that never run anything, and folding
@@ -70,6 +83,12 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     func runOnce(connectorId: String) async -> RunResult {
         lock.withLock { recorded.append("run:\(connectorId)") }
         await parkInRun?.enter()
+        return .delivered
+    }
+
+    func deliver(_ output: ConnectorOutput) async -> RunResult {
+        lock.withLock { recorded.append("deliver:\(output.text)") }
+        await parkInDeliver?.enter()
         return .delivered
     }
 }
@@ -289,7 +308,13 @@ func testModel(
     defaults: UserDefaults = UserDefaults(suiteName: "testModel-\(UUID().uuidString)")!,
     sleep: @escaping AppModel.Sleeping = parked,
     pollSleep: @escaping AppModel.Sleeping = parked,
-    deviceHost: String = "10.0.0.5"
+    deviceHost: String = "10.0.0.5",
+    anecdotes: (any AnecdoteReplaying)? = nil,
+    // Named rather than `.general`, so no test can put anything on the
+    // clipboard of whoever is running the suite.
+    pasteboard: NSPasteboard = NSPasteboard(
+        name: NSPasteboard.Name("testModel-\(UUID().uuidString)")
+    )
 ) -> AppModel {
     let registry = ConnectorRegistry()
     for connector in connectors { registry.register(connector) }
@@ -303,9 +328,62 @@ func testModel(
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: uploads
         ),
+        anecdotes: anecdotes,
         defaults: defaults,
+        pasteboard: pasteboard,
         sleep: sleep,
         pollSleep: pollSleep
+    )
+}
+
+// MARK: - History
+
+/// A history the menu can browse, and an output per entry.
+///
+/// The shipped connector puts the SAME banner on the clock for every anecdote —
+/// the joke is heard, not read — which would make two replays indistinguishable
+/// in `SpyHost`'s log. This one carries the anecdote's own text instead, so a
+/// test can say which entry was replayed.
+final class StubAnecdotes: AnecdoteReplaying, @unchecked Sendable {
+    let id: String
+    private let entries: [PlayedAnecdote]
+
+    init(id: String = "stub", history entries: [PlayedAnecdote] = []) {
+        self.id = id
+        self.entries = entries
+    }
+
+    func history() async -> [PlayedAnecdote] { entries }
+
+    func output(for anecdote: PreparedAnecdote) -> ConnectorOutput {
+        ConnectorOutput(text: anecdote.text, localAudio: anecdote.clips)
+    }
+}
+
+/// An anecdote whose single clip really is on disk, in a directory named the
+/// way the synthesizer names one — so `isPlayable` answers yes about it.
+func playableAnecdote(id: String, text: String = "joke") throws -> PreparedAnecdote {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("history-\(UUID().uuidString)")
+        .appendingPathComponent(PreparedAnecdote.namespace(for: id))
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let clip = directory.appendingPathComponent("turn-0.wav")
+    try Data().write(to: clip)
+    return PreparedAnecdote(
+        id: id, text: text, clips: [SpokenClip(url: clip)], laughter: "АХАХАХА",
+        preparedAt: nil, rank: nil
+    )
+}
+
+/// The same record with its audio already reclaimed: the entry a history keeps
+/// after the reaper has been through it.
+func anecdoteWhoseClipsAreGone(id: String, text: String = "joke") -> PreparedAnecdote {
+    let clip = FileManager.default.temporaryDirectory
+        .appendingPathComponent("reaped-\(UUID().uuidString)")
+        .appendingPathComponent("turn-0.wav")
+    return PreparedAnecdote(
+        id: id, text: text, clips: [SpokenClip(url: clip)], laughter: "АХАХАХА",
+        preparedAt: nil, rank: nil
     )
 }
 
@@ -347,6 +425,8 @@ final class QueueingHost: ConnectorRunning, @unchecked Sendable {
         await gate.enter()
         return .delivered
     }
+
+    func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
 }
 
 /// Answers `.cancelled` when its run is cancelled, as `ConnectorHost` does.
@@ -370,6 +450,8 @@ final class CancellingHost: ConnectorRunning, @unchecked Sendable {
         }
         return .cancelled
     }
+
+    func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
 }
 
 // MARK: - A real host, with the two collaborators a background pass never uses
@@ -439,4 +521,6 @@ final class RestockReportingHost: ConnectorRunning, @unchecked Sendable {
     func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
 
     func runOnce(connectorId: String) async -> RunResult { .delivered }
+
+    func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
 }

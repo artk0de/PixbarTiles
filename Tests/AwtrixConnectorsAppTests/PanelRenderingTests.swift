@@ -215,14 +215,24 @@ private func settingsFields(deviceHost: String) -> [String] {
     return fields(in: hosted(SettingsSheet(model: model)))
 }
 
-/// The panel, or the settings when they are open, as pixels.
+/// The panel, hosted and laid out, with a browse that reaches no network.
+///
+/// Handed back rather than rendered, for the tests that measure the panel's
+/// SIZE as well as its ink — a button that took a row of its own is a taller
+/// panel, and pixels alone cannot say whether the difference is a new row or a
+/// wider one.
 @MainActor
-private func drawn(_ model: AppModel) -> Data? {
+private func hostedPanel(_ model: AppModel) -> NSHostingView<MenuPanel> {
     let browsing = FakeBonjourBrowser()
     let browser = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
     browser.start()
-    let host = hosted(MenuPanel(model: model, monitor: model.monitor, discovery: browser))
-    return bitmap(host)?.representation(using: .png, properties: [:])
+    return hosted(MenuPanel(model: model, monitor: model.monitor, discovery: browser))
+}
+
+/// The panel, or the settings when they are open, as pixels.
+@MainActor
+private func drawn(_ model: AppModel) -> Data? {
+    bitmap(hostedPanel(model))?.representation(using: .png, properties: [:])
 }
 
 @MainActor
@@ -415,4 +425,127 @@ private func scheduledModel(dueIn delay: TimeInterval) async -> AppModel {
 
     #expect(drawn(complaining) != nil)
     #expect(drawn(complaining) != drawn(quiet))
+}
+
+// MARK: - History
+
+/// A model whose History is open and loaded.
+@MainActor
+private func showingHistory(_ entries: [PlayedAnecdote]) async -> AppModel {
+    let model = testModel(anecdotes: StubAnecdotes(history: entries))
+    model.openHistory()
+    #expect(await waitUntil { model.historyIsOpen && model.history.count == entries.count })
+    return model
+}
+
+/// A one-entry history, drawn.
+@MainActor
+private func drawnEntry(
+    _ anecdote: PreparedAnecdote, playedAt: Date
+) async -> Data? {
+    drawn(await showingHistory([PlayedAnecdote(anecdote: anecdote, playedAt: playedAt)]))
+}
+
+// The button the user asked for: in the Anecdotes row, not behind the gear and
+// not on a row of its own. Two panels alike in everything — same connector,
+// same address, neither started — except that one of them has a history to
+// browse, so a panel that grew the button anywhere accounts for the difference,
+// and one that grew a ROW for it is taller. Both halves are needed: the height
+// alone is equal while the button does not exist at all.
+@Test @MainActor func theAnecdotesRowCarriesAHistoryButtonWithoutTakingARowOfItsOwn() throws {
+    let without = hostedPanel(testModel())
+    let carrying = hostedPanel(testModel(anecdotes: StubAnecdotes(id: "stub")))
+
+    let plain = try #require(bitmap(without)?.representation(using: .png, properties: [:]))
+    let withHistory = try #require(bitmap(carrying)?.representation(using: .png, properties: [:]))
+
+    #expect(plain != withHistory)
+    #expect(without.fittingSize.height == carrying.fittingSize.height)
+}
+
+// A connector with no history to browse has no button to browse it with. The
+// panel draws every connector the registry holds, and only the anecdotes have a
+// history — a button on every row would promise one that does not exist.
+@Test @MainActor func aConnectorWithNoHistoryHasNoHistoryButton() {
+    let anecdotes = testModel(anecdotes: StubAnecdotes(id: "stub"))
+    let somethingElse = testModel(anecdotes: StubAnecdotes(id: "weather"))
+
+    #expect(drawn(somethingElse) != nil)
+    #expect(drawn(somethingElse) == drawn(testModel()))
+    #expect(drawn(anecdotes) != drawn(somethingElse))
+}
+
+// A menu bar window dismisses when it loses focus and takes any sheet over it
+// with it, so the History is shown in place of the panel exactly as the
+// settings are. And closing it goes back to the panel it replaced, pixel for
+// pixel — a surface you cannot leave is worse than one that never opened.
+@Test @MainActor func openingTheHistoryReplacesThePanelWithIt() async throws {
+    let played = PlayedAnecdote(
+        anecdote: try playableAnecdote(id: "a", text: "Заходит улитка в бар"),
+        playedAt: Date()
+    )
+    let model = testModel(anecdotes: StubAnecdotes(history: [played]))
+    let panel = drawn(model)
+
+    model.openHistory()
+    #expect(await waitUntil { model.history.isEmpty == false })
+    let history = drawn(model)
+
+    model.closeHistory()
+
+    #expect(panel != nil)
+    #expect(panel != history)
+    #expect(panel == drawn(model))
+}
+
+// One row per entry, or the surface is a list that lists nothing.
+@Test @MainActor func theHistoryDrawsARowPerEntry() async throws {
+    let first = PlayedAnecdote(
+        anecdote: try playableAnecdote(id: "a", text: "Заходит улитка в бар"),
+        playedAt: Date()
+    )
+    let second = PlayedAnecdote(
+        anecdote: try playableAnecdote(id: "b", text: "Штирлиц шёл по лесу"),
+        playedAt: Date()
+    )
+
+    let one = drawn(await showingHistory([first]))
+    let two = drawn(await showingHistory([first, second]))
+
+    #expect(one != nil)
+    #expect(one != two)
+}
+
+// "What was that one this morning" is the question history answers, and it
+// cannot be answered without the hour. Two surfaces holding the SAME anecdote —
+// same id, same text, same clips — and differing only in when it played: a
+// surface that does not draw the moment draws them identically.
+@Test @MainActor func everyEntrySaysWhenItPlayed() async throws {
+    let anecdote = try playableAnecdote(id: "a", text: "Заходит улитка в бар")
+    let played = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+    let morning = await drawnEntry(anecdote, playedAt: played)
+    let evening = await drawnEntry(anecdote, playedAt: played.addingTimeInterval(9 * 60 * 60))
+
+    #expect(morning != nil)
+    #expect(morning != evening)
+}
+
+// The rest of rule three, on the surface rather than in the model: an entry
+// whose audio has been reaped is still listed — it is still the joke, and it is
+// still copyable — but its "Play again" is not live. Same id, same text, same
+// moment; the only thing that differs is whether the clips are on disk, so a
+// surface that offered the same live button for both would draw them the same.
+@Test @MainActor func anEntryWhoseClipsAreGoneIsStillListedButCannotBePlayedAgain() async throws {
+    let played = Date(timeIntervalSinceReferenceDate: 800_000_000)
+    let here = try playableAnecdote(id: "a", text: "Заходит улитка в бар")
+    let gone = anecdoteWhoseClipsAreGone(id: "a", text: "Заходит улитка в бар")
+
+    let listed = await drawnEntry(gone, playedAt: played)
+    let empty = drawn(await showingHistory([]))
+    let playable = await drawnEntry(here, playedAt: played)
+
+    #expect(listed != nil)
+    #expect(listed != empty)
+    #expect(listed != playable)
 }

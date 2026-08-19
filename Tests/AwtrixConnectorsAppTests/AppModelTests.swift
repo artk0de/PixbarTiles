@@ -1,3 +1,4 @@
+import AppKit
 import AwtrixKit
 import Foundation
 import Testing
@@ -1032,4 +1033,189 @@ private func modelWithARealAnecdoteConnector(
     await subject.teardown()
 
     #expect(subject.lastMaintenanceFailure["stub"]?.contains("the feed is down") == true)
+}
+
+// MARK: - History
+
+// The day as well as the hour. History reaches back ten days, and "14:32" on
+// its own answers "what was that one this morning" only if it was this morning
+// — for anything older it is the day that is being asked about.
+@Test func aPlayedMomentIsSaidAsADayAndAnHour() {
+    let moment = Date(timeIntervalSinceReferenceDate: 800_000_000)
+    let said = PlayedAtLine.text(for: moment)
+    let hourAlone = moment.formatted(date: .omitted, time: .shortened)
+
+    #expect(said.contains(hourAlone))
+    #expect(said != hourAlone)
+}
+
+/// A store file whose history is exactly these entries, oldest first, as an
+/// earlier launch would have left it.
+///
+/// Written rather than retired into a live queue, because `retire` stamps
+/// `Date()` and a test cannot ask it for an entry from last week — which is the
+/// only kind the retention window has anything to say about.
+private func storeHolding(history entries: [PlayedAnecdote]) throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("history-\(UUID().uuidString).json")
+    let encoded = String(decoding: try JSONEncoder().encode(entries), as: UTF8.self)
+    try Data(#"{"pending":[],"played":[],"history":\#(encoded)}"#.utf8).write(to: url)
+    return url
+}
+
+/// The real connector over a queue holding exactly `entries`, with the reaper
+/// already run against `now`.
+@MainActor
+private func historyAfterReaping(
+    _ entries: [PlayedAnecdote], at now: Date, retention: TimeInterval
+) async throws -> (connector: AnecdoteConnector, reaped: Int) {
+    let queue = AnecdoteQueue(
+        storeURL: try storeHolding(history: entries),
+        clipRoot: FileManager.default.temporaryDirectory,
+        retention: retention
+    )
+    let connector = AnecdoteConnector(
+        queue: queue,
+        preparer: AnecdotePreparer(
+            source: AnecdoteSource(transport: StubTransport()),
+            speech: StubSpeechSynthesizer(),
+            queue: queue
+        )
+    )
+    return (connector, await queue.reapExpired(now: now))
+}
+
+// What the menu lists is what the queue still holds: newest first, and bounded
+// by the retention window the reaper enforces — not by a count of its own. A
+// second limit here would be a second answer to a question Task 17 already
+// answers, and the two would disagree the first time either moved.
+@Test @MainActor func historyListsNewestFirstAndStopsAtTheRetentionWindow() async throws {
+    let retention: TimeInterval = 10 * 24 * 60 * 60
+    let now = Date()
+    let wiring = try await historyAfterReaping(
+        [
+            PlayedAnecdote(
+                anecdote: anecdoteWhoseClipsAreGone(id: "old", text: "eleven days ago"),
+                playedAt: now.addingTimeInterval(-retention - 60)
+            ),
+            PlayedAnecdote(
+                anecdote: anecdoteWhoseClipsAreGone(id: "middle", text: "two days ago"),
+                playedAt: now.addingTimeInterval(-2 * 24 * 60 * 60)
+            ),
+            PlayedAnecdote(
+                anecdote: anecdoteWhoseClipsAreGone(id: "newest", text: "an hour ago"),
+                playedAt: now.addingTimeInterval(-60 * 60)
+            ),
+        ],
+        at: now,
+        retention: retention
+    )
+    // The one past the window went, and only it.
+    #expect(wiring.reaped == 1)
+
+    let subject = testModel(anecdotes: wiring.connector)
+    subject.openHistory()
+
+    #expect(await waitUntil { subject.history.isEmpty == false })
+    #expect(subject.history.map(\.anecdote.id) == ["newest", "middle"])
+}
+
+// Rule three. The record survives its audio — it is still listed and still
+// copyable — but there is nothing left to play, and a "Play again" that puts a
+// held banner on the clock with no audio to end it leaves the banner up until
+// somebody walks over and presses the middle button.
+//
+// The playable one is what makes the silence above a refusal rather than a
+// replay that has simply not happened yet.
+@Test @MainActor func anEntryWithMissingClipsCannotBeReplayed() async throws {
+    let host = SpyHost()
+    let here = try playableAnecdote(id: "here", text: "still here")
+    let gone = anecdoteWhoseClipsAreGone(id: "gone", text: "long gone")
+    let subject = testModel(
+        host: host,
+        anecdotes: StubAnecdotes(history: [
+            PlayedAnecdote(anecdote: gone, playedAt: Date()),
+            PlayedAnecdote(anecdote: here, playedAt: Date()),
+        ])
+    )
+
+    subject.replay(gone)
+    subject.replay(here)
+
+    #expect(await waitUntil { host.calls.contains("deliver:still here") })
+    #expect(host.calls.filter { $0.hasPrefix("deliver:") } == ["deliver:still here"])
+}
+
+// Rule four: the joke, not the banner. What the clock shows is
+// "ВНИМАНИЕ, АНЕКДОТ!" and what the laughter marker holds is "АХАХАХА" —
+// neither is what somebody pressing Copy is trying to paste into a chat.
+//
+// The entry copied here has no audio left, which is the other half of rule
+// three: an anecdote whose clips are gone is still copyable.
+@Test @MainActor func copyingPutsTheAnecdoteTextOnThePasteboard() {
+    let board = NSPasteboard(name: NSPasteboard.Name("awtrix-copy-\(UUID().uuidString)"))
+    let subject = testModel(pasteboard: board)
+    let anecdote = anecdoteWhoseClipsAreGone(id: "x", text: "Заходит улитка в бар")
+
+    subject.copyText(anecdote)
+
+    #expect(board.string(forType: .string) == "Заходит улитка в бар")
+}
+
+// Rule one, from the app's side. A replay goes to `deliver`, which is not a
+// run: nothing is produced, nothing is retired, and — the part this test is
+// about — no restock follows it and the connector's own result line is left
+// alone. Replaying something from last week must not touch tomorrow's schedule.
+//
+// The run at the end is the control: the same spy records both, so the absence
+// above is a refusal to run rather than a spy that cannot see one.
+@Test @MainActor func aReplayIsNeitherARunNorARestock() async throws {
+    let host = SpyHost()
+    let here = try playableAnecdote(id: "here", text: "still here")
+    let subject = testModel(
+        host: host,
+        anecdotes: StubAnecdotes(history: [PlayedAnecdote(anecdote: here, playedAt: Date())])
+    )
+
+    subject.replay(here)
+
+    #expect(await waitUntil { host.calls == ["deliver:still here"] })
+    #expect(subject.lastResults["stub"] == nil)
+
+    subject.runNow("stub")
+
+    #expect(await waitUntil {
+        host.calls == ["deliver:still here", "run:stub", "maintain:stub"]
+    })
+}
+
+// A replay puts the same held banner on the clock as a run, so the quit has to
+// wait for it too: a process killed during the release leaves the clock on that
+// banner. The task is the button's unless the model owns it, and teardown
+// cannot wait for something it does not hold.
+//
+// Measured against a release it does not control rather than raced inside a
+// 50 ms window: a teardown that does not wait comes back before the release,
+// and no amount of load can make it come back after.
+@Test @MainActor func teardownWaitsForAReplay() async throws {
+    let gate = Gate()
+    let here = try playableAnecdote(id: "here", text: "still here")
+    let subject = testModel(
+        host: SpyHost(parkInDeliver: gate),
+        anecdotes: StubAnecdotes(history: [PlayedAnecdote(anecdote: here, playedAt: Date())])
+    )
+
+    subject.replay(here)
+    #expect(await waitUntil { gate.enteredCount == 1 })
+
+    let started = ContinuousClock.now
+    // Detached, so releasing the gate does not need the MainActor the teardown
+    // is about to occupy.
+    Task.detached {
+        try? await Task.sleep(for: .milliseconds(200))
+        gate.open()
+    }
+    await subject.teardown()
+
+    #expect(ContinuousClock.now - started >= .milliseconds(150))
 }

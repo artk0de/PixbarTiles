@@ -144,6 +144,28 @@ struct StubIconInstaller: IconInstalling {
     }
 }
 
+/// Counts how often it was asked to produce, and produces something nothing
+/// else in these tests says.
+///
+/// A counter rather than a connector that throws: "the replay path never asked"
+/// is the claim, and a thrown error would only show that it did not USE what
+/// came back.
+private final class CountingConnector: Connector, @unchecked Sendable {
+    let id = "counting"
+    let displayName = "Counting"
+    let defaultInterval: TimeInterval = 300
+
+    private let lock = NSLock()
+    private var calls = 0
+
+    var produceCount: Int { lock.withLock { calls } }
+
+    func produce() async throws -> ConnectorOutput {
+        lock.withLock { calls += 1 }
+        return ConnectorOutput(text: "produced")
+    }
+}
+
 private struct FailingIconInstaller: IconInstalling {
     let error: any Error
     func ensureInstalled(_ ref: IconReference) async throws -> String { throw error }
@@ -938,6 +960,119 @@ private func staysFalse(
         Issue.record("expected .failed for unknown connector")
         return
     }
+}
+
+// MARK: - Replaying something already produced
+
+// The half of a run that the History replays. Asking the connector for one
+// would hand the user a NEW anecdote under a button that promised the old one,
+// and retire that new one as played on the way past — so `deliver` starts from
+// an output somebody already holds and never goes near `produce()`.
+@Test func deliverSendsTheBannerWithoutAskingTheConnectorToProduce() async throws {
+    let transport = RecordingTransport()
+    let connector = CountingConnector()
+    let host = makeHost(connector: connector, transport: transport)
+
+    let result = await host.deliver(ConnectorOutput(text: "replayed"))
+
+    #expect(result == .delivered)
+    #expect(connector.produceCount == 0)
+    let request = try #require(transport.requests.first)
+    // The argument reached the clock, rather than anything the host invented.
+    #expect(jsonBody(request)["text"] as? String == "replayed")
+    #expect(paths(transport) == ["/api/notify"])
+}
+
+// The other side of the same split. `runOnce` now produces and then hands the
+// result to the very code a replay uses, so what a run puts on the clock has to
+// go on being what its connector produced — banner, jingle, audio and the held
+// banner's release, all of it.
+@Test func runOnceStillDeliversWhatItProduced() async throws {
+    let transport = RecordingTransport()
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(
+        text: "produced", icon: .catalogue(9039), jingle: "nokia:d=4,o=5,b=225:8e6",
+        localAudio: [clip()], holdUntilAudioEnds: true
+    )
+    let audio = SpyAudio()
+    let host = makeHost(connector: connector, transport: transport, audio: audio)
+
+    #expect(await host.runOnce(connectorId: "stub") == .delivered)
+
+    let request = try #require(transport.requests.first)
+    #expect(jsonBody(request)["text"] as? String == "produced")
+    #expect(jsonBody(request)["icon"] as? String == "9039")
+    #expect(jsonBody(request)["rtttl"] as? String == "nokia:d=4,o=5,b=225:8e6")
+    #expect(jsonBody(request)["hold"] as? Bool == true)
+    #expect(audio.played == [[clip()]])
+    #expect(paths(transport) == ["/api/notify", "/api/notify/dismiss"])
+}
+
+// A replay takes its turn in the same queue a run does. `dismissNotification`
+// is global to the device, and the audio path plays one thing at a time, so a
+// replay pressed while an anecdote is speaking has to wait rather than talk
+// over it — and two presses of "Play again" are two replays, not one.
+@Test func aReplayWaitsForARunInFlightRatherThanOverlapping() async throws {
+    let transport = RecordingTransport()
+    let audio = GatedAudio()
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(
+        text: "scheduled", localAudio: [clip()], holdUntilAudioEnds: true
+    )
+    let host = makeHost(connector: connector, transport: transport, audio: audio)
+    let again = ConnectorOutput(text: "again", localAudio: [clip()], holdUntilAudioEnds: true)
+
+    let run = Task { await host.runOnce(connectorId: "stub") }
+    try await waitUntil { audio.enteredCount == 1 }
+
+    let first = Task { await host.deliver(again) }
+    let second = Task { await host.deliver(again) }
+    // An unserialised replay reaches `/api/notify` before it reaches the gate,
+    // so a moment is enough for it to show up.
+    #expect(try await staysFalse {
+        paths(transport).filter { $0 == "/api/notify" }.count > 1
+    })
+    #expect(audio.enteredCount == 1)
+
+    audio.open()
+    #expect(await run.value == .delivered)
+    #expect(await first.value == .delivered)
+    #expect(await second.value == .delivered)
+    // Three deliveries, each one's banner taken down before the next goes up.
+    #expect(paths(transport) == [
+        "/api/notify", "/api/notify/dismiss",
+        "/api/notify", "/api/notify/dismiss",
+        "/api/notify", "/api/notify/dismiss",
+    ])
+    #expect(audio.enteredCount == 3)
+}
+
+// A replay is not a run, and Task 15's backoff is a statement about the FEED:
+// hearing this morning's anecdote again says nothing about whether anekdot.ru
+// is up. Counting a rejected replay would back a healthy connector off; letting
+// a successful one clear the count would cancel a real backoff on the strength
+// of the user pressing a button.
+@Test func aReplayDoesNotAdvanceTheFailureCounter() async throws {
+    var failing = StubConnector()
+    failing.error = BoomError()
+    let host = makeHost(connector: failing)
+    for _ in 0..<2 { _ = await host.runOnce(connectorId: "stub") }
+    #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
+
+    #expect(await host.deliver(ConnectorOutput(text: "again")) == .delivered)
+    #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
+
+    let refusing = makeHost(
+        connector: failing, transport: PathFailingTransport(failingPath: "/api/notify")
+    )
+    for _ in 0..<2 { _ = await refusing.runOnce(connectorId: "stub") }
+    #expect(await refusing.consecutiveFailures(connectorId: "stub") == 2)
+
+    guard case .failed = await refusing.deliver(ConnectorOutput(text: "again")) else {
+        Issue.record("expected a replay the device rejected to fail")
+        return
+    }
+    #expect(await refusing.consecutiveFailures(connectorId: "stub") == 2)
 }
 
 // MARK: - Settings

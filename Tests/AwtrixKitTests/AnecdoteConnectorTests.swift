@@ -547,6 +547,86 @@ private struct SeededGenerator: RandomNumberGenerator {
     #expect(await queue.hasPlayed("https://www.anekdot.ru/id/1/"))
 }
 
+// MARK: - Hearing one again
+
+/// A host wired to this connector, with the two collaborators a replay would
+/// otherwise put on the network and the speakers stubbed out.
+private func makeAnecdoteHost(for connector: AnecdoteConnector) -> ConnectorHost {
+    let registry = ConnectorRegistry()
+    registry.register(connector)
+    return ConnectorHost(
+        device: AwtrixDevice(host: "10.0.0.5", transport: RecordingTransport()),
+        registry: registry,
+        store: InMemorySettingsStore(),
+        audio: SpyAudio(),
+        iconInstaller: StubIconInstaller()
+    )
+}
+
+// What "Play again" means: the same banner, the same jingle, the same clips in
+// the same order. Written as an equality against what the run itself put on the
+// clock, because any second way of building the output is a way for the two to
+// drift — and the drift would be silent, since a replay looks fine right up
+// until the icon or the hold is missing from it.
+@Test func replayingAPastAnecdotePutsExactlyWhatItsRunPutOnTheClock() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let preparer = AnecdotePreparer(
+        source: makeSource(dialogueFeed), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    _ = try await preparer.refill(target: 1)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+
+    let produced = try await connector.produce()
+    let played = try #require(await queue.history().first)
+
+    #expect(connector.output(for: played.anecdote) == produced)
+    // And not because both are empty: the output really carries the anecdote.
+    #expect(produced.text == AnecdoteConnector.banner)
+    #expect(produced.localAudio.count == 5)
+    #expect(produced.icon == AnecdoteConnector.laughIcon)
+}
+
+// Rule one of the History. `retire` is what makes an anecdote played, and it
+// belongs to `produce()` — the path a replay deliberately does not take. So
+// replaying cannot spend an anecdote nobody has heard yet: the queue's depth,
+// its history and the played set are all exactly where the run left them.
+@Test func aReplayDoesNotAddToThePlayedSet() async throws {
+    let queue = AnecdoteQueue(
+        storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention
+    )
+    let preparer = AnecdotePreparer(
+        source: makeSource(batchFeed), speech: StubSpeechSynthesizer(), queue: queue
+    )
+    _ = try await preparer.refill(target: 2)
+    let connector = AnecdoteConnector(queue: queue, preparer: preparer)
+    let host = makeAnecdoteHost(for: connector)
+
+    // A run first, so what marking one played looks like is on the record here
+    // rather than assumed from another test.
+    #expect(await host.runOnce(connectorId: "anecdotes") == .delivered)
+    let played = try #require(await queue.history().first).anecdote
+    #expect(await queue.hasPlayed(played.id))
+    #expect(await queue.ready() == 1)
+
+    // The one still waiting, replayed. Which of the two the run took is the
+    // play order's business, so the other one is picked rather than named.
+    let waitingId = played.id == "https://www.anekdot.ru/id/1/"
+        ? "https://www.anekdot.ru/id/2/"
+        : "https://www.anekdot.ru/id/1/"
+    let waiting = PreparedAnecdote(
+        id: waitingId, text: "joke", clips: played.clips, laughter: "АХАХАХА",
+        preparedAt: nil, rank: nil
+    )
+
+    #expect(await host.deliver(connector.output(for: waiting)) == .delivered)
+
+    #expect(await queue.hasPlayed(waitingId) == false)
+    #expect(await queue.ready() == 1)
+    #expect(await queue.history().count == 1)
+}
+
 @Test func anEmptyQueueAndAnExhaustedFeedThrowsRatherThanShowingNothing() async {
     let queue = AnecdoteQueue(
         storeURL: temporaryStore(), clipRoot: anyTemporaryRoot, retention: anyRetention

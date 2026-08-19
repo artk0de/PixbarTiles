@@ -1,3 +1,6 @@
+// `NSPasteboard` is AppKit's, and Copy is the one thing this model does that
+// leaves the app.
+import AppKit
 import AwtrixKit
 // `ObservableObject` and `@Published` are declared in Combine; Foundation
 // re-exports both, so this import names the framework that owns them.
@@ -13,12 +16,35 @@ import Foundation
 protocol ConnectorRunning: Sendable {
     func maintain(connectorId: String) async -> MaintenanceResult
     func runOnce(connectorId: String) async -> RunResult
+    /// Plays something already produced. A replay is this and nothing else: no
+    /// produce, so nothing is retired, and no outcome recorded against the
+    /// connector, so the backoff is untouched.
+    func deliver(_ output: ConnectorOutput) async -> RunResult
     /// The host owns this rather than the schedule, because the answer is a
     /// function of how the last runs went and the schedule does not watch them.
     func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval
 }
 
 extension ConnectorHost: ConnectorRunning {}
+
+/// The anecdotes the menu can look back over.
+///
+/// Declared here rather than in the kit for the reason `ConnectorRunning` is:
+/// this is the APP's view of a connector — what has played, and what playing one
+/// again would put on the clock. It is a connector's own two answers, and
+/// `AnecdoteConnector` satisfies it as written; nothing in the kit needs the
+/// pair to have a name.
+///
+/// `id` is on it because the panel draws every connector the registry holds and
+/// only one of them has a history: the row that gets a History button is the row
+/// whose connector this is.
+protocol AnecdoteReplaying: Sendable {
+    var id: String { get }
+    func history() async -> [PlayedAnecdote]
+    func output(for anecdote: PreparedAnecdote) -> ConnectorOutput
+}
+
+extension AnecdoteConnector: AnecdoteReplaying {}
 
 /// When a connector next runs, or what is stopping it.
 ///
@@ -133,6 +159,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var hostNote: String?
     /// Whether the settings are showing instead of the panel.
     @Published private(set) var settingsAreOpen = false
+    /// Whether the History is showing instead of the panel.
+    @Published private(set) var historyIsOpen = false
+    /// What has played recently, newest first, as of the last time the History
+    /// was opened.
+    ///
+    /// Read on opening rather than kept in step with the queue: nothing else on
+    /// the panel shows it, and a run that happens while the surface is closed
+    /// has no reader to tell. The list is whatever the queue still holds — the
+    /// retention window bounds it, and nothing here bounds it a second time.
+    @Published private(set) var history: [PlayedAnecdote] = []
     @Published private(set) var iconStatus: String?
     /// Mirrored from `monitor` rather than read through it, because the poll
     /// below is what learns the answer and a view that wants only the glyph
@@ -146,7 +182,14 @@ final class AppModel: ObservableObject {
     private let host: any ConnectorRunning
     private let store: any SettingsStore
     private let installer: CatalogueIconInstaller
+    /// The connector whose history the menu can browse, or nil when none was
+    /// wired. Optional because the panel is generic over connectors and only
+    /// one of them keeps anything to look back over.
+    private let anecdotes: (any AnecdoteReplaying)?
     private let defaults: UserDefaults
+    /// Where Copy writes. Injected so the suite cannot put anything on the
+    /// clipboard of whoever is running it.
+    private let pasteboard: NSPasteboard
     /// The delivery cadence, one sleeper per scheduled connector.
     private let scheduleSleep: Sleeping
     /// The reachability cadence, one sleeper for the whole app. Separate from
@@ -169,6 +212,16 @@ final class AppModel: ObservableObject {
     /// teardown can only wait for a task it holds, and this one is a minute of
     /// synthesis that a quit would otherwise kill halfway through a batch.
     private var launchRestock: Task<Void, Never>?
+    /// Replays the user asked for, still going, and the read that fills the
+    /// History behind them.
+    ///
+    /// Owned for the reason `manualRuns` is: a replay puts the same held banner
+    /// on the clock as a run, and a quit that does not wait for it kills the
+    /// process during the release. Keyed by nothing meaningful — two presses of
+    /// "Play again" are two replays, and the host queues them behind each other.
+    private var replays: [Int: Task<Void, Never>] = [:]
+    private var nextReplayKey = 0
+    private var historyLoad: Task<Void, Never>?
     /// Runs still going, per connector.
     ///
     /// A count rather than a flag because two presses are two runs: 37 seconds
@@ -187,18 +240,22 @@ final class AppModel: ObservableObject {
         host: any ConnectorRunning,
         store: any SettingsStore,
         installer: CatalogueIconInstaller,
+        anecdotes: (any AnecdoteReplaying)? = nil,
         defaults: UserDefaults = .standard,
+        pasteboard: NSPasteboard = .general,
         sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
         self.deviceHost = deviceHost
         self.typedHost = deviceHost
         self.defaults = defaults
+        self.pasteboard = pasteboard
         self.registry = registry
         self.monitor = DeviceMonitor(device: device)
         self.host = host
         self.store = store
         self.installer = installer
+        self.anecdotes = anecdotes
         self.scheduleSleep = sleep
         self.pollSleep = pollSleep
         for connector in registry.all {
@@ -242,6 +299,7 @@ final class AppModel: ObservableObject {
             ),
             store: store,
             installer: installer,
+            anecdotes: anecdotes.connector,
             defaults: defaults
         )
     }
@@ -338,6 +396,78 @@ final class AppModel: ObservableObject {
     func openSettings() { settingsAreOpen = true }
 
     func closeSettings() { settingsAreOpen = false }
+
+    // MARK: - History
+
+    /// Whether this connector has a history to browse.
+    ///
+    /// Asked of the connector rather than answered by a flag on the row,
+    /// because the panel draws whatever the registry holds and only the
+    /// anecdotes keep anything: a History button on a row with no history behind
+    /// it is a promise the surface cannot keep.
+    func hasHistory(_ connector: any Connector) -> Bool {
+        anecdotes?.id == connector.id
+    }
+
+    /// Shows what has played, in place of the panel.
+    ///
+    /// In place of, not over: a menu bar extra's window dismisses when it loses
+    /// focus and takes any sheet with it, so a sheet here is a surface that
+    /// vanishes while it is being read. The settings made the same trade.
+    ///
+    /// The list is read on every open. Nothing else shows it, so keeping it in
+    /// step with the queue between opens would be work nobody can see — and a
+    /// surface opened right after a run has to show that run.
+    func openHistory() {
+        historyIsOpen = true
+        historyLoad?.cancel()
+        guard let anecdotes else { return }
+        historyLoad = Task { [weak self] in
+            let played = await anecdotes.history()
+            guard let self, !Task.isCancelled else { return }
+            self.history = played
+        }
+    }
+
+    func closeHistory() { historyIsOpen = false }
+
+    /// Plays a past anecdote again.
+    ///
+    /// NOT a run, and every part of that is deliberate: it goes to `deliver`, so
+    /// nothing is produced and nothing is retired; no outcome is recorded, so
+    /// the backoff Task 15 owns is untouched; and no restock follows it, so the
+    /// refill Task 18 schedules is not brought forward. Replaying something from
+    /// last week cannot change what tomorrow does.
+    ///
+    /// An entry whose clips have been reaped is refused here, and `isPlayable`
+    /// is the one thing asked — the same answer the button's own disabled state
+    /// reads. Delivering it would put a held banner on the clock with audio that
+    /// never arrives to end it.
+    ///
+    /// The task is owned rather than left to the button's action closure, for
+    /// the reason `runNow`'s is: teardown can only wait for what it holds, and
+    /// this puts the same held banner on the clock.
+    func replay(_ anecdote: PreparedAnecdote) {
+        guard let anecdotes, anecdote.isPlayable else { return }
+        let output = anecdotes.output(for: anecdote)
+        let key = nextReplayKey
+        nextReplayKey += 1
+        replays[key] = Task { [weak self] in
+            _ = await self?.host.deliver(output)
+            self?.replays[key] = nil
+        }
+    }
+
+    /// Puts the joke on the pasteboard.
+    ///
+    /// The anecdote's own text — not the banner, which is the four words the
+    /// clock shows, and not the laughter, which is a marker for the synthesizer.
+    /// What somebody pressing Copy wants is the thing they would paste into a
+    /// chat.
+    func copyText(_ anecdote: PreparedAnecdote) {
+        pasteboard.clearContents()
+        pasteboard.setString(anecdote.text, forType: .string)
+    }
 
     // MARK: - Running
 
@@ -442,12 +572,14 @@ final class AppModel: ObservableObject {
     func teardown() async {
         monitorLoop?.cancel()
         monitorLoop = nil
-        let running = Array(timers.values) + Array(manualRuns.values)
-            + [iconRemoval, launchRestock].compactMap { $0 }
+        let running = Array(timers.values) + Array(manualRuns.values) + Array(replays.values)
+            + [iconRemoval, launchRestock, historyLoad].compactMap { $0 }
         timers.removeAll()
         manualRuns.removeAll()
+        replays.removeAll()
         iconRemoval = nil
         launchRestock = nil
+        historyLoad = nil
         for task in running { task.cancel() }
         for task in running { await task.value }
     }

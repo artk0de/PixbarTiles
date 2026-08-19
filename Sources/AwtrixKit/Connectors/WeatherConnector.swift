@@ -47,9 +47,16 @@ public struct WeatherConnector: Connector {
     public func produce() async throws -> ConnectorOutput {
         let reading = try await source.reading(at: location())
         let theme = WeatherTheme(code: reading.code, isDay: reading.isDay)
+        // Two quantities in one element: the digits are the AIR temperature,
+        // which is what a thermometer would agree with, and the colour is what
+        // that feels like. Collapsing them — showing the apparent temperature —
+        // gains one number and loses the other. Falling back to the air
+        // temperature when the service omitted the felt one, because a reading
+        // with no colour is drawn in whatever the previous app left behind.
+        let felt = reading.apparentTemperature ?? reading.temperature
         return ConnectorOutput(
             text: Self.degrees(reading.temperature),
-            color: theme.colour,
+            color: TemperatureColour(celsius: felt).hex,
             surface: .app(Self.appName),
             overlay: theme.overlay
         )

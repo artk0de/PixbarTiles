@@ -26,6 +26,15 @@ public struct WeatherReading: Sendable, Equatable {
     public let isDay: Bool
     /// Degrees Celsius.
     public let temperature: Double
+    /// What those degrees feel like, in degrees Celsius — wind, humidity and
+    /// sun folded in by the service. What the reading is COLOURED from, while
+    /// the digits stay the air temperature: a clock showing 2° when every other
+    /// thermometer in the room says 7 reads as broken rather than as informed.
+    ///
+    /// Optional for the reason `interval` is: a response that stops carrying it
+    /// has to read as "no answer for that" rather than fail the whole poll, and
+    /// the air temperature is a fair second answer to colour from.
+    public let apparentTemperature: Double?
     /// Millimetres in the last hour.
     public let precipitation: Double
     /// Kilometres per hour.
@@ -38,12 +47,13 @@ public struct WeatherReading: Sendable, Equatable {
     public let interval: TimeInterval
 
     public init(
-        code: Int, isDay: Bool, temperature: Double, precipitation: Double,
-        windSpeed: Double, interval: TimeInterval
+        code: Int, isDay: Bool, temperature: Double, apparentTemperature: Double? = nil,
+        precipitation: Double, windSpeed: Double, interval: TimeInterval
     ) {
         self.code = code
         self.isDay = isDay
         self.temperature = temperature
+        self.apparentTemperature = apparentTemperature
         self.precipitation = precipitation
         self.windSpeed = windSpeed
         self.interval = interval
@@ -87,9 +97,12 @@ public actor OpenMeteoSource {
 
     public static let endpoint = "https://api.open-meteo.com/v1/forecast"
 
-    /// The five fields the request asks for, verified against the live service.
+    /// The six fields the request asks for, verified against the live service.
+    /// `apparent_temperature` arrives in the same `current` object as the air
+    /// temperature and costs nothing extra to ask for — one request answers
+    /// both the digits and the colour.
     public static let fields =
-        "weather_code,is_day,precipitation,temperature_2m,wind_speed_10m"
+        "weather_code,is_day,precipitation,temperature_2m,apparent_temperature,wind_speed_10m"
 
     private let transport: any Transport
     /// Injected so a test can step over a quarter of an hour rather than wait
@@ -150,6 +163,11 @@ private struct Forecast: Decodable {
         let code: Int
         let isDay: Int
         let temperature: Double
+        /// Optional for the same reason `interval` is, and by the same
+        /// mechanism: an optional property is decoded with `decodeIfPresent`,
+        /// so a `current` object that stops carrying the field is still a
+        /// reading rather than a failed poll.
+        let apparentTemperature: Double?
         let precipitation: Double
         let windSpeed: Double
         /// Optional so a response that stops carrying it reads as "use the
@@ -162,6 +180,7 @@ private struct Forecast: Decodable {
             case code = "weather_code"
             case isDay = "is_day"
             case temperature = "temperature_2m"
+            case apparentTemperature = "apparent_temperature"
             case precipitation
             case windSpeed = "wind_speed_10m"
         }
@@ -172,6 +191,7 @@ private struct Forecast: Decodable {
             code: current.code,
             isDay: current.isDay != 0,
             temperature: current.temperature,
+            apparentTemperature: current.apparentTemperature,
             precipitation: current.precipitation,
             windSpeed: current.windSpeed,
             interval: current.interval ?? OpenMeteoSource.defaultInterval

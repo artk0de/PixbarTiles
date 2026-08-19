@@ -89,11 +89,10 @@ private let groups: [Group] = [
     let night = WeatherTheme(code: 0, isDay: false)
 
     #expect(day != night)
-    #expect(day.colour != night.colour)
-    // Different themes, same overlay: `is_day` decides what the clock's own app
-    // is drawn in, and there is no night overlay for it to reach for. Without
-    // this, a mapping that answered a made-up overlay for the night would pass
-    // the inequality above and put no weather on the device at all.
+    // Different themes, same overlay: `is_day` decides which sky this is, and
+    // there is no night overlay for it to reach for. Without this, a mapping
+    // that answered a made-up overlay for the night would pass the inequality
+    // above and put no weather on the device at all.
     #expect(day.overlay == .clear)
     #expect(night.overlay == .clear)
 }
@@ -104,19 +103,6 @@ private let groups: [Group] = [
     #expect(WeatherTheme(code: 2, isDay: true) != WeatherTheme(code: 2, isDay: false))
     // Overcast is not: there is no sun behind it to have set.
     #expect(WeatherTheme(code: 3, isDay: true) == WeatherTheme(code: 3, isDay: false))
-}
-
-// Every theme names a colour the device can parse. A colour is six hex digits
-// behind a hash; anything else is dropped by the firmware and the reading is
-// drawn in whatever the last app left behind.
-@Test func everyThemeNamesAColourTheDeviceCanParse() {
-    for theme in WeatherTheme.allCases {
-        #expect(theme.colour.count == 7, "\(theme) has \(theme.colour)")
-        #expect(theme.colour.first == "#")
-        #expect(theme.colour.dropFirst().allSatisfy { $0.isHexDigit })
-    }
-    // And no two skies look the same, or the colour is not saying anything.
-    #expect(Set(WeatherTheme.allCases.map(\.colour)).count == WeatherTheme.allCases.count)
 }
 
 // WMO separates 51–55 from 61–65 because drizzle is not rain, and the firmware

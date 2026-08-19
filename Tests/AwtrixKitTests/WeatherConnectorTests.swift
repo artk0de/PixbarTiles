@@ -92,10 +92,15 @@ private final class SkyAndClock: Transport, @unchecked Sendable {
     }
 }
 
-private func weatherBody(code: Int = 61, isDay: Int = 1, temperature: Double = 4.2) -> Data {
-    Data("""
+private func weatherBody(
+    code: Int = 61, isDay: Int = 1, temperature: Double = 4.2, apparent: Double? = nil
+) -> Data {
+    // Absent unless a test asks for one, and absent means the key is missing
+    // rather than null — a service that stops answering with a field drops it.
+    let felt = apparent.map { ",\"apparent_temperature\":\($0)" } ?? ""
+    return Data("""
     {"current":{"time":"2026-08-19T02:45","interval":900,"weather_code":\(code),
-      "is_day":\(isDay),"precipitation":0.4,"temperature_2m":\(temperature),
+      "is_day":\(isDay),"precipitation":0.4,"temperature_2m":\(temperature)\(felt),
       "wind_speed_10m":9.0}}
     """.utf8)
 }
@@ -168,10 +173,64 @@ private struct PassThroughIcons: IconInstalling {
     #expect(output.surface == .app(WeatherConnector.appName))
     #expect(output.overlay == .rain)
     #expect(output.text == "4°")
-    #expect(output.color == WeatherTheme.rain.colour)
+    #expect(output.color == TemperatureColour(celsius: 4.2).hex)
     // Nothing is spoken and nothing is held: an app has no banner to release.
     #expect(output.localAudio.isEmpty)
     #expect(output.holdUntilAudioEnds == false)
+}
+
+// Two quantities in one element, which is the whole point of it: the digits
+// answer how many degrees it is, the colour answers how that feels. A 4.2° in a
+// wind stands in like a -2°, and the reading is drawn as a -2 would be while
+// still saying 4.
+@Test func theColourIsChosenFromWhatItFeelsLikeRatherThanFromTheAirTemperature() async throws {
+    let transport = SkyAndClock(sky: weatherBody(temperature: 4.2, apparent: -2))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk }
+    )
+
+    let output = try await connector.produce()
+
+    #expect(output.color == TemperatureColour(celsius: -2).hex)
+    #expect(output.color != TemperatureColour(celsius: 4.2).hex)
+    // The reading itself is untouched. Showing the apparent temperature would
+    // be a clock that disagrees with every other thermometer in the room.
+    #expect(output.text == "4°")
+}
+
+// And the sky is not what the colour says any more, which is the change: an
+// overcast 25° and a clear 25° are drawn the same, because what is being
+// coloured is the temperature. The sky is on the overlay.
+@Test func twoSkiesAtTheSameTemperatureAreDrawnInTheSameColour() async throws {
+    var drawn: Set<String> = []
+    for code in [0, 3, 61, 71] {
+        let transport = SkyAndClock(sky: weatherBody(code: code, temperature: 25, apparent: 25))
+        let connector = WeatherConnector(
+            source: OpenMeteoSource(transport: transport), location: { desk }
+        )
+
+        let output = try await connector.produce()
+        drawn.insert(try #require(output.color))
+        // The sky still reaches the device; it reaches it as the overlay.
+        #expect(output.overlay == WeatherTheme(code: code, isDay: true).overlay)
+    }
+
+    #expect(drawn == [TemperatureColour(celsius: 25).hex])
+}
+
+// A response that stopped carrying the apparent temperature must not cost the
+// reading its colour — the air temperature is the honest second answer, and a
+// weather app drawn in the previous app's colour is the alternative.
+@Test func aReadingWithoutAnApparentTemperatureIsColouredFromTheAirTemperature() async throws {
+    let transport = SkyAndClock(sky: weatherBody(temperature: 27.5, apparent: nil))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk }
+    )
+
+    let output = try await connector.produce()
+
+    #expect(output.color == TemperatureColour(celsius: 27.5).hex)
+    #expect(output.text == "28°")
 }
 
 @Test func theTemperatureIsRoundedToWholeDegreesEitherSideOfZero() async throws {

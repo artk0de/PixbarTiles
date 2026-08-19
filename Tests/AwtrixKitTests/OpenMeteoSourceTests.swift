@@ -5,15 +5,18 @@ import Testing
 /// The shape the live API answers with, verified against it: a `current`
 /// object carrying its own update interval beside the readings.
 private func body(
-    code: Int = 3, isDay: Int = 1, temperature: Double = 18.6,
+    code: Int = 3, isDay: Int = 1, temperature: Double = 18.6, apparent: Double? = 15.4,
     precipitation: Double = 0, wind: Double = 10.5, interval: Int = 900
 ) -> Data {
-    Data("""
+    // Omitted rather than sent as null when there is none, because that is how
+    // a field the service stopped answering with would actually arrive.
+    let felt = apparent.map { ",\"apparent_temperature\":\($0)" } ?? ""
+    return Data("""
     {"latitude":55.75,"longitude":37.625,"utc_offset_seconds":0,
      "current_units":{"time":"iso8601","interval":"seconds","weather_code":"wmo code"},
      "current":{"time":"2026-08-19T02:45","interval":\(interval),"weather_code":\(code),
        "is_day":\(isDay),"precipitation":\(precipitation),
-       "temperature_2m":\(temperature),"wind_speed_10m":\(wind)}}
+       "temperature_2m":\(temperature)\(felt),"wind_speed_10m":\(wind)}}
     """.utf8)
 }
 
@@ -47,14 +50,19 @@ private final class Clock: @unchecked Sendable {
     #expect(url.contains("longitude=37.6173"))
     // No key and no signup, so there is nothing else to send. What the query
     // must carry is every field the theme and the reading are built from.
-    for field in ["weather_code", "is_day", "precipitation", "temperature_2m", "wind_speed_10m"] {
+    for field in [
+        "weather_code", "is_day", "precipitation", "temperature_2m", "wind_speed_10m",
+        "apparent_temperature",
+    ] {
         #expect(url.contains(field), "the request does not ask for \(field)")
     }
 }
 
 @Test func theSourceDecodesTheCurrentBlockTheApiAnswersWith() async throws {
     let transport = RecordingTransport()
-    transport.body = body(code: 61, isDay: 0, temperature: -3.4, precipitation: 1.2, wind: 22)
+    transport.body = body(
+        code: 61, isDay: 0, temperature: -3.4, apparent: -9.1, precipitation: 1.2, wind: 22
+    )
     let source = OpenMeteoSource(transport: transport)
 
     let reading = try await source.reading(at: moscow)
@@ -63,9 +71,26 @@ private final class Clock: @unchecked Sendable {
     // `is_day` arrives as 1 or 0, not as a JSON boolean.
     #expect(reading.isDay == false)
     #expect(reading.temperature == -3.4)
+    // Two quantities, not one rounded off the other: -3.4 in a 22 km/h wind is
+    // -9.1 to stand in, and the second is what the colour is chosen from.
+    #expect(reading.apparentTemperature == -9.1)
     #expect(reading.precipitation == 1.2)
     #expect(reading.windSpeed == 22)
     #expect(reading.interval == 900)
+}
+
+// Optional for the reason `interval` is: a response that stops carrying a field
+// has to read as "no answer for that" rather than fail the whole poll. The air
+// temperature is still worth showing, and it is still what the digits say.
+@Test func aResponseWithoutTheApparentTemperatureIsStillAReading() async throws {
+    let transport = RecordingTransport()
+    transport.body = body(temperature: 18.6, apparent: nil)
+    let source = OpenMeteoSource(transport: transport)
+
+    let reading = try await source.reading(at: moscow)
+
+    #expect(reading.apparentTemperature == nil)
+    #expect(reading.temperature == 18.6)
 }
 
 @Test func theSourceIsNotPolledFasterThanItsOwnInterval() async throws {

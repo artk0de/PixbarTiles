@@ -43,7 +43,9 @@ public enum DeviceOverlay: String, Sendable, Equatable, CaseIterable {
 /// exactly this many looks and two of them differ only by the hour: a clear
 /// night rendered as a bright sun is the kind of wrongness that gets noticed
 /// immediately, and it cannot be expressed by the overlay at all — there is no
-/// night overlay, so the difference has to live in what the app is drawn in.
+/// night overlay. The distinction is kept here for the icon to draw. The app's
+/// colour used to carry it and cannot any more: the colour answers how the
+/// temperature feels, which is a different question from what the sky is doing.
 public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
     case clearDay
     case clearNight
@@ -99,7 +101,8 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
     /// Four skies share `clear`, and that is not a mapping that lost
     /// information: the firmware has no layer for cloud, fog or night, and
     /// drawing rain over an overcast afternoon would be a lie about the
-    /// weather. What tells them apart is the colour below.
+    /// weather. What tells them apart is the theme itself, which is what an
+    /// icon is chosen from.
     public var overlay: DeviceOverlay {
         switch self {
         case .clearDay, .clearNight, .cloud, .fog: .clear
@@ -109,26 +112,6 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
         case .frost: .frost
         case .thunder: .thunder
         case .storm: .storm
-        }
-    }
-
-    /// What the reading is drawn in, in the clock's own loop.
-    ///
-    /// Six hex digits behind a hash, which is the only form the firmware
-    /// parses; anything else is dropped and the reading comes out in whatever
-    /// the previous app left behind.
-    public var colour: String {
-        switch self {
-        case .clearDay: "#FFC300"
-        case .clearNight: "#4C6FFF"
-        case .cloud: "#9AA5B1"
-        case .fog: "#7F8C99"
-        case .drizzle: "#7FB3FF"
-        case .rain: "#3C8CFF"
-        case .snow: "#DFF3FF"
-        case .frost: "#8FE3F5"
-        case .thunder: "#C77DFF"
-        case .storm: "#FF5C4D"
         }
     }
 }

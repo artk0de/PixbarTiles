@@ -55,9 +55,31 @@ public enum DeliverySurface: Sendable, Equatable {
     case app(String)
 }
 
+/// A bar filled from the left under an app's text.
+///
+/// Named for what the firmware calls it — `progress`, and not `bar`, which is a
+/// different field drawing a little graph of a series. The percentage is what
+/// the device draws rather than what is true: a reading past a hundred belongs
+/// in the text, where it can be read, and not in a bar that has no room for it.
+public struct ProgressBar: Sendable, Equatable {
+    /// Nought to a hundred, clamped on the way in — the firmware has nothing to
+    /// draw outside that and does not say so.
+    public let percent: Int
+    public let fill: String
+    public let track: String
+
+    public init(percent: Int, fill: String, track: String) {
+        self.percent = min(100, max(0, percent))
+        self.fill = fill
+        self.track = track
+    }
+}
+
 public struct ConnectorOutput: Sendable, Equatable {
     public var text: String
     public var icon: IconReference?
+    /// The bar drawn under the text, or nil for an output that is only words.
+    public var progress: ProgressBar?
     public var jingle: String?
     public var localAudio: [SpokenClip]
     /// Keep the banner on the clock until the audio finishes, rather than for a
@@ -89,6 +111,7 @@ public struct ConnectorOutput: Sendable, Equatable {
     public init(
         text: String,
         icon: IconReference? = nil,
+        progress: ProgressBar? = nil,
         jingle: String? = nil,
         localAudio: [SpokenClip] = [],
         holdUntilAudioEnds: Bool = false,
@@ -100,6 +123,7 @@ public struct ConnectorOutput: Sendable, Equatable {
     ) {
         self.text = text
         self.icon = icon
+        self.progress = progress
         self.jingle = jingle
         self.localAudio = localAudio
         self.holdUntilAudioEnds = holdUntilAudioEnds

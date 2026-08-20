@@ -97,18 +97,28 @@ public struct AppPayload: Sendable, Equatable {
     /// than it left.
     public var lifetime: Int?
 
+    /// A bar under the text, or nil for an app that is only a reading.
+    ///
+    /// The firmware's `progress`, not its `bar`: `bar` plots a series of values
+    /// as a little graph across the tile, `progress` fills one row from the left
+    /// and takes its own two colours. Verified against the clock on 2026-08-20
+    /// — the filled part, the unfilled part and the text all colour separately.
+    public var progress: ProgressBar?
+
     public init(
         text: String,
         icon: String? = nil,
         color: String? = nil,
         duration: Int? = nil,
-        lifetime: Int? = nil
+        lifetime: Int? = nil,
+        progress: ProgressBar? = nil
     ) {
         self.text = text
         self.icon = icon
         self.color = color
         self.duration = duration
         self.lifetime = lifetime
+        self.progress = progress
     }
 
     /// Only set fields are emitted — the firmware rejects nulls.
@@ -118,6 +128,11 @@ public struct AppPayload: Sendable, Equatable {
         if let color { object["color"] = color }
         if let duration { object["duration"] = duration }
         if let lifetime { object["lifetime"] = lifetime }
+        if let progress {
+            object["progress"] = progress.percent
+            object["progressC"] = progress.fill
+            object["progressBC"] = progress.track
+        }
         return object
     }
 }

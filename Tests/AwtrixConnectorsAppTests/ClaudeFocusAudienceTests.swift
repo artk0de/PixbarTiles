@@ -3,14 +3,24 @@ import Foundation
 import Testing
 @testable import AwtrixConnectorsApp
 
-// Which Focus the Claude app belongs to, read off what macOS actually says.
+// Which Focus the Claude app survives, read off what macOS actually says.
 //
-// The list of identifiers lives in `AwtrixKit`; what is tested here is the
-// translation — every answer the status can give, mapped to shown or not. The
-// interesting branches are the two that are not a named mode.
+// Shown by default, hidden by exception. The first version of this had it the
+// other way round — a list of the two Focuses the app was FOR, hiding it
+// everywhere else — and that put the app off the clock during the state a Mac
+// is in most of the day: no Focus at all. What was asked for is that work and
+// personal time do not stop it, which is a statement about exceptions.
 
-@Test func theAppIsShownDuringTheTwoFocusesItBelongsTo() {
-    for identifier in ["com.apple.focus.work", "com.apple.focus.personal-time"] {
+@Test func theAppKeepsWorkingThroughTheFocusesItWasAskedToSurvive() {
+    for identifier in [
+        "com.apple.focus.work",
+        "com.apple.focus.personal-time",
+        // And every other ordinary Focus, for the same reason: none of these
+        // silences the room either.
+        "com.apple.focus.fitness",
+        "com.apple.focus.mindfulness",
+        "com.apple.focus.reading",
+    ] {
         let status = StubFocusStatus(
             access: .authorized, isFocused: true, activeMode: .mode(identifier)
         )
@@ -18,37 +28,37 @@ import Testing
     }
 }
 
-@Test func theAppIsHiddenDuringEveryOtherNamedFocus() {
-    for identifier in [
-        "com.apple.donotdisturb.mode.default",
-        "com.apple.sleep.sleep-mode",
-        "com.apple.focus.fitness",
-        "com.apple.focus.mindfulness",
-    ] {
+// The exception list, and it is the anecdotes' list rather than a second copy.
+@Test func theAppIsHiddenOnlyByTheFocusesThatSilenceTheRoom() {
+    for identifier in DoNotDisturbDatabase.silencing {
         let status = StubFocusStatus(
             access: .authorized, isFocused: true, activeMode: .mode(identifier)
         )
         #expect(!ClaudeFocusAudience.shows(status), "shown during \(identifier)")
     }
+
+    // Stated as membership too, so that a Focus quietly added to the silencing
+    // list starts hiding this app without anybody having to remember to.
+    #expect(DoNotDisturbDatabase.silencing.contains("com.apple.donotdisturb.mode.default"))
+    #expect(DoNotDisturbDatabase.silencing.contains("com.apple.sleep.sleep-mode"))
 }
 
-// No Focus at all is not one of the two, and it is the ordinary state of a Mac.
-// Asserted on its own because it is the case that decides whether this app is
-// on the clock most of the time.
-@Test func theAppIsHiddenWhenNoFocusIsOnAtAll() {
+// No Focus at all is the ordinary state of a Mac, and it is the case the first
+// version got wrong: it hid the app almost always, and the report that came
+// back was "the app stopped appearing", not "the gate is inverted".
+@Test func theAppIsShownWhenNoFocusIsOnAtAll() {
     let status = StubFocusStatus(access: .authorized, isFocused: false, activeMode: .noFocus)
 
-    #expect(!ClaudeFocusAudience.shows(status))
+    #expect(ClaudeFocusAudience.shows(status))
 }
 
-// And the two ways of not knowing both show it.
+// And both ways of not knowing show it.
 //
 // Reading the active mode needs Full Disk Access, and an unauthorized centre
 // cannot be believed about the mode either — its `isFocused` is the same false
 // a machine with no Focus gives. Hiding on either would produce an app that
 // never appears on a machine where everything else works, with nothing anywhere
-// saying why. Showing costs a Claude app on the matrix during Do Not Disturb:
-// visible, harmless, and it explains itself the moment somebody looks.
+// saying why.
 @Test func theAppIsShownWheneverTheFocusCannotBeRead() {
     let noFullDiskAccess = StubFocusStatus(
         access: .authorized, isFocused: true, activeMode: .cannotTell
@@ -56,10 +66,6 @@ import Testing
     #expect(ClaudeFocusAudience.shows(noFullDiskAccess))
 
     for access: FocusAccess in [.notDetermined, .denied, .restricted] {
-        // The mode says "no Focus" and is not to be believed, because the
-        // permission to read it was never granted. This is the branch that
-        // would otherwise hide the app on every machine that has not been
-        // through the permission prompt.
         let unauthorized = StubFocusStatus(
             access: access, isFocused: false, activeMode: .noFocus
         )

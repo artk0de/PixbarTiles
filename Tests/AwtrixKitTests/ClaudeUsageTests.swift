@@ -216,16 +216,7 @@ private struct FixedReport: ClaudeUsageReporting {
     #expect(try! #require(lifetime) <= 900)
 }
 
-// MARK: - When it is shown at all
-
-// Two Focus modes and no others, which is what was asked for. The interesting
-// case is the third one.
-@Test func theAppBelongsToTheWorkingAndPersonalFocusesOnly() {
-    #expect(ClaudeUsage.shows(focusIdentifier: "com.apple.focus.work"))
-    #expect(ClaudeUsage.shows(focusIdentifier: "com.apple.focus.personal-time"))
-
-    #expect(!ClaudeUsage.shows(focusIdentifier: "com.apple.donotdisturb.mode.default"))
-    #expect(!ClaudeUsage.shows(focusIdentifier: "com.apple.sleep.sleep-mode"))
-    #expect(!ClaudeUsage.shows(focusIdentifier: "com.apple.focus.fitness"))
-    #expect(!ClaudeUsage.shows(focusIdentifier: nil))
-}
+// Which Focus the app survives is asserted in `ClaudeFocusAudienceTests`, in
+// the target that knows what a Focus is. What this kit knows is only that
+// something can shut the gate — see `nothingIsProducedWhileTheFocusIsNotOneOf
+// ItsOwn` above.

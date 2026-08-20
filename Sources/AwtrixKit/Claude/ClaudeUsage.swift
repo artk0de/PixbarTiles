@@ -13,31 +13,12 @@ public enum ClaudeUsage {
     /// warning about itself.
     public static let brandColour = "#D97757"
 
-    /// The Focus modes this app belongs to.
-    ///
-    /// Identifiers rather than display names: a Focus is renamed freely in
-    /// Settings and its identifier is not, so matching on the name would break
-    /// the moment somebody types over "Work". Captured from the Focus database
-    /// on this machine rather than guessed.
-    public static let focusesItBelongsTo: Set<String> = [
-        "com.apple.focus.work",
-        "com.apple.focus.personal-time",
-    ]
-
-    /// Whether the weekly allowance belongs on the clock right now.
-    ///
-    /// Nil means no Focus is active, and that answers false: the app was asked
-    /// for during working and personal hours specifically, and "no Focus at
-    /// all" is neither of them.
-    ///
-    /// The case NOT decided here is the one where the Focus cannot be read —
-    /// the app has no Full Disk Access, so the database is unreadable. That is
-    /// not a Focus identifier and does not reach this function; whoever cannot
-    /// tell must decide whether to show, and the reason it is their decision is
-    /// that hiding on "cannot tell" produces an app which never appears and
-    /// never explains why.
-    public static func shows(focusIdentifier: String?) -> Bool {
-        guard let focusIdentifier else { return false }
-        return focusesItBelongsTo.contains(focusIdentifier)
-    }
+    // Which Focus this app survives is deliberately NOT decided here.
+    //
+    // It was, once: a list of the two Focuses the app was for, and a check that
+    // hid it everywhere else. That is the wrong shape as well as the wrong
+    // answer — the exception list belongs beside the one the anecdotes already
+    // use, so that a Focus added to it starts hiding this app too without
+    // anybody remembering to. `ClaudeFocusAudience` owns it, in the target that
+    // knows what a Focus is.
 }

@@ -276,21 +276,49 @@ enum BatteryLine {
     /// where somebody most wants it. "3 h 47 m" states a minute of precision
     /// nothing behind it can support, and a reader plans around what they are
     /// shown.
+    /// The rungs an estimate above an hour is rounded to, in hours.
+    ///
+    /// Roughly a quarter apart, which is the size of the error the model behind
+    /// the number actually has. A finer grid would render differences the
+    /// estimate cannot tell apart.
+    private static let rungs: [Double] = [1, 1.5, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 36, 48]
+
     static func duration(_ seconds: TimeInterval) -> String {
         let total = max(0, Int(seconds.rounded()))
-        // Coarser above the hour, because the same relative claim costs more
-        // minutes there: five on forty is a quarter of an hour on four. Chosen
-        // by what was handed in rather than by what it rounds to, or the hour is
-        // a boundary the answer can round itself across and back.
-        let step = total < 3_600 ? 5 * 60 : 15 * 60
-        // Floored at one step. Under half a step rounds to nothing, and "0 m"
-        // reads as a broken estimate rather than an urgent one.
-        let quantised = max(((total + step / 2) / step) * step, step)
-        let hours = quantised / 3_600
-        let minutes = (quantised % 3_600) / 60
-        if hours > 0 && minutes > 0 { return "\(hours) h \(minutes) m" }
-        if hours > 0 { return "\(hours) h" }
-        return "\(minutes) m"
+
+        // Under the hour the five-minute grid stays, because the precision
+        // there is real: the bottom of the discharge curve is steep, so the
+        // voltage genuinely carries the rate and the answer is worth a figure.
+        if total < 3_600 {
+            let step = 5 * 60
+            // Floored at one step. Under half a step rounds to nothing, and
+            // "0 m" reads as a broken estimate rather than an urgent one.
+            let quantised = max(((total + step / 2) / step) * step, step)
+            // Except when it rounds up to the hour itself: "60 m" is the same
+            // amount of time as "1 h" and a worse sentence.
+            if quantised >= 3_600 { return "~1 h" }
+            return "\(quantised / 60) m"
+        }
+
+        // Above it, a ladder and a tilde. The figure is a charge left over a
+        // fitted rate, against a curve that is the canonical shape of a lithium
+        // cell rather than a fit to this one — good to some tens of percent,
+        // not to the minute. "20 h 15 m" claims four digits of a number that
+        // has one, and a reader plans around the claim.
+        let hours = Double(total) / 3_600
+        // A 4400 mAh cell at the seventy-odd milliamps this clock cannot go
+        // below is about sixty hours. Past that the model has failed rather
+        // than the battery having lasted, and saying so is the honest answer.
+        guard hours <= 52 else { return "2+ days" }
+
+        let rung = rungs.min { abs($0 - hours) < abs($1 - hours) } ?? 1
+        if rung >= 24 {
+            let days = rung / 24
+            if days == 1 { return "~1 day" }
+            return days == 1.5 ? "~1.5 days" : "~\(Int(days)) days"
+        }
+        if rung == rung.rounded() { return "~\(Int(rung)) h" }
+        return "~\(Int(rung)) h 30 m"
     }
 }
 

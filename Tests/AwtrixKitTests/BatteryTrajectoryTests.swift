@@ -280,7 +280,16 @@ private let dischargingOnBattery = [
 
 @Test func theEstimateFromTheMeasuredDischargeIsAboutADay() {
     var subject = BatteryTrajectory()
-    for (step, reading) in dischargingOnBattery.enumerated() {
+    // The measured half hour, and then the same half hour again four raw steps
+    // lower — the discharge continuing at the rate it was measured at.
+    //
+    // The extension is not padding. Thirty minutes near the top of the curve is
+    // a fall of about one and a half points of charge, which is smaller than
+    // three raw steps of load-sag is worth there, so the estimate is withheld —
+    // deliberately. It was the old model's willingness to answer inside that
+    // window that produced the numbers being complained about.
+    let measured = dischargingOnBattery + dischargingOnBattery.map { $0 - 4 }
+    for (step, reading) in measured.enumerated() {
         subject.record(
             stats(percent: percent(at: reading), raw: reading), at: at(Double(step) * 120)
         )
@@ -665,19 +674,29 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
 
 // MARK: - How long is left
 
-@Test func theEstimateIsTheRawFigureAboveEmptyOverTheFittedRate() {
+@Test func theEstimateIsTheChargeLeftOverTheRateItIsBeingSpent() {
     var subject = BatteryTrajectory()
 
-    // Half an hour of the raw figure falling one step a minute — the rate a
-    // full discharge runs at. It ends at 570, which the firmware's map puts 95
-    // steps above the 475 it calls empty, so 95 minutes are left.
+    // Half an hour of the raw figure falling one step a minute, ending at 570.
+    //
+    // This is the test that carried the defect, and the two answers are worth
+    // reading side by side. The old expression divided the raw distance above
+    // the firmware's empty — 95 steps — by the fitted raw rate, and answered 95
+    // MINUTES. But 570 is 3.67 V, which is the bottom knee: eleven percent of
+    // the charge, not fifty. The cell had about seven minutes in it, and the
+    // panel was promising an hour and a half.
     //
     // `bat` never moves through any of it. The percent-delta this replaced
     // answered nothing at all here, because an integer percentage that stood
     // still has no rate to give.
     ramp(&subject, from: 600, by: -1, minutes: 30, percent: 50)
 
-    #expect(secondsLeft(subject) == 5_700)
+    let left = secondsLeft(subject) ?? 0
+    // A band rather than a figure: the curve is the canonical shape, not a fit
+    // to this cell, and a test asserting a number to the second would be
+    // claiming a precision the model does not have.
+    #expect(left > 5 * 60, "answered \(left / 60) minutes")
+    #expect(left < 12 * 60, "answered \(left / 60) minutes")
 }
 
 @Test func theEstimateNeverTouchesThePercentage() {
@@ -699,7 +718,9 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
         )
     }
 
-    #expect(secondsLeft(tracking) == 5_700)
+    // The equality is the assertion; the figure beside it only says the two
+    // agreed on something rather than on nothing.
+    #expect(secondsLeft(tracking) != nil)
     #expect(secondsLeft(flickering) == secondsLeft(tracking))
 }
 
@@ -735,13 +756,18 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
     #expect(subject.reading?.timeRemaining == nil)
 }
 
-@Test func theRateIsMeasuredOverTheWindowRatherThanTheWholeHistory() {
+@Test func theRateIgnoresTheStretchBeforeTheFallWasEstablished() {
     var subject = BatteryTrajectory()
 
     // Ten minutes falling five times as fast as the rest — the clock was
-    // showing something bright, or the room was cold — then an hour and a half
-    // at one step a minute. Only the last ninety minutes are inside the window,
-    // and inside it every reading is on one line.
+    // showing something bright, or it had just come off the charger — then an
+    // hour and a half at one step a minute.
+    //
+    // What keeps the steep opening out of the fit is no longer the retention
+    // window, which now holds a whole day: it is that the rate reads only what
+    // came after the battery was last seen going up, and a reading pinned at
+    // the top of the scale IS "going up". The steep stretch is spent getting
+    // clear of that, and the fit starts where the discharge was established.
     for minute in 0...100 {
         let reading = minute <= 10 ? 665 - 5 * minute : 615 - (minute - 10)
         subject.record(
@@ -749,10 +775,12 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
         )
     }
 
-    // 525 is fifty steps above empty at a step a minute: fifty minutes. Reading
-    // right back to the start would answer a steeper rate, and an estimate
-    // carrying one that stopped applying an hour and a half ago.
-    #expect(secondsLeft(subject) == 3_000)
+    // 525 is 3.39 V — three percent of the charge, not the twenty-six the
+    // firmware's linear map calls it. Minutes, not the fifty this used to
+    // answer by dividing volts by volts.
+    let left = secondsLeft(subject) ?? 0
+    #expect(left > 60, "answered \(left / 60) minutes")
+    #expect(left < 15 * 60, "answered \(left / 60) minutes")
 }
 
 @Test func aRebootPartWayThroughTheWindowTakesTheEstimateWithTheHistory() {
@@ -763,7 +791,7 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
             at: at(Double(minute) * 60)
         )
     }
-    #expect(secondsLeft(subject) == 5_700)
+    #expect(secondsLeft(subject) != nil)
 
     // Somebody unplugged the clock and plugged it in again. Half an hour of
     // fitted history is exactly the thing that would carry the situation before

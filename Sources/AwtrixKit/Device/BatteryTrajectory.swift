@@ -213,6 +213,25 @@ public struct BatteryTrajectory: Sendable {
     /// hour-long measurement of the float to size a smaller band against, and
     /// the clock cannot be asked for one without plugging it in.
     public static let steadyBand = 3
+
+    /// How long readings are kept.
+    ///
+    /// A day, against the ninety minutes `window` keeps for the direction. The
+    /// two are separate numbers with separate jobs: direction is a question
+    /// about the last hour, and the rate on the plateau needs an arm long
+    /// enough that the fall outgrows the sag — which there can take most of an
+    /// afternoon.
+    public static let retention: TimeInterval = 24 * 60 * 60
+    /// Beyond `window`, one reading every five minutes is kept and the rest
+    /// dropped. The slope is unchanged by the thinning and the stored series
+    /// stays a few hundred points.
+    static let thinTo: TimeInterval = 5 * 60
+    /// How far the fitted fall must outgrow the sag before an estimate is shown.
+    ///
+    /// Two, which is the smallest ratio that is not arguing with the noise. One
+    /// would show an estimate the moment the signal merely matched the wobble;
+    /// three would keep the plateau silent for a whole working day.
+    static let signalToNoise = 2.0
     /// What the raw figure reads at 0%.
     ///
     /// The firmware's own map, `map(raw, 475, 665, 0, 100)`, which reproduces
@@ -254,6 +273,13 @@ public struct BatteryTrajectory: Sendable {
     /// Readings inside the window, oldest first. Only ones carrying a raw
     /// figure: a firmware that omits it contributes a percentage and no trend.
     private var samples: [BatterySample] = []
+    /// When the battery was last seen going UP.
+    ///
+    /// The rate is fitted only over what came after it. With samples kept for a
+    /// whole day, a fit over "everything held" would be dragged through the
+    /// charge that preceded the discharge — a rise and a fall averaged into a
+    /// gentle nothing, and an estimate of days.
+    private var lastSeenRising: Date?
     /// The whole of the last report, which is what the percentage is read off,
     /// so that a clock with no raw figure still has one.
     ///
@@ -387,8 +413,9 @@ public struct BatteryTrajectory: Sendable {
         let before = direction
         if let raw = stats.batRaw {
             samples.append(BatterySample(raw: raw, at: now))
-            samples.removeAll { now.timeIntervalSince($0.at) > Self.window }
+            prune(at: now)
             direction = Self.direction(of: samples, holding: direction)
+            if direction == .charging { lastSeenRising = now }
         }
         ratchet(to: stats.bat, wasGoing: before)
         return crossing(at: stats.bat)
@@ -478,9 +505,33 @@ public struct BatteryTrajectory: Sendable {
         guard let rise = fittedChange(of: samples, over: riseWindow, needing: minimumTrendSpan)
         else { return previous }
         if rise > Double(steadyBand) { return .charging }
+
+        // Pinned at the top of the scale, which is a charger holding it there:
+        // a cell resting above 4.2 V is being held above it by something. Asked
+        // BEFORE the fall window, and needing only the rise window's two
+        // minutes, because sitting still at the top is not a trend anybody has
+        // to fit — waiting twenty minutes to notice it would blank the glyph
+        // for the state the clock spends most of its life in.
+        if samples.last.map({ $0.raw >= BatteryChargeCurve.rawAtFull - 2 }) == true {
+            return .charging
+        }
+
+        // Not enough watched to fit a fall yet. HELD, not called charging — and
+        // that word is the defect this replaced. A discharge needs twenty
+        // minutes before it can be fitted while a rise needs two, so answering
+        // `.charging` here labelled the first eighteen minutes of EVERY
+        // discharge as a charge: the plug glyph on a clock nobody had plugged
+        // in, which is exactly what was reported and was not fixed by making
+        // the windows asymmetric.
         guard let fall = fittedChange(of: samples, over: fallWindow, needing: minimumFallSpan)
-        else { return .charging }
-        return fall < -Double(steadyBand) ? .discharging : .charging
+        else { return previous }
+        if fall < -Double(steadyBand) { return .discharging }
+
+        // Steady, and not at the top. Nothing has moved far enough to say, so
+        // the previous verdict stands rather than being replaced by a guess.
+        // Before there is any verdict that is `.unknown`, which the panel draws
+        // as an hourglass: honest, and the thing the plug was lying about.
+        return previous
     }
 
     /// How many raw steps the fitted line accounts for across the readings
@@ -515,16 +566,86 @@ public struct BatteryTrajectory: Sendable {
     /// Every gate below is a different way of not having a rate.
     private var timeRemaining: TimeInterval? {
         guard direction == .discharging else { return nil }
-        guard let first = samples.first, let last = samples.last else { return nil }
-        guard last.at.timeIntervalSince(first.at) >= Self.minimumSpan else { return nil }
+        let series = fallSeries
+        guard let first = series.first, let last = series.last else { return nil }
+        let span = last.at.timeIntervalSince(first.at)
+        guard span >= Self.minimumSpan else { return nil }
         // Zero is the reading sitting still with nothing to divide, and negative
         // cannot reach here past the direction gate. Either renders as "forever".
-        guard let falling = rateRawPerSecond, falling > 0 else { return nil }
-        // Below the firmware's own zero the map has nothing left to say.
-        // Extrapolating past the end of the scale answers a negative duration,
-        // which the panel would floor and render as a confident five minutes.
-        guard last.raw > Self.rawAtEmpty else { return nil }
-        return Double(last.raw - Self.rawAtEmpty) / falling
+        guard let falling = chargePerSecond, falling > 0 else { return nil }
+
+        // The fall has to be bigger than the wobble it is being seen through,
+        // and BOTH are measured in charge — which is the whole reason the curve
+        // exists. Three raw steps of load-sag are worth a fraction of a point
+        // near the top of the curve and several points on the plateau, so a
+        // threshold fixed in either unit is right in one region and wrong
+        // everywhere else. Converting the band through the curve at the reading
+        // in hand is what makes one rule cover the whole discharge.
+        //
+        // The consequence is honest and worth stating: unplugged at the top,
+        // this opens within the hour and then STAYS open, because the series
+        // keeps growing and the fit keeps improving. Started fresh in the
+        // middle of the plateau, it can stay shut for hours — and hours of
+        // saying nothing is the correct answer there, because the voltage
+        // genuinely does not carry the rate yet.
+        let sag = Double(Self.steadyBand) * BatteryChargeCurve.percentPerRaw(atRaw: last.raw)
+        guard falling * span >= Self.signalToNoise * sag else { return nil }
+
+        // What is left is CHARGE, not volts above a floor. The old expression
+        // divided the raw distance above `rawAtEmpty` by a raw-per-second rate,
+        // and on the plateau that rate is at its smallest — so the estimate was
+        // at its largest exactly where the battery was emptiest.
+        let left = BatteryChargeCurve.percent(atRaw: last.raw)
+        guard left > 0 else { return nil }
+        return left / falling
+    }
+
+    /// The samples the rate may be fitted over: everything since the battery was
+    /// last seen going up.
+    private var fallSeries: [BatterySample] {
+        guard let since = lastSeenRising else { return samples }
+        return samples.filter { $0.at > since }
+    }
+
+    /// How fast charge is being spent, in percent per second, positive while
+    /// draining.
+    ///
+    /// Charge rather than volts, and that substitution IS the fix. A cell at
+    /// constant load spends charge at a constant rate; it does not lose voltage
+    /// at a constant rate, because the curve it walks down is flat in the middle
+    /// and steep at the ends.
+    private var chargePerSecond: Double? {
+        let series = fallSeries
+        guard let start = series.first?.at else { return nil }
+        let points = series.map {
+            (x: $0.at.timeIntervalSince(start), y: BatteryChargeCurve.percent(atRaw: $0.raw))
+        }
+        guard let slope = Self.slope(of: points), slope < 0 else { return nil }
+        return -slope
+    }
+
+    /// Keeps a day of readings, thinned beyond the direction window.
+    ///
+    /// Two different retentions for two different jobs. Direction is a question
+    /// about the last hour and is answered from the dense tail; the RATE on the
+    /// plateau needs a long arm, because there the whole day's fall can be a
+    /// handful of raw steps. Beyond `window` one sample every `thinTo` carries
+    /// the same slope at a fraction of the storage — a day comes to a few
+    /// hundred points, which is kilobytes of JSON.
+    private mutating func prune(at now: Date) {
+        samples.removeAll { now.timeIntervalSince($0.at) > Self.retention }
+        var kept: [BatterySample] = []
+        var lastThinned: Date?
+        for sample in samples {
+            if now.timeIntervalSince(sample.at) <= Self.window {
+                kept.append(sample)
+                continue
+            }
+            if let lastThinned, sample.at.timeIntervalSince(lastThinned) < Self.thinTo { continue }
+            kept.append(sample)
+            lastThinned = sample.at
+        }
+        samples = kept
     }
 
     /// How fast the raw figure is falling, in raw steps per second.
@@ -620,6 +741,7 @@ public struct BatteryTrajectory: Sendable {
     private mutating func discardHistory() {
         samples = []
         direction = .unknown
+        lastSeenRising = nil
     }
 
     // MARK: - Warnings

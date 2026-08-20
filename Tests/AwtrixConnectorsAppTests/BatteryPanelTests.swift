@@ -141,13 +141,44 @@ private func reading(
 }
 
 @Test func aDurationReadsAsHoursAndMinutes() {
-    #expect(BatteryLine.duration(14_400) == "4 h")
-    #expect(BatteryLine.duration(15_300) == "4 h 15 m")
     #expect(BatteryLine.duration(2_700) == "45 m")
     // Under a minute left reads as the smallest step the grid has rather than
     // "0 m", which looks like a broken estimate rather than an urgent one.
     #expect(BatteryLine.duration(20) == "5 m")
     #expect(BatteryLine.duration(0) == "5 m")
+}
+
+// Above the hour the grid stops being a grid and becomes a ladder, and the
+// tilde is not decoration.
+//
+// The figure behind it is a charge left over a fitted rate, against a curve
+// that is the canonical shape of a lithium cell rather than a fit to this one —
+// good to some tens of percent, not to the minute. Rendering "20 h 15 m" claims
+// four decimal places of a number that has one, and a reader plans around the
+// claim rather than around the number.
+@Test func anEstimateAboveAnHourIsARungOnALadderRatherThanAFigure() {
+    #expect(BatteryLine.duration(4 * 3_600) == "~4 h")
+    // A quarter of an hour either side of a rung is the same rung: at four
+    // hours, fifteen minutes is inside the error bar by an order of magnitude.
+    #expect(BatteryLine.duration(4 * 3_600 + 900) == "~4 h")
+    #expect(BatteryLine.duration(4 * 3_600 - 900) == "~4 h")
+    // The rungs widen as the number does, because the same relative claim costs
+    // more minutes further out.
+    #expect(BatteryLine.duration(5 * 3_600) == "~5 h")
+    #expect(BatteryLine.duration(7 * 3_600) == "~6 h")
+    #expect(BatteryLine.duration(9 * 3_600) == "~8 h")
+    #expect(BatteryLine.duration(90 * 60) == "~1 h 30 m")
+}
+
+@Test func aDayOrMoreIsSaidInDaysAndThenGivenUpOn() {
+    #expect(BatteryLine.duration(24 * 3_600) == "~1 day")
+    #expect(BatteryLine.duration(36 * 3_600) == "~1.5 days")
+    #expect(BatteryLine.duration(47 * 3_600) == "~2 days")
+    // And beyond two days the answer stops pretending. A 4400 mAh cell at the
+    // seventy-odd milliamps this clock cannot go below is about sixty hours of
+    // runtime, so anything past that is the model failing rather than a battery
+    // lasting.
+    #expect(BatteryLine.duration(80 * 3_600) == "2+ days")
 }
 
 // The estimate extrapolates all the way to 0%, and lithium-ion stops being
@@ -164,22 +195,16 @@ private func reading(
     #expect(BatteryLine.duration(41 * 60) == "40 m")
 }
 
-// Coarser above the hour, because the same relative claim costs more minutes
-// there: five minutes on forty is a quarter of an hour on four.
-@Test func anEstimateOverAnHourIsRoundedToAQuarterOfOne() {
-    #expect(BatteryLine.duration(4 * 3_600 + 22 * 60) == "4 h 15 m")
-    #expect(BatteryLine.duration(4 * 3_600 + 8 * 60) == "4 h 15 m")
-    #expect(BatteryLine.duration(4 * 3_600 + 2 * 60) == "4 h")
-}
-
 // Which grid a reading lands on is decided by the reading, not by what it
 // rounds to — otherwise the hour is a boundary the answer can round itself
 // across and back.
 @Test func theHourIsWhereTheGridChanges() {
     #expect(BatteryLine.duration(57 * 60) == "55 m")
-    // A second under the hour, on the five-minute grid, rounding up to it.
-    #expect(BatteryLine.duration(3_599) == "1 h")
-    #expect(BatteryLine.duration(3_600 + 8 * 60) == "1 h 15 m")
+    // A second under the hour, on the five-minute grid, rounding up to it — and
+    // saying "1 h" rather than "60 m", which is the same amount of time and a
+    // worse sentence.
+    #expect(BatteryLine.duration(3_599) == "~1 h")
+    #expect(BatteryLine.duration(3_600 + 8 * 60) == "~1 h")
 }
 
 @Test func urgencyIsCarriedByTheColourRatherThanASecondGlyph() {

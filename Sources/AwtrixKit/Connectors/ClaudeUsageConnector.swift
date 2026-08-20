@@ -28,21 +28,35 @@ public struct ClaudeUsageConnector: Connector {
 
     public let id = "claude"
     public let displayName = "Claude usage"
-    /// Ten minutes, matching the weather. The figure moves only when work is
-    /// being done, and a weekly bar does not move fast enough to be worth
-    /// asking about more often than that.
-    public let defaultInterval: TimeInterval = 600
+    /// Five minutes, and chosen against `lifetime` rather than on its own.
+    ///
+    /// The figure itself would tolerate a much lazier poll — a weekly bar moves
+    /// slowly. What sets this is that the app must leave the clock soon after
+    /// the Focus does, and the only thing that removes it is its lifetime
+    /// expiring. Three polls inside one lifetime survives a couple of misses
+    /// while still clearing the matrix within a quarter of an hour.
+    public let defaultInterval: TimeInterval = 300
     public let narrator: Voice = .crystal
     public let isAudible = false
     public let isAmbient = true
 
     private let reporter: any ClaudeUsageReporting
+    private let showsNow: @Sendable () -> Bool
 
-    public init(reporter: any ClaudeUsageReporting) {
+    /// `showsNow` is how the Focus reaches a type that must not know what a
+    /// Focus is. The default shows always, so a construction site with no
+    /// opinion behaves as though there were no gate at all.
+    public init(
+        reporter: any ClaudeUsageReporting,
+        showsNow: @escaping @Sendable () -> Bool = { true }
+    ) {
         self.reporter = reporter
+        self.showsNow = showsNow
     }
 
     public func produce() async throws -> ConnectorOutput {
+        // The gate first, so a poll outside working hours costs no request.
+        guard showsNow() else { throw Failure.outOfFocus }
         guard let reading = try await reporter.read() else { throw Failure.noReading }
         return Self.output(for: reading)
     }
@@ -53,6 +67,10 @@ public struct ClaudeUsageConnector: Connector {
         /// lets the clock drop the app by itself, which says the true thing
         /// — nothing here knows the figure any more — without inventing one.
         case noReading
+        /// This is not one of the hours this app belongs to. Same mechanism as
+        /// `noReading` and a different reason, kept apart so a panel or a log
+        /// can tell "cannot say" from "not now".
+        case outOfFocus
     }
 
     /// What a reading looks like on the matrix.
@@ -75,10 +93,13 @@ public struct ClaudeUsageConnector: Connector {
             ),
             color: ClaudeUsage.brandColour,
             surface: .app(Self.appName),
-            // An hour, matching the weather: at a ten-minute poll six refreshes
-            // fit inside it, so five consecutive failures are survivable before
-            // the clock drops the app.
-            lifetime: 3_600
+            // A quarter of an hour, and it is doing two jobs. The usual one is
+            // insurance: a crashed Mac stops refreshing and the clock clears a
+            // figure nothing is standing behind any more. The second is how
+            // this app LEAVES when the Focus changes — nothing retracts it, the
+            // gate simply stops feeding it and the lifetime finishes the job.
+            // Read with `defaultInterval`, which is chosen against this.
+            lifetime: 900
         )
     }
 

@@ -160,6 +160,62 @@ let usageBody = """
     #expect(barred.jsonObject["progressBC"] as? String == "#303030")
 }
 
+// MARK: - The gate in front of a poll
+
+private struct FixedReport: ClaudeUsageReporting {
+    let reading: ClaudeUsageReading?
+    func read() async throws -> ClaudeUsageReading? { reading }
+}
+
+// Out of hours the connector produces NOTHING, and nothing is what takes the
+// app off the clock: no delivery means no refresh, and the lifetime the last
+// delivery carried runs out. That is why the lifetime is short — it is doing
+// double duty as the way this app leaves the matrix, not only as insurance
+// against a crashed Mac.
+@Test func nothingIsProducedWhileTheFocusIsNotOneOfItsOwn() async {
+    let connector = ClaudeUsageConnector(
+        reporter: FixedReport(reading: ClaudeUsageReading(utilization: 78, resetsAt: nil)),
+        showsNow: { false }
+    )
+
+    await #expect(throws: ClaudeUsageConnector.Failure.outOfFocus) {
+        _ = try await connector.produce()
+    }
+}
+
+@Test func theGateIsAskedBeforeTheServiceIs() async throws {
+    // A reporter that would answer, behind a closed gate: the point is that the
+    // gate is checked FIRST, so a shut-out poll costs no request at all.
+    final class Counting: ClaudeUsageReporting, @unchecked Sendable {
+        var asked = 0
+        func read() async throws -> ClaudeUsageReading? {
+            asked += 1
+            return ClaudeUsageReading(utilization: 10, resetsAt: nil)
+        }
+    }
+    let reporter = Counting()
+
+    _ = try? await ClaudeUsageConnector(reporter: reporter, showsNow: { false }).produce()
+    #expect(reporter.asked == 0)
+
+    _ = try? await ClaudeUsageConnector(reporter: reporter, showsNow: { true }).produce()
+    #expect(reporter.asked == 1)
+}
+
+// The app has to leave the clock soon after the Focus does, and the only thing
+// that removes it is the lifetime expiring. So the two numbers are chosen
+// together: three polls fit inside one lifetime, which survives a couple of
+// missed polls while still clearing the matrix within a quarter of an hour.
+@Test func thePollAndTheLifetimeAreChosenAgainstEachOther() {
+    let connector = ClaudeUsageConnector(reporter: FixedReport(reading: nil))
+    let lifetime = ClaudeUsageConnector
+        .output(for: ClaudeUsageReading(utilization: 1, resetsAt: nil)).lifetime
+
+    let fits = Double(try! #require(lifetime)) / connector.defaultInterval
+    #expect(fits >= 3)
+    #expect(try! #require(lifetime) <= 900)
+}
+
 // MARK: - When it is shown at all
 
 // Two Focus modes and no others, which is what was asked for. The interesting

@@ -490,8 +490,12 @@ final class AppModel: ObservableObject {
         // it here would drop that program out of its own session. A launch on a
         // machine with no Claude Code signed in reports nothing and the app
         // simply never appears in the loop.
+        let focusStatus = SystemFocusStatus()
         registry.register(
-            ClaudeUsageConnector(reporter: ClaudeUsageReporter(transport: transport))
+            ClaudeUsageConnector(
+                reporter: ClaudeUsageReporter(transport: transport),
+                showsNow: { ClaudeFocusAudience.shows(focusStatus) }
+            )
         )
 
         return AppModel(

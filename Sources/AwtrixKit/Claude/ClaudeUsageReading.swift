@@ -18,10 +18,17 @@ public struct ClaudeUsageReading: Sendable, Equatable {
 
     /// The weekly bar out of an answer from `/api/oauth/usage`.
     ///
-    /// Several bars come back — a five-hour one, the weekly one, and per-model
-    /// weekly ones — so the weekly bar is found BY NAME. Picking by position
-    /// would follow whatever order the service happens to send and would change
-    /// meaning without anything here changing.
+    /// The bars are TOP-LEVEL KEYS, not a list — `five_hour`, `seven_day`, and
+    /// a set of per-model weekly ones. This was captured from a live answer
+    /// rather than assumed, after a first version invented a `rate_limits`
+    /// array and passed its own tests against its own invention.
+    ///
+    /// Three details that all have to be right at once, and each of which fails
+    /// silently on its own: the per-model bars come back as explicit `null` on
+    /// an account with no split, so a null has to read as absence rather than
+    /// as a zero bar; `utilization` is FRACTIONAL, so reading it as an integer
+    /// throws every value away; and `resets_at` carries sub-second precision
+    /// and an offset, which the default ISO-8601 reader declines without a word.
     ///
     /// Nil for anything that is not a weekly reading, and that is the whole
     /// point of the initialiser being failable: zero is a real reading meaning
@@ -30,18 +37,26 @@ public struct ClaudeUsageReading: Sendable, Equatable {
     public init?(json: Data) {
         guard
             let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
-            let bars = root["rate_limits"] as? [[String: Any]],
-            let weekly = bars.first(where: { $0["name"] as? String == Self.weeklyBar }),
-            let utilization = weekly["utilization"] as? Int
+            let weekly = root[Self.weeklyBar] as? [String: Any],
+            let utilization = weekly["utilization"] as? Double
         else { return nil }
 
-        self.utilization = utilization
-        self.resetsAt = (weekly["resets_at"] as? String).flatMap {
-            ISO8601DateFormatter().date(from: $0)
-        }
+        // Nearest whole percent. The bar and the number beside it are drawn from
+        // this one value, so rounding here is what keeps them from disagreeing.
+        self.utilization = Int(utilization.rounded())
+        self.resetsAt = (weekly["resets_at"] as? String).flatMap(Self.moment(from:))
     }
 
     /// The name the service gives the weekly bar. Written down once, here,
     /// because it is a wire value and not a word this app chose.
     static let weeklyBar = "seven_day"
+
+    /// The service's timestamps carry fractional seconds; some fields elsewhere
+    /// do not. Both are tried rather than assumed, because the failure mode of
+    /// guessing is a reset time that is silently nil.
+    private static func moment(from text: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return withFraction.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+    }
 }

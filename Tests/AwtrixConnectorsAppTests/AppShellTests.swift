@@ -144,20 +144,21 @@ private func scratchStore() -> URL {
     let connector = try #require(subject.registry.all.first)
     #expect(connector.id == "anecdotes")
     // First, and the order is the order the panel offers them in: the
-    // anecdotes are what this app is for, and the weather is what it also does.
-    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather"])
+    // anecdotes are what this app is for, and the ambient pair is what it also
+    // does while nobody is asking it anything.
+    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude"])
     // Deliberately not asserting the interval here. `AnecdoteConnector`'s own
     // default IS thirty minutes, so every such assertion holds equally through
     // the store's fallback and proves nothing about debt 2. The
     // `StubConnector(5 * 60)` tests are what carry that rule.
 }
 
-// And of the two it registers, only the anecdotes are offered a row. The rule
+// And of the three it registers, only the anecdotes are offered a row. The rule
 // is `PanelRows`, applied here to the connectors the app ACTUALLY ships rather
 // than to a pair made up for the test: `thePanelDrawsNoRowForAConnectorThat
-// IsAmbient` proves the rule reaches the screen, and this proves the shipped
-// weather is on the wrong side of it while the shipped anecdotes stay on the
-// right one.
+// IsAmbient` proves the rule reaches the screen, and this proves both shipped
+// ambient connectors are on the wrong side of it while the shipped anecdotes
+// stay on the right one.
 //
 // Both halves are asserted, because "no rows at all" satisfies the first on its
 // own — which is the whole panel gone and the test still green.
@@ -170,7 +171,7 @@ private func scratchStore() -> URL {
         defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore()
     )
 
-    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather"])
+    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude"])
     #expect(PanelRows.drawn(from: subject.registry.all).map(\.id) == ["anecdotes"])
 }
 

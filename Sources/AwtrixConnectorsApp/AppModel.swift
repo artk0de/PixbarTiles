@@ -485,6 +485,14 @@ final class AppModel: ObservableObject {
                 location: { location.current }
             )
         )
+        // The credential is Claude Code's, not this app's, and the reporter
+        // only ever reads it — see `ClaudeCredentialReading` for why refreshing
+        // it here would drop that program out of its own session. A launch on a
+        // machine with no Claude Code signed in reports nothing and the app
+        // simply never appears in the loop.
+        registry.register(
+            ClaudeUsageConnector(reporter: ClaudeUsageReporter(transport: transport))
+        )
 
         return AppModel(
             deviceHost: deviceHost,

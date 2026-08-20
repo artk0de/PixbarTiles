@@ -427,6 +427,32 @@ private func staysFalse(
     #expect(jsonBody(request)["lifetime"] as? Int == 3_600)
 }
 
+// A bar an output asks for has to survive the crossing into a payload, and this
+// test exists because it did not.
+//
+// `ConnectorOutput` grew a `progress`, `AppPayload` grew one, both were tested,
+// and the line that copies one into the other was never written — so the field
+// was green on both banks of a river nothing crossed. The app reached the clock
+// with its number and no bar, and no test anywhere disagreed.
+@Test func aProgressBarReachesTheDeviceOnAnAppDelivery() async throws {
+    var connector = StubConnector()
+    connector.output = ConnectorOutput(
+        text: "78%",
+        progress: ProgressBar(percent: 78, fill: "#D97757", track: "#303030"),
+        surface: .app("claude")
+    )
+    let transport = RecordingTransport()
+    let host = makeHost(connector: connector, transport: transport)
+
+    _ = await host.runOnce(connectorId: "stub")
+
+    let request = try #require(transport.requests.first { $0.url?.path == "/api/custom" })
+    let body = jsonBody(request)
+    #expect(body["progress"] as? Int == 78)
+    #expect(body["progressC"] as? String == "#D97757")
+    #expect(body["progressBC"] as? String == "#303030")
+}
+
 // And never on a notification, however loudly the output asks for one. A
 // notification interrupts and then goes away by itself, so there is nothing
 // left on the clock for a lifetime to expire — and the firmware documents the

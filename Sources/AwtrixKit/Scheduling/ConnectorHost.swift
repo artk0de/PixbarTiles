@@ -378,7 +378,8 @@ public actor ConnectorHost {
                         // The clock removing this app itself, for the endings
                         // this process never gets to clean up after. Custody
                         // above covers only the clean quit.
-                        lifetime: output.lifetime
+                        lifetime: output.lifetime,
+                        progress: output.progress
                     ),
                     named: name,
                     // Falling back to the app's own name rather than skipping

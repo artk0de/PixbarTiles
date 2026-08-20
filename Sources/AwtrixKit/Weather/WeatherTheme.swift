@@ -49,11 +49,10 @@ public enum DeviceOverlay: String, Sendable, Equatable, CaseIterable {
 public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
     case clearDay
     case clearNight
-    /// Daylight only, and the name says so on purpose. There is no
-    /// `partlyCloudyNight` beside it — see the WMO 2 branch below for why the
-    /// asymmetry is the decision rather than the omission it looks like.
     case partlyCloudyDay
-    case cloud
+    case partlyCloudyNight
+    case cloudDay
+    case cloudNight
     case fog
     case drizzle
     case rain
@@ -73,17 +72,21 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
         // 0 clear, 1 mainly clear — a bare sun or a bare moon, so the hour
         // decides which.
         case 0, 1: self = isDay ? .clearDay : .clearNight
-        // 2 partly cloudy: broken cloud with the sun behind it, which the
-        // catalogue draws and a bare sun overstates for a whole afternoon.
-        // By night it goes back to `clearNight`, and that is the
-        // decision rather than a missing case: the catalogue has no moon behind
-        // a cloud — both weather packs were swept whole to check — so a
-        // `partlyCloudyNight` would draw the same moon, over the same `clear`
-        // overlay, in the same temperature-derived colour as a clear night. A
-        // sky the device cannot draw differently is a branch nobody can see.
-        case 2: self = isDay ? .partlyCloudyDay : .clearNight
-        // 3 overcast. Nothing behind it to have set.
-        case 3: self = .cloud
+        // 2 partly cloudy: broken cloud with something behind it, which a bare
+        // sun or a bare moon overstates for a whole afternoon or a whole night.
+        //
+        // The night half used to collapse into `clearNight`, and that was a
+        // decision with a reason: the catalogue has no moon behind a cloud —
+        // both weather packs were swept whole to check — so the branch would
+        // have drawn the same moon over the same `clear` overlay, and nobody
+        // could have seen it. The reason expired. Art for it arrived from
+        // outside the catalogue and ships with this app, so the branch draws
+        // something of its own and earns its place.
+        case 2: self = isDay ? .partlyCloudyDay : .partlyCloudyNight
+        // 3 overcast — nothing behind it to have set, but still a sky that
+        // looks different at midnight than at noon, and the two were one
+        // picture until there was a second one to draw.
+        case 3: self = isDay ? .cloudDay : .cloudNight
         case 45: self = .fog
         // 48 depositing rime fog: ice on every surface, which is frost rather
         // than fog however it arrived.
@@ -111,14 +114,18 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
 
     /// The device-wide layer this sky draws.
     ///
-    /// Five skies share `clear`, and that is not a mapping that lost
+    /// Seven skies share `clear`, and that is not a mapping that lost
     /// information: the firmware has no layer for cloud, fog or night, and
     /// drawing rain over an overcast afternoon would be a lie about the
-    /// weather. What tells them apart is the theme itself, which is what an
-    /// icon is chosen from.
+    /// weather. Probed against the clock on 2026-08-20 rather than assumed —
+    /// `fog`, `cloud`, `cloudy`, `night`, `wind`, `hail` and `sun` are every one
+    /// of them coerced to `clear`, while `frost` and `thunder` written in the
+    /// same pass came back verbatim. What tells the seven apart is the theme
+    /// itself, which is what an icon is chosen from.
     public var overlay: DeviceOverlay {
         switch self {
-        case .clearDay, .clearNight, .partlyCloudyDay, .cloud, .fog: .clear
+        case .clearDay, .clearNight, .partlyCloudyDay, .partlyCloudyNight,
+             .cloudDay, .cloudNight, .fog: .clear
         case .drizzle: .drizzle
         case .rain: .rain
         case .snow: .snow
@@ -136,10 +143,18 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
     /// beside whatever the previous one in the loop left on the matrix, which
     /// nothing on the device or in this app would report.
     ///
-    /// Every id below was fetched and its frames counted: all eleven are 8x8
-    /// animated GIFs, which is the only thing the clock draws. The catalogue
-    /// has no public search, so an id costs a download and a look — do not
-    /// invent one, and do not go hunting for a better one.
+    /// Every picture below was fetched and its frames counted: all thirteen are
+    /// 8x8 animated GIFs, which is the only thing the clock draws. The
+    /// catalogue has no public search — the firmware's own icon page previews
+    /// by id and nothing more, checked on 2026-08-20 — so an id costs a
+    /// download and a look. Do not invent one, and do not go hunting for a
+    /// better one.
+    ///
+    /// Two skies name `.bundled` art instead, and that is what a sky with no
+    /// catalogue picture looks like once somebody finds one elsewhere: the
+    /// bytes ship in this package and install by the same route, so the promise
+    /// on a clock that has never run this app is the one `.catalogue` makes.
+    /// `.installed` would not make it, which is why no sky here uses it.
     ///
     /// `drizzle`, `frost` and `storm` deliberately borrow a neighbour's
     /// picture, because the catalogue has nothing of their own yet. It is a
@@ -153,7 +168,17 @@ public enum WeatherTheme: String, Sendable, Equatable, CaseIterable {
         case .clearDay: .catalogue(2282)          // sun, 7 frames
         case .clearNight: .catalogue(12181)       // crescent moon with stars, 4 frames
         case .partlyCloudyDay: .catalogue(53802)  // a cloud with the sun behind it, 16 frames
-        case .cloud: .catalogue(53384)            // a cloud drifting across, 16 frames
+        // A crescent behind a drifting cloud, 24 frames. The crescent is the
+        // reason this one was picked over the round-moon cut of the same
+        // animation: `clearNight` already draws a crescent, so the moon stays
+        // the constant and the cloud is what changes — which is the only thing
+        // this sky is telling you that a clear night is not.
+        case .partlyCloudyNight: .bundled("PartlyCloudyNightHalfMoon")
+        case .cloudDay: .catalogue(53384)         // a cloud drifting across, 16 frames
+        // A grey mass filling most of the tile with a white cloud under it, 32
+        // frames. Darkest of the three and the only one with no moon to speak
+        // of, which is what makes it read as overcast rather than broken cloud.
+        case .cloudNight: .bundled("ani_partly_cloudy_night")
         case .fog: .catalogue(17056)              // horizontal grey bars, 2 frames
         case .drizzle: .catalogue(2284)           // shared with rain, awaiting its own art
         case .rain: .catalogue(2284)              // cloud with blue drops, 5 frames

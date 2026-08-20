@@ -23,9 +23,22 @@ public struct SpokenClip: Sendable, Equatable, Codable {
 /// because this module declares an `enum AwtrixKit` that shadows its own name.
 public enum IconReference: Sendable, Equatable {
     /// Already present on the device, referenced by basename.
+    ///
+    /// The one case that promises nothing: it names a file this app never put
+    /// there and cannot put back. Right for art a user placed on their own
+    /// flash, wrong for anything this app draws by itself — on a clock that has
+    /// been reset the picture is simply gone, and a banner with no icon beside
+    /// it reads as ordinary.
     case installed(String)
     /// Fetched from the LaMetric catalogue by id, then installed.
     case catalogue(Int)
+    /// Art shipped inside this app, uploaded to the flash on demand.
+    ///
+    /// The case for a picture the catalogue does not have. It installs by
+    /// exactly the same route as `catalogue` — list, skip or upload — and
+    /// differs only in where the bytes come from, so it keeps the same promise
+    /// on a clock that has never seen this app.
+    case bundled(String)
 }
 
 /// Where an output is drawn on the clock.

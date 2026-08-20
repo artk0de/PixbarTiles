@@ -5,7 +5,10 @@ let package = Package(
     name: "AwtrixConnectors",
     platforms: [.macOS(.v14)],
     targets: [
-        .target(name: "AwtrixKit"),
+        // The resources are icon art for skies the LaMetric catalogue has
+        // nothing for. They ship here rather than being fetched, so a clock
+        // that has never run this app still draws them.
+        .target(name: "AwtrixKit", resources: [.process("Resources")]),
         .testTarget(
             name: "AwtrixKitTests",
             dependencies: ["AwtrixKit"],

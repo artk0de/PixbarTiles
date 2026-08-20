@@ -140,6 +140,7 @@ struct StubIconInstaller: IconInstalling {
         switch ref {
         case let .installed(name): return name
         case let .catalogue(id): return String(id)
+        case let .bundled(name): return name
         }
     }
 }

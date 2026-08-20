@@ -9,6 +9,10 @@ public struct CatalogueIconInstaller: IconInstalling {
     public enum Failure: Error, Sendable, Equatable {
         /// The catalogue answered for this id with something that is not a GIF.
         case notAnImage(Int)
+        /// A sky named bundled art this package does not carry. Unreachable
+        /// while the suite is green — the names are checked against the package
+        /// at test time — so it exists to fail loudly rather than to be handled.
+        case artMissing(String)
         /// The device refused to delete these, and they are still recorded.
         case notRemoved([String])
     }
@@ -53,7 +57,33 @@ public struct CatalogueIconInstaller: IconInstalling {
         case let .catalogue(id):
             // `id` is an `Int`, so the name it produces cannot contain a slash
             // or a `..` — nothing from the catalogue picks the path it lands on.
-            let name = String(id)
+            return try await ensureOnFlash(named: String(id)) { try await download(id: id) }
+        case let .bundled(name):
+            // The same route as a catalogue icon, and deliberately so: what
+            // differs between the two is where the bytes come from, not what
+            // the device is told or what this app remembers about it. The
+            // fetch is a closure for the same reason it is one there — it runs
+            // only when the listing says the flash does not already hold it.
+            return try await ensureOnFlash(named: name) {
+                guard let blob = BundledIcon.data(named: name) else {
+                    throw Failure.artMissing(name)
+                }
+                return blob
+            }
+        }
+    }
+
+    /// Puts `name` on the flash unless it is already there, and answers with the
+    /// name either way.
+    ///
+    /// Shared by both installing cases so that the remembering cannot drift
+    /// apart between them: which record a found icon goes into, and the order
+    /// the two records are written in after an upload, are the parts that are
+    /// easy to get subtly wrong twice.
+    private func ensureOnFlash(
+        named name: String,
+        fetching bytes: () async throws -> Data
+    ) async throws -> String {
             // Confirmed once is confirmed for the rest of the launch. The
             // listing this skips was otherwise paid on every anecdote and, now
             // that the weather draws a picture too, on every poll of it — for
@@ -70,7 +100,7 @@ public struct CatalogueIconInstaller: IconInstalling {
                 confirmed.remember(name)
                 return name
             }
-            try await device.installIcon(download(id: id), named: name)
+            try await device.installIcon(bytes(), named: name)
             // Both records after the upload, never before. An icon that failed
             // to reach the flash is not one this app can be asked to take back
             // off it, and not one to skip the next listing for either — a
@@ -80,7 +110,6 @@ public struct CatalogueIconInstaller: IconInstalling {
             uploads.record(name)
             confirmed.remember(name)
             return name
-        }
     }
 
     /// Takes back off the flash exactly what this app put on it, and returns the

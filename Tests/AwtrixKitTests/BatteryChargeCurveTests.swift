@@ -2,28 +2,28 @@ import Foundation
 import Testing
 @testable import AwtrixKit
 
-// How much charge is left, from a voltage.
+// How much charge is left, from a voltage — measured on this clock.
 //
-// `bat_raw` is an ADC reading of the cell's voltage — GPIO34 through a divider,
-// median-and-mean filtered by the firmware, ten bits, so one raw step is about
-// 6.45 mV and the firmware's own ends are 475 ≈ 3.06 V and 665 ≈ 4.29 V. What
-// makes this file necessary is that voltage is NOT charge: a lithium cell holds
-// a long flat plateau through the middle of its discharge and falls steeply at
-// both ends, so equal steps in voltage are wildly unequal steps in charge.
+// `bat_raw` is an ADC reading of the cell's voltage. Voltage is not charge, and
+// on THIS cell the gap between the two is not a subtlety: the firmware maps the
+// pair linearly onto its own 475–665 and calls the moment the clock dies 47%.
 //
-// The firmware maps the two linearly anyway, and so did this app — which is the
-// defect this curve exists to remove.
+// One discharge was logged once a minute from boot until it went silent, and
+// the sample after the silence reported an uptime of seventy-two seconds — a
+// power cycle at the end of an accelerating collapse. Charge here is how much of
+// that measured runtime was still to come at each reading.
 
-@Test func theCurveIsPinnedToTheEndsTheFirmwareUses() {
-    // Anchored rather than merely close, because everything downstream divides
-    // by what is left: a curve that answered 4% at the firmware's own zero
-    // would leave an estimate that never reaches the end of the battery.
-    #expect(BatteryChargeCurve.percent(atRaw: 475) == 0)
+@Test func theCurveEndsWhereTheClockActuallyDies() {
+    // 564, not the firmware's 475. The clock went silent on this reading.
+    #expect(BatteryChargeCurve.percent(atRaw: 564) == 0)
     #expect(BatteryChargeCurve.percent(atRaw: 665) == 100)
 }
 
 @Test func aReadingOutsideTheScaleIsClampedRatherThanExtrapolated() {
-    #expect(BatteryChargeCurve.percent(atRaw: 400) == 0)
+    // Below where it dies there is no runtime left to describe, and the
+    // firmware's own floor is deep inside that region.
+    #expect(BatteryChargeCurve.percent(atRaw: 475) == 0)
+    #expect(BatteryChargeCurve.percent(atRaw: 540) == 0)
     #expect(BatteryChargeCurve.percent(atRaw: 700) == 100)
 }
 
@@ -39,46 +39,73 @@ import Testing
     }
 }
 
-// The whole point, stated as an inequality: the middle of the discharge is
-// FLAT in volts, so a raw step there is worth several times what a raw step is
-// worth near the top.
+// The size of the firmware's error, as the measurement found it.
 //
-// This is what the linear map gets wrong, and the ratio is the size of the
-// error it was making.
-@Test func aVoltStepIsWorthFarMoreChargeOnThePlateauThanAtTheKnee() {
-    let atKnee = BatteryChargeCurve.percent(atRaw: 640) - BatteryChargeCurve.percent(atRaw: 635)
-    let onPlateau = BatteryChargeCurve.percent(atRaw: 600) - BatteryChargeCurve.percent(atRaw: 595)
+// This is the whole reason the app cannot reason from `bat`. The direction is
+// the surprise: the firmware is not merely imprecise, it is optimistic by tens
+// of points, and most so near the end where it matters.
+@Test func theFirmwareIsOptimisticAndTheGapWidensTowardsTheEnd() {
+    func firmware(_ raw: Int) -> Double { Double(raw - 475) / 190 * 100 }
 
-    #expect(atKnee > 0)
-    #expect(onPlateau > atKnee * 2, "plateau \(onPlateau) vs knee \(atKnee)")
-}
+    // At the top of the logged run: eighty-two against sixty-five.
+    #expect(abs(firmware(631) - 82) < 1)
+    #expect(BatteryChargeCurve.percent(atRaw: 631) == 65)
 
-// And the consequence for the number this app used to trust.
-//
-// At the reading taken from the live clock — raw 631, which the firmware calls
-// 82% — the cell is still near the top of its curve and genuinely holds about
-// nine tenths of its charge. The firmware's linear map understates it by most
-// of ten points, and an estimate built on that map divides the wrong remainder
-// by the wrong rate.
-@Test func theLinearMapAndTheCurveDisagreeByEnoughToMatter() {
-    let firmware = Double(631 - 475) / Double(665 - 475) * 100
-    let curve = BatteryChargeCurve.percent(atRaw: 631)
+    // Two thirds of the way down: seventy-two against forty-four.
+    #expect(abs(firmware(612) - 72) < 1)
+    #expect(BatteryChargeCurve.percent(atRaw: 612) == 44)
 
-    #expect(abs(firmware - 82) < 1, "firmware map drifted: \(firmware)")
-    #expect(curve > firmware + 5, "curve \(curve) vs firmware \(firmware)")
-    #expect(curve < 95)
+    // And at the reading it died on: forty-seven against nothing at all.
+    #expect(abs(firmware(564) - 47) < 1)
+    #expect(BatteryChargeCurve.percent(atRaw: 564) == 0)
+
+    // The gap widens as the battery empties — from seventeen points near the
+    // top of the run to nearly fifty — which is what makes an estimate built on
+    // the firmware's figure worst where somebody most needs it.
+    let gaps = [631, 612, 596, 580].map { firmware($0) - BatteryChargeCurve.percent(atRaw: $0) }
+    for (earlier, later) in zip(gaps, gaps.dropFirst()) {
+        #expect(later > earlier, "gap narrowed: \(gaps)")
+    }
+    #expect(gaps.first! > 15)
+    #expect(gaps.last! > 45)
+
+    // It stops widening only because the firmware's own number has to come down
+    // eventually: at the reading it died on, its remaining 47 points ARE the
+    // whole error. Stated so that the peak is not mistaken for the worst case.
+    #expect(firmware(564) - BatteryChargeCurve.percent(atRaw: 564) > 45)
 }
 
 // How much charge one raw step is worth HERE, which is what the trend gate
 // needs in order to ask "is this fall bigger than the noise" in charge rather
 // than in volts.
 @Test func theCurveCanSayWhatARawStepIsWorthAtAGivenReading() {
-    // On the plateau a single raw step moves several points of charge…
-    #expect(BatteryChargeCurve.percentPerRaw(atRaw: 597) > 1.2)
-    // …and near the top it moves a fraction of one.
-    #expect(BatteryChargeCurve.percentPerRaw(atRaw: 640) < 0.7)
+    // The measured curve is steepest in charge terms around the middle of the
+    // run, where a single raw step is worth the better part of two points…
+    #expect(BatteryChargeCurve.percentPerRaw(atRaw: 600) > 1.5)
+    // …and shallowest across the top, which is the stretch no measurement
+    // stands behind and is drawn as a straight line.
+    #expect(BatteryChargeCurve.percentPerRaw(atRaw: 645) < 1.2)
     // Never zero, or the gate built on it would divide by nothing.
-    for raw in stride(from: 476, through: 664, by: 4) {
+    for raw in stride(from: 566, through: 663, by: 4) {
         #expect(BatteryChargeCurve.percentPerRaw(atRaw: raw) > 0, "flat at raw \(raw)")
+    }
+}
+
+// The measured points, asserted as a table so that editing the curve is a
+// decision rather than a drift.
+//
+// Every pair below came out of the log: charge is the fraction of the twelve
+// and a half hours of runtime that was still ahead at that reading.
+@Test func theCurvePassesThroughTheReadingsThatWereMeasured() {
+    let measured: [(raw: Int, percent: Double)] = [
+        (564, 0), (572, 3), (580, 6), (588, 10), (596, 17),
+        (604, 32), (612, 44), (620, 51), (628, 61), (631, 65),
+    ]
+
+    for point in measured {
+        #expect(
+            BatteryChargeCurve.percent(atRaw: point.raw) == point.percent,
+            "raw \(point.raw) drew \(BatteryChargeCurve.percent(atRaw: point.raw))"
+        )
     }
 }

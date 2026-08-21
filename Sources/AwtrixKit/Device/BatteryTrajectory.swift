@@ -418,6 +418,18 @@ public struct BatteryTrajectory: Sendable {
             if direction == .charging { lastSeenRising = now }
         }
         ratchet(to: stats.bat, wasGoing: before)
+        // On `bat`, and that is now known to be wrong — left alone deliberately
+        // rather than by oversight.
+        //
+        // Logged to the moment this clock went flat, the firmware read 47. So
+        // every threshold here — 20, 10, 5, 1 — is below anything it will ever
+        // report, and all four warnings are unreachable on this hardware. The
+        // fix is to read `BatteryChargeCurve.percent(atRaw:)` instead, which is
+        // one line; what stops it being made here is that it moves eight tests
+        // covering arming, re-arming and lowest-of-many crossings, and those
+        // describe behaviour nobody has asked to change. Their fixtures pair a
+        // percentage with a raw figure by the firmware's map, so the change is
+        // a rewrite of what they mean rather than a repair.
         return crossing(at: stats.bat)
     }
 

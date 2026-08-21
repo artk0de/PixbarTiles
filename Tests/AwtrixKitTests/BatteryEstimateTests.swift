@@ -125,10 +125,12 @@ private func discharge(
 // Nothing is said until the fall is bigger than the noise it has to be seen
 // through, and how long that takes depends on WHERE on the curve the battery is.
 //
-// Near the top a raw step is worth a fraction of a point, so a few tens of
-// minutes settle it. On the plateau one raw step is worth several points, and
-// the same three steps of load-sag can hide hours of discharge — so the gate
-// stays shut for longer, and that is the design rather than a shortcoming.
+// The canonical shape predicted that the middle of the discharge would be the
+// slow half — a flat plateau where three raw steps of load-sag hide hours. The
+// MEASURED curve of this cell does not have that asymmetry: a raw step is worth
+// roughly one to two points of charge across the whole logged run, so both ends
+// settle inside the same hour or so. The prediction was wrong and the gate is
+// unchanged by it, which is the useful thing to record.
 @Test func nothingIsSaidUntilTheFallOutgrowsTheNoise() {
     var atKnee = BatteryTrajectory()
     var kneeOpenedAfter: TimeInterval?
@@ -149,12 +151,16 @@ private func discharge(
     }
 
     let knee = try! #require(kneeOpenedAfter)
+    let plateau = try! #require(plateauOpenedAfter)
+
+    // Neither speaks in the first quarter of an hour, which is the noise floor
+    // doing its job…
     #expect(knee >= 15 * 60, "spoke after only \(knee / 60) minutes")
+    #expect(plateau >= 15 * 60, "spoke after only \(plateau / 60) minutes")
+    // …and neither takes more than a couple of hours, on a cell whose curve
+    // turns out to be far more even than the canonical one.
     #expect(knee <= 2 * 3_600)
-    // The plateau is slower to trust, and that asymmetry is the point.
-    if let plateau = plateauOpenedAfter {
-        #expect(plateau >= knee, "plateau opened in \(plateau / 60)m, knee in \(knee / 60)m")
-    }
+    #expect(plateau <= 2 * 3_600)
 }
 
 // A charge inside the buffer does not poison the rate that follows it.

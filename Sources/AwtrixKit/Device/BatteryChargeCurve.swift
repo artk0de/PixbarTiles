@@ -23,42 +23,51 @@ import Foundation
 /// A calibration against an observed discharge would replace these nodes and
 /// nothing else.
 public enum BatteryChargeCurve {
-    /// The firmware's ends, which are also this curve's.
+    /// Where this cell actually runs out, which is not where the firmware says.
     ///
-    /// Pinned rather than merely approached. Everything downstream divides what
-    /// is left by a rate, and a curve answering four percent at the firmware's
-    /// own zero would leave an estimate that never reaches the end of the
-    /// battery.
-    public static let rawAtEmpty = 475
+    /// 564, measured. The clock was logged once a minute from a full charge
+    /// until it went silent at raw 564 after twelve and a half hours, and the
+    /// sample after the silence reported an uptime of seventy-two seconds — a
+    /// power cycle, at the end of a voltage collapse that was accelerating
+    /// while the matrix was at its dimmest. It ran flat.
+    ///
+    /// The firmware called that moment 47%. Its map runs to 475, which is
+    /// 3.06 V — a voltage this cell never reaches, because the board stops
+    /// first. Extrapolating to it is what made every estimate above this
+    /// generous, and it is why `bat` cannot be reasoned from.
+    public static let rawAtEmpty = 564
     public static let rawAtFull = 665
 
     /// Voltage against charge, as `(raw, percent)` in ascending order.
     ///
-    /// Read off the canonical curve at 6.45 mV per step: 4.20 V is a full cell
-    /// at 651, the plateau runs from about 3.78 V to 3.92 V — raw 586 to 608 —
-    /// and everything below 3.60 V is the bottom knee, which is steep enough
-    /// that eighty raw steps carry only the last five points of charge.
+    /// MEASURED on this clock rather than taken from the canonical shape of the
+    /// family. One discharge was logged once a minute from boot to the moment
+    /// it went flat — twelve and a half hours — and charge here is simply how
+    /// much of that runtime was still to come at each reading. That is the
+    /// definition that matters to somebody looking at the panel: not how full
+    /// the cell is in coulombs, but how much of the evening is left.
     ///
-    /// The top sliver carries one point of charge rather than none, and that
-    /// is a modelling convenience with a reason. Above 4.20 V a cell is full or
-    /// on a charger, so honestly it is all one state — but `percentPerRaw` is
-    /// what the estimate's gate divides by, and a genuinely flat segment would
-    /// hand it a zero. One point spread over 4.20 to 4.29 V costs nothing in a
-    /// region the battery cannot rest at and removes the divide entirely.
+    /// Read beside the firmware's own answer, the size of its error is the
+    /// point of this table: it called raw 612 seventy-two percent when eleven
+    /// hours of the twelve and a half were already gone, and called the moment
+    /// the clock died forty-seven.
+    ///
+    /// The top third is the honest weakness. Logging began three and three
+    /// quarter hours into the run, at raw 631, so everything above that is a
+    /// straight line drawn to a full cell — no measurement stands behind it,
+    /// and a charge watched from full would replace those two entries.
     static let nodes: [(raw: Int, percent: Double)] = [
-        (475, 0),    // 3.06 V — the firmware's zero
-        (558, 5),    // 3.60 V
-        (569, 10),   // 3.67 V
-        (578, 20),   // 3.73 V
-        (586, 30),   // 3.78 V — plateau begins
-        (591, 40),   // 3.81 V
-        (595, 50),   // 3.84 V
-        (600, 60),   // 3.87 V
-        (608, 70),   // 3.92 V — plateau ends
-        (617, 80),   // 3.98 V
-        (629, 90),   // 4.06 V
-        (651, 99),   // 4.20 V — a full cell
-        (665, 100),  // 4.29 V — the firmware's ceiling
+        (564, 0),    // the reading it went silent on
+        (572, 3),
+        (580, 6),
+        (588, 10),
+        (596, 17),
+        (604, 32),
+        (612, 44),
+        (620, 51),
+        (628, 61),
+        (631, 65),   // the first reading of the log
+        (665, 100),  // assumed, not measured — see above
     ]
 
     /// The charge left at this reading, nought to a hundred.

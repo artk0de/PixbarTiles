@@ -295,14 +295,15 @@ private let dischargingOnBattery = [
         )
     }
 
-    // An order, not a precision. Half a day to two days is what a 32x8 matrix
-    // at brightness 3 should be expected to do, and it is what 167 raw steps
-    // above empty at the measured rate works out to — the point of the
-    // assertion is that the answer is a day and not the three hours the old
-    // premise implied.
+    // An order, not a precision — and the order has since been measured rather
+    // than reasoned about. This clock was logged from a full charge to the
+    // moment it went flat: twelve and a half hours. These readings sit near the
+    // top of that run, so most of it is still to come, and an answer of about
+    // ten hours is the right size. "Half a day to two days" was the previous
+    // guess, made before anything had watched a whole discharge.
     let left = subject.reading?.timeRemaining ?? 0
-    #expect(left > 12 * 3_600)
-    #expect(left < 48 * 3_600)
+    #expect(left > 6 * 3_600, "answered \(left / 3_600) hours")
+    #expect(left < 16 * 3_600, "answered \(left / 3_600) hours")
 }
 
 @Test func aFastDischargeWaitsOnTheSpanRatherThanOnTheBand() {
@@ -692,11 +693,12 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
     ramp(&subject, from: 600, by: -1, minutes: 30, percent: 50)
 
     let left = secondsLeft(subject) ?? 0
-    // A band rather than a figure: the curve is the canonical shape, not a fit
-    // to this cell, and a test asserting a number to the second would be
-    // claiming a precision the model does not have.
-    #expect(left > 5 * 60, "answered \(left / 60) minutes")
-    #expect(left < 12 * 60, "answered \(left / 60) minutes")
+    // A band rather than a figure. 570 is six raw steps above the reading this
+    // clock was measured to die on, and the ramp spends one step a minute — so
+    // the truth is a handful of minutes, and the old expression's answer of
+    // ninety-five was not merely imprecise.
+    #expect(left > 2 * 60, "answered \(left / 60) minutes")
+    #expect(left < 10 * 60, "answered \(left / 60) minutes")
 }
 
 @Test func theEstimateNeverTouchesThePercentage() {
@@ -775,12 +777,11 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
         )
     }
 
-    // 525 is 3.39 V — three percent of the charge, not the twenty-six the
-    // firmware's linear map calls it. Minutes, not the fifty this used to
-    // answer by dividing volts by volts.
-    let left = secondsLeft(subject) ?? 0
-    #expect(left > 60, "answered \(left / 60) minutes")
-    #expect(left < 15 * 60, "answered \(left / 60) minutes")
+    // 525 is BELOW the reading this clock was measured to go silent on, so
+    // there is nothing left to promise and nothing is promised. The firmware
+    // calls the same reading twenty-six percent, and the old expression turned
+    // that into a confident fifty minutes.
+    #expect(secondsLeft(subject) == nil)
 }
 
 @Test func aRebootPartWayThroughTheWindowTakesTheEstimateWithTheHistory() {

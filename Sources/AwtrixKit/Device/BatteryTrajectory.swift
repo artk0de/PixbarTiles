@@ -418,19 +418,19 @@ public struct BatteryTrajectory: Sendable {
             if direction == .charging { lastSeenRising = now }
         }
         ratchet(to: stats.bat, wasGoing: before)
-        // On `bat`, and that is now known to be wrong — left alone deliberately
-        // rather than by oversight.
+        // On the MEASURED charge, never on `bat`.
         //
-        // Logged to the moment this clock went flat, the firmware read 47. So
-        // every threshold here — 20, 10, 5, 1 — is below anything it will ever
-        // report, and all four warnings are unreachable on this hardware. The
-        // fix is to read `BatteryChargeCurve.percent(atRaw:)` instead, which is
-        // one line; what stops it being made here is that it moves eight tests
-        // covering arming, re-arming and lowest-of-many crossings, and those
-        // describe behaviour nobody has asked to change. Their fixtures pair a
-        // percentage with a raw figure by the firmware's map, so the change is
-        // a rewrite of what they mean rather than a repair.
-        return crossing(at: stats.bat)
+        // The firmware's percentage cannot reach these lines. Logged to the
+        // moment this clock went flat, it read 47 — so 20, 10, 5 and 1 all sat
+        // below anything it would ever report, and every low-battery warning
+        // this app has was unreachable on real hardware. The tests passed
+        // throughout, because their fixtures were built through the same
+        // firmware map they were asserting against.
+        //
+        // A reading with no raw figure keeps `bat`, which is all such a
+        // firmware offers: a warning on a suspect scale beats none at all.
+        let charge = stats.batRaw.map { Int(BatteryChargeCurve.percent(atRaw: $0).rounded()) }
+        return crossing(at: charge ?? stats.bat)
     }
 
     /// Where the battery is, which way it is going, and how long that leaves.

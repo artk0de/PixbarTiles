@@ -34,7 +34,26 @@ private func secondsLeft(_ subject: BatteryTrajectory) -> TimeInterval? {
 /// different clocks.
 private func percent(at raw: Int) -> Int { (raw - 475) * 100 / 190 }
 
-private func raw(at percent: Int) -> Int { 475 + (190 * percent) / 100 }
+/// The raw reading whose MEASURED charge is `percent`.
+///
+/// Not the firmware's map, and the distinction is the whole reason the warnings
+/// work now. Every fixture below feeds this helper a charge and asserts a
+/// warning at that charge; before it was inverted through the firmware's linear
+/// scale, which reads 47 on a cell this clock was measured to die on — so the
+/// readings these tests built were nowhere near the lines they were named after.
+///
+/// A search rather than an inverse table, so it follows the curve if the curve
+/// is ever recalibrated. Answers the reading whose rounded charge matches, which
+/// is what `crossing(at:)` compares.
+private func raw(at percent: Int) -> Int {
+    var best = BatteryChargeCurve.rawAtEmpty
+    var bestGap = Double.infinity
+    for candidate in BatteryChargeCurve.rawAtEmpty...BatteryChargeCurve.rawAtFull {
+        let gap = abs(BatteryChargeCurve.percent(atRaw: candidate) - Double(percent))
+        if gap < bestGap { bestGap = gap; best = candidate }
+    }
+    return best
+}
 
 private func stats(
     percent: Int, raw: Int?, uptime: Int? = 9_000, uid: String = "awtrix_a07f9c"
@@ -948,8 +967,14 @@ private func fillUpThroughFourPercent(_ subject: inout BatteryTrajectory) -> [Ba
         } else {
             percent = 6
         }
+        // The raw figure is built FROM the charge this fixture names, rather
+        // than from a hand-picked ramp near the firmware's floor. Those numbers
+        // — 480 to 500 — are below the reading this clock was measured to die
+        // on, so under a curve that knows where empty is they are all zero, and
+        // a fixture about filling up through four percent never left the bottom
+        // line at all.
         let warning = subject.record(
-            stats(percent: percent, raw: 480 + 2 * minute), at: at(Double(minute) * 60)
+            stats(percent: percent, raw: raw(at: percent)), at: at(Double(minute) * 60)
         )
         if let warning { fired.append(warning) }
     }
@@ -976,11 +1001,16 @@ private func fillUpThroughFourPercent(_ subject: inout BatteryTrajectory) -> [Ba
     // SKIPPED on the way up rather than spent, so it is still there to fire —
     // and it fires once the fit has caught up with the change of direction,
     // which is what the readings can actually support.
+    // Longer than it used to be, and the length is load-bearing. These charges
+    // are a handful of raw steps apart — near the bottom of a measured curve a
+    // point of charge is worth about two steps, where the firmware's map made
+    // it nineteen — so the fall needs an hour of readings to outgrow both the
+    // deadband and the charge still sitting in the fit's window.
     var fired: [Int] = []
-    for minute in 11...25 {
-        let percent = minute >= 15 ? 4 : 6
+    for minute in 11...75 {
+        let percent = max(4, 8 - (minute - 11) / 16)
         let warning = subject.record(
-            stats(percent: percent, raw: 500 - 2 * (minute - 10)),
+            stats(percent: percent, raw: raw(at: percent)),
             at: at(Double(minute) * 60)
         )
         if let warning { fired.append(warning.threshold) }
@@ -1063,21 +1093,30 @@ private func fillUpThroughFourPercent(_ subject: inout BatteryTrajectory) -> [Ba
     var subject = BatteryTrajectory()
     let lastLine = try #require(BatteryTrajectory.thresholds.min())
 
-    // Eleven minutes of the raw figure climbing two steps a minute, which is a
-    // charge by the third of them. `bat` reads a point lower for the last five
-    // — the same wander that has this clock reporting 100, 99, 100 with nothing
-    // changing behind it — and lands on the last line while the trend is
-    // unambiguous. Unproven is not the same as contradicted: the exception is
-    // for the first case only, and this is the second.
-    let fired = (0...10).compactMap { minute in
-        subject.record(
-            stats(percent: minute < 6 ? lastLine + 1 : lastLine, raw: 478 + 2 * minute),
-            at: at(Double(minute) * 60)
+    // Establish the charge first, well clear of every line, so the direction is
+    // unambiguous before the last line is offered at all.
+    //
+    // The fixture this replaces relied on `bat` reading a point lower than the
+    // raw figure it was paired with, and on the warning being taken from `bat`.
+    // Neither survives: the warning is read off the measured charge now, so a
+    // wandering percentage cannot reach a line the cell is nowhere near. What
+    // is worth protecting is the rule itself — a clock KNOWN to be filling up
+    // has no news however low it reads — and that is what this poses now.
+    for minute in 0...10 {
+        _ = subject.record(
+            stats(percent: 20, raw: raw(at: 10) + 2 * minute), at: at(Double(minute) * 60)
         )
     }
-
     #expect(subject.reading?.direction == .charging)
-    #expect(fired.isEmpty)
+
+    // Now the last line, on a clock that is demonstrably charging. Unproven is
+    // not the same as contradicted: the exception that fires this line without
+    // a verdict is for the first case only, and this is the second.
+    let fired = subject.record(
+        stats(percent: lastLine, raw: raw(at: lastLine)), at: at(11 * 60)
+    )
+
+    #expect(fired == nil)
 }
 
 @Test func firingWithoutADirectionStillSpendsTheThreshold() throws {

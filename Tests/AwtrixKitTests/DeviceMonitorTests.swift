@@ -423,12 +423,18 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
     // gated on a direction, and since the fall was measured a direction is a
     // line fitted across an hour — so a crossing handed in before twenty
     // minutes have been watched is a crossing nobody is told about.
+    // The raw figures are the ones this clock's MEASURED curve puts either side
+    // of the twenty line — 604 down to 598 is thirty-two percent down to
+    // twenty-one — rather than the 547-to-511 they used to be. Those readings
+    // are below the voltage this clock was measured to die on, so on a curve
+    // that knows where empty is they are all zero, and the fixture crossed the
+    // last line rather than the first.
     for minute in 0...25 {
-        transport.body = trendJSON(bat: 25, raw: 547 - minute)
+        transport.body = trendJSON(bat: 25, raw: 604 - minute / 4)
         #expect(await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60)) == nil)
     }
 
-    transport.body = trendJSON(bat: 19, raw: 511)
+    transport.body = trendJSON(bat: 19, raw: 597)
 
     #expect(
         await monitor.refresh(at: origin.addingTimeInterval(26 * 60))

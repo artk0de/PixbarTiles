@@ -787,8 +787,12 @@ import Testing
     let poll = Metronome()
     let subject = testModel(
         transport: ScriptedTransport(
-            bodies: (0...25).map { statsBody(percent: 25, raw: 547 - $0) }
-                + [statsBody(percent: 25, raw: 521), statsBody(percent: 19, raw: 511)]
+            // Either side of the twenty line on this clock's MEASURED curve —
+            // 604 is thirty-two percent and 597 is nineteen. The 547-to-511
+            // these used to be sit below the voltage it was measured to die on,
+            // so they are all zero now and crossed the last line, not the first.
+            bodies: (0...25).map { statsBody(percent: 25, raw: 604 - $0 / 4) }
+                + [statsBody(percent: 25, raw: 598), statsBody(percent: 19, raw: 597)]
         ),
         pollSleep: poll.sleep,
         alerts: alerts

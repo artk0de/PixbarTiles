@@ -313,6 +313,21 @@ final class AppModel: ObservableObject {
     private let alerts: any BatteryWarningPresenting
     /// Whether macOS says the user is busy, and what to call it when it does.
     private let focus: FocusGate
+    /// Connectors whose place in the clock's loop depends on which Focus is on,
+    /// and how to ask about each.
+    ///
+    /// Injected rather than discovered from the registry, because `Connector`
+    /// says nothing about a Focus and should not: `AwtrixKit` does not know
+    /// what one is, and the whole point of the gate being a closure is that it
+    /// stays that way.
+    private let focusGated: [FocusGatedConnector]
+    /// The Focus the last poll saw, so this one can tell that it changed.
+    ///
+    /// Nil until the first poll, which is what stops a launch from counting as
+    /// a change — the launch already delivers what it owes through
+    /// `deliverWhatTheLaunchOwes`, and a second delivery on the same turn would
+    /// be a duplicate push for nothing.
+    private var lastSeenFocus: ActiveFocusMode?
     /// Whether a microphone the user cares about is capturing.
     private let microphone: MicrophoneGate
     private var timers: [String: Task<Void, Never>] = [:]
@@ -413,6 +428,7 @@ final class AppModel: ObservableObject {
         pasteboard: NSPasteboard = .general,
         alerts: any BatteryWarningPresenting,
         focus: FocusGate,
+        focusGated: [FocusGatedConnector] = [],
         quietHours: QuietWindow = .default,
         microphone: MicrophoneGate,
         watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
@@ -440,6 +456,7 @@ final class AppModel: ObservableObject {
         self.anecdotes = anecdotes
         self.alerts = alerts
         self.focus = focus
+        self.focusGated = focusGated
         self.quietHours = quietHours
         self.microphone = microphone
         self.watchedMicrophones = watching
@@ -522,7 +539,14 @@ final class AppModel: ObservableObject {
             alerts: BatteryAlert(
                 dialog: ModalBatteryDialog(), notifications: SystemBatteryNotifier()
             ),
-            focus: FocusGate(status: SystemFocusStatus()),
+            // The same reading of macOS the connector's own gate is built on,
+            // so the two cannot answer differently about the same moment.
+            focus: FocusGate(status: focusStatus),
+            focusGated: [
+                FocusGatedConnector(id: ClaudeUsageConnector.appName) {
+                    ClaudeFocusAudience.shows(focusStatus)
+                },
+            ],
             quietHours: QuietWindow.stored(in: defaults),
             microphone: MicrophoneGate(inputs: SystemAudioInputs()),
             watching: WatchedMicrophone.stored(in: defaults)
@@ -948,6 +972,46 @@ final class AppModel: ObservableObject {
     /// A run started by hand puts the same held banner on the clock as a
     /// scheduled one, and a quit that does not wait for it kills the process
     /// during the release and leaves the banner up.
+    /// Puts a Focus-gated connector where the Focus now says it belongs.
+    ///
+    /// Both directions, because they are not the same operation. Arriving is a
+    /// delivery — the connector produces and the app goes into the loop. LEAVING
+    /// has to be an explicit retraction: nothing on the clock removes an app for
+    /// being un-refreshed until its lifetime runs out, so a Sleep that started
+    /// at midnight would leave the number lit until a quarter past.
+    ///
+    /// Only on a CHANGE. Asking every minute would re-push an unchanged app
+    /// sixty times an hour, and re-retract one that is already gone.
+    /// Internal rather than private so the suite can pose a switch directly.
+    /// The single caller is `poll()`, which is where the minute hand is.
+    func reactToAFocusChange() {
+        let current = focus.status.activeMode
+        defer { lastSeenFocus = current }
+        guard let before = lastSeenFocus, before != current else { return }
+
+        for gated in focusGated {
+            if gated.shows() {
+                runNow(gated.id)
+            } else {
+                retract(gated.id)
+            }
+        }
+    }
+
+    /// Takes a connector's app back off the clock now, rather than letting its
+    /// lifetime expire.
+    ///
+    /// Through the same `manualRuns` bracket `runNow` uses, for the reason that
+    /// one is: teardown can only wait for a task this model is holding.
+    private func retract(_ id: String) {
+        let key = nextRunKey
+        nextRunKey += 1
+        manualRuns[key] = Task { [weak self] in
+            await self?.host.restoreDeviceState(borrowedBy: id)
+            self?.manualRuns[key] = nil
+        }
+    }
+
     func runNow(_ id: String) {
         let key = nextRunKey
         nextRunKey += 1
@@ -1068,6 +1132,12 @@ final class AppModel: ObservableObject {
         // that knows whether there is a device to give it to. Costs a set read
         // once the debt is settled, which is within a poll of every launch.
         deliverWhatTheLaunchOwes()
+        // And in the same turn, because a Focus changes without any loop being
+        // told: this poll is the minute hand the app has, and the alternative
+        // is waiting out a connector's own cadence — up to five minutes to
+        // appear when work starts, and a whole lifetime to leave when Sleep
+        // does.
+        reactToAFocusChange()
         // Awaited here rather than detached. The dialog does not block — it
         // schedules itself — and what is awaited is the authorization request,
         // which happens once. A detached task would be one more thing teardown

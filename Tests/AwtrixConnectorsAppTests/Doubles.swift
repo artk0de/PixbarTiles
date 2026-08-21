@@ -478,6 +478,9 @@ func testModel(
     // allowed to ask, and a default of `.notDetermined` would have every test
     // in this target pass or fail depending on the hour it was run at.
     focus: FocusGate = focusGate(StubFocusStatus(access: .authorized)),
+    // Empty, so no test acquires a reaction to a Focus change it did not ask
+    // for: the pairing is the app's wiring rather than a property of a model.
+    focusGated: [FocusGatedConnector] = [],
     quietHours: QuietWindow = .default,
     // Nothing capturing, so nothing in the suite is held by whatever is plugged
     // into the machine running it. A default reading the REAL inputs would have
@@ -504,6 +507,7 @@ func testModel(
         pasteboard: pasteboard,
         alerts: alerts,
         focus: focus,
+        focusGated: focusGated,
         quietHours: quietHours,
         microphone: microphone,
         watching: watching,
@@ -984,6 +988,9 @@ final class StubFocusStatus: FocusStatusReading, @unchecked Sendable {
     func nowFocused(_ value: Bool) { lock.withLock { focused = value } }
 
     func nowReports(access: FocusAccess) { lock.withLock { accessValue = access } }
+
+    /// The user switching Focus underneath a poll that is already running.
+    func nowIn(_ value: ActiveFocusMode) { lock.withLock { mode = value } }
 }
 
 /// A clock stopped at an hour, so a test can ask what the gate does at three in

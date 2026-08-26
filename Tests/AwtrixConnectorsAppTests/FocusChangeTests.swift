@@ -5,11 +5,15 @@ import Testing
 
 // A Focus turning on or off, and the clock catching up with it.
 //
-// Nothing tells this app that the user switched Focus — there is no callback to
-// register for — so the reachability poll is the minute hand it has. Without
-// this, a connector whose visibility depends on the Focus waits out its own
-// cadence: up to five minutes to appear when work starts, and a whole lifetime
-// to leave when Sleep does, which is a lit number on a clock beside a bed.
+// Nothing NOTIFIES this app that the user switched Focus — `INFocusStatusCenter`
+// answers when asked and announces nothing — so the switch is noticed two ways:
+// `FocusAssertionsWatcher` watches the file macOS writes the assertion to, and
+// the reachability poll reconciles on its minute whatever that watcher missed
+// (it needs Full Disk Access, and a machine without it has only the poll).
+// Either way the reaction is this method. Without it, a connector whose
+// visibility depends on the Focus waits out its own cadence: up to five minutes
+// to appear when work starts, and a whole lifetime to leave when Sleep does,
+// which is a lit number on a clock beside a bed.
 
 private func gated(_ status: StubFocusStatus) -> [FocusGatedConnector] {
     [FocusGatedConnector(id: "claude") { ClaudeFocusAudience.shows(status) }]

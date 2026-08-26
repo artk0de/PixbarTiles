@@ -481,6 +481,12 @@ func testModel(
     // Empty, so no test acquires a reaction to a Focus change it did not ask
     // for: the pairing is the app's wiring rather than a property of a model.
     focusGated: [FocusGatedConnector] = [],
+    // Nil, so no test acquires an opinion about the clock's indicator lamps it
+    // did not ask for: a model built without one leaves both corners alone.
+    vpnLamps: VPNLampDisplay? = nil,
+    // Nothing running, so no test in this target answers to whichever VPNs
+    // happen to be up on the machine running it.
+    vpnPresence: VPNPresence = VPNPresence(processes: FixedProcessList(paths: [])),
     quietHours: QuietWindow = .default,
     // Nothing capturing, so nothing in the suite is held by whatever is plugged
     // into the machine running it. A default reading the REAL inputs would have
@@ -508,6 +514,8 @@ func testModel(
         alerts: alerts,
         focus: focus,
         focusGated: focusGated,
+        vpnLamps: vpnLamps,
+        vpnPresence: vpnPresence,
         quietHours: quietHours,
         microphone: microphone,
         watching: watching,
@@ -1174,4 +1182,37 @@ let aDesk = Coordinates(latitude: 55.7558, longitude: 37.6173)
 
 func weatherConnector(over transport: any Transport) -> WeatherConnector {
     WeatherConnector(source: OpenMeteoSource(transport: transport), location: { aDesk })
+}
+
+// MARK: - VPN and the clock's lamps
+
+/// A process table a test writes out by hand.
+struct FixedProcessList: RunningProcessListing {
+    let paths: [String]
+
+    func executablePaths() -> [String] { paths }
+}
+
+/// Records what reached the clock's indicator lamps, and can refuse like an
+/// unplugged one.
+///
+/// Lock-guarded rather than an actor so a `waitUntil` condition can read it:
+/// those run on the main actor and cannot await.
+final class RecordingLamps: IndicatorLighting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [(slot: IndicatorSlot, signal: IndicatorSignal)] = []
+    private var refused: Set<IndicatorSlot> = []
+
+    var written: [(slot: IndicatorSlot, signal: IndicatorSignal)] { lock.withLock { recorded } }
+
+    /// Which corners this clock will not accept. A set rather than a boolean
+    /// because half a delivery is the interesting failure.
+    func refuse(_ slots: Set<IndicatorSlot>) { lock.withLock { refused = slots } }
+
+    func setIndicator(_ slot: IndicatorSlot, to signal: IndicatorSignal) async throws {
+        try lock.withLock {
+            if refused.contains(slot) { throw AwtrixError.invalidHost("nowhere") }
+            recorded.append((slot, signal))
+        }
+    }
 }

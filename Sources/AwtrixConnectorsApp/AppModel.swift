@@ -351,6 +351,21 @@ final class AppModel: ObservableObject {
     /// each other rather than one replacing the other.
     private var manualRuns: [Int: Task<Void, Never>] = [:]
     private var nextRunKey = 0
+    /// Whether each VPN is carrying, read fresh on every trigger.
+    private let vpnPresence: VPNPresence
+    /// The two corners of the matrix, and what they are showing.
+    ///
+    /// Optional because most of the suite has no opinion about indicators and
+    /// should not have to supply a clock to say so — nil is an app that leaves
+    /// the corners alone entirely.
+    private let vpnLamps: VPNLampDisplay?
+    /// Writes to those corners, still going. Keyed like `manualRuns` and for
+    /// the same reason: triggers overlap, the display serialises them, and
+    /// teardown has to be able to wait for whichever are in flight.
+    private var vpnPushes: [Int: Task<Void, Never>] = [:]
+    /// The two things that say the world moved. See `startWatchingTheWorld`.
+    private let networkWatcher = NetworkPathWatcher()
+    private let focusWatcher = FocusAssertionsWatcher()
     /// The restock the launch fires, still going.
     ///
     /// Owned rather than detached, for the reason every other loop here is:
@@ -429,6 +444,8 @@ final class AppModel: ObservableObject {
         alerts: any BatteryWarningPresenting,
         focus: FocusGate,
         focusGated: [FocusGatedConnector] = [],
+        vpnLamps: VPNLampDisplay? = nil,
+        vpnPresence: VPNPresence = VPNPresence(),
         quietHours: QuietWindow = .default,
         microphone: MicrophoneGate,
         watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
@@ -457,6 +474,8 @@ final class AppModel: ObservableObject {
         self.alerts = alerts
         self.focus = focus
         self.focusGated = focusGated
+        self.vpnLamps = vpnLamps
+        self.vpnPresence = vpnPresence
         self.quietHours = quietHours
         self.microphone = microphone
         self.watchedMicrophones = watching
@@ -547,6 +566,9 @@ final class AppModel: ObservableObject {
                     ClaudeFocusAudience.shows(focusStatus)
                 },
             ],
+            // The same device the connectors write through. Indicators do
+            // not go into the loop, so they contend with nothing that does.
+            vpnLamps: VPNLampDisplay(clock: device),
             quietHours: QuietWindow.stored(in: defaults),
             microphone: MicrophoneGate(inputs: SystemAudioInputs()),
             watching: WatchedMicrophone.stored(in: defaults)
@@ -855,6 +877,7 @@ final class AppModel: ObservableObject {
         noteLaunchDeliveries()
         startMonitoring()
         startWatchingMicrophones()
+        startWatchingTheWorld()
         // The one caller that resumes. A cadence describes the gap BETWEEN
         // deliveries, and every OTHER caller of `reschedule` is a settings
         // change, where the gap the user just chose starts now.
@@ -998,6 +1021,57 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Starts the two watchers that make the corners follow the machine
+    /// rather than a timer.
+    ///
+    /// Neither watcher answers anything — each says only that something moved,
+    /// and `refreshVPNIndicators` works out what. That split is what lets the
+    /// network watcher stay ignorant of VPNs: it fires on WiFi hiccups, on a
+    /// cable, on waking, and every one of those is a fine moment to look.
+    ///
+    /// The Focus watch is allowed to fail. Opening the directory it reads costs
+    /// Full Disk Access, and on a machine without it the app keeps exactly the
+    /// behaviour it had before this existed: `poll()` notices the switch on its
+    /// own minute.
+    private func startWatchingTheWorld() {
+        networkWatcher.start { [weak self] in
+            Task { @MainActor in self?.refreshVPNIndicators() }
+        }
+        focusWatcher.start { [weak self] in
+            Task { @MainActor in
+                // Both, and in this order. The Focus decides which corners are
+                // allowed to say anything at all, and it is also what decides
+                // whether the Claude app belongs in the loop — which until now
+                // was answered only on the poll's minute.
+                self?.reactToAFocusChange()
+                self?.refreshVPNIndicators()
+            }
+        }
+    }
+
+    /// Puts the clock's two VPN corners where the machine says they belong.
+    ///
+    /// Reads the process table on every call rather than caching it. The read
+    /// is milliseconds and only happens on a change, and a cache would have to
+    /// be invalidated by the very event this is already reacting to.
+    /// Internal rather than private for the reason `reactToAFocusChange` is:
+    /// the suite drives it directly, because the alternative is waiting on a
+    /// real network event.
+    func refreshVPNIndicators() {
+        guard let vpnLamps else { return }
+        let lamps = VPNIndicatorPolicy.lamps(
+            focus: focus.status.activeMode,
+            pritunl: vpnPresence.isUp(.pritunl),
+            amnezia: vpnPresence.isUp(.amnezia)
+        )
+        let key = nextRunKey
+        nextRunKey += 1
+        vpnPushes[key] = Task { [weak self] in
+            await vpnLamps.show(lamps)
+            self?.vpnPushes[key] = nil
+        }
+    }
+
     /// Takes a connector's app back off the clock now, rather than letting its
     /// lifetime expire.
     ///
@@ -1064,14 +1138,21 @@ final class AppModel: ObservableObject {
     func teardown() async {
         monitorLoop?.cancel()
         monitorLoop = nil
+        // Before anything is cancelled, so nothing new is scheduled behind the
+        // teardown. Both fire from queues of their own, and a path change
+        // landing halfway through this would enqueue a write to a clock the
+        // app is in the middle of giving back.
+        networkWatcher.stop()
+        focusWatcher.stop()
         let running = Array(timers.values) + Array(manualRuns.values) + Array(replays.values)
-            + Array(restores.values)
+            + Array(restores.values) + Array(vpnPushes.values)
             + [iconRemoval, launchRestock, historyLoad, microphoneWatch, panelRefresh]
             .compactMap { $0 }
         timers.removeAll()
         manualRuns.removeAll()
         replays.removeAll()
         restores.removeAll()
+        vpnPushes.removeAll()
         iconRemoval = nil
         launchRestock = nil
         historyLoad = nil
@@ -1091,6 +1172,12 @@ final class AppModel: ObservableObject {
         // had taken it off. And unowned by any connector: a quit is not about
         // one of them.
         await host.restoreDeviceState(borrowedBy: nil)
+        // And the corners, for the same reason and in the same breath.
+        // Indicators live on the clock: the firmware holds them through this
+        // process going away, so a quit while the work tunnel was down would
+        // leave a red corner blinking on the desk with nothing left running
+        // that could ever put it out.
+        await vpnLamps?.clear()
     }
 
     private func startMonitoring() {
@@ -1138,6 +1225,13 @@ final class AppModel: ObservableObject {
         // appear when work starts, and a whole lifetime to leave when Sleep
         // does.
         reactToAFocusChange()
+        // The safety net under the two watchers rather than the way the corners
+        // normally move. Both of those are event-driven and neither is
+        // guaranteed — a Focus watch needs Full Disk Access it may not have,
+        // and a path change is macOS's notion of one — so the minute hand
+        // reconciles whatever they missed. Costs nothing when they missed
+        // nothing: the display writes only what moved.
+        refreshVPNIndicators()
         // Awaited here rather than detached. The dialog does not block — it
         // schedules itself — and what is awaited is the authorization request,
         // which happens once. A detached task would be one more thing teardown

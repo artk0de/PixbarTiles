@@ -10,8 +10,11 @@ import Security
 /// takes what is there and, when that has expired, reports nothing until Claude
 /// Code renews it on its own account.
 ///
-/// For the same reason nothing here caches. Every look is a fresh read, so the
-/// poll after a renewal picks up the new token without anything being told.
+/// Nothing here caches, and that is a statement about THIS layer rather than
+/// about the app: a look is always a real look at the store. Who decides how
+/// OFTEN to look is `ClaudeUsageReporter`, and it holds a token for as long as
+/// the service accepts it — because a look can raise a password prompt, and a
+/// five-minute poll that looked every time raised hundreds a day.
 public protocol ClaudeCredentialReading: Sendable {
     /// The current access token, or nil when there is not one to be had.
     func accessToken() -> String?

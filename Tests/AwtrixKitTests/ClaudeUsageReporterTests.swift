@@ -70,14 +70,116 @@ private struct FixedCredential: ClaudeCredentialReading {
     #expect(transport.requests.isEmpty)
 }
 
+// MARK: - How often the credential is fetched
+
+/// Counts how many times the store was asked, and can hand out a new token.
+private final class CountingCredential: ClaudeCredentialReading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    private var tokens: [String]
+
+    init(_ tokens: [String]) { self.tokens = tokens }
+
+    var timesAsked: Int { lock.withLock { reads } }
+
+    func accessToken() -> String? {
+        lock.withLock {
+            defer { reads += 1 }
+            return tokens.indices.contains(reads) ? tokens[reads] : tokens.last
+        }
+    }
+}
+
+/// Answers each canned status in turn, so one call can be refused and the next
+/// allowed.
+private final class ScriptedTransport: Transport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var script: [(status: Int, body: Data)]
+    private var sent: [URLRequest] = []
+
+    init(_ script: [(status: Int, body: Data)]) { self.script = script }
+
+    var requests: [URLRequest] { lock.withLock { sent } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let step = lock.withLock { () -> (status: Int, body: Data) in
+            sent.append(request)
+            return script.count > 1 ? script.removeFirst() : script[0]
+        }
+        return (
+            step.body,
+            HTTPURLResponse(
+                url: request.url!, statusCode: step.status, httpVersion: nil, headerFields: nil
+            )!
+        )
+    }
+}
+
+// The keychain is asked ONCE, and then not again while the token works.
+//
+// This is a fix for a real complaint rather than an optimisation. The connector
+// polls every five minutes, and the first version read the credential on every
+// one of those — two hundred and eighty-eight reads of another application's
+// keychain item a day. macOS may put a password prompt in front of any of them,
+// so "read it fresh so a renewal is picked up" bought correctness at the price
+// of a dialog that would not stop.
+@Test func theCredentialIsFetchedOnceAndReusedWhileItWorks() async throws {
+    let credentials = CountingCredential(["tok-1"])
+    let transport = RecordingTransport()
+    transport.body = Data(usageBody.utf8)
+    let reporter = ClaudeUsageReporter(transport: transport, credentials: credentials)
+
+    for _ in 0..<5 { _ = try await reporter.read() }
+
+    #expect(credentials.timesAsked == 1, "asked \(credentials.timesAsked) times")
+    #expect(transport.requests.count == 5)
+}
+
+// And it IS asked again the moment the token stops working, which is what keeps
+// the caching honest: a renewal is picked up on the first poll after the old
+// token is refused, rather than at the next launch.
+@Test func aRefusedTokenIsFetchedAgainAndTheRequestRetried() async throws {
+    let credentials = CountingCredential(["stale", "fresh"])
+    let transport = ScriptedTransport([
+        (401, Data(#"{"type":"error"}"#.utf8)),
+        (200, Data(usageBody.utf8)),
+    ])
+    let reporter = ClaudeUsageReporter(transport: transport, credentials: credentials)
+
+    let reading = try #require(await reporter.read())
+
+    #expect(reading.utilization == 78)
+    #expect(credentials.timesAsked == 2)
+    // Two requests, and the second carried the NEW token — a retry with the same
+    // one would spend a round trip to be refused identically.
+    #expect(transport.requests.count == 2)
+    #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer stale")
+    #expect(transport.requests[1].value(forHTTPHeaderField: "Authorization") == "Bearer fresh")
+}
+
+// One retry, never a loop. A store that keeps handing back the same refused
+// token must not be asked forever.
+@Test func aTokenThatIsStillRefusedAfterRereadingAnswersNothing() async throws {
+    let credentials = CountingCredential(["stale"])
+    let transport = ScriptedTransport([(401, Data(#"{"type":"error"}"#.utf8))])
+    let reporter = ClaudeUsageReporter(transport: transport, credentials: credentials)
+
+    let reading = try await reporter.read()
+
+    #expect(reading == nil)
+    #expect(transport.requests.count <= 2, "sent \(transport.requests.count) requests")
+}
+
 // MARK: - Where the credential comes from
 
 // The token belongs to Claude Code, not to this app, and the two rules that
 // follow from that are the whole design. This app READS it and never refreshes
 // it: an OAuth refresh rotates the refresh token, so refreshing here would drop
-// Claude Code out of its own session mid-work. And it re-reads rather than
-// caching, so the moment Claude Code renews, the next poll picks the new one up.
-@Test func theCredentialIsReadFreshFromTheStoreOnEveryLook() {
+// Claude Code out of its own session mid-work. And a look at the store is
+// always a real look — the store itself holds nothing. WHEN to look is the
+// reporter's decision, asserted above: it holds a token while the service
+// accepts it, because every look can raise a password prompt.
+@Test func aLookAtTheStoreIsAlwaysARealLook() {
     final class CountingStore: ClaudeCredentialReading, @unchecked Sendable {
         var reads = 0
         func accessToken() -> String? { reads += 1; return "t" }

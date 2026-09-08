@@ -208,7 +208,7 @@ public struct DeviceStats: Sendable, Decodable, Equatable {
 }
 
 public actor AwtrixDevice {
-    private let host: String
+    private var host: String
     private let transport: Transport
 
     /// Normalised here as well as at the field the user types into, because
@@ -224,6 +224,21 @@ public actor AwtrixDevice {
     public init(host: String, transport: Transport) {
         self.host = DeviceAddress.host(from: host) ?? host
         self.transport = transport
+    }
+
+    /// Points this device — and so everything holding it — at a new address.
+    ///
+    /// An actor built once and shared is what makes this a three-line change
+    /// rather than a rebuild: the monitor, the custody and every connector hold
+    /// this same instance, so re-pointing it re-points all of them at the same
+    /// instant. Constructing a second `AwtrixDevice` would leave every existing
+    /// holder talking to the address that stopped answering.
+    ///
+    /// Normalised on the way in for the reason the initialiser normalises: this
+    /// is a third way into the actor, and a rule that only two of the three
+    /// obey is a rule the next caller gets wrong.
+    public func adopt(host: String) {
+        self.host = DeviceAddress.host(from: host) ?? host
     }
 
     // MARK: sending

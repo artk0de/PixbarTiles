@@ -494,7 +494,11 @@ func testModel(
     // interface on this desk.
     microphone: MicrophoneGate = MicrophoneGate(inputs: StubAudioInputs()),
     watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
-    micSleep: @escaping AppModel.Sleeping = parked
+    micSleep: @escaping AppModel.Sleeping = parked,
+    // Nil, so no test acquires a browse it did not ask for: a model built
+    // without one stays at the address it was given, however long the clock is
+    // away.
+    relocate: AppModel.RelocatingHost? = nil
 ) -> AppModel {
     let registry = ConnectorRegistry()
     for connector in connectors { registry.register(connector) }
@@ -502,6 +506,7 @@ func testModel(
     return AppModel(
         deviceHost: deviceHost,
         device: device,
+        relocate: relocate,
         registry: registry,
         host: host,
         store: store,

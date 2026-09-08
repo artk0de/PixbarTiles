@@ -82,9 +82,13 @@ struct SettingsSheet: View {
     ///
     /// Saves as it is typed — `AppModel.typedHost` writes on every change — so
     /// there is no Save button and no submit to remember. What it writes is the
-    /// same `UserDefaults` key `AppModel.live()` reads at launch, which is why
-    /// it can exist beside a `deviceHost` that stays a `let`: it rebuilds
-    /// nothing, and says so.
+    /// same `UserDefaults` key `AppModel.live()` reads at launch, and it says
+    /// as much: a typed address rebuilds nothing and waits for the next launch.
+    ///
+    /// A relocation writes the same two places without waiting, and the field
+    /// follows it — so what is shown here can change without anybody typing.
+    /// That is the one case with no note beside it, because there is no save to
+    /// report and nothing for the reader to do.
     private var deviceHostSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Device address").font(.caption).foregroundStyle(.secondary)

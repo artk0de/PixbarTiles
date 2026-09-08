@@ -457,11 +457,11 @@ struct MenuPanel: View {
     /// reachable, and the panel never says it is.
     ///
     /// There is no field to type an address into, and that is not an omission:
-    /// `deviceHost` is read once at launch because changing it would have to
-    /// rebuild the device, the monitor and the host underneath a running
-    /// schedule. What this line is for is knowing WHICH name to write with
-    /// `defaults write dev.artk0re.awtrix-connectors deviceHost …`, which
-    /// previously meant knowing it by heart.
+    /// the gear has one, and the app moves itself onto the clock it finds
+    /// without either being needed. What this line is for is the cases the app
+    /// will not act on by itself — two clocks advertising and none of them
+    /// remembered, or a refused Local Network permission — where knowing the
+    /// name is what makes the field usable at all.
     ///
     /// Which is why the row is USUALLY not here at all. `AppDelegate` browses
     /// only while this panel is open and the clock is not answering, so a

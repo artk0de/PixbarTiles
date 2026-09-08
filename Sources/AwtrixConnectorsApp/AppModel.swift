@@ -131,6 +131,23 @@ final class AppModel: ObservableObject {
     /// panel's address field writes for the next one.
     static let deviceHostKey = "deviceHost"
     static let defaultDeviceHost = "192.168.1.72"
+    /// Which clock this app has been talking to, as the firmware names itself
+    /// in `/api/stats`.
+    ///
+    /// Written down for one purpose, and it is the purpose that makes silent
+    /// relocation safe: a browse run during an outage can tell OUR clock from a
+    /// neighbour's. Without it the only rule available is "exactly one device
+    /// is advertising", which moves this app onto somebody else's device the
+    /// first time ours is unplugged.
+    static let deviceUIDKey = "deviceUID"
+
+    /// One bounded attempt to find where the clock went, as one answer.
+    ///
+    /// A closure rather than the `DeviceRelocation` itself, for the reason
+    /// every clock and sleeper here is one: what this model needs is an
+    /// address, and taking the type would drag a browser, a probe and a
+    /// deadline into every test that has no opinion about any of them.
+    typealias RelocatingHost = @MainActor (String?) async -> String?
     /// How often reachability is re-asked. Not a user setting: it costs one
     /// request and the answer drives a glyph, not a delivery.
     ///
@@ -169,19 +186,36 @@ final class AppModel: ObservableObject {
     /// being told where to look.
     static let deviceUnreachable = "clock unreachable"
 
-    /// Read at launch and never written here. The gear's settings sheet edits
-    /// the address through `DeviceHostField`, which writes the same defaults
-    /// key `defaults write dev.artk0re.awtrix-connectors deviceHost` writes —
-    /// either way the next launch picks it up. A settable property would have
-    /// to rebuild the device, the monitor and the host underneath a running
-    /// schedule, and nothing in the menu asks for that yet.
+    /// Where this app is talking to the clock right now.
+    ///
+    /// Seeded at launch from the stored address and written exactly one other
+    /// way: by a relocation, when the clock stopped answering and was found
+    /// again somewhere else. It used to be a `let`, on the argument that a
+    /// settable address would have to rebuild the device, the monitor and the
+    /// host underneath a running schedule. That argument fell to
+    /// `AwtrixDevice.adopt(host:)` — the device is an actor built once and held
+    /// by all three, so re-pointing it re-points them, and nothing is rebuilt.
+    ///
+    /// Published because the panel draws it, and a panel still naming the
+    /// address that stopped answering invites somebody to fix what is already
+    /// fixed.
     ///
     /// Whatever is stored, `AwtrixDevice` normalises it: the hand-written path
     /// reaches no field and no validation, so a `http://10.0.0.5` typed into a
     /// terminal has to be dealt with where the URL is built.
-    let deviceHost: String
+    @Published private(set) var deviceHost: String
     let registry: ConnectorRegistry
     let monitor: DeviceMonitor
+    /// Held so that a relocation can re-point it, which is the whole reason
+    /// this reference exists here rather than only inside the monitor.
+    private let device: AwtrixDevice
+    private let relocate: RelocatingHost?
+    /// How many polls in a row the clock has not answered.
+    ///
+    /// The only input `RelocationSchedule` needs, and the reason it needs no
+    /// clock: the polls are a fixed cadence, so this count is the length of the
+    /// outage in the one unit this model already holds.
+    private var unansweredPolls = 0
 
     @Published private(set) var lastResults: [String: String] = [:]
     /// What the last background pass had to complain about, per connector, and
@@ -434,6 +468,10 @@ final class AppModel: ObservableObject {
     init(
         deviceHost: String,
         device: AwtrixDevice,
+        // Nil by default, so that no test acquires a browse it did not ask for:
+        // a model built without one stays where it was put, however long the
+        // clock is away.
+        relocate: RelocatingHost? = nil,
         registry: ConnectorRegistry,
         host: any ConnectorRunning,
         store: any SettingsStore,
@@ -455,6 +493,8 @@ final class AppModel: ObservableObject {
     ) {
         self.deviceHost = deviceHost
         self.typedHost = deviceHost
+        self.device = device
+        self.relocate = relocate
         self.typedLocation = LocationField.text(for: Coordinates.stored(in: defaults))
         self.defaults = defaults
         self.pasteboard = pasteboard
@@ -499,6 +539,20 @@ final class AppModel: ObservableObject {
     ) -> AppModel {
         let deviceHost = defaults.string(forKey: deviceHostKey) ?? defaultDeviceHost
         let device = AwtrixDevice(host: deviceHost, transport: transport)
+        // Built here rather than inside the model so that the one door to the
+        // outside stays this function's `transport` parameter: the probe below
+        // is an HTTP request, and it goes through the same door every other
+        // request does.
+        let relocation = DeviceRelocation(
+            browser: { DeviceBrowser() },
+            probe: { host in
+                // A device of its own, pointed at the candidate. The app's own
+                // device is not re-pointed until the answer has been checked,
+                // so a probe that reached the wrong clock cannot move anything
+                // by having been made.
+                try? await AwtrixDevice(host: host, transport: transport).stats().uid
+            }
+        )
         let registry = ConnectorRegistry()
         let store = UserDefaultsSettingsStore(defaults: defaults)
         let installer = CatalogueIconInstaller(
@@ -537,6 +591,7 @@ final class AppModel: ObservableObject {
         return AppModel(
             deviceHost: deviceHost,
             device: device,
+            relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
             host: ConnectorHost(
                 device: device,
@@ -1238,6 +1293,52 @@ final class AppModel: ObservableObject {
         // cannot wait for, for a warning that fires four times in the life of a
         // charge.
         if let crossed { await alerts.warn(crossed) }
+        // Last, and awaited rather than detached. It is the only part of a poll
+        // that can spend seconds — a browse has a settle window to wait out —
+        // and everything above is what the panel is about to draw. Detaching it
+        // would be one more thing teardown cannot wait for, for the sake of a
+        // few seconds on the polls where the clock is already unreachable.
+        await followTheClock()
+    }
+
+    /// Keeps track of which clock is ours, and goes looking for it when it
+    /// stops answering.
+    ///
+    /// The two halves are one method because they are one rule: the reading
+    /// that tells us the clock is fine is the same reading that tells us its
+    /// name, and the failure that starts a search is the same failure that has
+    /// to be counted for the search to be rationed.
+    private func followTheClock() async {
+        if case let .online(stats) = monitor.state {
+            unansweredPolls = 0
+            defaults.set(stats.uid, forKey: Self.deviceUIDKey)
+            return
+        }
+        unansweredPolls += 1
+        guard let relocate,
+              RelocationSchedule.isDue(afterConsecutiveFailures: unansweredPolls)
+        else { return }
+        // The count is NOT reset by a successful move, only by a clock that
+        // answers. A move onto the wrong address would otherwise reset the
+        // rationing and browse again on the very next poll, and again after
+        // that — the browse storm this schedule exists to prevent, rebuilt out
+        // of an optimistic reset.
+        guard let found = await relocate(defaults.string(forKey: Self.deviceUIDKey)),
+              found != deviceHost
+        else { return }
+
+        // The device first: it is the actor the monitor, the custody and every
+        // connector hold, so this is the line that actually moves the app. The
+        // rest is bookkeeping about a move that has already happened.
+        await device.adopt(host: found)
+        deviceHost = found
+        defaults.set(found, forKey: Self.deviceHostKey)
+        typedHost = found
+        // `typedHost` has a `didSet` that saves and then says so, and what it
+        // says is "Saved — takes effect at next launch". Both halves are wrong
+        // here: nobody typed, and it took effect at once. The note is what a
+        // person's own editing earns.
+        hostNote = nil
     }
 
     /// Asks for what the panel is about to need: one reading, and what has

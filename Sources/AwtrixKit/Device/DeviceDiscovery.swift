@@ -6,17 +6,32 @@ import Network
 
 /// One AWTRIX instance seen advertising itself on the local network.
 ///
-/// A name and nothing else, deliberately. The firmware advertises as
-/// `awtrix_<mac-suffix>`, and that instance name is not a hostname —
-/// `awtrix.local` does not resolve — so there is no address to be had here
-/// without resolving the service, and nothing in this type may be mistaken for
-/// one. Discovery answers "is there a clock on this network", not "where".
+/// The firmware advertises as `awtrix_<mac-suffix>`, and this type used to
+/// carry that name and refuse to carry anything else, on the stated grounds
+/// that an instance name is not a hostname and so a browse could not know an
+/// address. The premise was wrong, and it cost the app a defect: `awtrix.local`
+/// indeed does not resolve, but the instance name is not `awtrix` — it is
+/// `awtrix_a07f9c`, and the firmware answers to exactly that under `.local`.
+/// Measured against the clock on the desk, `awtrix_a07f9c.local` resolved to
+/// 192.168.1.67 and served `/api/stats`, through `URLSession` and the
+/// underscore included.
+///
+/// So a browse does answer "where" as well as "whether", and the address it
+/// answers with is better than the one a person types: a DHCP lease moves, and
+/// a name does not.
 public struct DiscoveredDevice: Sendable, Equatable {
     public let instanceName: String
 
     public init(instanceName: String) {
         self.instanceName = instanceName
     }
+
+    /// The host this clock answers on.
+    ///
+    /// A construction rather than something the browse reported, which is why
+    /// nothing acts on it before `DeviceAdoption.isTheSameClock` has heard the
+    /// address say its own name back.
+    public var host: String { "\(instanceName).local" }
 }
 
 /// How far discovery has got, and what it actually knows.

@@ -20,6 +20,10 @@ public actor AwtrixClockSession {
     /// borrows is global, so the record of it belongs beside the device rather
     /// than beside any one producer.
     private let custody: DeviceCustody
+    /// The lamps' custody, over the same device every delivery goes through.
+    /// Nonisolated because it is an actor of its own: the app hands it to the
+    /// VPN display when it composes itself, without a hop through this one.
+    public nonisolated let indicators: IndicatorCustody
 
     /// Deliveries one at a time, and how the last runs went. Runs and replays
     /// both take their turn in it — see `runOnce(connectorId:)` for why they
@@ -48,6 +52,7 @@ public actor AwtrixClockSession {
         self.iconInstaller = iconInstaller
         self.chain = DeliveryChain(retryPolicy: retryPolicy)
         self.custody = DeviceCustody(device: device, overlays: borrowedOverlays)
+        self.indicators = IndicatorCustody(lamps: device)
     }
 
     /// Puts back the device-wide state this app borrowed.

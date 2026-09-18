@@ -592,24 +592,26 @@ final class AppModel: ObservableObject {
             )
         )
 
+        let session = AwtrixClockSession(
+            device: device,
+            registry: registry,
+            store: store,
+            audio: SequentialAudioPlayer(),
+            iconInstaller: installer,
+            // Durable, for the reason the uploaded-icon record is: what
+            // this app did to the device is not knowable by looking at the
+            // device afterwards. One exit without a teardown and an
+            // in-memory record turns this app's own weather overlay into
+            // the value it restores for ever.
+            borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
+        )
+
         return AppModel(
             deviceHost: deviceHost,
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
-            host: AwtrixClockSession(
-                device: device,
-                registry: registry,
-                store: store,
-                audio: SequentialAudioPlayer(),
-                iconInstaller: installer,
-                // Durable, for the reason the uploaded-icon record is: what
-                // this app did to the device is not knowable by looking at the
-                // device afterwards. One exit without a teardown and an
-                // in-memory record turns this app's own weather overlay into
-                // the value it restores for ever.
-                borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
-            ),
+            host: session,
             store: store,
             installer: installer,
             anecdotes: anecdotes.connector,
@@ -625,9 +627,10 @@ final class AppModel: ObservableObject {
                     ClaudeFocusAudience.shows(focusStatus)
                 },
             ],
-            // The same device the connectors write through. Indicators do
-            // not go into the loop, so they contend with nothing that does.
-            vpnLamps: VPNLampDisplay(clock: device),
+            // The session's own lamp custody, over the same device the
+            // connectors write through. Indicators do not go into the loop, so
+            // they contend with nothing that does.
+            vpnLamps: VPNLampDisplay(indicators: session.indicators),
             quietHours: QuietWindow.stored(in: defaults),
             microphone: MicrophoneGate(inputs: SystemAudioInputs()),
             watching: WatchedMicrophone.stored(in: defaults)

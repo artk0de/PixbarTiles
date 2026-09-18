@@ -1,0 +1,560 @@
+# PixelClockTiles — multi-clock tiles design
+
+Status: approved for planning · 2026-09-18
+
+AWTRIX Connectors becomes PixelClockTiles: a menu bar app that drives several
+pixel clocks at once — the Ulanzi TC001 on AWTRIX 3 and the Ulanzi TC002 on
+its stock firmware — where every connector is a small app the user places on a
+clock as a tile. A connector draws each clock model through a face of its own,
+and a connector with no face for a model cannot be placed on that model.
+
+Free software; a Sublime-style donation prompt is a later concern and is not
+part of this design.
+
+## Decisions taken while designing
+
+Recorded so the plan does not re-open them.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | One clock or several | Several at once, both models together, managed in the general settings |
+| 2 | What a tile is bound to | A tile is one connector on one specific clock |
+| 3 | The same connector twice on one clock | No — one tile per connector per clock. VPN is the single exception (decision 9) |
+| 4 | VPN lamps and battery warnings | VPN becomes a tile connector; battery stays part of the clock's status |
+| 5 | Audible connectors on several clocks | An audible tile whose sound plays through the Mac can sit on one clock only |
+| 6 | TC002 rendering and on-device audio | Out of this design; investigated separately after it (follow-up F1) |
+| 7 | How several clocks are regulated | A list of clocks in the settings; two clocks listed means two driven. No mode switch |
+| 8 | How defaults reach a tile | Copied from the connector when the tile is created, then the tile owns them |
+| 9 | Several VPNs on one clock | One tile per VPN; tiles may share a lamp at different times or Focuses |
+| 10 | Two VPN tiles claiming one lamp at the same moment | Refused when saved |
+| — | Approach | Faces inside the connector, typed per-model scenes, one session per clock |
+| — | Name | PixelClockTiles; the kit becomes PixelClockKit |
+
+## Measured device facts — TC002
+
+Verified against the clock on the desk (`192.168.1.72`) on 2026-09-14, not taken
+from documentation.
+
+| Fact | Evidence |
+| --- | --- |
+| The TC002 answers on the address the TC001 used to hold | UDP broadcast from `192.168.1.72`; `awtrix_a07f9c.local` does not answer |
+| It announces itself on UDP 55555 (documented as about once a second) | caught within five seconds of listening: `Ulanzi TC002 9b9a:ccc4b2779b9a:B0D32I008U3671403:false` |
+| `GET /getBase` identifies it | `{"devSn":"B0D32I008U3671403","ssid":…,"ip":"192.168.1.72","mac":"ccc4b2779b9a","mcuVer":"V1.0.17","appVer":"1.1.1"}` |
+| AWTRIX's stats endpoint does not exist on it | `GET /api/stats` → HTTP 301 |
+| A custom app is created by name | `POST /api/custom?name=probe_claude` → `{"code":200,"message":"ok"}` |
+| Custom apps are listed | `GET /api/customList` → `{"apps":["probe_claude"],"count":1}` |
+| An empty object deletes one | `POST /api/custom?name=probe_claude` with `{}` → list back to `{"apps":[],"count":0}` |
+| `switchDiyApp` takes the UI away from where the user left it | `{"code":200,"message":"app switch requested","data":{"name":"probe_claude","index":100}}`; the user saw the interface move from L3 to L2 |
+| A pushed frame shows full screen | the probe (`CLAUDE 42%` over a drawn bar) was shown full screen, and read to the user as a picture rather than as a native app |
+| Ports | 80 open, 5555 (adb) open, 1883 closed |
+
+From the reverse-engineered documentation (`atomicstack/tc002-customisation`,
+`CUSTOM-APP.md`, `HTTP-API.md`) and the official repository — **not yet
+verified here**, and each one the plan leans on gets a live check first:
+
+- The payload is `{duration, text[], draw[], image[]}`, shared by HTTP and MQTT.
+- Text is ASCII 0x20–0x7E; lowercase letters render blank; `fontHeight: 10` is
+  the size known to work; the device does not scroll.
+- `draw` primitives: `dp` pixel, `dl` line, `dr` rectangle outline, `df` filled
+  rectangle, `db` bitmap. Colours are `#RRGGBB` strings.
+- `image` takes a data URI; animated GIFs play at any size up to 52×16.
+- There is no `lifetime`: an app persists after its sender goes away.
+- No notification, indicator, overlay, battery, or audio endpoint exists on the
+  stock firmware. Audio is reachable only from software running on the clock.
+
+## Architecture
+
+```text
+            driving adapters                        driven ports
+  ┌───────────────────────────────┐        ┌──────────────────────────────┐
+  │ menu bar panel, tile detail,  │        │ AwtrixDevice   (TC001)       │
+  │ settings, system events       │        │ UlanziDevice   (TC002)       │
+  │ (network path, Focus, timers) │        │ AudioSink      (Mac speakers)│
+  └──────────────┬────────────────┘        │ ClockDiscovery (Bonjour, UDP)│
+                 │                          └──────────────▲───────────────┘
+        ┌────────▼─────────┐   programs    ┌───────────────┴──────────────┐
+        │ tiles + policies │──────────────►│ ClockSession (one per clock) │
+        │ connectors:      │               │ DeliveryChain · custody ·    │
+        │ read() + faces   │               │ health · lamp ownership      │
+        └──────────────────┘               └──────────────────────────────┘
+```
+
+### Clock
+
+A record in the Clocks section of the settings.
+
+| Field | Meaning |
+| --- | --- |
+| `id: UUID` | This app's stable key |
+| `name` | What the user calls it — "Desk", "Kitchen" |
+| `model: ClockModel` | `.awtrix3` or `.ulanziTC002`, detected when the clock is added, never chosen |
+| `address` | Host or IP |
+| `hardwareIdentity` | AWTRIX `uid` from `/api/stats`; TC002 `devSn` from `/getBase` |
+
+Adoption and relocation work on `hardwareIdentity`: a DHCP lease moving is the
+same clock on a new address, not a new clock. This is `DeviceAdoption`'s rule,
+applied per clock.
+
+### Connector
+
+A type in code, not a record.
+
+```swift
+enum ClockModel: Sendable { case awtrix3, ulanziTC002 }
+
+protocol Connector: Sendable {
+    associatedtype Reading: Sendable
+    associatedtype Config: Codable & Sendable   // per-tile settings; Void-like for most
+    var id: String { get }
+    var displayName: String { get }
+    var trigger: Trigger { get }            // .every(interval) | .events(stream, recheck: interval)
+    var narrator: Voice { get }
+    var isAudible: Bool { get }
+    var instancing: Instancing { get }      // .single | .perKey
+    func read(config: Config) async throws -> Reading
+    var awtrixFace: AwtrixFace<Reading>? { get }   // Reading -> AwtrixScene
+    var ulanziFace: UlanziFace<Reading>? { get }   // Reading -> UlanziScene
+}
+```
+
+- The models a connector supports are the faces it has. Nothing else declares
+  support, so the two cannot disagree.
+- A face is a pure function. It never reaches a network or a device, which is
+  what lets every drawing be tested against a value.
+- `isAmbient` is removed. It existed to hide rows the user had not asked for;
+  the user now places every tile, so there is nothing to hide. An ambient tile
+  simply has no "Run now".
+- `ConnectorMaintaining` stays, per connector type. The anecdote queue is one
+  queue, and its background pass runs while any clock carries an unpaused
+  anecdote tile.
+
+### Tile
+
+One connector on one clock.
+
+- Key: `TileKey(clockId, connectorId, instance)`. `instance` is empty for
+  `.single` connectors, so a second tile of the same connector on the same
+  clock is impossible by construction. The VPN connector is `.perKey`, keyed by
+  the VPN it watches.
+- `policy: TilePolicy` — the common component below, on every tile.
+- `lastDeliveredAt` — carried over from `ConnectorSettings` unchanged, so the
+  cadence survives a relaunch per tile.
+- `config` — what one connector needs and no other does: the weather location,
+  the VPN tile's VPN, lamp and colours.
+
+Typing: a connector with an associated type does not reach the UI as an
+existential. When a `ClockSession` is built, each tile becomes a program for
+that clock's model — `() async throws -> Delivery<AwtrixScene>` or
+`() async throws -> Delivery<UlanziScene>` — with `read` and the face closed
+over. An AWTRIX scene cannot be handed to a TC002 session; it does not compile.
+
+### TilePolicy — the common component
+
+Every tile carries one, edited by one shared editor. Defaults are copied from
+the connector when the tile is created, then belong to the tile.
+
+| Field | Meaning |
+| --- | --- |
+| `isPaused` | Stop without losing the settings. Removing a tile is `✕`, and is a different act |
+| `refresh` | Seconds between runs. Floor 30 s for every connector. For an event-driven tile it is the recheck period between events |
+| `focus.silencedIn: Set<FocusState>` | The Focuses the tile does not work in, edited as "works in" checkboxes |
+| `focus.whenUnknown: .run \| .hold` | What to do under a Focus outside the four, or one that cannot be named |
+| `window: .always \| .quiet(HourWindow) \| .active(HourWindow)` | Silent hours, or working hours, or neither |
+
+The refresh scale: 30 s, 1, 2, 3 min, then 5–60 min in steps of 5, then 2–12 h.
+It is **stored in seconds** and snapped to the nearest scale value when read.
+Today the stored value is an index into the scale; putting 30 s in front of it
+would move every stored interval, so migration goes index → duration →
+seconds.
+
+`FocusState` is closed: `.none`, `.work`, `.personal`, `.doNotDisturb`,
+`.sleep`, `.unknown`. The four built-in modes are matched on identifiers macOS
+ships and users cannot edit — `com.apple.focus.work`, `com.apple.focus.personal`,
+`com.apple.donotdisturb.mode.default`, `com.apple.sleep.sleep-mode`.
+`ModeConfigurations.json` is not read. How the state is resolved, keeping
+`FocusGate`'s rules:
+
+| What macOS says | FocusState |
+| --- | --- |
+| `INFocusStatusCenter` not authorized | `.none` — the window alone decides, as `QuietRule.quietHours` does today |
+| Authorized, a mode read from `Assertions.json` | the matching case, or `.unknown` for any other identifier |
+| Authorized, no mode readable, `isFocused == false` | `.none` |
+| Authorized, no mode readable, `isFocused == true` | `.unknown` |
+
+`HourWindow` is today's `QuietWindow` without the direction: whole hours,
+wrapping midnight, zero length meaning no window. `.quiet` silences inside it;
+`.active` silences outside it.
+
+Evaluation order stays what `FocusGate.silence` fixed: the window first, then
+the Focus. The reason the first answer names the window is load-bearing today —
+the nightly refresh reads it to decide whether it may spend — and it stays so.
+
+Every policy is a function of (FocusState, hour): six states by 24 hours, a
+144-cell boolean grid. That makes two checks exact rather than heuristic: the
+lamp-overlap refusal (below) and the tests, which enumerate the grid.
+
+Defaults, copied into a new tile:
+
+| Connector | `refresh` | Not working in | `whenUnknown` | `window` |
+| --- | --- | --- | --- | --- |
+| weather | 600 s | — | run | always |
+| claude | 300 s | Do Not Disturb, Sleep | run | always |
+| anecdotes | 1800 s | Do Not Disturb, Sleep | hold | quiet 23:00–08:00 |
+| vpn | 60 s recheck | — | run | always |
+
+The microphone hold stays a Mac-wide rule for audible tiles: it is about the
+room, not about any one tile.
+
+### Adding a tile
+
+`TileCatalogue.availability(connector, on: clock)` returns `.available` or
+`.unavailable(reason)`, and the Add tile menu shows the reason beside a
+disabled entry.
+
+1. No face for `clock.model` → "not supported on TC002".
+2. A `.single` connector already on this clock → not listed.
+3. An audible connector whose sound plays through `MacSpeakers`, already placed
+   on another clock → "already speaking through Kitchen". Evaluated against the
+   current state, not stamped at creation, so a clock gaining a sink of its own
+   later changes the answer.
+4. A VPN tile whose lamp is already claimed at an overlapping moment → refused
+   when saved (see VPN tiles).
+
+### ClockSession — one per clock
+
+Replaces `ConnectorHost`. It holds the model's adapter, a delivery chain,
+backoff counts by `TileKey`, the model's custody, and the clock's health.
+
+`DeliveryChain` is `ConnectorHost` with the model taken out: `queued`,
+`classify`, the outcome recording and `nextDelay`, with every cancellation rule
+from waves 1–3 kept as it is. Sessions do not share a chain: a clock that has
+stopped answering holds up only its own tiles.
+
+Audio is not part of a scene. A face produces
+`Delivery<Scene>{scene, audio: [SpokenClip], holdUntilAudioEnds}`, and the audio
+goes to an `AudioSink` port — `MacSpeakers` today, which is the existing
+`SequentialAudioPlayer`. Which clock a tile is on does not decide where its
+sound plays.
+
+### AWTRIX adapter (TC001)
+
+- Scene: `.notification(…)`, `.app(name, payload, overlay?)`,
+  `.indicator(slot, signal)`.
+- Port: the existing `AwtrixDevice` actor, unchanged.
+- Icons: `IconReference` (`catalogue`, `bundled`, `installed`) and
+  `CatalogueIconInstaller` become AWTRIX vocabulary.
+- Custody, three kinds, all existing behaviour:
+  - the borrowed `OVERLAY`, recorded durably (`BorrowedOverlayStore`), now per
+    clock;
+  - apps in the loop, recorded in memory, because the clock keeps them in RAM;
+  - indicator lamps, moved here from `VPNLampDisplay`: what each slot shows,
+    written only when it changes, forgotten when a write fails, all put out on
+    quit.
+- Health: `stats()` and `BatteryTrajectory`; battery history keyed by
+  `hardwareIdentity`, so two clocks' trends never mix. Battery warnings name the
+  clock: "Desk: 20%".
+
+### Ulanzi adapter (TC002)
+
+- Scene: `.app(name, UlanziFrame)`, where `UlanziFrame` is
+  `{duration, text[], draw[], image[]}`.
+- Port: a new `UlanziDevice` actor — `showApp(_:named:)`, `removeApp(named:)`,
+  `customApps()`, `identity()`. It does not call `switchDiyApp`: the measured
+  effect is the user's interface moving away from where they left it.
+- How a frame is realised on the clock — custom app or something else — is
+  follow-up F1's to decide, inside this adapter. The scene does not change with
+  it.
+- Images: `UlanziImage.bundled(name)`, 16 px art shipped as resources and sent
+  inline as base64. There is no flash to install into and no catalogue.
+- Custody: `UlanziCustody` keeps a **durable** record of the app names this app
+  pushed to each clock, because apps outlive the sender here. The rule is the
+  opposite of AWTRIX's, which is why custody belongs to the adapter:
+  - at session start, `customApps()` ∩ record, minus the names of live tiles →
+    `{}` each;
+  - a tile paused or removed → `{}` at once;
+  - quit → `{}` for everything recorded;
+  - `lifetime` is emulated: a tile with no successful delivery for longer than
+    its face's lifetime has its app removed by the session. After a crash of the
+    Mac the last frame stays until the next launch; that residual is accepted.
+- Health: reachable when `/getBase` answers. There is no battery, so the panel
+  draws no battery line at all rather than a placeholder.
+
+### Discovery and model detection
+
+- `ClockDiscovery` merges the existing Bonjour browse for AWTRIX with a new
+  `UlanziBroadcastListener` on UDP 55555. A broadcast carries the MAC and the
+  serial, which is the identity relocation needs. Listening is passive, but it
+  runs under the same rule as the browse: while the Add clock sheet is open, or
+  while a configured clock is not answering.
+- A clock added by address is probed with `GET /api/stats` and `GET /getBase`
+  concurrently; its model is whichever response **decodes**. Status codes are
+  not trusted — the TC002 answers the AWTRIX path with 301, and firmwares
+  answer foreign paths unpredictably. This is `CatalogueIconInstaller`'s rule
+  of trusting the magic bytes over the status.
+
+### Connectors and faces
+
+| Connector | Reading | Trigger | AWTRIX face | TC002 face |
+| --- | --- | --- | --- | --- |
+| weather | `WeatherReading` → `WeatherTheme` | every 600 s | as today: `.app("weather")`, 8×8 icon, overlay, lifetime 3600 | `.app("weather")`: 16×16 sky GIF on the left, temperature coloured by how it feels; `°` is outside the font's ASCII and is drawn as pixels; no overlay exists, so the icon carries the sky; lifetime 3600 emulated |
+| claude | `ClaudeUsageReading` | every 300 s | as today: progress bar, `ClaudeStar` 8×8, lifetime 900 | `.app("claude")`: `ClaudeStar` 16 px, `42%`, bar from `dr` and `df` along the bottom, lifetime 900 emulated |
+| anecdotes | `PreparedAnecdote`; reading it retires it | every 1800 s + maintenance | as today: held banner, RTTTL jingle, audio on the Mac | none in this design — the Cyrillic banner and on-device sound are F1's |
+| vpn | `VPNState` for one watched VPN | events + 60 s recheck | `.indicator(slot, signal)` | none — the TC002 has no global indicators |
+
+Carried-over rules:
+
+- The existing drawing tests (`ClaudeUsageConnector.output(for:)`, the weather
+  output) move to face tests. They are moved, not rewritten.
+- A Focus change retracts a tile whose policy no longer allows it, on both
+  models: `removeApp` on AWTRIX, `{}` on the TC002. This is what
+  `FocusGatedConnector` does for Claude today, generalised. On the TC002 it is
+  what keeps a figure from standing for a whole emulated lifetime.
+- `OpenMeteoSource` caches one answer today, `(reading, at, of: Coordinates)?`.
+  Two weather tiles at two locations would evict each other on every poll. The
+  cache becomes keyed by coordinates.
+- The History belongs to the anecdote tile, and Play again delivers through the
+  session of the clock that tile is on.
+
+### VPN tiles
+
+`VPNPresence` recognises a tunnel by its process: the application bundle plus
+the binaries that exist only while a tunnel is up (`WatchedVPN`). A tile's VPN
+is chosen from a catalogue of these presets — Pritunl and Amnezia today. A user
+cannot describe a bundle and its tunnel binaries, so a new VPN is added to the
+catalogue in code.
+
+Tile config:
+
+| Field | Meaning |
+| --- | --- |
+| `vpn` | A `WatchedVPN` preset |
+| `slot` | top, middle or bottom lamp |
+| `upColour` | `#RRGGBB`, from a SwiftUI `ColorPicker` or the palette |
+| `whenDown` | `.off` or `.blink(colour)`, blinking at today's 500 ms |
+
+`VPNIndicatorPolicy` stops reading the Focus. A tile's lamp says one thing —
+whether its VPN is up — while the tile's `TilePolicy` allows it to run; when
+the policy does not, the tile lets go of the lamp.
+
+Several tiles may share a lamp. At any moment the lamp belongs to the one tile
+whose policy allows it; with none, the lamp is off. Two tiles on the same slot
+whose 144-cell grids intersect are refused when saved, naming the overlap:
+"Pritunl and WireGuard both claim the middle lamp: Work, 10:00–19:00".
+
+The palette — saturated on purpose, because at brightness 2–3 the LEDs wash
+pastels towards white:
+
+| Name | Colour |
+| --- | --- |
+| Electric Lime | `#A3FF12` |
+| Cyber Cyan | `#00F0FF` |
+| Hot Magenta | `#FF2BD6` |
+| Ultraviolet | `#8B5CF6` |
+| Neon Mint | `#3DFFB0` |
+| Sunset Orange | `#FF6B1A` |
+| Solar Yellow | `#FFE600` |
+| Alarm Red | `#FF1744` |
+
+## Menu bar UI
+
+### The panel
+
+1. Header: `PixelClockTiles` and the gear.
+2. Clock switcher — one segment per clock, hidden when there is one. The
+   selection persists (`selectedClockId`) and is the "current clock" the Add
+   tile menu is checked against.
+3. The selected clock's status: `DeviceStatusLine`; `BatteryLine` on AWTRIX
+   only; `DiscoveryStatusLine` while it is not answering.
+4. Tile rows: connector icon and name, a short result (`12°C`, `42%`,
+   `in 12 min`, `up`), a state badge (paused, held by Focus, silent hours,
+   failing with backoff), and `▶` (not for ambient tiles), `⋯`, `✕`. `✕`
+   confirms inline — "Remove Weather from Desk?" — because removing loses the
+   tile's settings and, on the TC002, takes its app off the clock.
+5. `+ Add tile` — every connector, with `TileCatalogue.availability` deciding
+   which are enabled and why the others are not.
+
+### Tile detail
+
+A surface opened by `⋯`, in the panel's window like the settings and the
+History today. The shared `TilePolicy` editor on top, the connector's own block
+under it:
+
+```text
+┌ ← Weather · Desk ─────────────────────────────┐
+│ Paused                                    [ ] │
+│ Refresh      ●──────────  30 s                │
+│ Works in Focus:                               │
+│   ☑ No Focus  ☑ Work  ☑ Personal              │
+│   ☐ Do Not Disturb  ☐ Sleep                   │
+│   Other Focus / cannot tell:     [Run ▾]      │
+│ Hours        [Always ▾]                       │
+│ ── Weather ─────────────────────────────────  │
+│ Location     [Tbilisi                   🔍]  │
+└───────────────────────────────────────────────┘
+```
+
+The anecdote tile's block carries the History button, which opens the existing
+`HistoryMenu`. The VPN tile's block carries the VPN, lamp, palette and
+`ColorPicker`, and the down behaviour.
+
+### General settings
+
+- Clocks: the list with name, model, address and status; rename; remove with
+  confirmation, which takes every tile off that clock through its custody; add
+  from what discovery found — both models — or by address.
+- Mac-wide: the microphone hold for audible tiles, the Full Disk Access line
+  (what it changes about Focus matching), and the login item.
+- Gone from here: the weather switch (now a tile), the location (now the
+  weather tile's), the quiet hours (now every tile's `TilePolicy`).
+
+### Behaviour
+
+- The menu bar glyph shows offline for the **selected** clock. "Any clock
+  offline" would be permanent on a laptop that has left the kitchen clock
+  behind.
+- No clocks: "No clocks yet" and "Add clock…", which opens the Clocks section.
+  A clock with no tiles shows only `+ Add tile`.
+- Text and availability are computed in plain types (`TileRowLine`,
+  `AddTileMenuItem`) and tested like `NextRunLine` is; the views stay thin.
+  `MenuPanel.swift` is split into `ClockSwitcher`, `ClockStatusBlock`,
+  `TileRow`, `AddTileMenu`, `TileDetail` and `ClocksSettings`. `PanelWidth` and
+  `ResizeBorder` are reused as they are.
+
+## Persistence and migration
+
+New `UserDefaults` keys, JSON-encoded: `clocks: [ClockRecord]`,
+`tiles: [TileRecord]`, `selectedClockId`, `ownedApps.<clockId>` (TC002
+custody), `borrowedOverlay.<clockId>` (AWTRIX custody),
+`batteryHistory.<hardwareIdentity>`.
+
+Migration of an existing installation runs once and is idempotent. Its marker
+is written last, so a migration that fails part-way runs again from the start
+on the next launch rather than leaving half a model.
+
+| Old | New |
+| --- | --- |
+| `deviceHost` | one AWTRIX clock named "Clock" |
+| `connector.<id>` | a tile on that clock; `isEnabled` → `!isPaused`; interval index → duration → seconds; `lastDeliveredAt` kept |
+| `quietStartHour` / `quietEndHour` | `window: .quiet(…)` on the audible tiles |
+| the stored location | the weather tile's `config` |
+| the always-on VPN lamps | two VPN tiles, both `whenUnknown: hold` (today a Focus that cannot be named leaves both lamps dark): Pritunl on the top lamp, working in Work only, `#90EE90`, down → blink `#FF0000`; Amnezia on the bottom lamp, working in Work and Personal, `#A855F7`, down → off |
+| the borrowed overlay | `borrowedOverlay.<clockId>` of that clock |
+| `batteryHistory` | `batteryHistory.<uid>` |
+
+Behaviour that changes on purpose, so it is not reported as a regression:
+
+- A Focus outside the four built-in modes now follows `whenUnknown`. For the
+  anecdote tile that is hold, where today any named mode other than Do Not
+  Disturb and Sleep speaks.
+- The VPN lamps now need `INFocusStatusCenter` authorisation as well as Full
+  Disk Access to follow a Focus, like every other tile; today they read the
+  mode with Full Disk Access alone.
+
+## Rename — phase 0
+
+- Executable target `AwtrixConnectorsApp` → `PixelClockTilesApp`; bundle
+  `PixelClockTiles.app`; `Package.swift`, `Scripts/bundle.sh`, `Info.plist`.
+- `AwtrixKit` → `PixelClockKit`, since it holds both firmwares' adapters.
+- AWTRIX-specific types keep their names — `AwtrixDevice`, `AwtrixError`,
+  `DeviceDiscovery.isAwtrixInstance`. In this architecture they are the AWTRIX
+  adapter, and the name says exactly what is inside.
+- Bundle id `dev.artk0re.awtrix-connectors` → `dev.artk0re.pixelclocktiles`,
+  with the old domain's keys copied into the new one on first launch.
+- Paid once by the user: macOS asks again for location, notifications and
+  Focus, because grants are bound to the bundle id and the signature; the login
+  item is registered again.
+- The repository directory stays `awtrix-connectors` until decided otherwise;
+  renaming it breaks the tea-rags registration.
+
+## Error handling
+
+- A clock that stops answering stalls only its own session. Its tiles back off
+  as today; other clocks carry on.
+- Custody failures are kept, not dropped: AWTRIX keeps the overlay record, the
+  TC002 keeps the owned-name record, and the next restore or launch retries.
+- Quit restores every session concurrently inside the existing quit budget; a
+  second clock does not double the time a quit may take.
+- TC002 answers carry their own `code` in the body — every live answer so far
+  did (`{"code":200,"message":"ok"}`), and the documentation lists
+  `{"code":400,…}` and `{"code":404,"message":"custom app not found"}`. The
+  adapter treats a non-200 `code` as a failure whatever the HTTP status says,
+  until a live check shows how the two relate.
+- A migration failure leaves the old keys untouched and the marker unwritten.
+
+## Testing
+
+- Faces: pure functions; the drawing tests move over from the connectors.
+- `TilePolicy`: every one of the 144 cells, the lamp overlap, the 30 s floor,
+  the scale and its snapping.
+- Adapters: against the existing `Transport` double. `UlanziDeviceSendTests`
+  pins exact paths and JSON bodies, as `AwtrixDeviceSendTests` does.
+- Fixtures captured from the clock in this design's session: the UDP broadcast,
+  `/getBase`, the 301 on `/api/stats`, the `customList` bodies.
+- `UlanziCustody`: reconciliation against a fake `customList`, lifetime
+  emulation, quit.
+- Migration: snapshots of old `UserDefaults` in, records out; a second run
+  changes nothing.
+- Mutation, as HANDOFF lays down: one site at a time, and after adding a guard,
+  re-run the mutations of the guards in front of it.
+
+What only a person at the hardware can settle, added to HANDOFF's list:
+
+1. A weather frame and a Claude frame on the TC002, read from across the room.
+2. Two VPN tiles sharing a lamp: switching Focus hands the lamp from one to the
+   other with no flash of the wrong colour.
+3. With Full Disk Access on a signed build, Work and Personal are recognised by
+   `com.apple.focus.work` and `com.apple.focus.personal`. `VPNIndicatorPolicy`
+   already records these two as unverified from outside the app, and now every
+   tile depends on them.
+4. Removing a TC002 tile takes its app off the clock, and a relaunch after a
+   force quit removes an app whose tile is gone.
+
+## Phases
+
+Each phase is a series of small commits with the tree green before and after.
+
+| # | Phase | What becomes true |
+| --- | --- | --- |
+| 0 | Rename | PixelClockTiles, PixelClockKit, the new bundle id and the key copy. No behaviour change |
+| 1 | Domain and persistence | Clock and tile records and the migration. The app reads its one clock from `clocks` instead of `deviceHost`, and each connector's cadence and pause from its tile instead of `connector.<id>` — the records have a reader from the commit that adds them |
+| 2 | Ports and AWTRIX parity | `DeliveryChain`, the AWTRIX `ClockSession`, connectors split into `read` and `awtrixFace`, indicator custody. No behaviour change; the existing tests are moved, not rewritten |
+| 3 | TC002 adapter | `UlanziDevice`, `UlanziCustody`, the UDP listener, model detection, the weather and Claude TC002 faces. The app still drives one clock — the first in `clocks`, of whichever model — so the TC002 works with the current panel from here |
+| 4 | Several clocks and tiles | A session per clock, scheduling by `TileKey`, `TilePolicy` with its grid and overlap check in place of the global `FocusGate`, `TileCatalogue.availability`, VPN tiles with lamp ownership, the keyed weather cache, retraction on Focus change |
+| 5 | UI | The switcher, tile rows, Add tile, tile detail with the policy editor and colour picker, the Clocks section; `MenuPanel` split up |
+
+Each phase gets its own implementation plan. A type lands in the phase that
+first reads it, never ahead of its caller.
+
+The TC002 comes third rather than last because it is the clock in use: after
+phase 3 it shows the weather and the Claude figure while tiles and the new UI
+are still being built.
+
+Phase 2 is the riskiest, and it is held to parity for that reason: it runs
+through `AppModel.swift` (1,948 lines, 31 commits, 42% of them fixes) and
+`MenuPanel.swift` (21 commits, 48% fixes). New capability arrives only once the
+structure stands on the moved tests.
+
+## Follow-ups
+
+- **F1 — TC002 rendering and on-device sound.** How the screens work (the L1,
+  L2 and L3 the user sees and why `switchDiyApp` moved between them), where
+  custom apps sit next to the built-in tools, custom app against a native
+  screen, and on-device sound: root adb on 5555, the official `AudioManager`
+  from a device-side FlyThings app, or the community runtime's `POST /sound` —
+  which stops the stock app and with it `/api/custom`. Its outcome may add an
+  anecdote face for the TC002 and a `DeviceSpeaker` sink, which is when
+  availability rule 3 starts to matter per clock.
+- More VPN presets in the catalogue.
+
+## Out of scope
+
+- The donation prompt and anything else about distribution.
+- A licence review of the voice pipeline (XTTS-v2 and the cloned voices)
+  before the app is given to anyone else. Required before then, not now.
+- MQTT. The payload is the same; a broker adds a process and nothing the app
+  needs.
+- Replacing the TC002's stock application.
+- Custom Focus modes beyond the four built-ins, which would need
+  `ModeConfigurations.json`.
+- An App Store build. The app reads another program's credential and the
+  Focus database from outside a sandbox.

@@ -131,18 +131,15 @@ final class AppModel: ObservableObject {
     /// real interval. The shipped value is the only one that sleeps.
     typealias Sleeping = @Sendable (TimeInterval) async throws -> Void
 
-    /// The defaults key the address is read from at launch, and the one the
-    /// panel's address field writes for the next one.
+    /// Where an installation from before the clock records kept the address.
+    /// `ClockMigration` reads it once; nothing writes it any more.
     static let deviceHostKey = "deviceHost"
+    /// What a launch with no address of its own talks to.
     static let defaultDeviceHost = "192.168.1.72"
-    /// Which clock this app has been talking to, as the firmware names itself
-    /// in `/api/stats`.
-    ///
-    /// Written down for one purpose, and it is the purpose that makes silent
-    /// relocation safe: a browse run during an outage can tell OUR clock from a
-    /// neighbour's. Without it the only rule available is "exactly one device
-    /// is advertising", which moves this app onto somebody else's device the
-    /// first time ours is unplugged.
+    /// Where an installation from before the clock records kept the clock's
+    /// name for itself, as `/api/stats` gives it. `ClockMigration` reads it
+    /// once into `ClockRecord.hardwareIdentity`, which is what relocation asks
+    /// for now — the one thing that tells OUR clock from a neighbour's.
     static let deviceUIDKey = "deviceUID"
 
     /// One bounded attempt to find where the clock went, as one answer.
@@ -213,6 +210,13 @@ final class AppModel: ObservableObject {
     /// Held so that a relocation can re-point it, which is the whole reason
     /// this reference exists here rather than only inside the monitor.
     private let device: AwtrixDevice
+    /// The clock this model drives: as it was stored at launch, plus what this
+    /// launch has since learned about it. Its id is what every write below is
+    /// keyed by.
+    private var clock: ClockRecord
+    /// Where what is learned about the clock is written down for the next
+    /// launch.
+    private let clocks: ClockStore
     private let relocate: RelocatingHost?
     /// How many polls in a row the clock has not answered.
     ///
@@ -238,7 +242,7 @@ final class AppModel: ObservableObject {
     /// `didSet` does not run during initialization, which is what keeps seeding
     /// the field from writing this launch's address straight back to disk.
     @Published var typedHost: String {
-        didSet { hostNote = DeviceHostField.save(typedHost, to: defaults) }
+        didSet { hostNote = DeviceHostField.save(typedHost, to: clocks, for: clock) }
     }
     @Published private(set) var hostNote: String?
     /// What is in the location field.
@@ -470,7 +474,7 @@ final class AppModel: ObservableObject {
     private var iconRemoval: Task<Void, Never>?
 
     init(
-        deviceHost: String,
+        clock: ClockRecord,
         device: AwtrixDevice,
         // Nil by default, so that no test acquires a browse it did not ask for:
         // a model built without one stays where it was put, however long the
@@ -495,8 +499,10 @@ final class AppModel: ObservableObject {
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         micSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
-        self.deviceHost = deviceHost
-        self.typedHost = deviceHost
+        self.clock = clock
+        self.clocks = ClockStore(defaults: defaults)
+        self.deviceHost = clock.address
+        self.typedHost = clock.address
         self.device = device
         self.relocate = relocate
         self.typedLocation = LocationField.text(for: Coordinates.stored(in: defaults))
@@ -541,8 +547,12 @@ final class AppModel: ObservableObject {
         transport: any Transport = URLSessionTransport(),
         anecdoteStore: URL = AppPaths.anecdoteStore
     ) -> AppModel {
-        let deviceHost = defaults.string(forKey: deviceHostKey) ?? defaultDeviceHost
-        let device = AwtrixDevice(host: deviceHost, transport: transport)
+        // Before anything reads a record. A step that fails leaves its marker
+        // unwritten and runs again at the next launch; this launch drives
+        // whatever is stored, and the line below makes sure something is.
+        try? ClockMigration(defaults: defaults, fallbackHost: defaultDeviceHost).run()
+        let clock = ClockStore(defaults: defaults).firstClock(orCreatingAt: defaultDeviceHost)
+        let device = AwtrixDevice(host: clock.address, transport: transport)
         // Built here rather than inside the model so that the one door to the
         // outside stays this function's `transport` parameter: the probe below
         // is an HTTP request, and it goes through the same door every other
@@ -593,7 +603,7 @@ final class AppModel: ObservableObject {
         )
 
         return AppModel(
-            deviceHost: deviceHost,
+            clock: clock,
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
@@ -1315,7 +1325,8 @@ final class AppModel: ObservableObject {
     private func followTheClock() async {
         if case let .online(stats) = monitor.state {
             unansweredPolls = 0
-            defaults.set(stats.uid, forKey: Self.deviceUIDKey)
+            clock.hardwareIdentity = stats.uid
+            clocks.update(clock) { $0.hardwareIdentity = stats.uid }
             return
         }
         unansweredPolls += 1
@@ -1327,7 +1338,7 @@ final class AppModel: ObservableObject {
         // rationing and browse again on the very next poll, and again after
         // that — the browse storm this schedule exists to prevent, rebuilt out
         // of an optimistic reset.
-        guard let found = await relocate(defaults.string(forKey: Self.deviceUIDKey)),
+        guard let found = await relocate(clock.hardwareIdentity),
               found != deviceHost
         else { return }
 
@@ -1336,7 +1347,8 @@ final class AppModel: ObservableObject {
         // rest is bookkeeping about a move that has already happened.
         await device.adopt(host: found)
         deviceHost = found
-        defaults.set(found, forKey: Self.deviceHostKey)
+        clock.address = found
+        clocks.update(clock) { $0.address = found }
         typedHost = found
         // `typedHost` has a `didSet` that saves and then says so, and what it
         // says is "Saved — takes effect at next launch". Both halves are wrong

@@ -463,6 +463,9 @@ func testModel(
     sleep: @escaping AppModel.Sleeping = parked,
     pollSleep: @escaping AppModel.Sleeping = parked,
     deviceHost: String = "10.0.0.5",
+    // Nil, as a clock that has never answered: a test that needs the model to
+    // remember which clock is its own says so.
+    hardwareIdentity: String? = nil,
     anecdotes: (any AnecdoteReplaying)? = nil,
     // Named rather than `.general`, so no test can put anything on the
     // clipboard of whoever is running the suite.
@@ -504,7 +507,9 @@ func testModel(
     for connector in connectors { registry.register(connector) }
     let device = AwtrixDevice(host: deviceHost, transport: transport)
     return AppModel(
-        deviceHost: deviceHost,
+        clock: ClockRecord(
+            name: "Clock", model: .awtrix3, address: deviceHost, hardwareIdentity: hardwareIdentity
+        ),
         device: device,
         relocate: relocate,
         registry: registry,
@@ -830,7 +835,7 @@ func modelOverRealHost(
         iconInstaller: NoIconInstaller()
     )
     let model = AppModel(
-        deviceHost: "10.0.0.5",
+        clock: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5"),
         device: device,
         registry: registry,
         host: host,

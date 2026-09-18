@@ -1093,7 +1093,7 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
 
     subject.typedHost = "10.0.0.9"
 
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.9")
     #expect(subject.hostNote == DeviceHostField.takesEffectNextLaunch)
 }
 
@@ -1106,9 +1106,9 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
     let subject = testModel(defaults: defaults, deviceHost: "192.168.1.72")
 
     subject.typedHost = "10.0.0"
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0")
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0")
     subject.typedHost = "10.0.0.9"
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.9")
 }
 
 // Seeding the field is not the user typing. `didSet` does not run during
@@ -1121,7 +1121,7 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
     let subject = testModel(defaults: defaults, deviceHost: "192.168.1.72")
 
     #expect(subject.typedHost == "192.168.1.72")
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == nil)
+    #expect(ClockStore(defaults: defaults).all().isEmpty)
     #expect(subject.hostNote == nil)
 }
 
@@ -1134,7 +1134,7 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
     subject.typedHost = "10.0.0.9"
     subject.typedHost = "   "
 
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.9")
     #expect(subject.hostNote == nil)
 }
 
@@ -1328,7 +1328,7 @@ private func modelWithARealAnecdoteConnector(
     let settings = InMemorySettingsStore()
     let device = AwtrixDevice(host: "10.0.0.5", transport: StubTransport())
     let model = AppModel(
-        deviceHost: "10.0.0.5",
+        clock: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5"),
         device: device,
         registry: registry,
         host: ConnectorHost(

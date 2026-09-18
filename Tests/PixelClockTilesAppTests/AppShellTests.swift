@@ -797,7 +797,7 @@ private func launchedForBrowsing(
     defer { defaults.removePersistentDomain(forName: suite) }
     let browsing = FakeBonjourBrowser()
     let delegate = AppDelegate(
-        model: testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep),
+        model: testModel(defaults: defaults, sleep: Metronome().sleep, pollSleep: Metronome().sleep),
         budget: QuitBudget(),
         discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
     )
@@ -812,7 +812,7 @@ private func launchedForBrowsing(
     // The address is the user's to set, through the field, and finding a clock
     // is not the user saying anything. `awtrix_a07f9c` is not a hostname —
     // written here it would point the next launch at nothing that resolves.
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == nil)
+    #expect(ClockStore(defaults: defaults).all().contains { $0.address == "awtrix_a07f9c" } == false)
     #expect(delegate.model.deviceHost == "10.0.0.5")
 }
 
@@ -825,8 +825,14 @@ private func launchedForBrowsing(
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    // A launch first: the field exists only on a running app, and it is the
+    // launch that migrates. A field still writing the old key would pass on a
+    // domain nothing had launched on yet.
+    _ = AppModel.live(defaults: defaults, anecdoteStore: scratchStore())
+    let clocks = ClockStore(defaults: defaults)
+    let clock = try #require(clocks.all().first)
 
-    DeviceHostField.save("10.0.0.9", to: defaults)
+    DeviceHostField.save("10.0.0.9", to: clocks, for: clock)
 
     // Read back the way the app reads it, not the way it was written: a field
     // writing some other key would save happily and change nothing.
@@ -840,12 +846,14 @@ private func launchedForBrowsing(
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
-    defaults.set("10.0.0.9", forKey: AppModel.deviceHostKey)
+    let clocks = ClockStore(defaults: defaults)
+    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.9")
+    try clocks.replaceAll([clock])
 
-    #expect(DeviceHostField.save("   \n ", to: defaults) == nil)
+    #expect(DeviceHostField.save("   \n ", to: clocks, for: clock) == nil)
 
     // And the address that was there is still there.
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+    #expect(clocks.all().first?.address == "10.0.0.9")
 }
 
 // A pasted address arrives with whatever was around it. `AwtrixDevice` builds
@@ -856,9 +864,14 @@ private func launchedForBrowsing(
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
 
-    DeviceHostField.save("  192.168.1.72\n", to: defaults)
+    let clocks = ClockStore(defaults: defaults)
 
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "192.168.1.72")
+    DeviceHostField.save(
+        "  192.168.1.72\n", to: clocks,
+        for: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+    )
+
+    #expect(clocks.all().first?.address == "192.168.1.72")
 }
 
 // Pasting `http://10.0.0.5` out of the clock's own web interface is the single
@@ -874,11 +887,14 @@ private func launchedForBrowsing(
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    _ = AppModel.live(defaults: defaults, anecdoteStore: scratchStore())
+    let clocks = ClockStore(defaults: defaults)
+    let clock = try #require(clocks.all().first)
 
-    let note = DeviceHostField.save("http://10.0.0.5/", to: defaults)
+    let note = DeviceHostField.save("http://10.0.0.5/", to: clocks, for: clock)
 
     #expect(note == DeviceHostField.takesEffectNextLaunch)
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.5")
+    #expect(clocks.all().first?.address == "10.0.0.5")
     #expect(
         AppModel.live(defaults: defaults, anecdoteStore: scratchStore()).deviceHost == "10.0.0.5"
     )
@@ -891,13 +907,15 @@ private func launchedForBrowsing(
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
-    defaults.set("10.0.0.9", forKey: AppModel.deviceHostKey)
+    let clocks = ClockStore(defaults: defaults)
+    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.9")
+    try clocks.replaceAll([clock])
 
-    #expect(DeviceHostField.save("a b", to: defaults) == DeviceHostField.unusable)
-    #expect(DeviceHostField.save("http://", to: defaults) == DeviceHostField.unusable)
+    #expect(DeviceHostField.save("a b", to: clocks, for: clock) == DeviceHostField.unusable)
+    #expect(DeviceHostField.save("http://", to: clocks, for: clock) == DeviceHostField.unusable)
 
     // And the address that was there is still there.
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
+    #expect(clocks.all().first?.address == "10.0.0.9")
 }
 
 // What the panel says after a save. The address is read once at launch and
@@ -908,7 +926,10 @@ private func launchedForBrowsing(
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
 
-    let note = DeviceHostField.save("10.0.0.9", to: defaults)
+    let note = DeviceHostField.save(
+        "10.0.0.9", to: ClockStore(defaults: defaults),
+        for: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+    )
 
     #expect(note == DeviceHostField.takesEffectNextLaunch)
     #expect(note?.lowercased().contains("next launch") == true)

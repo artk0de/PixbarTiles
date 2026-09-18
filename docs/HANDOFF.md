@@ -5,6 +5,9 @@ the spec, and the SDD ledger; the rest is in git.
 
 - Spec: `docs/superpowers/specs/2026-08-17-awtrix-connectors-design.md`
 - Plan: `docs/superpowers/plans/2026-08-17-awtrix-connectors.md` (29 tasks)
+- Next: `docs/superpowers/specs/2026-09-18-pixelclocktiles-multi-clock-design.md`,
+  one plan per phase — phase 0 is
+  `docs/superpowers/plans/2026-09-18-pixelclocktiles-phase0-rename.md`
 - Ledger: `.superpowers/sdd/2026-08-17-awtrix-connectors/progress.md` (git-ignored,
   local only — every ruling and deferred finding lives there)
 
@@ -36,8 +39,12 @@ rather than logic: `theProducersPacingIsObeyedPerClipNotAveraged`,
 `theShippedPlayerWaitsOutRealAudioForAsLongAsItLasts`. Read a red run against
 what else the machine was doing before treating it as a defect.
 
-The app is installed at `~/Applications/AwtrixConnectors.app`. Rebuild it with
-`./Scripts/bundle.sh debug` and it lands in `build/`.
+The app is installed at `~/Applications/PixelClockTiles.app` (until the first
+install of the renamed build, the old `~/Applications/AwtrixConnectors.app`).
+Rebuild it with `./Scripts/bundle.sh debug` and it lands in
+`build/PixelClockTiles.app`. The package is `PixelClockTiles`: the kit is
+`PixelClockKit`, the executable target `PixelClockTilesApp`, and their tests
+`PixelClockKitTests` and `PixelClockTilesAppTests`.
 
 What it does now: prepares ten anecdotes ahead, refreshed daily and played
 best-first by feed rank; speaks them in five cloned voices with the female one
@@ -351,7 +358,8 @@ Recorded so they are not deferred a fourth time. All are in the plan already.
 and must NOT advance the failure counter. A run the app tore down is not evidence
 the feed is sick.
 
-**Also open, with no owner yet:** `public enum AwtrixKit` shadows the module name,
+**Also open, with no owner yet:** `public enum PixelClockKit` (`AwtrixKit` before
+the rename) shadows the module name,
 which is why `IconRef` had to be renamed `IconReference` (LaunchServices declares
 its own `IconRef`). Pre-1.0, compile-time only, fails loudly. Its own task.
 
@@ -469,8 +477,8 @@ as much about whether it can be FOUND as about whether it works.
 24. If a surface ever opens at a size you cannot work with:
 
     ```sh
-    defaults write dev.artk0re.awtrix-connectors panelWidth -int 320
-    defaults write dev.artk0re.awtrix-connectors historyHeight -int 280
+    defaults write dev.artk0re.pixelclocktiles panelWidth -int 320
+    defaults write dev.artk0re.pixelclocktiles historyHeight -int 280
     ```
 
     then relaunch. Deleting either key does the same. Both are read back through
@@ -591,7 +599,7 @@ and this one is not trusted — trust is needed to VERIFY a signature, not to ma
 one. Sign by its SHA-1 instead:
 
 ```bash
-codesign --force --deep --sign 6417A281BC7E103BB9B4A4EA69F831F5211A89A5 build/AwtrixConnectors.app
+codesign --force --deep --sign 6417A281BC7E103BB9B4A4EA69F831F5211A89A5 build/PixelClockTiles.app
 ```
 
 ### Probed again, signed, 2026-08-19 — all three answer
@@ -631,6 +639,51 @@ says.
   attributes `Info.plist`. And `open` forwards the calling shell's environment,
   so launching from a terminal is not a faithful reproduction of a Finder
   launch.
+
+## The rename to PixelClockTiles
+
+Phase 0 of the multi-clock design. The bundle is `PixelClockTiles.app`, its
+identifier `dev.artk0re.pixelclocktiles`; 1010 tests, zero build warnings.
+
+**Settings are carried over, once.** A defaults domain is keyed by bundle
+identifier, so `DefaultsCarryOver` runs first in `AppDelegate.init()` and
+copies every key of `dev.artk0re.awtrix-connectors` that the new domain lacks.
+It never overwrites a key the new domain already holds, and it writes its
+marker, `carriedOverFromAwtrixConnectors`, last. The old domain is only read,
+so going back to the old build finds everything where it was. Presence is
+judged on the new domain's own record, not through the search list, which
+also answers from the registration domain and `NSGlobalDomain`.
+
+Where else the old name lives, and what was decided:
+
+| Where | Decision |
+| --- | --- |
+| `~/Library/Application Support/AwtrixConnectors/anecdotes.json` | Kept. Not keyed by bundle id, so the rename does not move it, and moving it would put the played set at risk for the sake of a name |
+| `$TMPDIR/awtrix-speech` | Kept. The store records clip paths under it and the reaper reclaims nothing outside it |
+| `DispatchQueue` labels | Renamed to `dev.artk0re.pixelclocktiles.*`; nothing persisted |
+| Logger subsystems, Caches | None exist |
+| Keychain | Nothing of ours; the app reads Claude Code's `Claude Code-credentials` |
+| Signing identity `AwtrixConnectors Local Signing` | Kept; it is chosen by SHA-1 and its name is read by nothing |
+| The app icon's wordmark, `AWTRIX` in `Scripts/MakeIcon.swift` | Kept. A new mark is a design question, not part of a rename |
+
+**Paid once by the user**, because TCC grants are bound to the bundle id and
+the signature: location, notifications, Focus, Local Network and Full Disk
+Access are asked for again (Full Disk Access means adding
+`PixelClockTiles.app` in System Settings by hand); the login item is turned on
+again from the settings; the first read of the Claude token raises the
+keychain prompt again. Remove `~/Applications/AwtrixConnectors.app` once the
+new build runs, which also retires its login item.
+
+To check at the desk, on the first launch of the renamed build: the panel talks
+to the same clock and names the remainder of the interval the old build was
+in, not a fresh one; and the battery row carries its trend glyph on the first
+reading rather than ⏳.
+
+**The installed app depends on `.build`.** `Scripts/bundle.sh` does not copy
+SwiftPM's resource bundle (now `PixelClockTiles_PixelClockKit.bundle`) into
+the `.app`, so `Bundle.module` finds the bundled GIFs through the absolute
+build path compiled into the binary, and `fatalError`s if that directory is
+gone. This predates the rename. Phase 3 ships the TC002's images the same way.
 
 ## Deferred findings
 

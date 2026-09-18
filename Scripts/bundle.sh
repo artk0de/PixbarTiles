@@ -13,14 +13,25 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
-APP="build/AwtrixConnectors.app"
+APP="build/PixelClockTiles.app"
 
-swift build -c "$CONFIG" --product AwtrixConnectorsApp
-BINARY="$(swift build -c "$CONFIG" --show-bin-path)/AwtrixConnectorsApp"
+swift build -c "$CONFIG" --product PixelClockTilesApp
+BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)"
+BINARY="$BIN_PATH/PixelClockTilesApp"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BINARY" "$APP/Contents/MacOS/AwtrixConnectors"
+cp "$BINARY" "$APP/Contents/MacOS/PixelClockTiles"
+
+# The kit's resources (the bundled GIFs), as SwiftPM built them. Without this
+# copy the app finds them only through the absolute build path compiled into
+# the binary, and SwiftPM's lookup stops the process once that directory is
+# gone — a build installed from a worktree dies with the worktree.
+# `KitResources` reads this copy first. `Contents/Resources` rather than the
+# `.app` root, where SwiftPM would look on its own: codesign refuses anything
+# at the root but `Contents`. The name is SwiftPM's, package then target; a
+# rename makes this `cp` fail rather than ship an app with no art.
+cp -R "$BIN_PATH/PixelClockTiles_PixelClockKit.bundle" "$APP/Contents/Resources/"
 
 # The artwork is generated, never committed: build/ is git-ignored, so the only
 # thing under version control is the code that draws it. Deterministic by
@@ -39,9 +50,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleExecutable</key><string>AwtrixConnectors</string>
-  <key>CFBundleIdentifier</key><string>dev.artk0re.awtrix-connectors</string>
-  <key>CFBundleName</key><string>AwtrixConnectors</string>
+  <key>CFBundleExecutable</key><string>PixelClockTiles</string>
+  <key>CFBundleIdentifier</key><string>dev.artk0re.pixelclocktiles</string>
+  <key>CFBundleName</key><string>PixelClockTiles</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
@@ -56,7 +67,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
        exactly the answer the panel has to be able to tell apart from an empty
        network. -->
   <key>NSLocalNetworkUsageDescription</key>
-  <string>AwtrixConnectors looks for AWTRIX clocks advertising themselves on your network, so you do not have to find the address yourself.</string>
+  <string>PixelClockTiles looks for pixel clocks on your network, so you do not have to type their address yourself.</string>
   <!-- Required, and not merely for the wording: without this key
        `INFocusStatusCenter.requestAuthorization` does not fail, it ABORTS the
        process — EXC_CRASH, TCC namespace, "must contain an
@@ -65,7 +76,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
        window rather than crashing; this is what makes the other half reachable
        the day the app is signed. -->
   <key>NSFocusStatusUsageDescription</key>
-  <string>AwtrixConnectors checks whether a Focus is on, so it stays quiet instead of reading a joke out loud while you are busy.</string>
+  <string>PixelClockTiles checks whether a Focus is on, so it stays quiet instead of reading a joke out loud while you are busy.</string>
   <!-- Without this key CoreLocation refuses whatever the signature says, so it
        has to be here before location is worth attempting at all. It IS worth
        attempting: measured on a signed probe from this bundle's own signing
@@ -76,7 +87,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
        only knows settlements, which cannot tell one side of a 40 km city from
        the other. -->
   <key>NSLocationWhenInUseUsageDescription</key>
-  <string>AwtrixConnectors reads this Mac's location once, when you ask it to, so the clock shows the weather where you actually are.</string>
+  <string>PixelClockTiles reads this Mac's location once, when you ask it to, so the clock shows the weather where you actually are.</string>
 </dict>
 </plist>
 PLIST

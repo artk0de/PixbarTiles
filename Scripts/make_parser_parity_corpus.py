@@ -34,7 +34,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROTOTYPE = os.path.join(ROOT, "prototype")
 FIXTURE = os.path.join(
-    ROOT, "Tests", "AwtrixKitTests", "Fixtures", "parser_parity_corpus.json"
+    ROOT, "Tests", "PixelClockKitTests", "Fixtures", "parser_parity_corpus.json"
 )
 
 sys.path.insert(0, PROTOTYPE)

@@ -77,7 +77,7 @@ public struct WeatherConnector: Connector {
         self.location = location
     }
 
-    public func produce() async throws -> ConnectorOutput {
+    public func produce() async throws -> AwtrixDelivery {
         let reading = try await source.reading(at: location())
         let theme = WeatherTheme(code: reading.code, isDay: reading.isDay)
         // Two quantities in one element: the digits are the AIR temperature,
@@ -87,7 +87,7 @@ public struct WeatherConnector: Connector {
         // temperature when the service omitted the felt one, because a reading
         // with no colour is drawn in whatever the previous app left behind.
         let felt = reading.apparentTemperature ?? reading.temperature
-        return ConnectorOutput(
+        return AwtrixDelivery(
             text: Self.degrees(reading.temperature),
             // The sky, drawn inside the app rather than over the whole matrix.
             // The overlay below already carries it to the device, but four

@@ -14,14 +14,14 @@ struct StubConnector: Connector {
     let id: String
     let displayName = "Stub"
     let defaultInterval: TimeInterval = 300
-    var output: ConnectorOutput?
+    var output: AwtrixDelivery?
     var error: (any Error)?
 
     init(id: String = "stub") { self.id = id }
 
-    func produce() async throws -> ConnectorOutput {
+    func produce() async throws -> AwtrixDelivery {
         if let error { throw error }
-        return output ?? ConnectorOutput(text: "hello")
+        return output ?? AwtrixDelivery(text: "hello")
     }
 }
 
@@ -129,9 +129,9 @@ private final class GatedConnector: Connector, Sendable {
     var enteredCount: Int { gate.enteredCount }
     func open() { gate.open() }
 
-    func produce() async throws -> ConnectorOutput {
+    func produce() async throws -> AwtrixDelivery {
         await gate.enter()
-        return ConnectorOutput(text: "hi")
+        return AwtrixDelivery(text: "hi")
     }
 }
 
@@ -161,9 +161,9 @@ private final class CountingConnector: Connector, @unchecked Sendable {
 
     var produceCount: Int { lock.withLock { calls } }
 
-    func produce() async throws -> ConnectorOutput {
+    func produce() async throws -> AwtrixDelivery {
         lock.withLock { calls += 1 }
-        return ConnectorOutput(text: "produced")
+        return AwtrixDelivery(text: "produced")
     }
 }
 
@@ -242,12 +242,12 @@ private final class BlockingConnector: Connector, @unchecked Sendable {
 
     var hasStarted: Bool { lock.withLock { entered } }
 
-    func produce() async throws -> ConnectorOutput {
+    func produce() async throws -> AwtrixDelivery {
         lock.withLock { entered = true }
         // Long enough that a run which ignores cancellation is unmistakable
         // rather than merely slow.
         try await Task.sleep(nanoseconds: 2_000_000_000)
-        return ConnectorOutput(text: "never")
+        return AwtrixDelivery(text: "never")
     }
 }
 
@@ -264,7 +264,7 @@ private final class SpyMaintainingConnector: Connector, ConnectorMaintaining, @u
 
     var maintenanceCount: Int { lock.withLock { calls } }
 
-    func produce() async throws -> ConnectorOutput { ConnectorOutput(text: "hi") }
+    func produce() async throws -> AwtrixDelivery { AwtrixDelivery(text: "hi") }
 
     func maintain() async throws {
         lock.withLock { calls += 1 }
@@ -377,7 +377,7 @@ private func staysFalse(
 
 @Test func runOnceResolvesTheIconBeforeNotifying() async throws {
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "hi", icon: .catalogue(9039))
+    connector.output = AwtrixDelivery(text: "hi", icon: .catalogue(9039))
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
@@ -389,7 +389,7 @@ private func staysFalse(
 
 @Test func runOnceSendsTheJingleAlongsideTheText() async throws {
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "hi", jingle: "nokia:d=4,o=5,b=225:8e6")
+    connector.output = AwtrixDelivery(text: "hi", jingle: "nokia:d=4,o=5,b=225:8e6")
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
@@ -401,7 +401,7 @@ private func staysFalse(
 
 @Test func runOncePlaysLocalAudio() async {
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "hi", localAudio: [clip()])
+    connector.output = AwtrixDelivery(text: "hi", localAudio: [clip()])
     let audio = SpyAudio()
     let host = makeHost(connector: connector, audio: audio)
 
@@ -417,7 +417,7 @@ private func staysFalse(
 // good, with nothing on screen to say it is stale.
 @Test func aLifetimeReachesTheDeviceOnAnAppDelivery() async throws {
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "4°", surface: .app("weather"), lifetime: 3_600)
+    connector.output = AwtrixDelivery(text: "4°", surface: .app("weather"), lifetime: 3_600)
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
@@ -430,13 +430,13 @@ private func staysFalse(
 // A bar an output asks for has to survive the crossing into a payload, and this
 // test exists because it did not.
 //
-// `ConnectorOutput` grew a `progress`, `AppPayload` grew one, both were tested,
+// `AwtrixDelivery` grew a `progress`, `AppPayload` grew one, both were tested,
 // and the line that copies one into the other was never written — so the field
 // was green on both banks of a river nothing crossed. The app reached the clock
 // with its number and no bar, and no test anywhere disagreed.
 @Test func aProgressBarReachesTheDeviceOnAnAppDelivery() async throws {
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "78%",
         progress: ProgressBar(percent: 78, fill: "#D97757", track: "#303030"),
         surface: .app("claude")
@@ -459,7 +459,7 @@ private func staysFalse(
 // key for custom apps alone.
 @Test func aLifetimeIsNeverSentOnANotification() async throws {
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "hi", lifetime: 3_600)
+    connector.output = AwtrixDelivery(text: "hi", lifetime: 3_600)
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
@@ -474,7 +474,7 @@ private func staysFalse(
 // the app until this app removes it.
 @Test func aConnectorThatDeclaresNoLifetimeSendsNoSuchKey() async throws {
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "4°", surface: .app("weather"))
+    connector.output = AwtrixDelivery(text: "4°", surface: .app("weather"))
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
@@ -494,7 +494,7 @@ private func staysFalse(
 @Test func aHeldBannerStaysUpForTheAudioAndIsDismissedAfterwards() async throws {
     let transport = RecordingTransport()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let host = makeHost(connector: connector, transport: transport)
@@ -512,7 +512,7 @@ private func staysFalse(
 @Test func aBannerIsNotHeldWhenThereIsNoAudioToEndIt() async throws {
     let transport = RecordingTransport()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "hi", holdUntilAudioEnds: true)
+    connector.output = AwtrixDelivery(text: "hi", holdUntilAudioEnds: true)
     let host = makeHost(connector: connector, transport: transport)
 
     #expect(await host.runOnce(connectorId: "stub") == .delivered)
@@ -525,7 +525,7 @@ private func staysFalse(
 @Test func aBannerThatWasNotHeldIsNotDismissed() async throws {
     let transport = RecordingTransport()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "hi", localAudio: [clip()])
+    connector.output = AwtrixDelivery(text: "hi", localAudio: [clip()])
     let host = makeHost(connector: connector, transport: transport)
 
     _ = await host.runOnce(connectorId: "stub")
@@ -543,7 +543,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let audio = SpyAudio(deviceLog: { paths(transport) })
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
@@ -578,7 +578,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     transport.status = 500
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "hi", localAudio: [clip()])
+    connector.output = AwtrixDelivery(text: "hi", localAudio: [clip()])
     let audio = SpyAudio()
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
@@ -597,7 +597,7 @@ private func staysFalse(
 @Test func aDismissThatFailsIsReportedEvenThoughTheAudioPlayed() async {
     let transport = PathFailingTransport(failingPath: "/api/notify/dismiss")
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let audio = SpyAudio()
@@ -618,7 +618,7 @@ private func staysFalse(
 // asked for.
 @Test func anIconThatCannotBeInstalledStopsTheRunBeforeItNotifies() async {
     var connector = StubConnector()
-    connector.output = ConnectorOutput(text: "hi", icon: .catalogue(9039))
+    connector.output = AwtrixDelivery(text: "hi", icon: .catalogue(9039))
     let transport = RecordingTransport()
     let host = makeHost(
         connector: connector, transport: transport,
@@ -701,7 +701,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let audio = GatedAudio()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
@@ -733,7 +733,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let audio = GatedAudio()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
@@ -766,7 +766,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let audio = GatedAudio()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
@@ -800,7 +800,7 @@ private func staysFalse(
     let audio = GatedAudio()
     let store = InMemorySettingsStore()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let host = makeHost(
@@ -833,7 +833,7 @@ private func staysFalse(
     let transport = CancellationAwareTransport()
     let audio = GatedAudio()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
@@ -872,7 +872,7 @@ private func staysFalse(
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
 
     var delivering = StubConnector()
-    delivering.output = ConnectorOutput(
+    delivering.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     registry.register(delivering)
@@ -893,7 +893,7 @@ private func staysFalse(
     let transport = PathFailingTransport(failingPath: "/api/notify/dismiss")
     let audio = GatedAudio()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
@@ -1052,7 +1052,7 @@ private func staysFalse(
     let connector = CountingConnector()
     let host = makeHost(connector: connector, transport: transport)
 
-    let result = await host.deliver(ConnectorOutput(text: "replayed"))
+    let result = await host.deliver(AwtrixDelivery(text: "replayed"))
 
     #expect(result == .delivered)
     #expect(connector.produceCount == 0)
@@ -1069,7 +1069,7 @@ private func staysFalse(
 @Test func runOnceStillDeliversWhatItProduced() async throws {
     let transport = RecordingTransport()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "produced", icon: .catalogue(9039), jingle: "nokia:d=4,o=5,b=225:8e6",
         localAudio: [clip()], holdUntilAudioEnds: true
     )
@@ -1095,11 +1095,11 @@ private func staysFalse(
     let transport = RecordingTransport()
     let audio = GatedAudio()
     var connector = StubConnector()
-    connector.output = ConnectorOutput(
+    connector.output = AwtrixDelivery(
         text: "scheduled", localAudio: [clip()], holdUntilAudioEnds: true
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
-    let again = ConnectorOutput(text: "again", localAudio: [clip()], holdUntilAudioEnds: true)
+    let again = AwtrixDelivery(text: "again", localAudio: [clip()], holdUntilAudioEnds: true)
 
     let run = Task { await host.runOnce(connectorId: "stub") }
     try await waitUntil { audio.enteredCount == 1 }
@@ -1138,7 +1138,7 @@ private func staysFalse(
     for _ in 0..<2 { _ = await host.runOnce(connectorId: "stub") }
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
 
-    #expect(await host.deliver(ConnectorOutput(text: "again")) == .delivered)
+    #expect(await host.deliver(AwtrixDelivery(text: "again")) == .delivered)
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
 
     let refusing = makeHost(
@@ -1147,7 +1147,7 @@ private func staysFalse(
     for _ in 0..<2 { _ = await refusing.runOnce(connectorId: "stub") }
     #expect(await refusing.consecutiveFailures(connectorId: "stub") == 2)
 
-    guard case .failed = await refusing.deliver(ConnectorOutput(text: "again")) else {
+    guard case .failed = await refusing.deliver(AwtrixDelivery(text: "again")) else {
         Issue.record("expected a replay the device rejected to fail")
         return
     }

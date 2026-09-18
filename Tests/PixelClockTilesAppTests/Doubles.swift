@@ -33,7 +33,7 @@ struct StubConnector: Connector {
         self.isAmbient = isAmbient
     }
 
-    func produce() async throws -> ConnectorOutput { ConnectorOutput(text: "hello") }
+    func produce() async throws -> AwtrixDelivery { AwtrixDelivery(text: "hello") }
 }
 
 /// A connector that makes no sound at all, and claims nothing beyond that.
@@ -139,7 +139,7 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
         return .delivered
     }
 
-    func deliver(_ output: ConnectorOutput) async -> RunResult {
+    func deliver(_ output: AwtrixDelivery) async -> RunResult {
         lock.withLock { recorded.append("deliver:\(output.text)") }
         await parkInDeliver?.enter()
         return deliverResult
@@ -549,8 +549,8 @@ final class StubAnecdotes: AnecdoteReplaying, @unchecked Sendable {
 
     func history() async -> [PlayedAnecdote] { entries }
 
-    func output(for anecdote: PreparedAnecdote) -> ConnectorOutput {
-        ConnectorOutput(text: anecdote.text, localAudio: anecdote.clips)
+    func output(for anecdote: PreparedAnecdote) -> AwtrixDelivery {
+        AwtrixDelivery(text: anecdote.text, localAudio: anecdote.clips)
     }
 }
 
@@ -620,7 +620,7 @@ final class QueueingHost: ConnectorRunning, @unchecked Sendable {
         return .delivered
     }
 
-    func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+    func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
     /// Nothing was borrowed, so there is nothing to give back. Spelled out
     /// rather than defaulted on the protocol: a default would let the SHIPPED
@@ -650,7 +650,7 @@ final class CancellingHost: ConnectorRunning, @unchecked Sendable {
         return .cancelled
     }
 
-    func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+    func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }
@@ -744,7 +744,7 @@ final class RestockReportingHost: ConnectorRunning, @unchecked Sendable {
 
     func runOnce(connectorId: String) async -> RunResult { .delivered }
 
-    func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+    func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }
@@ -795,7 +795,7 @@ struct BrokenConnector: Connector {
         self.defaultInterval = defaultInterval
     }
 
-    func produce() async throws -> ConnectorOutput { throw FeedIsDown() }
+    func produce() async throws -> AwtrixDelivery { throw FeedIsDown() }
 }
 
 /// A model over the SHIPPED host, so the failure count a test reads is the real

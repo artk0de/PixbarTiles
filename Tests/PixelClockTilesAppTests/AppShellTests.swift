@@ -181,7 +181,7 @@ private func scratchStore() -> URL {
 /// machines: `localAudio` is this Mac speaking through its own speakers, and
 /// `jingle` is the clock's buzzer playing RTTTL. A guard watching one of them
 /// would wave the other straight through.
-private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
+private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
     output.jingle != nil || output.localAudio.isEmpty == false
 }
 
@@ -243,10 +243,10 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
     #expect(inspected > 0)
     // And the question being asked is one that can answer yes, or the loop
     // passes for a connector singing through either channel.
-    #expect(putsSoundInTheRoom(ConnectorOutput(text: "x", jingle: AnecdoteConnector.nokiaJingle)))
+    #expect(putsSoundInTheRoom(AwtrixDelivery(text: "x", jingle: AnecdoteConnector.nokiaJingle)))
     #expect(
         putsSoundInTheRoom(
-            ConnectorOutput(
+            AwtrixDelivery(
                 text: "x", localAudio: [SpokenClip(url: URL(fileURLWithPath: "/tmp/x.wav"))]
             )
         )

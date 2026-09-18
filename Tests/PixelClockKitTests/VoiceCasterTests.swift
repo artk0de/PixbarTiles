@@ -264,7 +264,7 @@ private struct NarratedConnector: Connector {
     let defaultInterval: TimeInterval = 60
     let narrator: Voice
 
-    func produce() async throws -> ConnectorOutput { ConnectorOutput(text: "") }
+    func produce() async throws -> AwtrixDelivery { AwtrixDelivery(text: "") }
 }
 
 /// A connector that names none, so what reaches the caster is the protocol's
@@ -274,7 +274,7 @@ private struct UnnarratedConnector: Connector {
     let displayName = "Unnarrated"
     let defaultInterval: TimeInterval = 60
 
-    func produce() async throws -> ConnectorOutput { ConnectorOutput(text: "") }
+    func produce() async throws -> AwtrixDelivery { AwtrixDelivery(text: "") }
 }
 
 /// Narration at both ends and three speakers between them — the shape every

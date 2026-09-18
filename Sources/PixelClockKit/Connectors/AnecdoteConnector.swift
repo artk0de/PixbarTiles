@@ -273,7 +273,7 @@ public struct AnecdoteConnector: Connector {
     /// queue up — `topUpIfNeeded` does, off this path. The one exception is an
     /// empty queue: with nothing to pop there is nothing else to show, so
     /// waiting for a batch buys the only anecdote there is.
-    public func produce() async throws -> ConnectorOutput {
+    public func produce() async throws -> AwtrixDelivery {
         var anecdote = await nextPlayable()
         if anecdote == nil {
             // One, not a batch. A cold first launch would otherwise pay the
@@ -300,8 +300,8 @@ public struct AnecdoteConnector: Connector {
     /// accident: `retire` is what makes an anecdote played, it belongs to
     /// `produce()` above, and a replay must not spend an anecdote nobody has
     /// heard.
-    public func output(for anecdote: PreparedAnecdote) -> ConnectorOutput {
-        ConnectorOutput(
+    public func output(for anecdote: PreparedAnecdote) -> AwtrixDelivery {
+        AwtrixDelivery(
             text: Self.banner,
             icon: Self.laughIcon,
             jingle: Self.nokiaJingle,

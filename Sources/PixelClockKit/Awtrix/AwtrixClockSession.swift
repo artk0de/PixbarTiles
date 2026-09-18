@@ -137,7 +137,7 @@ public actor AwtrixClockSession {
     /// morning's anecdote again is not evidence about anekdot.ru in either
     /// direction. There is no connector id to record against, and that is the
     /// point rather than an omission.
-    public func deliver(_ output: ConnectorOutput) async -> RunResult {
+    public func deliver(_ output: AwtrixDelivery) async -> RunResult {
         await chain.deliver { [self] in await send(output, from: nil) }
     }
 
@@ -190,7 +190,7 @@ public actor AwtrixClockSession {
     /// - Parameter connectorId: who this output is for, or nil on the replay
     ///   path, which has no connector to be for. Only a run can borrow device
     ///   state, because only a run has somebody to give it back on behalf of.
-    private func send(_ output: ConnectorOutput, from connectorId: String?) async -> RunResult {
+    private func send(_ output: AwtrixDelivery, from connectorId: String?) async -> RunResult {
         do {
             var iconName: String?
             if let icon = output.icon {

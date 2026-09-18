@@ -19,7 +19,7 @@ protocol ConnectorRunning: Sendable {
     /// Plays something already produced. A replay is this and nothing else: no
     /// produce, so nothing is retired, and no outcome recorded against the
     /// connector, so the backoff is untouched.
-    func deliver(_ output: ConnectorOutput) async -> RunResult
+    func deliver(_ output: AwtrixDelivery) async -> RunResult
     /// The host owns this rather than the schedule, because the answer is a
     /// function of how the last runs went and the schedule does not watch them.
     func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval
@@ -51,7 +51,7 @@ extension AwtrixClockSession: ConnectorRunning {}
 protocol AnecdoteReplaying: Sendable {
     var id: String { get }
     func history() async -> [PlayedAnecdote]
-    func output(for anecdote: PreparedAnecdote) -> ConnectorOutput
+    func output(for anecdote: PreparedAnecdote) -> AwtrixDelivery
 }
 
 extension AnecdoteConnector: AnecdoteReplaying {}

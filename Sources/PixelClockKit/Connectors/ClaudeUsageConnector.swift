@@ -54,7 +54,7 @@ public struct ClaudeUsageConnector: Connector {
         self.showsNow = showsNow
     }
 
-    public func produce() async throws -> ConnectorOutput {
+    public func produce() async throws -> AwtrixDelivery {
         // The gate first, so a poll outside working hours costs no request.
         guard showsNow() else { throw Failure.outOfFocus }
         guard let reading = try await reporter.read() else { throw Failure.noReading }
@@ -78,8 +78,8 @@ public struct ClaudeUsageConnector: Connector {
     /// Separated from `produce` so the drawing can be tested against a figure
     /// rather than against a network. Everything decided here is decided from
     /// the one number.
-    public static func output(for reading: ClaudeUsageReading) -> ConnectorOutput {
-        ConnectorOutput(
+    public static func output(for reading: ClaudeUsageReading) -> AwtrixDelivery {
+        AwtrixDelivery(
             // The true figure, including one past a hundred. The bar clamps
             // because the firmware has nowhere to draw the rest; the text has
             // no such excuse, and hiding an overage from the reader is not the

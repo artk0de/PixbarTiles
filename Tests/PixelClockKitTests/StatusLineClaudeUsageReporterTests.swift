@@ -132,3 +132,88 @@ private struct StatusDocumentFolder {
         #expect(try await reporter.read() == nil, "\(document)")
     }
 }
+
+// MARK: - A document missing a window
+
+// Each window can be absent on its own, and the spec's rule is to keep the last
+// value this process saw for it. Blanking the weekly figure because one reply
+// carried only the five-hour window would take a true number off the clock.
+@Test func aWindowMissingFromTheNextDocumentKeepsTheLastValueSeen() async throws {
+    let folder = try StatusDocumentFolder()
+    defer { folder.remove() }
+    let reporter = StatusLineClaudeUsageReporter(
+        document: folder.document, now: { beforeEitherReset }
+    )
+    try folder.write(statusLineDocument)
+    _ = try await reporter.read()
+
+    let later = Date(timeIntervalSince1970: 1_738_419_500)
+    try folder.write(
+        #"{"rate_limits":{"five_hour":{"used_percentage":30,"resets_at":1738425600}}}"#,
+        modified: later
+    )
+    let weeklyKept = try #require(await reporter.read())
+
+    #expect(weeklyKept.utilization == 41)
+    #expect(weeklyKept.resetsAt == Date(timeIntervalSince1970: 1_738_857_600))
+    #expect(weeklyKept.fiveHour?.utilization == 30)
+    // The document read is the new one, even though its week came from memory.
+    #expect(weeklyKept.observedAt == later)
+
+    // And the other way round.
+    try folder.write(#"{"rate_limits":{"seven_day":{"used_percentage":44,"resets_at":1738857600}}}"#)
+    let fiveHourKept = try #require(await reporter.read())
+
+    #expect(fiveHourKept.utilization == 44)
+    #expect(fiveHourKept.fiveHour?.utilization == 30)
+}
+
+// Every other shape of document counts as "both windows missing". The hook
+// stores anything whose TEXT contains "rate_limits" — a session renamed
+// "rate_limits" is enough — and a document with no windows is no reason to
+// take a figure off the clock that nothing has contradicted.
+@Test func aDocumentWithNoWindowsKeepsTheLastValuesSeen() async throws {
+    let folder = try StatusDocumentFolder()
+    defer { folder.remove() }
+    let reporter = StatusLineClaudeUsageReporter(
+        document: folder.document, now: { beforeEitherReset }
+    )
+    try folder.write(statusLineDocument)
+    _ = try await reporter.read()
+
+    try folder.write(#"{"session_name":"rate_limits","model":{"display_name":"Opus"}}"#)
+    #expect(try await reporter.read()?.utilization == 41)
+
+    try folder.write("not json at all")
+    #expect(try await reporter.read()?.utilization == 41)
+}
+
+// Until one has been seen, there is nothing to keep.
+@Test func aDocumentWithoutAWeeklyWindowIsNoReadingUntilOneHasBeenSeen() async throws {
+    let folder = try StatusDocumentFolder()
+    defer { folder.remove() }
+    let reporter = StatusLineClaudeUsageReporter(
+        document: folder.document, now: { beforeEitherReset }
+    )
+
+    try folder.write(#"{"rate_limits":{"five_hour":{"used_percentage":12,"resets_at":1738425600}}}"#)
+
+    #expect(try await reporter.read() == nil)
+}
+
+// The document gone is not "a window missing". Disconnect deletes it so that
+// the figure leaves the clock, and a memory that outlived the file would keep
+// the figure there until the weekly reset.
+@Test func aDeletedDocumentTakesTheFigureAwayEvenAfterOneWasSeen() async throws {
+    let folder = try StatusDocumentFolder()
+    defer { folder.remove() }
+    let reporter = StatusLineClaudeUsageReporter(
+        document: folder.document, now: { beforeEitherReset }
+    )
+    try folder.write(statusLineDocument)
+    #expect(try await reporter.read() != nil)
+
+    try FileManager.default.removeItem(at: folder.document)
+
+    #expect(try await reporter.read() == nil)
+}

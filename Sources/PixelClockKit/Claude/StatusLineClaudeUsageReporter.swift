@@ -11,6 +11,14 @@ public actor StatusLineClaudeUsageReporter: ClaudeUsageReporting {
     private let document: URL
     /// What decides that a window has reset and stopped being a reading.
     private let now: @Sendable () -> Date
+    /// The last value of each window this process saw.
+    ///
+    /// A window can be missing from any one document, and when it is, the last
+    /// value seen stands in for it. Per process and in memory: a relaunch that
+    /// finds a document without a week reads nothing until one arrives, which is
+    /// the honest answer for a figure nobody has confirmed since.
+    private var weekly: ClaudeUsageWindow?
+    private var fiveHour: ClaudeUsageWindow?
 
     public init(document: URL, now: @escaping @Sendable () -> Date = { Date() }) {
         self.document = document
@@ -18,13 +26,18 @@ public actor StatusLineClaudeUsageReporter: ClaudeUsageReporting {
     }
 
     public func read() async throws -> ClaudeUsageReading? {
+        // In front of the memory, on purpose: a deleted document is how
+        // Disconnect takes the figure away.
         guard let data = try? Data(contentsOf: document) else { return nil }
         let limits = Self.rateLimits(in: data)
-        guard let weekly = Self.window(limits["seven_day"]) else { return nil }
+        if let seen = Self.window(limits["seven_day"]) { weekly = seen }
+        if let seen = Self.window(limits["five_hour"]) { fiveHour = seen }
+
+        guard let current = weekly else { return nil }
         return ClaudeUsageReading(
-            utilization: weekly.utilization,
-            resetsAt: weekly.resetsAt,
-            fiveHour: Self.window(limits["five_hour"]),
+            utilization: current.utilization,
+            resetsAt: current.resetsAt,
+            fiveHour: fiveHour,
             observedAt: modificationDate()
         )
     }

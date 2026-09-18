@@ -1,5 +1,6 @@
 import Foundation
 import Intents
+import PixelClockKit
 
 /// What macOS has been asked about Focus, and what it answered.
 ///
@@ -467,10 +468,9 @@ enum DoNotDisturbDatabase {
     /// what these two identifiers already say, and every other mode in it is
     /// one to speak through — including the ones a user invents, which no list
     /// here could enumerate.
-    static let silencing: Set<String> = [
-        "com.apple.donotdisturb.mode.default",
-        "com.apple.sleep.sleep-mode",
-    ]
+    static let silencing: Set<String> = Set(
+        [MacFocus.doNotDisturb, .sleep].compactMap(\.modeIdentifier)
+    )
 
     /// Where macOS keeps it.
     ///

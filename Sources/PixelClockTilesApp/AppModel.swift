@@ -83,6 +83,8 @@ enum AppPaths {
     /// reaper removes whole trees, and a root of `/tmp` would put every other
     /// process's scratch directory inside the boundary.
     static let clipRoot = FileManager.default.temporaryDirectory
+        // The old name on purpose: the store records clip paths under it, and the
+        // reaper reclaims nothing outside it, so a new name would orphan them all.
         .appendingPathComponent("awtrix-speech")
 
     /// How long a played anecdote's audio is kept before the queue's reaper may
@@ -110,6 +112,8 @@ enum AppPaths {
             ?? URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent("Library/Application Support")
         return support
+            // The old name on purpose: the rename does not move this folder, and
+            // moving it would put the played set at risk for the sake of a name.
             .appendingPathComponent("AwtrixConnectors")
             .appendingPathComponent("anecdotes.json")
     }()

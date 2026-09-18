@@ -679,11 +679,16 @@ to the same clock and names the remainder of the interval the old build was
 in, not a fresh one; and the battery row carries its trend glyph on the first
 reading rather than ⏳.
 
-**The installed app depends on `.build`.** `Scripts/bundle.sh` does not copy
-SwiftPM's resource bundle (now `PixelClockTiles_PixelClockKit.bundle`) into
-the `.app`, so `Bundle.module` finds the bundled GIFs through the absolute
-build path compiled into the binary, and `fatalError`s if that directory is
-gone. This predates the rename. Phase 3 ships the TC002's images the same way.
+**The installed app no longer depends on `.build`.** Until now `Bundle.module`
+found the bundled GIFs through the absolute build path compiled into the
+binary, and `fatalError`ed once that directory was gone, so a build installed
+from a worktree died with the worktree. This predated the rename, and is now
+fixed. `Scripts/bundle.sh` copies `PixelClockTiles_PixelClockKit.bundle` into
+`Contents/Resources` (not the `.app` root, which codesign refuses), and
+`KitResources.bundle` reads that copy first, touching `Bundle.module` only when
+there is none, which is the case under `swift test` and `swift run`. Any new
+kit resource goes through `KitResources.bundle`, never `Bundle.module`
+directly. Phase 3's TC002 images included.
 
 ## Deferred findings
 

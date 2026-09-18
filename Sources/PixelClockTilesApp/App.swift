@@ -170,7 +170,7 @@ enum AppGlyph {
         return prepare(
             NSImage(named: chosen.resource)
                 ?? NSImage(
-                    systemSymbolName: chosen.symbol, accessibilityDescription: "AWTRIX"
+                    systemSymbolName: chosen.symbol, accessibilityDescription: "PixelClockTiles"
                 )!
         )
     }

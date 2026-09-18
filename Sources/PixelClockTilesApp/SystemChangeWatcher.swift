@@ -16,7 +16,7 @@ import Network
 /// moved.
 final class NetworkPathWatcher: @unchecked Sendable {
     private let monitor = NWPathMonitor()
-    private let queue = DispatchQueue(label: "dev.artk0re.awtrix-connectors.network-path")
+    private let queue = DispatchQueue(label: "dev.artk0re.pixelclocktiles.network-path")
 
     /// Starts watching. The handler fires once straight away with the path as
     /// it stands, which is what puts the corners right at launch.
@@ -47,7 +47,7 @@ final class FocusAssertionsWatcher: @unchecked Sendable {
     /// drift apart.
     static let directory = DoNotDisturbDatabase.assertions.deletingLastPathComponent()
 
-    private let queue = DispatchQueue(label: "dev.artk0re.awtrix-connectors.focus-assertions")
+    private let queue = DispatchQueue(label: "dev.artk0re.pixelclocktiles.focus-assertions")
     private let lock = NSLock()
     private var source: (any DispatchSourceFileSystemObject)?
 

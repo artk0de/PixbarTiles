@@ -214,7 +214,7 @@ public actor AwtrixDevice {
     /// Normalised here as well as at the field the user types into, because
     /// the field is not the only writer: `AppModel`'s own documentation tells
     /// the reader to point the app at a different clock with
-    /// `defaults write dev.artk0re.awtrix-connectors deviceHost`, and whatever
+    /// `defaults write dev.artk0re.pixelclocktiles deviceHost`, and whatever
     /// they put there arrives at this initialiser untouched.
     ///
     /// A value nothing can be made of is kept exactly as it stands, rather than

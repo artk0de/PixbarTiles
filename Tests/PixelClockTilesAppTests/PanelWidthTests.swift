@@ -67,7 +67,7 @@ import Testing
     #expect(PanelWidth(-.infinity).points == PanelWidth.designed)
 }
 
-// `defaults write dev.artk0re.awtrix-connectors panelWidth -int 500` is how
+// `defaults write dev.artk0re.pixelclocktiles panelWidth -int 500` is how
 // somebody recovers a panel they cannot reach, and it is the documented way out
 // in `docs/HANDOFF.md`. Read through a cast that only accepts a double, that
 // entry would be seen as a key with nothing in it and answered with 320 — the

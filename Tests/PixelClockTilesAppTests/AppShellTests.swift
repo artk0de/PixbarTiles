@@ -73,7 +73,7 @@ import Testing
 /// against a reference rather than against the other state.
 @MainActor
 private func glyphDrawnFrom(_ symbol: String) -> Data? {
-    AppGlyph.prepare(NSImage(systemSymbolName: symbol, accessibilityDescription: "AWTRIX")!)
+    AppGlyph.prepare(NSImage(systemSymbolName: symbol, accessibilityDescription: "PixelClockTiles")!)
         .tiffRepresentation
 }
 

@@ -15,8 +15,8 @@ cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 APP="build/AwtrixConnectors.app"
 
-swift build -c "$CONFIG" --product AwtrixConnectorsApp
-BINARY="$(swift build -c "$CONFIG" --show-bin-path)/AwtrixConnectorsApp"
+swift build -c "$CONFIG" --product PixelClockTilesApp
+BINARY="$(swift build -c "$CONFIG" --show-bin-path)/PixelClockTilesApp"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

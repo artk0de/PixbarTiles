@@ -27,6 +27,7 @@ Recorded so the plan does not re-open them.
 | 8 | How defaults reach a tile | Copied from the connector when the tile is created, then the tile owns them |
 | 9 | Several VPNs on one clock | One tile per VPN; tiles may share a lamp at different times or Focuses |
 | 10 | Two VPN tiles claiming one lamp at the same moment | Refused when saved |
+| 11 | Where the Claude figure comes from | Claude Code's status line, written to a file the app reads. The keychain reader and `/api/oauth/usage` are removed. The figure is as fresh as the last Claude Code reply |
 | — | Approach | Faces inside the connector, typed per-model scenes, one session per clock |
 | — | Name | PixelClockTiles; the kit becomes PixelClockKit |
 
@@ -297,7 +298,7 @@ sound plays.
 | Connector | Reading | Trigger | AWTRIX face | TC002 face |
 | --- | --- | --- | --- | --- |
 | weather | `WeatherReading` → `WeatherTheme` | every 600 s | as today: `.app("weather")`, 8×8 icon, overlay, lifetime 3600 | `.app("weather")`: 16×16 sky GIF on the left, temperature coloured by how it feels; `°` is outside the font's ASCII and is drawn as pixels; no overlay exists, so the icon carries the sky; lifetime 3600 emulated |
-| claude | `ClaudeUsageReading` | every 300 s | as today: progress bar, `ClaudeStar` 8×8, lifetime 900 | `.app("claude")`: `ClaudeStar` 16 px, `42%`, bar from `dr` and `df` along the bottom, lifetime 900 emulated |
+| claude | `ClaudeUsageReading`, from the status-line file | every 300 s | as today: progress bar, `ClaudeStar` 8×8, lifetime 900 | `.app("claude")`: `ClaudeStar` 16 px, `42%`, bar from `dr` and `df` along the bottom, lifetime 900 emulated |
 | anecdotes | `PreparedAnecdote`; reading it retires it | every 1800 s + maintenance | as today: held banner, RTTTL jingle, audio on the Mac | none in this design — the Cyrillic banner and on-device sound are F1's |
 | vpn | `VPNState` for one watched VPN | events + 60 s recheck | `.indicator(slot, signal)` | none — the TC002 has no global indicators |
 
@@ -314,6 +315,55 @@ Carried-over rules:
   cache becomes keyed by coordinates.
 - The History belongs to the anecdote tile, and Play again delivers through the
   session of the clock that tile is on.
+
+### Claude usage — read from Claude Code's status line
+
+The Claude tile no longer handles a credential. Claude Code runs a configured
+status-line command after each reply and hands it a JSON document on stdin. For
+Pro and Max accounts that document carries `rate_limits.five_hour` and
+`rate_limits.seven_day`, each with `used_percentage` (0–100) and `resets_at`
+(Unix seconds). This is a documented contract. `/api/oauth/usage`, which the
+app polls today, is not, and `ClaudeUsageReading` already records one wrong
+guess at its shape.
+
+- **The hook.** A POSIX `sh` script the app writes to
+  `~/Library/Application Support/PixelClockTiles/claude-statusline.sh`. It
+  reads stdin once. When the text contains `"rate_limits"`, it writes the whole
+  document to `claude-status.json` beside itself through a temporary file and
+  `mv`, which is atomic on one volume. When a status line was configured before
+  this one, it then pipes the same input into that command and passes its
+  output through. No `jq`, no interpreter: the script stores, the app parses.
+  Skipping documents without `rate_limits` keeps a session that has not had
+  its first reply yet from blanking the figure another session wrote.
+- **Connecting.** It edits one key of `~/.claude/settings.json`, `statusLine`,
+  and only on the user's action ("Connect Claude Code" in the general
+  settings). The value it replaces is kept in `claudeStatusLine.previous`, and
+  "Disconnect" puts it back, or removes the key when there was none. Every other
+  key keeps its value. A file that does not parse as a JSON object is left
+  alone and the action says why. The confirmation names the cost: with any
+  custom status line, Claude Code stops showing most of its footer hints,
+  `esc to interrupt` among them.
+- **Reading.** `StatusLineClaudeUsageReporter` conforms to
+  `ClaudeUsageReporting` and decodes the file on each tile refresh. It is a
+  local read, so there is no watcher. A document missing one window keeps the
+  last value this process saw for it.
+- **What a reading means.** `ClaudeUsageReading` keeps `utilization` and
+  `resetsAt` for the weekly window, which both faces draw, and gains
+  `fiveHour`, which no face draws yet. It also carries `observedAt`, the file's
+  modification time. Once the weekly `resets_at` has passed, the reporter
+  answers nil rather than zero. The window it described is over, spending since
+  then is unknown, and zero would be a calm, confident lie — the rule the
+  reporter already follows. The tile then leaves the clock at the end of its
+  lifetime, and comes back at the next Claude Code reply.
+- **Freshness.** The figure moves only when a Claude Code session gets a reply.
+  Spending in claude.ai or the desktop app shows up at the next one.
+  `claude -p` does not run the status line.
+- **Removed**, with their tests: `KeychainClaudeCredentials`,
+  `FileClaudeCredentials`, `AnyClaudeCredentials`, `ClaudeCredentialSearch`,
+  the HTTP `ClaudeUsageReporter` with its token cache, and
+  `ClaudeUsageReading.init?(json:)`. The app no longer reads another program's
+  credential, so there is no keychain prompt, before or after the bundle id
+  changes.
 
 ### VPN tiles
 
@@ -403,7 +453,8 @@ The anecdote tile's block carries the History button, which opens the existing
   confirmation, which takes every tile off that clock through its custody; add
   from what discovery found — both models — or by address.
 - Mac-wide: the microphone hold for audible tiles, the Full Disk Access line
-  (what it changes about Focus matching), and the login item.
+  (what it changes about Focus matching), the login item, and Connect /
+  Disconnect Claude Code with the time of the last status-line document.
 - Gone from here: the weather switch (now a tile), the location (now the
   weather tile's), the quiet hours (now every tile's `TilePolicy`).
 
@@ -449,6 +500,9 @@ Behaviour that changes on purpose, so it is not reported as a regression:
 - The VPN lamps now need `INFocusStatusCenter` authorisation as well as Full
   Disk Access to follow a Focus, like every other tile; today they read the
   mode with Full Disk Access alone.
+- The Claude figure shows nothing until Claude Code is connected and has
+  replied once, and it moves only with Claude Code replies. Today it polls
+  every five minutes whatever the user is doing.
 
 ## Rename — phase 0
 
@@ -480,6 +534,9 @@ Behaviour that changes on purpose, so it is not reported as a regression:
   adapter treats a non-200 `code` as a failure whatever the HTTP status says,
   until a live check shows how the two relate.
 - A migration failure leaves the old keys untouched and the marker unwritten.
+- Claude Code's settings file is written only on the user's action and only
+  when it parses as a JSON object. A write goes through a temporary file and a
+  rename, so a crash never leaves a half-written settings file behind.
 
 ## Testing
 
@@ -494,6 +551,12 @@ Behaviour that changes on purpose, so it is not reported as a regression:
   emulation, quit.
 - Migration: snapshots of old `UserDefaults` in, records out; a second run
   changes nothing.
+- Claude status line: the hook run by the tests with `/bin/sh` against sample
+  documents — with and without `rate_limits`, with a previous command chained,
+  with a previous command that fails. The settings edit against fixture files —
+  no `statusLine`, an existing one, one that does not parse, other keys kept.
+  The reporter against fixture documents, including a missing window and a
+  `resets_at` in the past.
 - Mutation, as HANDOFF lays down: one site at a time, and after adding a guard,
   re-run the mutations of the guards in front of it.
 
@@ -521,9 +584,26 @@ Each phase is a series of small commits with the tree green before and after.
 | 3 | TC002 adapter | `UlanziDevice`, `UlanziCustody`, the UDP listener, model detection, the weather and Claude TC002 faces. The app still drives one clock — the first in `clocks`, of whichever model — so the TC002 works with the current panel from here |
 | 4 | Several clocks and tiles | A session per clock, scheduling by `TileKey`, `TilePolicy` with its grid and overlap check in place of the global `FocusGate`, `TileCatalogue.availability`, VPN tiles with lamp ownership, the keyed weather cache, retraction on Focus change |
 | 5 | UI | The switcher, tile rows, Add tile, tile detail with the policy editor and colour picker, the Clocks section; `MenuPanel` split up |
+| C | Claude via the status line | The hook, Connect / Disconnect, `StatusLineClaudeUsageReporter`; the keychain reader and `/api/oauth/usage` removed |
 
 Each phase gets its own implementation plan. A type lands in the phase that
 first reads it, never ahead of its caller.
+
+The phases do not run strictly in order. After phase 0, five lanes run at once,
+each in its own worktree:
+
+- phase 1;
+- phase 2;
+- part A of phase 3, the TC002 adapter's leaf types;
+- part A of phase 4, `TilePolicy` as pure types;
+- lane C.
+
+Parts B of phases 3 and 4 follow once phases 1 and 2 have landed, and phase 5
+comes last. Parts A are a deliberate exception to the rule above. Their types
+reach their callers in parts B of the same program, and nothing reaches
+`master` before the callers do. Lane C touches the Claude connector, which
+phase 2 splits into `read` and a face; the `ClaudeUsageReporting` protocol is
+the seam both keep.
 
 The TC002 comes third rather than last because it is the clock in use: after
 phase 3 it shows the weather and the Claude figure while tiles and the new UI
@@ -556,5 +636,7 @@ structure stands on the moved tests.
 - Replacing the TC002's stock application.
 - Custom Focus modes beyond the four built-ins, which would need
   `ModeConfigurations.json`.
-- An App Store build. The app reads another program's credential and the
+- An App Store build. The app edits Claude Code's settings file and reads the
   Focus database from outside a sandbox.
+- Drawing the five-hour Claude window on a face. The reading carries it; which
+  face shows it, and how, is a later decision.

@@ -8,7 +8,7 @@ private struct FakeConnector: Connector {
     let defaultInterval: TimeInterval = 300
     var output = AwtrixDelivery(text: "hi")
 
-    func produce() async throws -> AwtrixDelivery { output }
+    func read() async throws -> AwtrixDelivery { output }
 }
 
 // MARK: - The registry

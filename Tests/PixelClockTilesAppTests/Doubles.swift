@@ -33,7 +33,7 @@ struct StubConnector: Connector {
         self.isAmbient = isAmbient
     }
 
-    func produce() async throws -> AwtrixDelivery { AwtrixDelivery(text: "hello") }
+    func read() async throws -> AwtrixDelivery { AwtrixDelivery(text: "hello") }
 }
 
 /// A connector that makes no sound at all, and claims nothing beyond that.
@@ -795,7 +795,7 @@ struct BrokenConnector: Connector {
         self.defaultInterval = defaultInterval
     }
 
-    func produce() async throws -> AwtrixDelivery { throw FeedIsDown() }
+    func read() async throws -> AwtrixDelivery { throw FeedIsDown() }
 }
 
 /// A model over the SHIPPED host, so the failure count a test reads is the real

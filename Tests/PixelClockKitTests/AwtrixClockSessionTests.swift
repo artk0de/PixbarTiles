@@ -19,7 +19,7 @@ struct StubConnector: Connector {
 
     init(id: String = "stub") { self.id = id }
 
-    func produce() async throws -> AwtrixDelivery {
+    func read() async throws -> AwtrixDelivery {
         if let error { throw error }
         return output ?? AwtrixDelivery(text: "hello")
     }
@@ -129,7 +129,7 @@ private final class GatedConnector: Connector, Sendable {
     var enteredCount: Int { gate.enteredCount }
     func open() { gate.open() }
 
-    func produce() async throws -> AwtrixDelivery {
+    func read() async throws -> AwtrixDelivery {
         await gate.enter()
         return AwtrixDelivery(text: "hi")
     }
@@ -161,7 +161,7 @@ private final class CountingConnector: Connector, @unchecked Sendable {
 
     var produceCount: Int { lock.withLock { calls } }
 
-    func produce() async throws -> AwtrixDelivery {
+    func read() async throws -> AwtrixDelivery {
         lock.withLock { calls += 1 }
         return AwtrixDelivery(text: "produced")
     }
@@ -242,7 +242,7 @@ private final class BlockingConnector: Connector, @unchecked Sendable {
 
     var hasStarted: Bool { lock.withLock { entered } }
 
-    func produce() async throws -> AwtrixDelivery {
+    func read() async throws -> AwtrixDelivery {
         lock.withLock { entered = true }
         // Long enough that a run which ignores cancellation is unmistakable
         // rather than merely slow.
@@ -264,7 +264,7 @@ private final class SpyMaintainingConnector: Connector, ConnectorMaintaining, @u
 
     var maintenanceCount: Int { lock.withLock { calls } }
 
-    func produce() async throws -> AwtrixDelivery { AwtrixDelivery(text: "hi") }
+    func read() async throws -> AwtrixDelivery { AwtrixDelivery(text: "hi") }
 
     func maintain() async throws {
         lock.withLock { calls += 1 }

@@ -16,8 +16,16 @@ public struct SpokenClip: Sendable, Equatable, Codable {
     }
 }
 
-/// A source of content. Produces and returns; never talks to the device.
+/// A source of content. Reads and returns; never talks to a clock.
+///
+/// Two halves. `read()` goes out for a value — a feed, a service, a queue —
+/// and `awtrixFace` draws that value for an AWTRIX clock without going
+/// anywhere. Kept apart so every drawing can be tested against a value, and so
+/// another clock model gets a face of its own over the same reading.
 public protocol Connector: Sendable {
+    /// What `read()` hands the faces.
+    associatedtype Reading: Sendable
+
     var id: String { get }
     var displayName: String { get }
     var defaultInterval: TimeInterval { get }
@@ -73,7 +81,10 @@ public protocol Connector: Sendable {
     /// answering its own question untouched: it is what a Focus and a busy
     /// microphone are asked before a run is held.
     var isAmbient: Bool { get }
-    func produce() async throws -> AwtrixDelivery
+    /// Goes out for the value this connector shows. May throw; never draws.
+    func read() async throws -> Reading
+    /// How the reading looks on an AWTRIX clock.
+    var awtrixFace: AwtrixFace<Reading> { get }
 }
 
 extension Connector {
@@ -106,6 +117,17 @@ extension Connector {
     /// that says nothing, keeps its row. Only one that has declared itself
     /// ambient out loud loses one.
     public var isAmbient: Bool { false }
+
+    /// What the AWTRIX session delivers for this connector: the reading,
+    /// drawn.
+    ///
+    /// The one place the two halves meet, so a reading never reaches a clock
+    /// undrawn and a face never draws without a fresh reading. A connector
+    /// whose read spends something — the anecdotes retire what they pop —
+    /// spends it exactly once per delivery.
+    public func produce() async throws -> AwtrixDelivery {
+        awtrixFace.draw(try await read())
+    }
 }
 
 /// Work a connector does away from the delivery path.

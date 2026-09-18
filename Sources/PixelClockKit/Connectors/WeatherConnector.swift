@@ -68,7 +68,7 @@ public struct WeatherConnector: Connector {
     public let isAmbient = true
 
     private let source: OpenMeteoSource
-    /// Read on every produce rather than held, so a location typed into the
+    /// Read on every read rather than held, so a location typed into the
     /// settings takes effect at the next poll instead of at the next launch.
     private let location: @Sendable () -> Coordinates
 
@@ -77,8 +77,22 @@ public struct WeatherConnector: Connector {
         self.location = location
     }
 
-    public func produce() async throws -> AwtrixDelivery {
-        let reading = try await source.reading(at: location())
+    /// Goes out for the sky where the clock is. Nothing is drawn here; see
+    /// `output(for:)`.
+    public func read() async throws -> WeatherReading {
+        try await source.reading(at: location())
+    }
+
+    public var awtrixFace: AwtrixFace<WeatherReading> {
+        AwtrixFace { Self.output(for: $0) }
+    }
+
+    /// What a reading looks like on the matrix.
+    ///
+    /// Separated from `read()` so the drawing can be tested against a reading
+    /// rather than against a network, as `ClaudeUsageConnector.output(for:)`
+    /// already is.
+    static func output(for reading: WeatherReading) -> AwtrixDelivery {
         let theme = WeatherTheme(code: reading.code, isDay: reading.isDay)
         // Two quantities in one element: the digits are the AIR temperature,
         // which is what a thermometer would agree with, and the colour is what

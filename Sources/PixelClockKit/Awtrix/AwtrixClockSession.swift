@@ -175,7 +175,7 @@ public actor AwtrixClockSession {
     /// Asks the connector for something, then delivers it.
     ///
     /// The produce stays inside the chain, which is where it has always been:
-    /// `AnecdoteConnector.produce()` pops an anecdote and retires it as played,
+    /// `AnecdoteConnector.read()` pops an anecdote and retires it as played,
     /// and a produce that ran ahead of its turn would spend anecdotes on
     /// deliveries that had not happened yet — and, when the queue is empty,
     /// would put a whole batch of synthesis in front of the run behind it.

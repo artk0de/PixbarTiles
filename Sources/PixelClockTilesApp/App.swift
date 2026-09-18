@@ -238,6 +238,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var panelWindow: NSWindow?
 
     override init() {
+        // First, before `.live()`: everything it builds reads the defaults, and
+        // on the first launch after the rename those are still in the old domain.
+        DefaultsCarryOver.run(
+            from: DefaultsCarryOver.previousDomain,
+            into: Bundle.main.bundleIdentifier,
+            through: .standard
+        )
         self.model = .live()
         self.discovery = DeviceBrowser()
         self.budget = QuitBudget()

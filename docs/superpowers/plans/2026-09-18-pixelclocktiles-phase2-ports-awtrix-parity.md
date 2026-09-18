@@ -25,6 +25,9 @@
 - `Sources/PixelClockTilesApp/MenuPanel.swift` is not touched by this phase (21 commits, 48% fixes). `AppModel.swift` (31 commits, 42% fixes) is touched only in its two protocol declarations, one conformance line, three doc comments and `live()`. No method body outside `live()` changes.
 - A Ulanzi TC002 at `192.168.1.72` is live on the LAN. No test and no step makes a network call to it; every request in this plan goes through an injected `Transport` double.
 - Mutation discipline (HANDOFF): mutate **one site at a time**; after adding a guard, re-run the mutations of the guards it sits in front of. Mutations are run after the task's commit, on a clean tree, and each is reverted with `git restore <file>` before the next.
+- The first line of each code block below (`// Sources/…`, `// Tests/…`) names the file; it is not written into it.
+- Every "Run: `swift test`" of the full suite was run as `swift test -j 2 --no-parallel`. With several lanes compiling on one machine, a parallel run failed 41 time-budgeted app tests at `BASE`, each green alone; the serial run is what counts. `nothingButTheAnecdotesEverPutsSoundInTheRoom` reads the real login keychain through `live()`'s `KeychainClaudeCredentials`, and once held a serial run for over ten minutes inside `SecItemCopyMatching`. From Task 2 on, full runs pass `--skip nothingButTheAnecdotesEverPutsSoundInTheRoom` and that test is run alone at the end, so the full-run count is one below the listed count.
+- Commits stage explicit paths. Where a step below said `git add -A Sources Tests`, the files that step names were added one by one.
 
 ---
 
@@ -129,17 +132,17 @@ No code and no commit. The task records what parity is measured against.
 - Consumes: the tree after phase 0 (and after Phase 1's commits, if they have landed).
 - Produces: `BASE` (a commit hash) and `N0` (a test count), which Task 6 reads. If another lane's commits are merged into this branch mid-phase, re-take `N0` on the merge and add that lane's new tests to it; every "`N0 + k`" below counts only this plan's own tests.
 
-- [ ] **Step 1: Confirm the phase 0 names are on disk**
+- [x] **Step 1: Confirm the phase 0 names are on disk**
 
 Run: `ls Sources/PixelClockKit/Scheduling/ConnectorHost.swift Sources/PixelClockTilesApp/AppModel.swift Tests/PixelClockKitTests/ConnectorHostTests.swift Tests/PixelClockTilesAppTests/Doubles.swift`
 Expected: all four paths print. If any is missing, phase 0 has not landed; stop.
 
-- [ ] **Step 2: Build with no warnings**
+- [x] **Step 2: Build with no warnings**
 
 Run: `swift build 2>&1 | grep -c "warning:"`
 Expected: `0`.
 
-- [ ] **Step 3: Run the suite and record the count**
+- [x] **Step 3: Run the suite and record the count**
 
 Run: `swift test 2>&1 | tail -3`
 Expected: PASS. Under heavy machine load four wall-clock tests are known to flake (HANDOFF § State). Re-run before treating a red among them as a defect.
@@ -147,10 +150,14 @@ Expected: PASS. Under heavy machine load four wall-clock tests are known to flak
 Run: `swift test --list-tests 2>/dev/null | wc -l`
 Expected: a number. Write it down as `N0` (999 at `39d7072`, before phase 0 and Phase 1 added tests).
 
-- [ ] **Step 4: Record the base commit**
+Recorded: `N0 = 1010`.
+
+- [x] **Step 4: Record the base commit**
 
 Run: `git rev-parse HEAD`
 Write the hash down as `BASE`.
+
+Recorded: `BASE = c0a0758` (this plan's own commit, on the phase 0 tip `0571ea0`; no Phase 1 commits merged).
 
 ---
 
@@ -178,7 +185,7 @@ Write the hash down as `BASE`.
 
 **Proven template:** `ConnectorHost.queued(_:)` itself, moved verbatim. `AnecdotePreparer.refill(target:)` is the repo's second use of the same tail-chain idiom and shows that the idiom survives on an actor of its own.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```swift
 // Tests/PixelClockKitTests/DeliveryChainTests.swift
@@ -372,12 +379,12 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter DeliveryChainTests`
 Expected: FAIL at compile time — `cannot find 'DeliveryChain' in scope`.
 
-- [ ] **Step 3: Create `DeliveryChain.swift`**
+- [x] **Step 3: Create `DeliveryChain.swift`**
 
 `RunResult` moves here from `ConnectorHost.swift` unchanged. `queued(_:)`, `record(_:for:)`, `nextDelay` and `classify` move unchanged, doc comments included. Only the words naming their caller are updated.
 
@@ -558,7 +565,7 @@ public actor DeliveryChain {
 }
 ```
 
-- [ ] **Step 4: Make `ConnectorHost` delegate to the chain**
+- [x] **Step 4: Make `ConnectorHost` delegate to the chain**
 
 In `Sources/PixelClockKit/Scheduling/ConnectorHost.swift`:
 
@@ -615,7 +622,7 @@ In `Sources/PixelClockKit/Scheduling/ConnectorHost.swift`:
 
 (i) Delete `classify(_:)` with its doc comment.
 
-- [ ] **Step 5: Run the new and the moved tests**
+- [x] **Step 5: Run the new and the moved tests**
 
 Run: `swift test --filter DeliveryChainTests`
 Expected: PASS, 6 tests.
@@ -632,14 +639,14 @@ Expected: `0`.
 Run: `swift test`
 Expected: PASS, `N0 + 6` tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Sources/PixelClockKit/Scheduling/DeliveryChain.swift Sources/PixelClockKit/Scheduling/ConnectorHost.swift Tests/PixelClockKitTests/DeliveryChainTests.swift
 git commit -m "refactor: lift the delivery chain out of the connector host"
 ```
 
-- [ ] **Step 7: Mutation checks — the moved guards are still pinned**
+- [x] **Step 7: Mutation checks — the moved guards are still pinned**
 
 No new guard was added, so no older mutation needs re-running. Each mutation below goes in on its own and is reverted with `git restore <file>` before the next. Run the named filter; every listed test must go red.
 
@@ -676,12 +683,12 @@ A pure rename and move. No behaviour or test body changes, so this task has no f
   - `extension AwtrixClockSession: ConnectorRunning {}` in `AppModel.swift`.
 - Production caller: `AppModel.live()` (`host: AwtrixClockSession(…)`).
 
-- [ ] **Step 1: Confirm the starting point**
+- [x] **Step 1: Confirm the starting point**
 
 Run: `swift test --filter ConnectorHostTests 2>&1 | tail -1`
 Expected: PASS, 53 tests.
 
-- [ ] **Step 2: Move the files**
+- [x] **Step 2: Move the files**
 
 ```bash
 mkdir -p Sources/PixelClockKit/Awtrix
@@ -689,7 +696,7 @@ git mv Sources/PixelClockKit/Scheduling/ConnectorHost.swift Sources/PixelClockKi
 git mv Tests/PixelClockKitTests/ConnectorHostTests.swift Tests/PixelClockKitTests/AwtrixClockSessionTests.swift
 ```
 
-- [ ] **Step 3: Rename every mention**
+- [x] **Step 3: Rename every mention**
 
 ```bash
 grep -rlE 'ConnectorHost' Sources Tests \
@@ -699,7 +706,12 @@ grep -rlE 'ConnectorHost' Sources Tests \
 Run: `grep -rn "ConnectorHost" Sources Tests`
 Expected: no output.
 
-- [ ] **Step 4: Move the model-neutral vocabulary out of the session file**
+Two mentions are then corrected by hand rather than left as the substitution wrote them:
+
+- `Sources/PixelClockKit/Scheduling/RetryPolicy.swift`, the doc comment on `cap`: the second clip is the chain's since Task 1, so it reads `` /// The ceiling the doubling runs into. The chain clips again, to the `` / `` /// connector's own interval — see `DeliveryChain.nextDelay(connectorId:interval:)`. `` The session's `nextDelay` only forwards.
+- `Tests/PixelClockKitTests/DeliveryChainTests.swift` (added in Task 1, so outside the audit), the header comment, rewrapped to 80 columns after the longer name.
+
+- [x] **Step 4: Move the model-neutral vocabulary out of the session file**
 
 Cut each block below from `Sources/PixelClockKit/Awtrix/AwtrixClockSession.swift`, doc comment included, and paste it unchanged at the named place:
 
@@ -709,7 +721,7 @@ Cut each block below from `Sources/PixelClockKit/Awtrix/AwtrixClockSession.swift
 
 After the cut, `AwtrixClockSession.swift` is `import Foundation`, then the actor.
 
-- [ ] **Step 5: Say what the session is**
+- [x] **Step 5: Say what the session is**
 
 Replace the actor's doc comment (`/// Owns everything a connector must not care about: enablement, delivery to the` / `/// device, and containment of failures.`) with:
 
@@ -724,7 +736,7 @@ Replace the actor's doc comment (`/// Owns everything a connector must not care 
 /// the held banner and its release, the icon installer, and `DeviceCustody`.
 ```
 
-- [ ] **Step 6: Run the suite**
+- [x] **Step 6: Run the suite**
 
 Run: `swift build 2>&1 | grep -c "warning:"`
 Expected: `0`.
@@ -735,10 +747,18 @@ Expected: PASS, 53 tests, the same 53 as in Step 1.
 Run: `swift test`
 Expected: PASS, `N0 + 6` tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
-git add -A Sources Tests
+# The two `git mv`s are already staged.
+git add Sources/PixelClockKit/Awtrix/AwtrixClockSession.swift Tests/PixelClockKitTests/AwtrixClockSessionTests.swift \
+  Sources/PixelClockKit/Audio/SequentialAudioPlayer.swift Sources/PixelClockKit/Device/CatalogueIconInstaller.swift \
+  Sources/PixelClockKit/Connectors/Connector.swift Sources/PixelClockKit/Connectors/WeatherConnector.swift \
+  Sources/PixelClockKit/Scheduling/RetryPolicy.swift Sources/PixelClockTilesApp/AppModel.swift \
+  Sources/PixelClockTilesApp/QuitBudget.swift Tests/PixelClockKitTests/AnecdoteConnectorTests.swift \
+  Tests/PixelClockKitTests/DeliveryChainTests.swift Tests/PixelClockKitTests/RetryPolicyTests.swift \
+  Tests/PixelClockKitTests/WeatherConnectorTests.swift Tests/PixelClockTilesAppTests/AppModelTests.swift \
+  Tests/PixelClockTilesAppTests/AppShellTests.swift Tests/PixelClockTilesAppTests/Doubles.swift
 git commit -m "refactor: the connector host becomes the AWTRIX clock's session"
 ```
 
@@ -771,7 +791,7 @@ The risk is one this project has already paid for once: a field that exists on b
 
 **Proven template:** `ConnectorOutput` itself. Same fields, labels and defaults, split along the line the spec draws.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```swift
 // Tests/PixelClockKitTests/AwtrixDeliveryTests.swift
@@ -840,12 +860,12 @@ import Testing
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter AwtrixDeliveryTests`
 Expected: FAIL at compile time — `cannot find 'AwtrixDelivery' in scope`.
 
-- [ ] **Step 3: Create `Delivery.swift`**
+- [x] **Step 3: Create `Delivery.swift`**
 
 ```swift
 // Sources/PixelClockKit/Connectors/Delivery.swift
@@ -885,7 +905,7 @@ public struct Delivery<Scene: Sendable & Equatable>: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Create `AwtrixScene.swift`**
+- [x] **Step 4: Create `AwtrixScene.swift`**
 
 `IconReference`, `DeliverySurface` and `ProgressBar` are **cut** from `Connector.swift` and pasted here unchanged, doc comments included (the `IconReference` comment keeps phase 0's `enum PixelClockKit` wording). They are shown in full so the file is complete. The field doc comments on `AwtrixScene` are `ConnectorOutput`'s own.
 
@@ -1051,11 +1071,11 @@ extension Delivery where Scene == AwtrixScene {
 }
 ```
 
-- [ ] **Step 5: Remove the old output from `Connector.swift`**
+- [x] **Step 5: Remove the old output from `Connector.swift`**
 
 In `Sources/PixelClockKit/Connectors/Connector.swift`, delete everything from the `IconReference` doc comment (`` /// Spelled out rather than `IconRef`: … ``) through the closing brace of `public struct ConnectorOutput`. That is four declarations: `IconReference`, `DeliverySurface`, `ProgressBar`, `ConnectorOutput`. `SpokenClip` above them stays.
 
-- [ ] **Step 6: Rename the type everywhere else**
+- [x] **Step 6: Rename the type everywhere else**
 
 ```bash
 grep -rlw 'ConnectorOutput' Sources Tests | xargs perl -pi -e 's/\bConnectorOutput\b/AwtrixDelivery/g'
@@ -1066,7 +1086,7 @@ Expected: no output.
 
 This one command reaches: the protocol requirement `func produce() async throws -> AwtrixDelivery`, the three connectors' `produce()` return types and constructors, `AnecdoteConnector.output(for:)`, the session's `deliver(_ output: AwtrixDelivery)` and `send(_ output: AwtrixDelivery, from:)`, `ConnectorRunning.deliver` (AppModel L22), `AnecdoteReplaying.output(for:)` (AppModel L54), and every test double and arrange line. The body of `send` does not change: it reads `output.text`, `output.icon`, `output.surface`, `output.lifetime`, `output.progress`, `output.overlay`, `output.jingle`, `output.duration` and `output.color` through the lookup, and `output.localAudio` and `output.holdUntilAudioEnds` directly.
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
 Run: `swift test --filter AwtrixDeliveryTests`
 Expected: PASS, 3 tests.
@@ -1080,14 +1100,20 @@ Expected: `0`.
 Run: `swift test`
 Expected: PASS, `N0 + 9` tests.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
-git add -A Sources Tests
+git add Sources/PixelClockKit/Connectors/Delivery.swift Sources/PixelClockKit/Awtrix/AwtrixScene.swift \
+  Tests/PixelClockKitTests/AwtrixDeliveryTests.swift Sources/PixelClockKit/Connectors/Connector.swift \
+  Sources/PixelClockKit/Connectors/ClaudeUsageConnector.swift Sources/PixelClockKit/Connectors/AnecdoteConnector.swift \
+  Sources/PixelClockKit/Connectors/WeatherConnector.swift Sources/PixelClockKit/Awtrix/AwtrixClockSession.swift \
+  Sources/PixelClockTilesApp/AppModel.swift Tests/PixelClockKitTests/AwtrixClockSessionTests.swift \
+  Tests/PixelClockKitTests/ConnectorRegistryTests.swift Tests/PixelClockKitTests/VoiceCasterTests.swift \
+  Tests/PixelClockTilesAppTests/AppShellTests.swift Tests/PixelClockTilesAppTests/Doubles.swift
 git commit -m "refactor: a delivery carries an AWTRIX scene, and the audio travels beside it"
 ```
 
-- [ ] **Step 9: Mutation checks — nothing is lost crossing into the scene**
+- [x] **Step 9: Mutation checks — nothing is lost crossing into the scene**
 
 All in the convenience initializer in `AwtrixScene.swift`, one at a time, each reverted with `git restore Sources/PixelClockKit/Awtrix/AwtrixScene.swift`.
 
@@ -1132,7 +1158,7 @@ The protocol gains `associatedtype Reading`, `read()` and `awtrixFace`. Its `pro
 
 **Proven template:** `ClaudeUsageConnector`, whose `produce()` already fetched a value and handed it to a static `output(for:)`. Weather and anecdotes follow it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```swift
 // Tests/PixelClockKitTests/ConnectorFaceTests.swift
@@ -1248,12 +1274,12 @@ private let oneAnecdote = """
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter ConnectorFaceTests`
 Expected: FAIL at compile time — `type 'Numeral' does not conform to protocol 'Connector'`, and `value of type 'WeatherConnector' has no member 'read'`.
 
-- [ ] **Step 3: Create `AwtrixFace.swift`**
+- [x] **Step 3: Create `AwtrixFace.swift`**
 
 ```swift
 // Sources/PixelClockKit/Awtrix/AwtrixFace.swift
@@ -1279,7 +1305,7 @@ public struct AwtrixFace<Reading: Sendable>: Sendable {
 }
 ```
 
-- [ ] **Step 4: Split the protocol**
+- [x] **Step 4: Split the protocol**
 
 In `Sources/PixelClockKit/Connectors/Connector.swift`:
 
@@ -1327,7 +1353,7 @@ In `Sources/PixelClockKit/Connectors/Connector.swift`:
     }
 ```
 
-- [ ] **Step 5: Split the weather connector**
+- [x] **Step 5: Split the weather connector**
 
 In `Sources/PixelClockKit/Connectors/WeatherConnector.swift`:
 
@@ -1387,7 +1413,7 @@ In `Sources/PixelClockKit/Connectors/WeatherConnector.swift`:
     }
 ```
 
-- [ ] **Step 6: Split the Claude usage connector**
+- [x] **Step 6: Split the Claude usage connector**
 
 In `Sources/PixelClockKit/Connectors/ClaudeUsageConnector.swift`:
 
@@ -1409,7 +1435,7 @@ In `Sources/PixelClockKit/Connectors/ClaudeUsageConnector.swift`:
 
 (b) In the doc comment of `output(for:)`, replace `` /// Separated from `produce` so the drawing can be tested against a figure `` with `` /// Separated from `read()` so the drawing can be tested against a figure ``. The body of `output(for:)` does not change.
 
-- [ ] **Step 7: Split the anecdote connector**
+- [x] **Step 7: Split the anecdote connector**
 
 In `Sources/PixelClockKit/Connectors/AnecdoteConnector.swift`, replace `public func produce() async throws -> AwtrixDelivery { … }` (L270–289, doc comment included) with:
 
@@ -1440,13 +1466,13 @@ In `Sources/PixelClockKit/Connectors/AnecdoteConnector.swift`, replace `public f
     }
 ```
 
-`output(for:)` does not change. Its doc comment ("The two callers are `produce()` and the replay") stays true: `produce()` reaches it through the face.
+`output(for:)`'s body does not change. Its doc comment keeps "The two callers are `produce()` and the replay", which stays true: `produce()` reaches it through the face. Its last paragraph named `produce()` as the owner of `retire`, and `produce()` is no longer in this file, so it now reads `` /// accident: `retire` is what makes an anecdote played, it belongs to `` / `` /// `read()` above, and a replay must not spend an anecdote nobody has ``.
 
-- [ ] **Step 8: Update the session's comment**
+- [x] **Step 8: Update the session's comment**
 
 In `Sources/PixelClockKit/Awtrix/AwtrixClockSession.swift`, in the doc comment of `produceAndSend(_:)`, replace `` /// `AnecdoteConnector.produce()` pops an anecdote and retires it as played, `` with `` /// `AnecdoteConnector.read()` pops an anecdote and retires it as played, ``. The code does not change: it still calls `connector.produce()`.
 
-- [ ] **Step 9: Give the test doubles a pass-through face and rename their method**
+- [x] **Step 9: Give the test doubles a pass-through face and rename their method**
 
 ```swift
 // Tests/PixelClockKitTests/PassThroughFace.swift
@@ -1490,7 +1516,7 @@ Expected: exactly one line, in `Sources/PixelClockKit/Connectors/Connector.swift
 
 If the compiler cannot infer `Reading` for a double (`type '…' does not conform to protocol 'Connector'`), add `typealias Reading = AwtrixDelivery` to that double. Its test bodies do not change.
 
-- [ ] **Step 10: Run the tests**
+- [x] **Step 10: Run the tests**
 
 Run: `swift test --filter ConnectorFaceTests`
 Expected: PASS, 5 tests.
@@ -1504,14 +1530,20 @@ Expected: `0`.
 Run: `swift test`
 Expected: PASS, `N0 + 14` tests.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
-git add -A Sources Tests
+git add Sources/PixelClockKit/Awtrix/AwtrixFace.swift Sources/PixelClockKit/Connectors/Connector.swift \
+  Sources/PixelClockKit/Connectors/WeatherConnector.swift Sources/PixelClockKit/Connectors/ClaudeUsageConnector.swift \
+  Sources/PixelClockKit/Connectors/AnecdoteConnector.swift Sources/PixelClockKit/Awtrix/AwtrixClockSession.swift \
+  Tests/PixelClockKitTests/AwtrixClockSessionTests.swift Tests/PixelClockKitTests/ConnectorRegistryTests.swift \
+  Tests/PixelClockKitTests/VoiceCasterTests.swift Tests/PixelClockTilesAppTests/Doubles.swift \
+  Tests/PixelClockKitTests/PassThroughFace.swift Tests/PixelClockTilesAppTests/PassThroughFace.swift \
+  Tests/PixelClockKitTests/ConnectorFaceTests.swift
 git commit -m "refactor: a connector reads, and its AWTRIX face draws what it read"
 ```
 
-- [ ] **Step 12: Mutation checks — each moved guard still bites**
+- [x] **Step 12: Mutation checks — each moved guard still bites**
 
 One at a time; revert each with `git restore <file>`.
 
@@ -1553,7 +1585,7 @@ The record of what each lamp shows moves out of the app's `VPNLampDisplay` into 
 
 **Proven template:** `VPNLampDisplay.write(_:_:)` — moved verbatim into `IndicatorCustody.show(_:on:)`.
 
-- [ ] **Step 1: Write the composition-root test, and see it pass on today's wiring**
+- [x] **Step 1: Write the composition-root test, and see it pass on today's wiring**
 
 First, because the kit test in Step 2 stops the whole package's tests from compiling until Step 3. This one characterises existing behaviour: `live()` lights the corners through the same device every delivery uses. It passes before the refactor and must still pass after it.
 
@@ -1593,7 +1625,7 @@ import Testing
 Run: `swift test --filter IndicatorCustodyWiringTests`
 Expected: PASS, 1 test. Today's `VPNLampDisplay(clock: device)` already does this.
 
-- [ ] **Step 2: Write the kit's failing test**
+- [x] **Step 2: Write the kit's failing test**
 
 ```swift
 // Tests/PixelClockKitTests/IndicatorCustodyTests.swift
@@ -1664,7 +1696,7 @@ private final class LampLog: IndicatorLighting, @unchecked Sendable {
 Run: `swift test --filter IndicatorCustodyTests`
 Expected: FAIL at compile time — `cannot find type 'IndicatorLighting' in scope` (it is still internal to the app) and `cannot find 'IndicatorCustody' in scope`.
 
-- [ ] **Step 3: Create `IndicatorCustody.swift`**
+- [x] **Step 3: Create `IndicatorCustody.swift`**
 
 ```swift
 // Sources/PixelClockKit/Awtrix/IndicatorCustody.swift
@@ -1722,7 +1754,7 @@ public actor IndicatorCustody {
 }
 ```
 
-- [ ] **Step 4: The session owns the lamps' custody**
+- [x] **Step 4: The session owns the lamps' custody**
 
 In `Sources/PixelClockKit/Awtrix/AwtrixClockSession.swift`, after the `custody` property and its doc comment, add:
 
@@ -1739,7 +1771,7 @@ In `init`, after `self.custody = DeviceCustody(device: device, overlays: borrowe
         self.indicators = IndicatorCustody(lamps: device)
 ```
 
-- [ ] **Step 5: Shrink `VPNLampDisplay` to the VPN corners**
+- [x] **Step 5: Shrink `VPNLampDisplay` to the VPN corners**
 
 Replace the whole of `Sources/PixelClockTilesApp/VPNLampDisplay.swift` with:
 
@@ -1782,7 +1814,7 @@ struct VPNLampDisplay: Sendable {
 
 The `IndicatorLighting` protocol and the `extension AwtrixDevice: IndicatorLighting {}` that stood at the top of this file are gone. They now live in the kit, under the same names, and `RecordingLamps` in `Doubles.swift` conforms to the kit's protocol with no edit.
 
-- [ ] **Step 6: Wire the display to the session's custody in `live()`**
+- [x] **Step 6: Wire the display to the session's custody in `live()`**
 
 In `Sources/PixelClockTilesApp/AppModel.swift`, inside `static func live(…)` only:
 
@@ -1826,7 +1858,7 @@ with
 
 If Phase 1 has changed how `store` or `device` is built inside `live()`, keep its lines and use whatever local it names. Nothing else in `AppModel.swift` changes in this task.
 
-- [ ] **Step 7: Rename the display's construction in the moved tests**
+- [x] **Step 7: Rename the display's construction in the moved tests**
 
 ```bash
 perl -pi -e 's/VPNLampDisplay\(clock: clock\)/VPNLampDisplay(indicators: IndicatorCustody(lamps: clock))/g' \
@@ -1837,7 +1869,7 @@ perl -pi -e 's/VPNLampDisplay\(clock: clock\)/VPNLampDisplay(indicators: Indicat
 Run: `grep -rn "VPNLampDisplay(clock" Sources Tests`
 Expected: no output.
 
-- [ ] **Step 8: Run the tests**
+- [x] **Step 8: Run the tests**
 
 Run: `swift test --filter 'IndicatorCustodyTests|IndicatorCustodyWiringTests|VPNLampDisplayTests|VPNIndicatorWiringTests'`
 Expected: PASS, 3 + 1 + 6 + 4 = 14 tests.
@@ -1851,14 +1883,17 @@ Expected: `0`.
 Run: `swift test`
 Expected: PASS, `N0 + 18` tests.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
-git add -A Sources Tests
+git add Sources/PixelClockKit/Awtrix/IndicatorCustody.swift Sources/PixelClockKit/Awtrix/AwtrixClockSession.swift \
+  Sources/PixelClockTilesApp/VPNLampDisplay.swift Sources/PixelClockTilesApp/AppModel.swift \
+  Tests/PixelClockTilesAppTests/VPNLampDisplayTests.swift Tests/PixelClockTilesAppTests/VPNIndicatorWiringTests.swift \
+  Tests/PixelClockKitTests/IndicatorCustodyTests.swift Tests/PixelClockTilesAppTests/IndicatorCustodyWiringTests.swift
 git commit -m "refactor: the AWTRIX session keeps custody of the indicator lamps"
 ```
 
-- [ ] **Step 10: Mutation checks**
+- [x] **Step 10: Mutation checks**
 
 One at a time; revert each with `git restore <file>`.
 
@@ -1885,7 +1920,7 @@ No production code. The task checks that the phase changed no behaviour and no a
 - Consumes: `BASE` and `N0` from Task 0.
 - Produces: nothing downstream reads.
 
-- [ ] **Step 1: Build and count**
+- [x] **Step 1: Build and count**
 
 Run: `swift build 2>&1 | grep -c "warning:"`
 Expected: `0`.
@@ -1896,7 +1931,7 @@ Expected: `N0 + 18` — 6 chain, 3 delivery, 5 face, 3 custody, 1 wiring.
 Run: `swift test`
 Expected: PASS.
 
-- [ ] **Step 2: No assertion changed except by the two renames**
+- [x] **Step 2: No assertion changed except by the two renames**
 
 ```bash
 git diff -M --diff-filter=MR "$BASE"..HEAD -- Tests \
@@ -1911,18 +1946,18 @@ Expected: no output. Every changed assertion line is a removed/added pair that d
 Run: `git diff -M --diff-filter=D --name-only "$BASE"..HEAD -- Tests`
 Expected: no output. No test file was deleted.
 
-- [ ] **Step 3: The risky files were left alone**
+- [x] **Step 3: The risky files were left alone**
 
 Run: `git diff --stat "$BASE"..HEAD -- Sources/PixelClockTilesApp/MenuPanel.swift`
 Expected: no output.
 
 Run: `git diff "$BASE"..HEAD -- Sources/PixelClockTilesApp/AppModel.swift | grep '^@@'`
-Expected: hunks only at `ConnectorRunning` / its conformance, `AnecdoteReplaying`, the three doc comments renamed in Task 2, and `live()`. A hunk inside any other method is a parity breach.
+Expected: hunks only at `ConnectorRunning` (its doc comment, `deliver`) / its conformance, `AnecdoteReplaying`, the other three doc comments renamed in Task 2 (`outstanding`'s, and two that say the session answers `.skipped`), and `live()`. A hunk inside any other method is a parity breach.
 
 Run: `grep -rnw -e ConnectorOutput -e ConnectorHost -e 'VPNLampDisplay(clock' Sources Tests`
 Expected: no output.
 
-- [ ] **Step 4: Append the handoff note**
+- [x] **Step 4: Append the handoff note**
 
 Append to the end of `docs/HANDOFF.md`:
 
@@ -1957,9 +1992,17 @@ Owed at the hardware (the desk clock is now a TC002, so this waits for a TC001
 on the network): the weather app, the Claude app and an anecdote banner look as
 they did before Phase 2; the VPN corners follow a Focus switch; a clean quit
 removes the apps, restores the overlay and darkens both corners.
+
+Found while running the suite, and not changed by Phase 2:
+`nothingButTheAnecdotesEverPutsSoundInTheRoom` produces every connector
+`live()` registers, so it reads the real login keychain through
+`KeychainClaudeCredentials`. Once, with the machine under heavy load, it sat in
+`SecItemCopyMatching` for more than ten minutes and held a serial run with it;
+alone, later, it passed in five seconds. A serial run that stops printing is
+worth sampling for that frame before anything else is suspected.
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/HANDOFF.md

@@ -2,18 +2,33 @@ import Foundation
 
 /// One reading of the weekly allowance.
 ///
-/// `utilization` is a percentage the service computed, not something derived
-/// here, and it is allowed past a hundred: an overage channel keeps serving
-/// after the bar is full, and a reading of a hundred and forty is a true thing
-/// to say about a week.
+/// `utilization` is a percentage Claude reported, not something derived here,
+/// and it is allowed past a hundred: an overage channel keeps serving after the
+/// bar is full, and a reading of a hundred and forty is a true thing to say
+/// about a week.
 public struct ClaudeUsageReading: Sendable, Equatable {
     public let utilization: Int
-    /// When this week's bar starts again, when the service says so.
+    /// When this week's bar starts again, when the source says so.
     public let resetsAt: Date?
+    /// The rolling five-hour window, when the source reported one. Carried, and
+    /// drawn by no face yet.
+    public let fiveHour: ClaudeUsageWindow?
+    /// When the document this came from was written: its modification time.
+    /// Nil for a reading that did not come from a document.
+    public let observedAt: Date?
 
-    public init(utilization: Int, resetsAt: Date?) {
+    /// The two newer fields default to nil, so a reading built from a figure
+    /// alone — every drawing test, every face — reads as it always did.
+    public init(
+        utilization: Int,
+        resetsAt: Date?,
+        fiveHour: ClaudeUsageWindow? = nil,
+        observedAt: Date? = nil
+    ) {
         self.utilization = utilization
         self.resetsAt = resetsAt
+        self.fiveHour = fiveHour
+        self.observedAt = observedAt
     }
 
     /// The weekly bar out of an answer from `/api/oauth/usage`.
@@ -45,6 +60,8 @@ public struct ClaudeUsageReading: Sendable, Equatable {
         // this one value, so rounding here is what keeps them from disagreeing.
         self.utilization = Int(utilization.rounded())
         self.resetsAt = (weekly["resets_at"] as? String).flatMap(Self.moment(from:))
+        self.fiveHour = nil
+        self.observedAt = nil
     }
 
     /// The name the service gives the weekly bar. Written down once, here,
@@ -58,5 +75,17 @@ public struct ClaudeUsageReading: Sendable, Equatable {
         let withFraction = ISO8601DateFormatter()
         withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return withFraction.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+    }
+}
+
+/// One of Claude Code's rate-limit windows: how much of it is gone, and when it
+/// starts again.
+public struct ClaudeUsageWindow: Sendable, Equatable {
+    public let utilization: Int
+    public let resetsAt: Date
+
+    public init(utilization: Int, resetsAt: Date) {
+        self.utilization = utilization
+        self.resetsAt = resetsAt
     }
 }

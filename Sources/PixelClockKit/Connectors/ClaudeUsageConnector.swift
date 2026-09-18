@@ -54,11 +54,16 @@ public struct ClaudeUsageConnector: Connector {
         self.showsNow = showsNow
     }
 
-    public func produce() async throws -> ConnectorOutput {
+    /// The reporter's reading, or the reason there is none.
+    public func read() async throws -> ClaudeUsageReading {
         // The gate first, so a poll outside working hours costs no request.
         guard showsNow() else { throw Failure.outOfFocus }
         guard let reading = try await reporter.read() else { throw Failure.noReading }
-        return Self.output(for: reading)
+        return reading
+    }
+
+    public var awtrixFace: AwtrixFace<ClaudeUsageReading> {
+        AwtrixFace { Self.output(for: $0) }
     }
 
     public enum Failure: Error, Sendable, Equatable {
@@ -75,11 +80,11 @@ public struct ClaudeUsageConnector: Connector {
 
     /// What a reading looks like on the matrix.
     ///
-    /// Separated from `produce` so the drawing can be tested against a figure
+    /// Separated from `read()` so the drawing can be tested against a figure
     /// rather than against a network. Everything decided here is decided from
     /// the one number.
-    public static func output(for reading: ClaudeUsageReading) -> ConnectorOutput {
-        ConnectorOutput(
+    public static func output(for reading: ClaudeUsageReading) -> AwtrixDelivery {
+        AwtrixDelivery(
             // The true figure, including one past a hundred. The bar clamps
             // because the firmware has nowhere to draw the rest; the text has
             // no such excuse, and hiding an overage from the reader is not the

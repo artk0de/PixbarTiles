@@ -1,6 +1,12 @@
 import AVFoundation
 import Foundation
 
+/// Plays prepared audio on the Mac. The clock cannot decode audio, so every
+/// spoken thing this app produces comes out of the local speakers.
+public protocol AudioPlaying: Sendable {
+    func play(_ clips: [SpokenClip]) async
+}
+
 /// One clip's playback: as much of `AVAudioPlayer` as the player below uses.
 ///
 /// Internal, and it exists for one reason — the rules worth pinning here are
@@ -24,7 +30,7 @@ extension AVAudioPlayer: ClipPlaying {}
 ///
 /// One caller at a time. Two overlapping `play` calls do not corrupt anything —
 /// there is no shared state to corrupt — but they do talk over each other, and
-/// keeping them apart belongs to whoever is scheduling deliveries. `ConnectorHost`
+/// keeping them apart belongs to whoever is scheduling deliveries. `AwtrixClockSession`
 /// is that, and it serialises them for its own reasons.
 public actor SequentialAudioPlayer: AudioPlaying {
     private let load: @Sendable (URL) throws -> any ClipPlaying

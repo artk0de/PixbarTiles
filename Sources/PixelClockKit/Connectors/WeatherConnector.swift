@@ -13,7 +13,7 @@ import Foundation
 ///
 /// A source of content like every other connector: it reaches the weather
 /// service and never the clock. What is written to the device, and what has to
-/// be remembered before it is written, belongs to `ConnectorHost` and
+/// be remembered before it is written, belongs to `AwtrixClockSession` and
 /// `DeviceCustody`.
 public struct WeatherConnector: Connector {
     /// The name this app's reading lives under in the device's loop. One name,
@@ -68,7 +68,7 @@ public struct WeatherConnector: Connector {
     public let isAmbient = true
 
     private let source: OpenMeteoSource
-    /// Read on every produce rather than held, so a location typed into the
+    /// Read on every read rather than held, so a location typed into the
     /// settings takes effect at the next poll instead of at the next launch.
     private let location: @Sendable () -> Coordinates
 
@@ -77,8 +77,22 @@ public struct WeatherConnector: Connector {
         self.location = location
     }
 
-    public func produce() async throws -> ConnectorOutput {
-        let reading = try await source.reading(at: location())
+    /// Goes out for the sky where the clock is. Nothing is drawn here; see
+    /// `output(for:)`.
+    public func read() async throws -> WeatherReading {
+        try await source.reading(at: location())
+    }
+
+    public var awtrixFace: AwtrixFace<WeatherReading> {
+        AwtrixFace { Self.output(for: $0) }
+    }
+
+    /// What a reading looks like on the matrix.
+    ///
+    /// Separated from `read()` so the drawing can be tested against a reading
+    /// rather than against a network, as `ClaudeUsageConnector.output(for:)`
+    /// already is.
+    static func output(for reading: WeatherReading) -> AwtrixDelivery {
         let theme = WeatherTheme(code: reading.code, isDay: reading.isDay)
         // Two quantities in one element: the digits are the AIR temperature,
         // which is what a thermometer would agree with, and the colour is what
@@ -87,7 +101,7 @@ public struct WeatherConnector: Connector {
         // temperature when the service omitted the felt one, because a reading
         // with no colour is drawn in whatever the previous app left behind.
         let felt = reading.apparentTemperature ?? reading.temperature
-        return ConnectorOutput(
+        return AwtrixDelivery(
             text: Self.degrees(reading.temperature),
             // The sky, drawn inside the app rather than over the whole matrix.
             // The overlay below already carries it to the device, but four

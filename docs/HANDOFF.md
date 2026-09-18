@@ -694,3 +694,42 @@ directly. Phase 3's TC002 images included.
 
 The ledger carries roughly forty deferred minor findings from the task reviews,
 each with the reason it was deferred. The final whole-branch review triages them.
+
+## PixelClockTiles Phase 2 — what it leaves for later phases
+
+Phase 2 (`docs/superpowers/plans/2026-09-18-pixelclocktiles-phase2-ports-awtrix-parity.md`)
+changed no behaviour. What it deliberately did not do, so the next phases do not
+look for it:
+
+- `ConnectorRunning` is still the app's name for a session; the kit type is
+  `AwtrixClockSession`. Phase 4 renames the protocol when `AppModel` holds a
+  session per clock.
+- `DeliveryChain` is keyed by `String`. Phase 4 makes it generic over `TileKey`.
+- Health — `DeviceMonitor`, `BatteryTrajectory`, relocation — is still in
+  `AppModel`. It moves into the session in Phase 4.
+- `AwtrixScene` is a struct with a `surface`, not the spec's enum. `.indicator`
+  joins it in Phase 4 with the VPN tile's face, and indicator writes must stay
+  off the delivery chain there too.
+- `awtrixFace` is non-optional. Phase 3b adds `ulanziFace` as optional with a
+  `nil` default in a protocol extension.
+- No `Config` on `Connector`. It lands in Phase 4 with the weather tile's
+  location, its first reader.
+- `produce()` is the AWTRIX program. Phase 3b names the TC002 counterpart.
+- The drawing tests stayed in their connector test files; Phase 3b moves them
+  when TC002 face tests land beside them.
+- `VPNLampDisplayTests` still pins lamp custody through the app's two corners.
+  When Phase 4 deletes `VPNLampDisplay`, `IndicatorCustodyTests` carries the
+  rules, and the generic "put out every lit lamp on quit" is Phase 4's to add.
+
+Owed at the hardware (the desk clock is now a TC002, so this waits for a TC001
+on the network): the weather app, the Claude app and an anecdote banner look as
+they did before Phase 2; the VPN corners follow a Focus switch; a clean quit
+removes the apps, restores the overlay and darkens both corners.
+
+Found while running the suite, and not changed by Phase 2:
+`nothingButTheAnecdotesEverPutsSoundInTheRoom` produces every connector
+`live()` registers, so it reads the real login keychain through
+`KeychainClaudeCredentials`. Once, with the machine under heavy load, it sat in
+`SecItemCopyMatching` for more than ten minutes and held a serial run with it;
+alone, later, it passed in five seconds. A serial run that stops printing is
+worth sampling for that frame before anything else is suspected.

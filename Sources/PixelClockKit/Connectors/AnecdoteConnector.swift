@@ -267,13 +267,14 @@ public struct AnecdoteConnector: Connector {
         self.now = now
     }
 
-    /// Pops an anecdote that was prepared earlier.
+    /// Pops an anecdote that was prepared earlier, and retires it: reading one
+    /// is playing it.
     ///
     /// This runs on a timer and is meant to be instant, so it does not top the
     /// queue up — `topUpIfNeeded` does, off this path. The one exception is an
     /// empty queue: with nothing to pop there is nothing else to show, so
     /// waiting for a batch buys the only anecdote there is.
-    public func produce() async throws -> ConnectorOutput {
+    public func read() async throws -> PreparedAnecdote {
         var anecdote = await nextPlayable()
         if anecdote == nil {
             // One, not a batch. A cold first launch would otherwise pay the
@@ -284,8 +285,11 @@ public struct AnecdoteConnector: Connector {
         }
         guard let anecdote else { throw Failure.nothingPrepared }
         await queue.retire(anecdote)
+        return anecdote
+    }
 
-        return output(for: anecdote)
+    public var awtrixFace: AwtrixFace<PreparedAnecdote> {
+        AwtrixFace { self.output(for: $0) }
     }
 
     /// What playing this anecdote puts on the clock.
@@ -298,10 +302,10 @@ public struct AnecdoteConnector: Connector {
     ///
     /// Nothing here touches the queue, and that is the rule rather than an
     /// accident: `retire` is what makes an anecdote played, it belongs to
-    /// `produce()` above, and a replay must not spend an anecdote nobody has
+    /// `read()` above, and a replay must not spend an anecdote nobody has
     /// heard.
-    public func output(for anecdote: PreparedAnecdote) -> ConnectorOutput {
-        ConnectorOutput(
+    public func output(for anecdote: PreparedAnecdote) -> AwtrixDelivery {
+        AwtrixDelivery(
             text: Self.banner,
             icon: Self.laughIcon,
             jingle: Self.nokiaJingle,

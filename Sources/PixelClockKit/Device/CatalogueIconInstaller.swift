@@ -1,5 +1,10 @@
 import Foundation
 
+public protocol IconInstalling: Sendable {
+    /// Returns the name the device will accept in a notify payload.
+    func ensureInstalled(_ ref: IconReference) async throws -> String
+}
+
 /// Installs icons on demand, skipping ones the device already holds.
 ///
 /// Two hosts, one transport: the listing and the upload go to the clock, the

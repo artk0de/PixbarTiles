@@ -23,7 +23,7 @@ private func working(_ mode: String) -> StubFocusStatus {
     let clock = RecordingLamps()
     let subject = testModel(
         focus: focusGate(working(VPNIndicatorPolicy.workFocus)),
-        vpnLamps: VPNLampDisplay(clock: clock),
+        vpnLamps: VPNLampDisplay(indicators: IndicatorCustody(lamps: clock)),
         // The personal tunnel is up and the work one is not, which is also the
         // case that catches a policy wired to the wrong boolean.
         vpnPresence: machine(personalTunnel)
@@ -48,7 +48,7 @@ private func working(_ mode: String) -> StubFocusStatus {
     let clock = RecordingLamps()
     let subject = testModel(
         focus: focusGate(working(VPNIndicatorPolicy.workFocus)),
-        vpnLamps: VPNLampDisplay(clock: clock),
+        vpnLamps: VPNLampDisplay(indicators: IndicatorCustody(lamps: clock)),
         vpnPresence: machine(workTunnel, personalTunnel)
     )
 
@@ -66,7 +66,7 @@ private func working(_ mode: String) -> StubFocusStatus {
     let clock = RecordingLamps()
     let subject = testModel(
         focus: focusGate(working("com.apple.sleep.sleep-mode")),
-        vpnLamps: VPNLampDisplay(clock: clock),
+        vpnLamps: VPNLampDisplay(indicators: IndicatorCustody(lamps: clock)),
         vpnPresence: machine(personalTunnel)
     )
 
@@ -80,7 +80,7 @@ private func working(_ mode: String) -> StubFocusStatus {
     let clock = RecordingLamps()
     let subject = testModel(
         focus: focusGate(working(VPNIndicatorPolicy.workFocus)),
-        vpnLamps: VPNLampDisplay(clock: clock),
+        vpnLamps: VPNLampDisplay(indicators: IndicatorCustody(lamps: clock)),
         vpnPresence: machine(personalTunnel)
     )
     subject.refreshVPNIndicators()

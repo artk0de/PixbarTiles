@@ -4,7 +4,7 @@ import Testing
 @testable import PixelClockKit
 
 // The doubles these tests build a host out of — `StubConnector`, `BoomError`,
-// `SpyAudio`, `StubIconInstaller` — are declared in `ConnectorHostTests.swift`.
+// `SpyAudio`, `StubIconInstaller` — are declared in `AwtrixClockSessionTests.swift`.
 //
 // One rule lives over there rather than here: a run torn down AFTER it reached
 // the device needs the gated audio and the cancellation-aware transport, which
@@ -19,8 +19,8 @@ import Testing
 private func hostOver(
     _ registry: ConnectorRegistry,
     store: any SettingsStore = InMemorySettingsStore()
-) -> ConnectorHost {
-    ConnectorHost(
+) -> AwtrixClockSession {
+    AwtrixClockSession(
         device: AwtrixDevice(host: "10.0.0.5", transport: RecordingTransport()),
         registry: registry,
         store: store,
@@ -39,7 +39,7 @@ private func failingConnector() -> StubConnector {
 /// that asserts "the count did not move" is worthless if the count was zero to
 /// begin with, so the arrangement is checked before the rule is.
 private func drive(
-    _ host: ConnectorHost, toFailureCount count: Int, registry: ConnectorRegistry
+    _ host: AwtrixClockSession, toFailureCount count: Int, registry: ConnectorRegistry
 ) async {
     registry.register(failingConnector())
     for _ in 0..<count { _ = await host.runOnce(connectorId: "stub") }

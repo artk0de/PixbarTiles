@@ -217,3 +217,72 @@ private struct StatusDocumentFolder {
 
     #expect(try await reporter.read() == nil)
 }
+
+// MARK: - A window that has reset
+
+/// A time a test can move. `@unchecked` because every access goes through
+/// `lock`; `Mutex` would say the same thing and is macOS 15+.
+private final class MovableNow: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Date
+
+    init(_ start: Date) { current = start }
+
+    var value: Date {
+        get { lock.withLock { current } }
+        set { lock.withLock { current = newValue } }
+    }
+}
+
+// Once the week's reset has passed, the figure describes a window that is over,
+// and spending since then is unknown. Zero would be a calm, confident lie, so
+// the answer is nothing, and the tile leaves the clock at the end of its
+// lifetime. The boundary is the reset itself: at that instant the week is over.
+@Test func aWeekThatHasResetIsNoReading() async throws {
+    let reset = Date(timeIntervalSince1970: 1_738_857_600)
+    let folder = try StatusDocumentFolder()
+    defer { folder.remove() }
+
+    for (resetsAt, answers) in [(1_738_857_599, false), (1_738_857_600, false), (1_738_857_601, true)] {
+        try folder.write(
+            #"{"rate_limits":{"seven_day":{"used_percentage":41,"resets_at":\#(resetsAt)}}}"#
+        )
+        // A reporter per case, so no memory from the case before stands in.
+        let reporter = StatusLineClaudeUsageReporter(document: folder.document, now: { reset })
+        #expect((try await reporter.read() != nil) == answers, "resets_at \(resetsAt)")
+    }
+}
+
+// The same rule applies to a week held in memory. Claude Code drops a window
+// once it resets, so the document after a reset has no week in it, and the
+// remembered one must not stand in for it.
+@Test func aRememberedWeekThatHasSinceResetIsNoReading() async throws {
+    let now = MovableNow(beforeEitherReset)
+    let folder = try StatusDocumentFolder()
+    defer { folder.remove() }
+    let reporter = StatusLineClaudeUsageReporter(document: folder.document, now: { now.value })
+    try folder.write(statusLineDocument)
+    #expect(try await reporter.read() != nil)
+
+    try folder.write(#"{"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1738900000}}}"#)
+    now.value = Date(timeIntervalSince1970: 1_738_857_600)
+
+    #expect(try await reporter.read() == nil)
+}
+
+// A five-hour window that has reset is dropped, and the week still reads. Only
+// the week decides whether there is a reading at all.
+@Test func anExpiredFiveHourWindowIsDroppedAndTheWeekStillReads() async throws {
+    let folder = try StatusDocumentFolder()
+    defer { folder.remove() }
+    try folder.write(statusLineDocument)
+    let betweenTheResets = Date(timeIntervalSince1970: 1_738_430_000)
+    let reporter = StatusLineClaudeUsageReporter(
+        document: folder.document, now: { betweenTheResets }
+    )
+
+    let reading = try #require(await reporter.read())
+
+    #expect(reading.utilization == 41)
+    #expect(reading.fiveHour == nil)
+}

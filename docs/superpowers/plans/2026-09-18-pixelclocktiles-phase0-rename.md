@@ -73,6 +73,7 @@ fixture in `HistoryHeightTests`.
 - Move: `Sources/AwtrixKit/` → `Sources/PixelClockKit/`, `Sources/AwtrixConnectorsApp/` → `Sources/PixelClockTilesApp/`, `Tests/AwtrixKitTests/` → `Tests/PixelClockKitTests/`, `Tests/AwtrixConnectorsAppTests/` → `Tests/PixelClockTilesAppTests/`
 - Move: `Sources/PixelClockKit/AwtrixKit.swift` → `Sources/PixelClockKit/PixelClockKit.swift`
 - Modify: `Package.swift`, every `.swift` file under `Sources/` and `Tests/` that names `AwtrixKit` or `AwtrixConnectorsApp`, `Scripts/make_parser_parity_corpus.py`
+- Modify: `Scripts/bundle.sh:18-19` — `--product` and the binary path only, so the script builds at this commit too
 
 **Interfaces:**
 - Produces: module `PixelClockKit`, executable target `PixelClockTilesApp`, test targets `PixelClockKitTests` and `PixelClockTilesAppTests`, package `PixelClockTiles`, `public enum PixelClockKit { static let version }`, `@main struct PixelClockTilesApp`.
@@ -114,7 +115,7 @@ Run: `swift test` — expected 999 tests passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources Tests Package.swift Scripts/make_parser_parity_corpus.py
+git add Sources Tests Package.swift Scripts/make_parser_parity_corpus.py Scripts/bundle.sh
 git commit -m "refactor: rename the package to PixelClockTiles and the kit to PixelClockKit"
 ```
 
@@ -181,6 +182,8 @@ count as already present and be dropped.
 - [ ] **Step 1: Write the failing tests.** Each test uses two fresh suites (`carry-over-old-<uuid>`, `carry-over-new-<uuid>`), both removed in `defer`:
   - every key of the old domain arrives in the new one, with its type (string, integer, bool, data);
   - a key the new domain already holds keeps its value;
+  - a key the new domain only has as a registered default is still carried over (the key is unique to the test: the registration domain is process-wide and cannot be taken back);
+  - a copy cut short writes only what is still missing, marker last;
   - a second run copies nothing, even after the old domain gained a key;
   - the old domain is byte-for-byte what it was;
   - `writes` puts the marker last, and returns nothing once the marker is present;

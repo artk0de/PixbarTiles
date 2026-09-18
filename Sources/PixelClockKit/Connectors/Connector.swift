@@ -227,3 +227,28 @@ extension Connector {
     /// ambient out loud loses one.
     public var isAmbient: Bool { false }
 }
+
+/// Work a connector does away from the delivery path.
+///
+/// Two things belong here, and they are the same pass: restocking whatever the
+/// connector hands out, and confirming that what it already handed out reached
+/// disk. Neither may sit inside `runOnce` — restocking can cost a model load
+/// and a minute of synthesis, which is exactly the bill the timer tick must not
+/// pay, and the durability question is only worth asking once the run that
+/// mutated the state is over.
+///
+/// Optional by design: a connector that holds nothing and prepares nothing has
+/// no background pass, and should not be made to declare an empty one.
+public protocol ConnectorMaintaining: Sendable {
+    func maintain() async throws
+}
+
+/// How one background pass went. Separate from `RunResult` because `delivered`
+/// would be a lie about a pass that never goes near the clock.
+public enum MaintenanceResult: Sendable, Equatable {
+    case completed
+    /// Switched off, or a connector with no background work to do.
+    case skipped
+    case cancelled
+    case failed(String)
+}

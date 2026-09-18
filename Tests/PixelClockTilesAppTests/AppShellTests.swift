@@ -210,7 +210,7 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
 //     measurement. The count below is what says at least one real output was
 //     inspected.
 //   - Anything a connector hands to the device that is not carried on its
-//     output — this reads the value `produce()` returns, and `ConnectorHost` is
+//     output — this reads the value `produce()` returns, and `AwtrixClockSession` is
 //     what turns it into sound.
 @Test @MainActor func nothingButTheAnecdotesEverPutsSoundInTheRoom() async throws {
     let suite = "app-model-\(UUID().uuidString)"
@@ -356,7 +356,7 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
 
 // The same argument one field over, and the one the final review found still
 // open: the record of the overlay this app borrowed has to outlive the process
-// that borrowed it. `live()` handing `ConnectorHost` the in-memory default
+// that borrowed it. `live()` handing `AwtrixClockSession` the in-memory default
 // meant a force quit — or any teardown that outran the quit budget — left the
 // user's own overlay unrecoverable, and nothing in the suite could see it.
 @Test @MainActor func whatAnEarlierLaunchBorrowedIsStillGivenBackInThisOne() async throws {

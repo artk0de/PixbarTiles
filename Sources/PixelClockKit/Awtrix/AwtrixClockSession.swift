@@ -1,44 +1,14 @@
 import Foundation
 
-/// Plays prepared audio on the Mac. The clock cannot decode audio, so every
-/// spoken thing this app produces comes out of the local speakers.
-public protocol AudioPlaying: Sendable {
-    func play(_ clips: [SpokenClip]) async
-}
-
-public protocol IconInstalling: Sendable {
-    /// Returns the name the device will accept in a notify payload.
-    func ensureInstalled(_ ref: IconReference) async throws -> String
-}
-
-/// Work a connector does away from the delivery path.
+/// The AWTRIX clock's session: everything a connector must not care about —
+/// enablement, delivery to the device, custody of what was borrowed, and
+/// containment of failures — for the one clock this app drives.
 ///
-/// Two things belong here, and they are the same pass: restocking whatever the
-/// connector hands out, and confirming that what it already handed out reached
-/// disk. Neither may sit inside `runOnce` — restocking can cost a model load
-/// and a minute of synthesis, which is exactly the bill the timer tick must not
-/// pay, and the durability question is only worth asking once the run that
-/// mutated the state is over.
-///
-/// Optional by design: a connector that holds nothing and prepares nothing has
-/// no background pass, and should not be made to declare an empty one.
-public protocol ConnectorMaintaining: Sendable {
-    func maintain() async throws
-}
-
-/// How one background pass went. Separate from `RunResult` because `delivered`
-/// would be a lie about a pass that never goes near the clock.
-public enum MaintenanceResult: Sendable, Equatable {
-    case completed
-    /// Switched off, or a connector with no background work to do.
-    case skipped
-    case cancelled
-    case failed(String)
-}
-
-/// Owns everything a connector must not care about: enablement, delivery to the
-/// device, and containment of failures.
-public actor ConnectorHost {
+/// Its deliveries take their turn in a `DeliveryChain`, which is what keeps two
+/// of them off the clock at once and what the backoff is read from. What stays
+/// here is what only an AWTRIX clock has: the notify and custom-app payloads,
+/// the held banner and its release, the icon installer, and `DeviceCustody`.
+public actor AwtrixClockSession {
     private let device: AwtrixDevice
     private let registry: ConnectorRegistry
     private let store: any SettingsStore

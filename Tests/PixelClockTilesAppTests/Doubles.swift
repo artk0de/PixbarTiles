@@ -628,7 +628,7 @@ final class QueueingHost: ConnectorRunning, @unchecked Sendable {
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }
 
-/// Answers `.cancelled` when its run is cancelled, as `ConnectorHost` does.
+/// Answers `.cancelled` when its run is cancelled, as `AwtrixClockSession` does.
 final class CancellingHost: ConnectorRunning, @unchecked Sendable {
     private let lock = NSLock()
     private var arrived = 0
@@ -657,7 +657,7 @@ final class CancellingHost: ConnectorRunning, @unchecked Sendable {
 
 // MARK: - A real host, with the two collaborators a background pass never uses
 
-/// Plays nothing. `ConnectorHost.maintain` never reaches the audio path, and a
+/// Plays nothing. `AwtrixClockSession.maintain` never reaches the audio path, and a
 /// test that wired the shipped player in would have `swift test` speaking.
 struct SilentAudioPlayer: AudioPlaying {
     func play(_ clips: [SpokenClip]) async {}
@@ -709,7 +709,7 @@ func waitForQueue(
 /// write the same words, so a wait on `lastResults` returns before the run that
 /// is being waited for has started.
 func waitForFailures(
-    of id: String, on host: ConnectorHost, toReach target: Int, limit: TimeInterval = 2
+    of id: String, on host: AwtrixClockSession, toReach target: Int, limit: TimeInterval = 2
 ) async -> Int {
     let deadline = Date().addingTimeInterval(limit)
     var count = await host.consecutiveFailures(connectorId: id)
@@ -817,12 +817,12 @@ func modelOverRealHost(
     sleep: @escaping AppModel.Sleeping = parked,
     pollSleep: @escaping AppModel.Sleeping = parked,
     micSleep: @escaping AppModel.Sleeping = parked
-) -> (model: AppModel, host: ConnectorHost) {
+) -> (model: AppModel, host: AwtrixClockSession) {
     let registry = ConnectorRegistry()
     registry.register(connector)
     let store = InMemorySettingsStore()
     let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
-    let host = ConnectorHost(
+    let host = AwtrixClockSession(
         device: device,
         registry: registry,
         store: store,

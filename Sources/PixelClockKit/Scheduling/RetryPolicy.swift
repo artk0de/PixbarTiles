@@ -9,8 +9,8 @@ import Foundation
 public struct RetryPolicy: Sendable {
     /// What the first failure is worth. Every one after doubles it.
     public let base: TimeInterval
-    /// The ceiling the doubling runs into. The host clips again, to the
-    /// connector's own interval — see `ConnectorHost.nextDelay(connectorId:interval:)`.
+    /// The ceiling the doubling runs into. The chain clips again, to the
+    /// connector's own interval — see `DeliveryChain.nextDelay(connectorId:interval:)`.
     public let cap: TimeInterval
 
     public init(base: TimeInterval = 30, cap: TimeInterval = 1800) {

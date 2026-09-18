@@ -3,9 +3,9 @@ import Testing
 @testable import PixelClockKit
 
 // The chain on its own, with no clock behind it. Everything here was already
-// true of `ConnectorHost`, and is pinned there too, through a device. These say
-// it of the chain alone, because the TC002's session will hold one without the
-// AWTRIX session's tests around it.
+// true of `AwtrixClockSession`, and is pinned there too, through a device.
+// These say it of the chain alone, because the TC002's session will hold one
+// without the AWTRIX session's tests around it.
 
 /// Parks work handed to the chain until the test lets it go.
 ///

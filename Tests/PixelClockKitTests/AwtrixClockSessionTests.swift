@@ -280,10 +280,10 @@ private func makeHost(
     store: any SettingsStore = InMemorySettingsStore(),
     audio: any AudioPlaying = SpyAudio(),
     iconInstaller: any IconInstalling = StubIconInstaller()
-) -> ConnectorHost {
+) -> AwtrixClockSession {
     let registry = ConnectorRegistry()
     registry.register(connector)
-    return ConnectorHost(
+    return AwtrixClockSession(
         device: AwtrixDevice(host: "10.0.0.5", transport: transport),
         registry: registry,
         store: store,
@@ -861,7 +861,7 @@ private func staysFalse(
     failing.error = BoomError()
     registry.register(failing)
     let audio = GatedAudio()
-    let host = ConnectorHost(
+    let host = AwtrixClockSession(
         device: AwtrixDevice(host: "10.0.0.5", transport: CancellationAwareTransport()),
         registry: registry,
         store: InMemorySettingsStore(),

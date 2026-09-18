@@ -13,7 +13,7 @@ import Foundation
 ///
 /// A source of content like every other connector: it reaches the weather
 /// service and never the clock. What is written to the device, and what has to
-/// be remembered before it is written, belongs to `ConnectorHost` and
+/// be remembered before it is written, belongs to `AwtrixClockSession` and
 /// `DeviceCustody`.
 public struct WeatherConnector: Connector {
     /// The name this app's reading lives under in the device's loop. One name,

@@ -144,4 +144,18 @@ public struct PixelCanvas: Sendable, Equatable {
             cursor += 4 * scale
         }
     }
+
+    /// The whole canvas as one full-screen db command — how every face ships
+    /// (D2). Pixels packed 0x00RRGGBB, row-major from the top-left corner.
+    public func drawCommands() -> UlanziDraw {
+        var packed: [UInt32] = []
+        packed.reserveCapacity(Self.width * Self.height)
+        for y in 0..<Self.height {
+            for x in 0..<Self.width {
+                let p = self[x, y]
+                packed.append(UInt32(p.red) << 16 | UInt32(p.green) << 8 | UInt32(p.blue))
+            }
+        }
+        return .bitmap(width: Self.width, height: Self.height, pixels: packed, at: .zero)
+    }
 }

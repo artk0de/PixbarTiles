@@ -1,0 +1,247 @@
+// Tests/PixelClockKitTests/ClaudeCodeStatusLineTests.swift
+import Foundation
+import Testing
+@testable import PixelClockKit
+
+// Connecting edits one key of somebody else's settings file, so every test
+// here works on a copy: a settings file under a temporary home, a hook folder
+// with a space in its name, and a defaults suite of its own. None of them
+// reads or writes the settings of whoever runs the suite.
+
+private struct ClaudeLinkScratch {
+    let root: URL
+    let suite: String
+    let defaults: UserDefaults
+
+    init() throws {
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("claude-link-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        suite = "claude-link-\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suite)!
+    }
+
+    var settings: URL { root.appendingPathComponent(".claude/settings.json") }
+    var directory: URL { root.appendingPathComponent("Application Support/PixelClockTiles") }
+    var link: ClaudeCodeStatusLine {
+        ClaudeCodeStatusLine(settingsFile: settings, directory: directory, defaults: defaults)
+    }
+
+    func writeSettings(_ text: String) throws {
+        try FileManager.default.createDirectory(
+            at: settings.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try Data(text.utf8).write(to: settings)
+    }
+
+    func settingsBytes() throws -> Data {
+        try Data(contentsOf: settings)
+    }
+
+    func settingsObject() throws -> [String: Any] {
+        try #require(try JSONSerialization.jsonObject(with: settingsBytes()) as? [String: Any])
+    }
+
+    func mode(of url: URL) throws -> Int? {
+        try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: root)
+        defaults.removePersistentDomain(forName: suite)
+    }
+}
+
+/// A settings file with the kinds of keys a real one carries.
+private let claudeSettings = #"""
+{
+  "model": "opus",
+  "permissions": { "allow": ["Bash(ls:*)"], "deny": [] },
+  "env": { "DISABLE_TELEMETRY": "1" },
+  "includeCoAuthoredBy": false,
+  "cleanupPeriodDays": 30
+}
+"""#
+
+/// A settings file with a status line of its own, carrying the optional fields
+/// Claude Code documents.
+private let settingsWithAStatusLine = #"""
+{
+  "model": "opus",
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh",
+    "padding": 2,
+    "refreshInterval": 5
+  }
+}
+"""#
+
+// MARK: - Connect
+
+@Test func connectingWithNoSettingsFileCreatesOneHoldingOnlyTheStatusLine() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+
+    try scratch.link.connect()
+
+    let root = try scratch.settingsObject()
+    #expect(root.keys.sorted() == ["statusLine"])
+    let line = try #require(root["statusLine"] as? [String: Any])
+    #expect(line["type"] as? String == "command")
+    #expect(line["command"] as? String
+        == ClaudeCodeStatusLine.command(hook: scratch.link.hook, chaining: nil))
+    // Nothing was replaced, so there is nothing to put back.
+    #expect(scratch.defaults.object(forKey: ClaudeCodeStatusLine.previousKey) == nil)
+}
+
+@Test func theHookIsInstalledAsTheShippedScriptForItsOwnerAlone() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+
+    try scratch.link.connect()
+
+    #expect(try Data(contentsOf: scratch.link.hook) == Data(ClaudeCodeStatusLine.script.utf8))
+    #expect(try scratch.mode(of: scratch.link.hook) == 0o700)
+}
+
+@Test func connectingKeepsEveryOtherKeyAsItWas() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(claudeSettings)
+    let before = try scratch.settingsObject()
+
+    try scratch.link.connect()
+
+    var after = try scratch.settingsObject()
+    #expect(after.removeValue(forKey: "statusLine") != nil)
+    #expect(NSDictionary(dictionary: after).isEqual(to: before))
+}
+
+// The previous line keeps showing, through the hook, and keeps its padding and
+// its timer: everything but `command` is the user's and stays theirs.
+@Test func connectingOverAStatusLineChainsItsCommandAndKeepsItsOtherFields() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(settingsWithAStatusLine)
+
+    try scratch.link.connect()
+
+    let line = try #require(try scratch.settingsObject()["statusLine"] as? [String: Any])
+    #expect(line["command"] as? String == ClaudeCodeStatusLine.command(
+        hook: scratch.link.hook, chaining: "~/.claude/statusline.sh"
+    ))
+    #expect(line["type"] as? String == "command")
+    #expect(line["padding"] as? Int == 2)
+    #expect(line["refreshInterval"] as? Int == 5)
+    #expect(scratch.defaults.data(forKey: ClaudeCodeStatusLine.previousKey) != nil)
+}
+
+// A half-finished edit, JSON with a comment in it, an array: writing over any
+// of them would lose what the user had, so the file is left exactly as it was
+// and nothing else happens either.
+@Test func aSettingsFileThatIsNotAJSONObjectIsLeftAloneAndSaysWhy() throws {
+    for text in [#"{"model": "opus","#, "[1, 2]", "", #"{ // mine"# + "\n}"] {
+        let scratch = try ClaudeLinkScratch()
+        defer { scratch.remove() }
+        try scratch.writeSettings(text)
+
+        #expect(throws: ClaudeCodeSettingsRefusal.notAJSONObject(path: scratch.settings.path)) {
+            try scratch.link.connect()
+        }
+        #expect(try scratch.settingsBytes() == Data(text.utf8), "\(text)")
+        #expect(FileManager.default.fileExists(atPath: scratch.link.hook.path) == false)
+        #expect(scratch.defaults.object(forKey: ClaudeCodeStatusLine.previousKey) == nil)
+    }
+}
+
+@Test func anUnreadableSettingsFileIsLeftAloneAndSaysWhy() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(claudeSettings)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o000], ofItemAtPath: scratch.settings.path
+    )
+    defer {
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: scratch.settings.path
+        )
+    }
+
+    #expect(throws: ClaudeCodeSettingsRefusal.unreadable(path: scratch.settings.path)) {
+        try scratch.link.connect()
+    }
+}
+
+// A settings file can hold secrets under `env`, and a rename-based write would
+// otherwise hand the new file the default mode. 0o640 is unusual on purpose:
+// it tells "kept" apart from "reset to 0644" and from "forced to 0600".
+@Test func aWriteKeepsTheSettingsFilesPermissions() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(claudeSettings)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o640], ofItemAtPath: scratch.settings.path
+    )
+
+    try scratch.link.connect()
+
+    #expect(try scratch.mode(of: scratch.settings) == 0o640)
+}
+
+// Dotfiles repositories keep `settings.json` as a symlink. The write goes to
+// the file the link points at, and the link stays a link.
+@Test func aSymlinkedSettingsFileStaysALinkAndItsTargetIsWritten() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    let dotfiles = scratch.root.appendingPathComponent("dotfiles/claude-settings.json")
+    try FileManager.default.createDirectory(
+        at: dotfiles.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    try Data(claudeSettings.utf8).write(to: dotfiles)
+    try FileManager.default.createDirectory(
+        at: scratch.settings.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    try FileManager.default.createSymbolicLink(at: scratch.settings, withDestinationURL: dotfiles)
+
+    try scratch.link.connect()
+
+    #expect(try FileManager.default.destinationOfSymbolicLink(atPath: scratch.settings.path)
+        == dotfiles.path)
+    let target = try #require(
+        try JSONSerialization.jsonObject(with: Data(contentsOf: dotfiles)) as? [String: Any]
+    )
+    #expect(target["statusLine"] != nil)
+}
+
+@Test func noStagingFileIsLeftBehind() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(claudeSettings)
+
+    try scratch.link.connect()
+
+    #expect(try FileManager.default.contentsOfDirectory(
+        atPath: scratch.settings.deletingLastPathComponent().path
+    ) == ["settings.json"])
+    #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.directory.path)
+        == [ClaudeCodeStatusLine.hookName])
+}
+
+// Claude Code is never pointed at a hook that is not there. With a plain file
+// where the hook's folder should be, the hook cannot be written, and the
+// settings must come out exactly as they went in.
+@Test func theHookIsInPlaceBeforeClaudeCodeIsPointedAtIt() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(claudeSettings)
+    try FileManager.default.createDirectory(
+        at: scratch.directory.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    try Data().write(to: scratch.directory)
+
+    #expect(throws: (any Error).self) {
+        try scratch.link.connect()
+    }
+    #expect(try scratch.settingsBytes() == Data(claudeSettings.utf8))
+}

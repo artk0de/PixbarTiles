@@ -20,6 +20,17 @@ public struct UlanziColour: Sendable, Equatable, Hashable {
     }
 }
 
+extension Pixel {
+    /// The canvas draws in the same colours the scene vocabulary names.
+    public init(colour: UlanziColour) {
+        self.init(
+            red: UInt8((colour.value >> 16) & 0xFF),
+            green: UInt8((colour.value >> 8) & 0xFF),
+            blue: UInt8(colour.value & 0xFF)
+        )
+    }
+}
+
 public enum UlanziFontHeight: Int, Sendable, Equatable {
     case small = 5
     case large = 10

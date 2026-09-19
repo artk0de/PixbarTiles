@@ -662,3 +662,79 @@ private struct PassThroughIcons: IconInstalling {
 
     #expect(transport.customAppPosts.first?["icon"] as? String == "2289")
 }
+
+// MARK: - The TC002 face
+
+// The TC002 has no text rendering and no icon catalogue to reach into: the
+// face rasters the reading here, on the Mac, and ships one full-screen db
+// bitmap (D2). The glyphs are the 3×5 font at scale 2, which is what fits the
+// panel's 16 rows and reads from a room.
+
+@Suite struct WeatherTC002FaceTests {
+    func makeWeatherConnector() -> WeatherConnector {
+        WeatherConnector(
+            source: OpenMeteoSource(transport: SkyAndClock()), location: { desk }
+        )
+    }
+
+    func reading(temperatureCelsius: Double) -> WeatherReading {
+        WeatherReading(
+            code: 0, isDay: true, temperature: temperatureCelsius, apparentTemperature: nil,
+            precipitation: 0, windSpeed: 0, interval: 900
+        )
+    }
+
+    @Test func negativeTemperatureRendersWithDegreeAndMinus() throws {
+        let face = makeWeatherConnector().ulanziFace
+        let delivery = face?.draw(reading(temperatureCelsius: -12.4))
+        let scene = delivery?.scene
+        #expect(scene?.frames.count == 1)
+        #expect(scene?.frames[0].draw.count == 1)   // the single db (D2)
+        // And the raster is the reading itself, whole degrees: -12.4 → -12°.
+        let draw = try #require(scene?.frames[0].draw[0])
+        #expect(
+            goldenASCII(of: draw)
+                == [
+                    "........####....######..####",
+                    "........####....######..####",
+                    "..........##........##..####",
+                    "..........##........##..####",
+                    "######....##....######......",
+                    "######....##....######......",
+                    "..........##....##..........",
+                    "..........##....##..........",
+                    "........######..######......",
+                    "........######..######......",
+                ]
+        )
+    }
+
+    @Test func themeColourInksTheDigits() throws {
+        // A warm reading is drawn in the warm end of the same gradient the
+        // AWTRIX face names in hex — red dominant for 30°.
+        let face = makeWeatherConnector().ulanziFace
+        let delivery = try #require(face?.draw(reading(temperatureCelsius: 30)))
+        let draw = try #require(delivery.scene.frames[0].draw.first)
+        guard case let .bitmap(_, _, pixels, _) = draw else {
+            Issue.record("not a bitmap")
+            return
+        }
+        let lit = try #require(pixels.first(where: { $0 != 0 }))
+        let red = (lit >> 16) & 0xFF, green = (lit >> 8) & 0xFF, blue = lit & 0xFF
+        #expect(red > 200)
+        #expect(red > green)
+        #expect(red > blue)
+    }
+
+    /// The same rounding rule as the AWTRIX face: -3.6 is -4, not -3 — the
+    /// wrong direction on the side of the scale where it matters.
+    @Test func halfDegreesRoundAwayFromZeroEitherSideOfZero() throws {
+        let face = makeWeatherConnector().ulanziFace
+        // Full first golden row per reading: "4°" and "-4°" respectively.
+        for (celsius, top) in [(4.2, "##..##..####"), (-3.6, "........##..##..####")] {
+            let delivery = try #require(face?.draw(reading(temperatureCelsius: celsius)))
+            let rows = goldenASCII(of: try #require(delivery.scene.frames[0].draw.first))
+            #expect(rows.first == top, "\(celsius) → \(rows.first ?? "?")")
+        }
+    }
+}

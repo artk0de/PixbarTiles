@@ -66,6 +66,10 @@ public struct ClaudeUsageConnector: Connector {
         AwtrixFace { Self.output(for: $0) }
     }
 
+    public var ulanziFace: UlanziFace<ClaudeUsageReading>? {
+        UlanziFace { Self.ulanziOutput(for: $0) }
+    }
+
     public enum Failure: Error, Sendable, Equatable {
         /// Nothing to draw. Deliberately an error rather than an output saying
         /// "—": the app carries a `lifetime`, so a run that delivers nothing
@@ -112,4 +116,38 @@ public struct ClaudeUsageConnector: Connector {
     /// two, light enough that the bar's full width is still visible — an unlit
     /// track makes a half-full bar look like a short one.
     static let trackColour = "#303030"
+
+    /// The bundled star as the TC002 image layer, measured from the file it
+    /// ships as: 8×8 and 8 frames, inside every measured image limit (A4).
+    static let star = UlanziImage(
+        base64: (BundledIcon.data(named: "ClaudeStar") ?? Data()).base64EncodedString(),
+        isAnimated: true,
+        frameCount: 8,
+        pixelSize: (width: 8, height: 8)
+    )
+
+    /// What a reading looks like on the TC002's 52×16 panel: the percentage
+    /// rastered through the 3×5 font at scale 2 in the brand colour, the star
+    /// riding beside it as the image layer.
+    static func ulanziOutput(for reading: ClaudeUsageReading) -> UlanziDelivery {
+        var canvas = PixelCanvas()
+        let text = "\(reading.utilization)%"
+        let ink = UlanziColour(hex: ClaudeUsage.brandColour)
+        let width = text.unicodeScalars.count * 4 * 2 - 2
+        canvas.drawText(
+            text,
+            at: PixelPoint(
+                x: (PixelCanvas.width - width) / 2, y: (PixelCanvas.height - 10) / 2
+            ),
+            ink: Pixel(colour: ink),
+            scale: 2
+        )
+        return UlanziDelivery(
+            scene: UlanziScene(
+                frames: [
+                    UlanziFrame(duration: 5, draw: [canvas.drawCommands()], image: [star])
+                ]
+            )
+        )
+    }
 }

@@ -6,7 +6,7 @@ import Foundation
 /// does not travel, so the coordinates are set once; and demanding location
 /// access on first launch of a menu bar toy is how an app gets denied
 /// everything, including the permissions it actually needs.
-public struct Coordinates: Sendable, Equatable, Codable {
+public struct Coordinates: Sendable, Hashable, Codable {
     public let latitude: Double
     public let longitude: Double
 
@@ -108,12 +108,13 @@ public actor OpenMeteoSource {
     /// Injected so a test can step over a quarter of an hour rather than wait
     /// one out. The shipped value is the only one that reads the clock.
     private let now: @Sendable () -> Date
-    /// The last answer, when it was given, and what it was about.
+    /// The last answer for each place, and when it was given.
     ///
-    /// The place is part of it. The coordinates are a setting the user can
-    /// edit, and a cache that ignored them would go on answering about the
-    /// place they just left for the whole of an interval.
-    private var cached: (reading: WeatherReading, at: Date, of: Coordinates)?
+    /// Keyed by the place rather than holding one answer. One slot served the
+    /// app while there was one location; two weather tiles at two places would
+    /// evict each other on every poll, and each would fetch on every run
+    /// however fresh the other's answer was.
+    private var cached: [Coordinates: (reading: WeatherReading, at: Date)] = [:]
 
     public init(transport: any Transport, now: @escaping @Sendable () -> Date = Date.init) {
         self.transport = transport
@@ -123,15 +124,14 @@ public actor OpenMeteoSource {
     /// What the sky is doing at these coordinates, fetching only when the last
     /// answer has aged past the cadence that answer itself declared.
     public func reading(at place: Coordinates) async throws -> WeatherReading {
-        if let cached, cached.of == place,
-            now().timeIntervalSince(cached.at) < cached.reading.interval {
-            return cached.reading
+        if let hit = cached[place], now().timeIntervalSince(hit.at) < hit.reading.interval {
+            return hit.reading
         }
 
         let reading = try await fetch(place)
         // Written only on success, so one outage is not served as the weather
         // for the whole of the next interval.
-        cached = (reading, now(), place)
+        cached[place] = (reading, now())
         return reading
     }
 

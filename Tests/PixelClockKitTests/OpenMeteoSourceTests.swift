@@ -189,3 +189,58 @@ private final class Clock: @unchecked Sendable {
     #expect(transport.requests.count == 2)
     #expect(recovered.code == 61)
 }
+
+// MARK: - One answer per place
+
+// Two weather tiles at two places, polled in turn. Held in one slot, each poll
+// evicted the other place's answer and every run went to the network.
+@Test func twoPlacesPolledInTurnAreEachAnsweredFromTheirOwnCache() async throws {
+    let clock = Clock()
+    let transport = RecordingTransport()
+    transport.body = body(code: 71)
+    let source = OpenMeteoSource(transport: transport, now: clock.now)
+
+    _ = try await source.reading(at: moscow)
+    transport.body = body(code: 0)
+    _ = try await source.reading(at: berlin)
+    clock.advance(60)
+    let moscowAgain = try await source.reading(at: moscow)
+    let berlinAgain = try await source.reading(at: berlin)
+
+    #expect(transport.requests.count == 2)
+    #expect(moscowAgain.code == 71)
+    #expect(berlinAgain.code == 0)
+}
+
+@Test func eachPlaceAgesOnItsOwnInterval() async throws {
+    let clock = Clock()
+    let transport = RecordingTransport()
+    transport.body = body()
+    let source = OpenMeteoSource(transport: transport, now: clock.now)
+
+    _ = try await source.reading(at: moscow)
+    clock.advance(500)
+    _ = try await source.reading(at: berlin)
+    clock.advance(401)
+    _ = try await source.reading(at: moscow)
+    _ = try await source.reading(at: berlin)
+
+    // Moscow's 900 seconds are up and Berlin's are not.
+    #expect(transport.requests.count == 3)
+    #expect(transport.requests.last?.url?.absoluteString.contains("latitude=55.7558") == true)
+}
+
+@Test func aFailedFetchForOnePlaceLeavesAnotherPlacesAnswerStanding() async throws {
+    let clock = Clock()
+    let transport = RecordingTransport()
+    transport.body = body(code: 71)
+    let source = OpenMeteoSource(transport: transport, now: clock.now)
+
+    _ = try await source.reading(at: moscow)
+    transport.status = 500
+    _ = try? await source.reading(at: berlin)
+    let moscowAgain = try await source.reading(at: moscow)
+
+    #expect(transport.requests.count == 2)
+    #expect(moscowAgain.code == 71)
+}

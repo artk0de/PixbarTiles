@@ -46,27 +46,30 @@ import Testing
 // Touching the toggle must not quietly rewrite the interval. Saving from the
 // store's own fallback rather than from the resolved settings would write
 // thirty minutes over a connector that declared five, and the default it
-// declares would never be seen again.
+// declares would never be seen again. The tile is the record now, so the
+// read-back is off the tile.
 @Test @MainActor func togglingAConnectorNobodyConfiguredKeepsItsOwnDefaultInterval() {
     let connector = StubConnector(defaultInterval: 5 * 60)
-    let store = InMemorySettingsStore()
-    let subject = testModel(connectors: [connector], store: store)
+    let defaults = UserDefaults(suiteName: "toggle-\(UUID().uuidString)")!
+    let subject = testModel(connectors: [connector], defaults: defaults)
 
     subject.setEnabled(false, for: connector)
 
-    #expect(store.storedSettings(for: connector.id)?.intervalPosition == 0)
-    #expect(store.storedSettings(for: connector.id)?.isEnabled == false)
+    let tile = TileStore(defaults: defaults).all().first { $0.key.connectorId == connector.id }
+    #expect(tile?.policy.refreshSeconds == Int(IntervalScale.duration(atPosition: 0)))
+    #expect(tile?.policy.isPaused == true)
     #expect(subject.settings(for: connector).intervalPosition == 0)
 }
 
 @Test @MainActor func movingTheSliderIsSavedAndReadBack() {
     let connector = StubConnector()
-    let store = InMemorySettingsStore()
-    let subject = testModel(connectors: [connector], store: store)
+    let defaults = UserDefaults(suiteName: "slider-\(UUID().uuidString)")!
+    let subject = testModel(connectors: [connector], defaults: defaults)
 
     subject.setIntervalPosition(7, for: connector)
 
-    #expect(store.storedSettings(for: connector.id)?.intervalPosition == 7)
+    let tile = TileStore(defaults: defaults).all().first { $0.key.connectorId == connector.id }
+    #expect(tile?.policy.refreshSeconds == Int(IntervalScale.duration(atPosition: 7)))
     #expect(subject.settings(for: connector).intervalPosition == 7)
 }
 
@@ -512,19 +515,20 @@ import Testing
 // writes through the same path.
 @Test @MainActor func aDeliveryIsWrittenDownWhereTheNextLaunchWillReadIt() async throws {
     let connector = StubConnector()
-    let store = InMemorySettingsStore()
+    let defaults = UserDefaults(suiteName: "delivered-\(UUID().uuidString)")!
     let host = SpyHost()
     let schedule = Metronome()
     let subject = testModel(
-        connectors: [connector], host: host, store: store, sleep: schedule.sleep
+        connectors: [connector], host: host, defaults: defaults, sleep: schedule.sleep
     )
 
     subject.start()
     #expect(await waitUntil { schedule.parked == 1 })
     schedule.tick()
-    #expect(await waitUntil { store.storedSettings(for: connector.id)?.lastDeliveredAt != nil })
+    let stored = { TileStore(defaults: defaults).all().first { $0.key.connectorId == connector.id } }
+    #expect(await waitUntil { stored()?.lastDeliveredAt != nil })
 
-    let delivered = try #require(store.storedSettings(for: connector.id)?.lastDeliveredAt)
+    let delivered = try #require(stored()?.lastDeliveredAt)
     // The instant of the delivery, not of the launch that scheduled it.
     #expect(abs(delivered.timeIntervalSinceNow) < 5)
     await subject.teardown()
@@ -1121,7 +1125,9 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
     let subject = testModel(defaults: defaults, deviceHost: "192.168.1.72")
 
     #expect(subject.typedHost == "192.168.1.72")
-    #expect(ClockStore(defaults: defaults).all().isEmpty)
+    // The record the fixture put there is what is still stored — seeding the
+    // field wrote nothing, where an eager didSet would have.
+    #expect(ClockStore(defaults: defaults).all().first?.address == "192.168.1.72")
     #expect(subject.hostNote == nil)
 }
 
@@ -1327,22 +1333,31 @@ private func modelWithARealAnecdoteConnector(
     registry.register(connector)
     let settings = InMemorySettingsStore()
     let device = AwtrixDevice(host: "10.0.0.5", transport: StubTransport())
-    let model = AppModel(
-        clock: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5"),
+    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+    let defaults = UserDefaults(suiteName: "launch-\(UUID().uuidString)")!
+    let host = AwtrixClockSession(
         device: device,
         registry: registry,
-        host: AwtrixClockSession(
-            device: device,
-            registry: registry,
-            store: settings,
-            audio: SilentAudioPlayer(),
-            iconInstaller: NoIconInstaller()
-        ),
         store: settings,
+        audio: SilentAudioPlayer(),
+        iconInstaller: NoIconInstaller()
+    )
+    try? TileStore(defaults: defaults).replaceAll([
+        TileRecord(
+            key: TileKey(clockId: clock.id, connectorId: connector.id),
+            policy: TilePolicyRecord(isPaused: false, refreshSeconds: 1_800)
+        )
+    ])
+    let model = AppModel(
+        clocks: [clock],
+        tiles: TileStore(defaults: defaults),
+        makeSession: { _ in host },
+        device: device,
+        registry: registry,
         installer: CatalogueIconInstaller(
             device: device, transport: StubTransport(), uploads: InMemoryUploadedIconStore()
         ),
-        defaults: UserDefaults(suiteName: "launch-\(UUID().uuidString)")!,
+        defaults: defaults,
         alerts: SpyAlerts(),
         focus: focusGate(StubFocusStatus(access: .authorized)),
         microphone: MicrophoneGate(inputs: StubAudioInputs()),

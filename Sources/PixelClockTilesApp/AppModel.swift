@@ -210,13 +210,23 @@ final class AppModel: ObservableObject {
     /// Held so that a relocation can re-point it, which is the whole reason
     /// this reference exists here rather than only inside the monitor.
     private let device: AwtrixDevice
-    /// The clock this model drives: as it was stored at launch, plus what this
-    /// launch has since learned about it. Its id is what every write below is
-    /// keyed by.
-    private var clock: ClockRecord
-    /// Where what is learned about the clock is written down for the next
+    /// Which clock the panel shows and the glyph is about. Phase 5's switcher
+    /// writes it; until then it is the first clock unless something set it.
+    static let selectedClockKey = "selectedClockId"
+
+    /// Every clock this app drives, as the settings list them.
+    @Published private(set) var clocks: [ClockRecord]
+    @Published var selectedClockId: UUID? {
+        didSet { defaults.set(selectedClockId?.uuidString, forKey: Self.selectedClockKey) }
+    }
+    /// One session per clock, each with its own delivery chain and custody —
+    /// so a clock that stops answering holds up only its own tiles.
+    private var sessions: [UUID: any ConnectorRunning] = [:]
+    private let makeSession: @MainActor (ClockRecord) -> any ConnectorRunning
+    private let tiles: TileStore
+    /// Where what is learned about the clocks is written down for the next
     /// launch.
-    private let clocks: ClockStore
+    private let clockStore: ClockStore
     /// The place this clock's weather tile reads for. Held so the settings
     /// field reads and saves through the same record the connector polls.
     private let location: StoredLocation
@@ -228,12 +238,47 @@ final class AppModel: ObservableObject {
     /// outage in the one unit this model already holds.
     private var unansweredPolls = 0
 
-    @Published private(set) var lastResults: [String: String] = [:]
-    /// What the last background pass had to complain about, per connector, and
+    @Published private(set) var tileLastResults: [TileKey: String] = [:]
+    /// What the last background pass had to complain about, per tile, and
     /// nothing at all when it went fine.
-    @Published private(set) var lastMaintenanceFailure: [String: String] = [:]
-    /// When each connector is next due, or what is holding it.
-    @Published private(set) var nextRun: [String: NextRun] = [:]
+    @Published private(set) var tileLastMaintenanceFailure: [TileKey: String] = [:]
+    /// When each tile is next due, or what is holding it.
+    @Published private(set) var tileNextRun: [TileKey: NextRun] = [:]
+    /// A by-tile map, seen the way the panel still reads it: the selected
+    /// clock's single tiles, by connector.
+    var nextRun: [String: NextRun] { projected(tileNextRun) }
+    /// The selected clock's run outcomes and maintenance failures, by connector,
+    /// for the same reason and until the same phase.
+    var lastResults: [String: String] { projected(tileLastResults) }
+    var lastMaintenanceFailure: [String: String] { projected(tileLastMaintenanceFailure) }
+
+    private func session(for key: TileKey) -> (any ConnectorRunning)? { sessions[key.clockId] }
+
+    /// The selected clock's tile of this connector, which is what the panel's
+    /// rows are about until Phase 5 draws tiles.
+    private func selectedKey(_ connectorId: String) -> TileKey? {
+        selectedClockId.map { TileKey(clockId: $0, connectorId: connectorId) }
+    }
+
+    /// A by-tile map, seen the way the panel still reads it: the selected
+    /// clock's single tiles, by connector.
+    private func projected<Value>(_ byTile: [TileKey: Value]) -> [String: Value] {
+        var byConnector: [String: Value] = [:]
+        for (key, value) in byTile where key.clockId == selectedClockId && key.instance.isEmpty {
+            byConnector[key.connectorId] = value
+        }
+        return byConnector
+    }
+
+    /// The clock record as this launch has it, by id.
+    private func clock(_ id: UUID) -> ClockRecord? {
+        clocks.first { $0.id == id }
+    }
+
+    /// The clock the one shared device, monitor and installer are built on —
+    /// the first, which for a one-clock install is the only one. B14 gives
+    /// every clock a health of its own.
+    private var clock: ClockRecord? { clocks.first }
     /// What is in the address field: what the NEXT launch will use, where
     /// `deviceHost` is what this one is using.
     ///
@@ -245,7 +290,10 @@ final class AppModel: ObservableObject {
     /// `didSet` does not run during initialization, which is what keeps seeding
     /// the field from writing this launch's address straight back to disk.
     @Published var typedHost: String {
-        didSet { hostNote = DeviceHostField.save(typedHost, to: clocks, for: clock) }
+        didSet {
+            guard let clock = self.clock else { return }
+            hostNote = DeviceHostField.save(typedHost, to: clockStore, for: clock)
+        }
     }
     @Published private(set) var hostNote: String?
     /// What is in the location field.
@@ -308,21 +356,15 @@ final class AppModel: ObservableObject {
     /// below is what learns the answer and a view that wants only the glyph
     /// should not have to observe a second object to get it.
     @Published private(set) var isDeviceOnline = false
-    /// What the user chose, per connector, already resolved against the
-    /// connector's own default. Published because the toggles and the slider
-    /// bind to it; the store behind it is persistence, not state.
-    @Published private var chosen: [String: ConnectorSettings] = [:]
     /// The hours the schedule stays quiet when macOS will not say whether a
     /// Focus is on. Published because the pickers bind to it; the defaults
-    /// behind it are persistence, not state — the same split as `chosen`.
+    /// behind it are persistence, not state.
     @Published private(set) var quietHours: QuietWindow
     /// The microphones the schedule waits for. Published for the same reason
     /// `quietHours` is: the settings' tick boxes bind to it, and the defaults
     /// behind it are persistence rather than state.
     @Published private(set) var watchedMicrophones: [WatchedMicrophone]
 
-    private let host: any ConnectorRunning
-    private let store: any SettingsStore
     private let installer: CatalogueIconInstaller
     /// The connector whose history the menu can browse, or nil when none was
     /// wired. Optional because the panel is generic over connectors and only
@@ -375,7 +417,7 @@ final class AppModel: ObservableObject {
     private var lastSeenFocus: ActiveFocusMode?
     /// Whether a microphone the user cares about is capturing.
     private let microphone: MicrophoneGate
-    private var timers: [String: Task<Void, Never>] = [:]
+    private var timers: [TileKey: Task<Void, Never>] = [:]
     private var monitorLoop: Task<Void, Never>?
     /// The one-off reading a panel open asked for, still going.
     ///
@@ -442,7 +484,7 @@ final class AppModel: ObservableObject {
     /// a flag, the first run finishing writes its outcome while the second is
     /// still in flight — the panel claiming a finished delivery during a
     /// running one, which is the lie this whole line of fixes is about.
-    private var outstanding: [String: Int] = [:]
+    private var outstanding: [TileKey: Int] = [:]
     /// Connectors whose scheduled run is waiting out a meeting.
     ///
     /// A SET, and that is the rule rather than a container choice: at most one
@@ -450,7 +492,7 @@ final class AppModel: ObservableObject {
     /// beats releases one anecdote rather than firing four in a burst the
     /// moment it ends. A second beat arriving while one is already held inserts
     /// nothing.
-    private var heldRuns: Set<String> = []
+    private var heldRuns: Set<TileKey> = []
     /// The ambient connectors this launch still owes the clock's loop a first
     /// delivery, drained by the first poll that finds the clock answering.
     ///
@@ -458,7 +500,7 @@ final class AppModel: ObservableObject {
     /// run for a different one: what is owed here is not a beat that arrived at
     /// a bad moment but the ONLY delivery a launch makes, and losing it is ten
     /// minutes of a clock with nothing on it.
-    private var launchDeliveriesOwed: Set<String> = []
+    private var launchDeliveriesOwed: Set<TileKey> = []
     /// When each scheduled connector's loop will next wake, as the turn that
     /// went to sleep computed it.
     ///
@@ -471,21 +513,21 @@ final class AppModel: ObservableObject {
     /// all of them: the panel went on naming a microphone that had stopped
     /// capturing half an hour earlier, after the run it held had already
     /// played.
-    private var scheduledDue: [String: Date] = [:]
+    private var scheduledDue: [TileKey: Date] = [:]
     /// The loop that lets them go.
     private var microphoneWatch: Task<Void, Never>?
     private var iconRemoval: Task<Void, Never>?
 
     init(
-        clock: ClockRecord,
+        clocks: [ClockRecord],
+        tiles: TileStore,
+        makeSession: @MainActor @escaping (ClockRecord) -> any ConnectorRunning,
         device: AwtrixDevice,
         // Nil by default, so that no test acquires a browse it did not ask for:
         // a model built without one stays where it was put, however long the
         // clock is away.
         relocate: RelocatingHost? = nil,
         registry: ConnectorRegistry,
-        host: any ConnectorRunning,
-        store: any SettingsStore,
         installer: CatalogueIconInstaller,
         anecdotes: (any AnecdoteReplaying)? = nil,
         defaults: UserDefaults = .standard,
@@ -502,13 +544,17 @@ final class AppModel: ObservableObject {
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         micSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
-        self.clock = clock
-        self.clocks = ClockStore(defaults: defaults)
-        self.deviceHost = clock.address
-        self.typedHost = clock.address
+        self.clocks = clocks
+        self.tiles = tiles
+        self.makeSession = makeSession
+        self.clockStore = ClockStore(defaults: defaults)
+        self.deviceHost = clocks.first?.address ?? ""
+        self.typedHost = clocks.first?.address ?? ""
         self.device = device
         self.relocate = relocate
-        self.location = StoredLocation(defaults: defaults, clockId: clock.id)
+        self.location = StoredLocation(
+            defaults: defaults, clockId: clocks.first?.id ?? UUID()
+        )
         self.typedLocation = LocationField.text(for: location.current)
         self.defaults = defaults
         self.pasteboard = pasteboard
@@ -521,8 +567,6 @@ final class AppModel: ObservableObject {
         self.monitor = DeviceMonitor(
             device: device, history: UserDefaultsBatteryHistoryStore(defaults: defaults)
         )
-        self.host = host
-        self.store = store
         self.installer = installer
         self.anecdotes = anecdotes
         self.alerts = alerts
@@ -536,9 +580,12 @@ final class AppModel: ObservableObject {
         self.scheduleSleep = sleep
         self.pollSleep = pollSleep
         self.micSleep = micSleep
-        for connector in registry.all {
-            chosen[connector.id] = Self.resolved(connector, in: store)
+        for clock in self.clocks {
+            sessions[clock.id] = makeSession(clock)
         }
+        let saved = defaults.string(forKey: Self.selectedClockKey).flatMap(UUID.init(uuidString:))
+        selectedClockId = clocks.contains(where: { $0.id == saved })
+            ? saved : clocks.first?.id
     }
 
     /// The composition root: one device host in, every collaborator wired.
@@ -555,8 +602,9 @@ final class AppModel: ObservableObject {
         // unwritten and runs again at the next launch; this launch drives
         // whatever is stored, and the line below makes sure something is.
         try? ClockMigration(defaults: defaults, fallbackHost: defaultDeviceHost).run()
-        let clock = ClockStore(defaults: defaults).firstClock(orCreatingAt: defaultDeviceHost)
-        let device = AwtrixDevice(host: clock.address, transport: transport)
+        let first = ClockStore(defaults: defaults).firstClock(orCreatingAt: defaultDeviceHost)
+        let clocks = ClockStore(defaults: defaults).all()
+        let device = AwtrixDevice(host: first.address, transport: transport)
         // Built here rather than inside the model so that the one door to the
         // outside stays this function's `transport` parameter: the probe below
         // is an HTTP request, and it goes through the same door every other
@@ -580,17 +628,12 @@ final class AppModel: ObservableObject {
 
         let anecdotes = anecdoteWiring(transport: transport, storeURL: anecdoteStore)
         registry.register(anecdotes.connector)
-        // The location is read on every produce rather than captured here, so a
-        // pair typed into the settings takes effect at the next poll instead of
-        // at the next launch. One source of weather for the whole app: the
-        // source caches its own answers, and a second instance would poll a
-        // free public service twice as often for the same reading.
-        let location = StoredLocation(defaults: defaults, clockId: clock.id)
+        // The panel's own registry still holds a weather connector — its rows
+        // are drawn from here — but no clock produces through this instance:
+        // each clock's session builds its own, closed over that clock's place.
+        let firstPlace = StoredLocation(defaults: defaults, clockId: first.id)
         registry.register(
-            WeatherConnector(
-                source: OpenMeteoSource(transport: transport),
-                location: { location.current }
-            )
+            WeatherConnector(source: OpenMeteoSource(transport: transport), location: { firstPlace.current })
         )
         // The credential is Claude Code's, not this app's, and the reporter
         // only ever reads it — see `ClaudeCredentialReading` for why refreshing
@@ -610,32 +653,69 @@ final class AppModel: ObservableObject {
         // saved choice gives it one.
         try? TileMigration(
             defaults: defaults,
-            clockId: clock.id,
+            clockId: first.id,
             connectors: registry.all.map { (id: $0.id, defaultInterval: $0.defaultInterval) }
         ).run()
         try? WeatherLocationMigration(defaults: defaults).run()
-        let store = TileSettingsStore(defaults: defaults, clockId: clock.id)
-        let session = AwtrixClockSession(
-            device: device,
-            registry: registry,
-            store: store,
-            audio: SequentialAudioPlayer(),
-            iconInstaller: installer,
-            // Durable, for the reason the uploaded-icon record is: what
-            // this app did to the device is not knowable by looking at the
-            // device afterwards. One exit without a teardown and an
-            // in-memory record turns this app's own weather overlay into
-            // the value it restores for ever.
-            borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
+
+        // One shared audio player and one shared weather source; everything
+        // else below is per clock.
+        let audio = SequentialAudioPlayer()
+        let weather = OpenMeteoSource(transport: transport)
+        let claude = ClaudeUsageConnector(
+            reporter: ClaudeUsageReporter(transport: transport),
+            showsNow: { ClaudeFocusAudience.shows(focusStatus) }
         )
+        let buildSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
+            // A registry per clock, so each clock's weather reads its own tile's
+            // place through the one shared source — which caches per place.
+            let registry = ConnectorRegistry()
+            registry.register(anecdotes.connector)
+            let place = StoredLocation(defaults: defaults, clockId: clock.id)
+            registry.register(WeatherConnector(source: weather, location: { place.current }))
+            registry.register(claude)
+            let store = TileSettingsStore(defaults: defaults, clockId: clock.id)
+            // Phase 3's branch on the model goes here: until it lands, every
+            // clock is an AWTRIX one, on a session of its own.
+            let device = AwtrixDevice(host: clock.address, transport: transport)
+            return AwtrixClockSession(
+                device: device,
+                registry: registry,
+                store: store,
+                audio: audio,
+                iconInstaller: CatalogueIconInstaller(
+                    device: device,
+                    transport: transport,
+                    // One record for the installation, as today. Which clock
+                    // an upload went to is not recorded yet (B21 owes it).
+                    uploads: UserDefaultsUploadedIconStore(defaults: defaults)
+                ),
+                // Durable, for the reason the uploaded-icon record is: what
+                // this app did to the device is not knowable by looking at the
+                // device afterwards. One exit without a teardown and an
+                // in-memory record turns this app's own weather overlay into
+                // the value it restores for ever. Still the one shared key
+                // here; it becomes per clock in B15.
+                borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
+            )
+        }
+        // One session per clock, built once here — the model's own
+        // `makeSession` hands these back, and init builds no others.
+        var sessionsByClock: [UUID: any ConnectorRunning] = [:]
+        for clock in clocks {
+            sessionsByClock[clock.id] = buildSession(clock)
+        }
+        let makeSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
+            sessionsByClock[clock.id] ?? buildSession(clock)
+        }
 
         return AppModel(
-            clock: clock,
+            clocks: clocks,
+            tiles: TileStore(defaults: defaults),
+            makeSession: makeSession,
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
-            host: session,
-            store: store,
             installer: installer,
             anecdotes: anecdotes.connector,
             defaults: defaults,
@@ -650,10 +730,12 @@ final class AppModel: ObservableObject {
                     ClaudeFocusAudience.shows(focusStatus)
                 },
             ],
-            // The session's own lamp custody, over the same device the
+            // The first clock's own lamp custody, over the same device the
             // connectors write through. Indicators do not go into the loop, so
             // they contend with nothing that does.
-            vpnLamps: VPNLampDisplay(indicators: session.indicators),
+            vpnLamps: (sessionsByClock[first.id] as? AwtrixClockSession).map {
+                VPNLampDisplay(indicators: $0.indicators)
+            },
             quietHours: QuietWindow.stored(in: defaults),
             microphone: MicrophoneGate(inputs: SystemAudioInputs()),
             watching: WatchedMicrophone.stored(in: defaults)
@@ -701,68 +783,70 @@ final class AppModel: ObservableObject {
 
     // MARK: - What the user chose
 
-    /// What this connector is set to.
-    ///
-    /// Keyed by the connector rather than by its id, because the fallback is the
-    /// connector's own `defaultInterval` and an id cannot answer that. The store
-    /// folds "never configured" into `ConnectorSettings()` — thirty minutes —
-    /// which is a decision it has no standing to make on a connector's behalf.
-    func settings(for connector: any Connector) -> ConnectorSettings {
-        chosen[connector.id] ?? Self.resolved(connector, in: store)
+    /// The selected clock's tile of this connector, as stored.
+    private func storedTile(_ key: TileKey) -> TileRecord? {
+        tiles.all().first { $0.key == key }
     }
 
-    private static func resolved(
-        _ connector: any Connector, in store: any SettingsStore
-    ) -> ConnectorSettings {
-        store.storedSettings(for: connector.id)
-            ?? ConnectorSettings(
+    /// What this connector is set to, on the selected clock's tile.
+    ///
+    /// A connector with no tile yet falls back to its own `defaultInterval` —
+    /// the same "never configured" the settings store used to fold, now read
+    /// off the connector itself.
+    func settings(for connector: any Connector) -> ConnectorSettings {
+        guard let key = selectedKey(connector.id), let record = storedTile(key) else {
+            return ConnectorSettings(
                 intervalPosition: IntervalScale.position(for: connector.defaultInterval)
             )
+        }
+        return Self.resolved(record)
+    }
+
+    private static func resolved(_ record: TileRecord) -> ConnectorSettings {
+        ConnectorSettings(
+            isEnabled: !record.policy.isPaused,
+            intervalPosition: IntervalScale.position(for: TimeInterval(record.policy.refreshSeconds)),
+            lastDeliveredAt: record.lastDeliveredAt
+        )
     }
 
     func setEnabled(_ enabled: Bool, for connector: any Connector) {
-        var current = settings(for: connector)
-        current.isEnabled = enabled
-        commit(current, for: connector)
-    }
-
-    func setIntervalPosition(_ position: Int, for connector: any Connector) {
-        var current = settings(for: connector)
-        current.intervalPosition = position
-        commit(current, for: connector)
-    }
-
-    /// Saved from the RESOLVED settings, never from the store's own fallback: a
-    /// connector whose default is five minutes would otherwise be written to
-    /// disk as thirty the first time its toggle was touched, and the default it
-    /// declares would never be seen again.
-    private func commit(_ settings: ConnectorSettings, for connector: any Connector) {
-        let wasEnabled = chosen[connector.id]?.isEnabled ?? true
-        chosen[connector.id] = settings
-        store.save(settings, for: connector.id)
-        reschedule(connector)
+        guard let key = selectedKey(connector.id), let record = storedTile(key) else { return }
+        let wasEnabled = !record.policy.isPaused
+        tiles.update(record) { $0.policy.isPaused = !enabled }
+        reschedule(key)
         // Only on the way OFF, and only on the edge. A connector switched off
         // stops running, so nothing else will ever put back what it borrowed —
         // where switching one ON borrows nothing until its first delivery, and
         // a restore there would write a value that is already on the device.
         // Dragging the interval slider is neither, and must not touch the clock
         // at all.
-        if wasEnabled && !settings.isEnabled { giveBackDeviceState(connector.id) }
+        if wasEnabled && !enabled { giveBackDeviceState(key) }
     }
 
-    /// Puts back what one connector borrowed from the clock.
+    func setIntervalPosition(_ position: Int, for connector: any Connector) {
+        guard let key = selectedKey(connector.id), let record = storedTile(key) else { return }
+        // The old slider's scale, until Phase 5 moves the row onto the refresh
+        // scale the policy is read through.
+        tiles.update(record) {
+            $0.policy.refreshSeconds = Int(IntervalScale.duration(atPosition: position))
+        }
+        reschedule(key)
+    }
+
+    /// Puts back what one tile borrowed from its clock.
     ///
     /// The task is owned here rather than left detached, for the reason every
     /// other one is: teardown can only wait for a task it holds, and this one
     /// writes to the device. Keyed by nothing meaningful — switching a
     /// connector off twice is two restores, and the second finds nothing left
     /// to give back.
-    private func giveBackDeviceState(_ id: String) {
-        let key = nextRestoreKey
+    private func giveBackDeviceState(_ key: TileKey) {
+        let restoreKey = nextRestoreKey
         nextRestoreKey += 1
-        restores[key] = Task { [weak self] in
-            await self?.host.restoreDeviceState(borrowedBy: id)
-            self?.restores[key] = nil
+        restores[restoreKey] = Task { [weak self] in
+            await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.connectorId)
+            self?.restores[restoreKey] = nil
         }
     }
 
@@ -916,18 +1000,32 @@ final class AppModel: ObservableObject {
     /// The task is owned rather than left to the button's action closure, for
     /// the reason `runNow`'s is: teardown can only wait for what it holds, and
     /// this puts the same held banner on the clock.
+    /// Said instead of an outcome, when no clock carries the anecdotes.
+    static let noClockCarriesTheAnecdotes = "No clock carries the anecdotes"
+
+    /// The session of the clock carrying the anecdote tile.
+    private var anecdoteSession: (any ConnectorRunning)? {
+        guard let anecdotes else { return nil }
+        return tiles.all().first { $0.key.connectorId == anecdotes.id }
+            .flatMap { sessions[$0.key.clockId] }
+    }
+
     func replay(_ anecdote: PreparedAnecdote) {
         guard let anecdotes, anecdote.isPlayable else { return }
+        guard let session = anecdoteSession else {
+            replayResult = Self.noClockCarriesTheAnecdotes
+            return
+        }
         let output = anecdotes.output(for: anecdote)
         let key = nextReplayKey
         nextReplayKey += 1
         replays[key] = Task { [weak self] in
-            let result = await self?.host.deliver(output)
+            let result = await session.deliver(output)
             // Kept, where the run line and the failure count are still not
             // touched. Those two are what the discarded result was ever
             // discarded for; the History is a third place, and it is the one
             // the button was pressed on.
-            if let result { self?.replayResult = Self.words(for: result) }
+            self?.replayResult = Self.words(for: result)
             self?.replays[key] = nil
         }
     }
@@ -965,8 +1063,13 @@ final class AppModel: ObservableObject {
         startWatchingTheWorld()
         // The one caller that resumes. A cadence describes the gap BETWEEN
         // deliveries, and every OTHER caller of `reschedule` is a settings
-        // change, where the gap the user just chose starts now.
-        for connector in registry.all { reschedule(connector, resuming: true) }
+        // change, where the gap the user just chose starts now. One schedule
+        // per stored tile whose clock has a session; a tile whose connector
+        // the registry does not know gets no timer inside `reschedule`, and
+        // the VPN tiles get their own path in B18.
+        for record in tiles.all() where sessions[record.key.clockId] != nil {
+            reschedule(record.key, resuming: true)
+        }
         restockAtLaunch()
     }
 
@@ -993,9 +1096,13 @@ final class AppModel: ObservableObject {
     /// app should be asking about at all.
     private func noteLaunchDeliveries() {
         launchDeliveriesOwed = Set(
-            registry.all
-                .filter { $0.isAmbient && settings(for: $0).isEnabled }
-                .map(\.id)
+            tiles.all()
+                .filter { record in
+                    guard registry.connector(id: record.key.connectorId)?.isAmbient == true
+                    else { return false }
+                    return record.policy.isPaused == false
+                }
+                .map(\.key)
         )
     }
 
@@ -1037,7 +1144,7 @@ final class AppModel: ObservableObject {
         let due = launchDeliveriesOwed.filter { scheduleHold(for: $0) == nil }
         guard due.isEmpty == false else { return }
         launchDeliveriesOwed.subtract(due)
-        for id in due { runNow(id) }
+        for key in due { runNow(key) }
     }
 
     /// Fills every enabled connector's queue, once, at launch.
@@ -1064,11 +1171,17 @@ final class AppModel: ObservableObject {
     /// has already finished costs nothing, where a handle that nils itself is
     /// one more thing to be wrong about.
     private func restockAtLaunch() {
-        let due = registry.all.filter { settings(for: $0).isEnabled }.map(\.id)
+        let due = tiles.all()
+            .filter {
+                registry.connector(id: $0.key.connectorId) != nil
+                    && sessions[$0.key.clockId] != nil
+                    && $0.policy.isPaused == false
+            }
+            .map(\.key)
         launchRestock = Task { [weak self] in
-            for id in due {
+            for key in due {
                 guard let self else { return }
-                await self.restock(id)
+                await self.restock(key)
             }
         }
     }
@@ -1099,9 +1212,9 @@ final class AppModel: ObservableObject {
 
         for gated in focusGated {
             if gated.shows() {
-                runNow(gated.id)
-            } else {
-                retract(gated.id)
+                if let key = selectedKey(gated.id) { runNow(key) }
+            } else if let key = selectedKey(gated.id) {
+                retract(key)
             }
         }
     }
@@ -1157,27 +1270,33 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Takes a connector's app back off the clock now, rather than letting its
+    /// Takes a tile's app back off its clock now, rather than letting its
     /// lifetime expire.
     ///
     /// Through the same `manualRuns` bracket `runNow` uses, for the reason that
     /// one is: teardown can only wait for a task this model is holding.
-    private func retract(_ id: String) {
-        let key = nextRunKey
+    private func retract(_ key: TileKey) {
+        let runKey = nextRunKey
         nextRunKey += 1
-        manualRuns[key] = Task { [weak self] in
-            await self?.host.restoreDeviceState(borrowedBy: id)
-            self?.manualRuns[key] = nil
+        manualRuns[runKey] = Task { [weak self] in
+            await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.connectorId)
+            self?.manualRuns[runKey] = nil
         }
     }
 
-    func runNow(_ id: String) {
-        let key = nextRunKey
+    func runNow(_ key: TileKey) {
+        let runKey = nextRunKey
         nextRunKey += 1
-        manualRuns[key] = Task { [weak self] in
-            await self?.runAndReport(id)
-            self?.manualRuns[key] = nil
+        manualRuns[runKey] = Task { [weak self] in
+            await self?.runAndReport(key)
+            self?.manualRuns[runKey] = nil
         }
+    }
+
+    /// The panel's "Run now", still named by connector — it goes to the
+    /// selected clock's tile, until Phase 5 draws tiles.
+    func runNow(_ id: String) {
+        if let key = selectedKey(id) { runNow(key) }
     }
 
     /// Takes this app's icons back off the flash, because the user asked.
@@ -1247,16 +1366,23 @@ final class AppModel: ObservableObject {
         panelRefresh = nil
         for task in running { task.cancel() }
         for task in running { await task.value }
-        // Last, and only once everything above has stopped. The clock is given
-        // back what this app borrowed — the weather overlay is a global setting
-        // written to flash, and leaving it behind is the same defect as leaving
-        // an icon on the device or a banner on the screen.
+        // Last, and only once everything above has stopped. Every clock is
+        // given back what this app borrowed — the weather overlay is a global
+        // setting written to flash, and leaving it behind is the same defect as
+        // leaving an icon on the device or a banner on the screen.
         //
         // After the cancellations rather than before them, or a delivery still
         // in flight would put the overlay straight back on after the restore
         // had taken it off. And unowned by any connector: a quit is not about
         // one of them.
-        await host.restoreDeviceState(borrowedBy: nil)
+        //
+        // Every clock at once, inside the budget one clock had: a second clock
+        // does not double what a quit may take.
+        await withTaskGroup(of: Void.self) { group in
+            for session in sessions.values {
+                group.addTask { await session.restoreDeviceState(borrowedBy: nil) }
+            }
+        }
         // And the corners, for the same reason and in the same breath.
         // Indicators live on the clock: the firmware holds them through this
         // process going away, so a quit while the work tunnel was down would
@@ -1339,10 +1465,13 @@ final class AppModel: ObservableObject {
     /// name, and the failure that starts a search is the same failure that has
     /// to be counted for the search to be rationed.
     private func followTheClock() async {
+        guard let clock = self.clock else { return }
         if case let .online(stats) = monitor.state {
             unansweredPolls = 0
-            clock.hardwareIdentity = stats.uid
-            clocks.update(clock) { $0.hardwareIdentity = stats.uid }
+            if let index = clocks.firstIndex(where: { $0.id == clock.id }) {
+                clocks[index].hardwareIdentity = stats.uid
+            }
+            clockStore.update(clock) { $0.hardwareIdentity = stats.uid }
             return
         }
         unansweredPolls += 1
@@ -1363,8 +1492,10 @@ final class AppModel: ObservableObject {
         // rest is bookkeeping about a move that has already happened.
         await device.adopt(host: found)
         deviceHost = found
-        clock.address = found
-        clocks.update(clock) { $0.address = found }
+        if let index = clocks.firstIndex(where: { $0.id == clock.id }) {
+            clocks[index].address = found
+        }
+        clockStore.update(clock) { $0.address = found }
         typedHost = found
         // `typedHost` has a `didSet` that saves and then says so, and what it
         // says is "Saved — takes effect at next launch". Both halves are wrong
@@ -1470,7 +1601,39 @@ final class AppModel: ObservableObject {
         let due = heldRuns.filter { scheduleHold(for: $0) == nil }
         guard due.isEmpty == false else { return }
         heldRuns.subtract(due)
-        for id in due { await runAndReport(id) }
+        for key in due { await runAndReport(key) }
+    }
+
+    /// Brings the sessions in line with the clocks as stored.
+    ///
+    /// A clock gone from the list has its schedules stopped and everything it
+    /// was lent given back through its own custody, then its session dropped.
+    /// A clock new to the list gets a session and its tiles' schedules. Called
+    /// by the Clocks settings (Phase 5) after every change they make.
+    func reloadClocks() {
+        let stored = ClockStore(defaults: defaults).all()
+        let kept = Set(stored.map(\.id))
+        for (id, session) in sessions where !kept.contains(id) {
+            for key in timers.keys where key.clockId == id {
+                timers.removeValue(forKey: key)?.cancel()
+            }
+            let restoreKey = nextRestoreKey
+            nextRestoreKey += 1
+            restores[restoreKey] = Task { [weak self] in
+                await session.restoreDeviceState(borrowedBy: nil)
+                self?.restores[restoreKey] = nil
+            }
+            sessions[id] = nil
+        }
+        for clock in stored where sessions[clock.id] == nil {
+            sessions[clock.id] = makeSession(clock)
+        }
+        clocks = stored
+        if selectedClockId.map(kept.contains) != true { selectedClockId = stored.first?.id }
+        for record in tiles.all() where timers[record.key] == nil && sessions[record.key.clockId] != nil {
+            reschedule(record.key)
+        }
+        deviceHost = selectedClockId.flatMap { clock($0)?.address } ?? (stored.first?.address ?? "")
     }
 
     /// Builds this connector's delivery loop, replacing whatever it had.
@@ -1479,20 +1642,29 @@ final class AppModel: ObservableObject {
     ///   interval rather than the whole of it. Set by the launch and by nothing
     ///   else; `noteNextRun` is where the remainder is worked out and where the
     ///   argument for it lives.
-    private func reschedule(_ connector: any Connector, resuming: Bool = false) {
-        timers.removeValue(forKey: connector.id)?.cancel()
+    /// Builds this tile's delivery loop, replacing whatever it had.
+    ///
+    /// - Parameter resuming: whether the FIRST sleep is the remainder of the
+    ///   interval rather than the whole of it. Set by the launch and by nothing
+    ///   else; `noteNextRun` is where the remainder is worked out and where the
+    ///   argument for it lives.
+    private func reschedule(_ key: TileKey, resuming: Bool = false) {
+        timers.removeValue(forKey: key)?.cancel()
         // Whatever the replaced schedule was going to wake at is not what the
         // new one will, and a refresh landing between here and the first
         // `noteNextRun` would otherwise publish the old loop's time.
-        scheduledDue[connector.id] = nil
-        let settings = settings(for: connector)
-        guard settings.isEnabled else {
-            nextRun[connector.id] = .held(Self.switchedOff)
+        scheduledDue[key] = nil
+        // A tile whose connector the registry does not know — the VPN among
+        // them, which is not a scene connector — gets no schedule here.
+        guard let connector = registry.connector(id: key.connectorId),
+            sessions[key.clockId] != nil
+        else { return }
+        guard let record = storedTile(key), record.policy.isPaused == false else {
+            tileNextRun[key] = .held(Self.switchedOff)
             return
         }
 
-        let id = connector.id
-        let interval = settings.interval
+        let interval = RefreshScale.snapped(TimeInterval(record.policy.refreshSeconds))
         let sleep = self.scheduleSleep
         // An ambient connector is deliberately NOT resumed, and the two halves
         // are one sentence rather than two rules: a launch owes each connector
@@ -1506,7 +1678,7 @@ final class AppModel: ObservableObject {
         // the reading is already on the matrix by then, which is the only thing
         // resuming would have bought it.
         let resumesFromTheLastDelivery = resuming && connector.isAmbient == false
-        timers[id] = Task { [weak self] in
+        timers[key] = Task { [weak self] in
             // Spent by the first turn and never offered to a second. What is
             // owed is the remainder of ONE interval; a loop that kept asking
             // would measure every later beat against an instant that only gets
@@ -1521,7 +1693,7 @@ final class AppModel: ObservableObject {
                 // own timer.
                 guard
                     let delay = await self?.noteNextRun(
-                        id, interval: interval, resuming: owesTheRemainder
+                        key, interval: interval, resuming: owesTheRemainder
                     )
                 else { return }
                 owesTheRemainder = false
@@ -1559,7 +1731,7 @@ final class AppModel: ObservableObject {
                 // path, and carrying on into the tick would start one more
                 // delivery while the app is being torn down.
                 guard let self else { return }
-                await self.tick(id)
+                await self.tick(key)
             }
         }
     }
@@ -1599,10 +1771,12 @@ final class AppModel: ObservableObject {
     ///   entry and spend it the moment the user switched it on, which is the
     ///   one gesture this must not fire on.
     private func noteNextRun(
-        _ id: String, interval: TimeInterval, resuming: Bool
+        _ key: TileKey, interval: TimeInterval, resuming: Bool
     ) async -> TimeInterval {
-        let wait = await host.nextDelay(connectorId: id, interval: interval)
-        let delay = resuming ? whatIsLeftOf(wait, for: id) : wait
+        let wait = await session(for: key)?.nextDelay(
+            connectorId: key.connectorId, interval: interval
+        ) ?? interval
+        let delay = resuming ? whatIsLeftOf(wait, for: key) : wait
         // Asked even while the clock is unreachable, and the answer is still
         // slept: the pause is not sticky, the beat is kept, and the first tick
         // after the device answers delivers. What changes is only what the
@@ -1612,8 +1786,8 @@ final class AppModel: ObservableObject {
         // The single writer of the DUE TIME, and only of that. The hold half of
         // the label has three other clocks that can change it, and they refresh
         // it themselves through `publishNextRun` below.
-        scheduledDue[id] = Date().addingTimeInterval(delay)
-        publishNextRun(id)
+        scheduledDue[key] = Date().addingTimeInterval(delay)
+        publishNextRun(key)
         return delay
     }
 
@@ -1639,32 +1813,32 @@ final class AppModel: ObservableObject {
     /// firing at launch instead is what the sleep-first rule exists to prevent.
     /// It is also why the record is an optional instant rather than one
     /// defaulted to the epoch, which would make every fresh connector overdue.
-    private func whatIsLeftOf(_ wait: TimeInterval, for id: String) -> TimeInterval {
-        guard let delivered = chosen[id]?.lastDeliveredAt else { return wait }
+    private func whatIsLeftOf(_ wait: TimeInterval, for key: TileKey) -> TimeInterval {
+        guard let delivered = storedTile(key)?.lastDeliveredAt else { return wait }
         return min(wait, max(0, wait - Date().timeIntervalSince(delivered)))
     }
 
-    /// Writes one connector's line from what is true now.
+    /// Writes one tile's line from what is true now.
     ///
-    /// The single place `nextRun` is written for a connector that has a
-    /// schedule, so the label cannot disagree with itself depending on which of
-    /// the three loops last ticked. A hold outranks the time, because a time
-    /// named while something is in force is the lie the user plans around.
+    /// The single place the label is written for a tile that has a schedule, so
+    /// the label cannot disagree with itself depending on which of the three
+    /// loops last ticked. A hold outranks the time, because a time named while
+    /// something is in force is the lie the user plans around.
     ///
-    /// A connector with no timer is one the user switched off, and that line
-    /// belongs to `reschedule`: it is the only state a live clock cannot
-    /// change, and overwriting it here would put an hour back on a row the user
-    /// has turned off.
-    private func publishNextRun(_ id: String) {
-        guard timers[id] != nil else { return }
-        if let hold = scheduleHold(for: id) {
-            nextRun[id] = .held(hold)
-        } else if let due = scheduledDue[id] {
-            nextRun[id] = .due(due)
+    /// A tile with no timer is one the user switched off, and that line belongs
+    /// to `reschedule`: it is the only state a live clock cannot change, and
+    /// overwriting it here would put an hour back on a row the user has turned
+    /// off.
+    private func publishNextRun(_ key: TileKey) {
+        guard timers[key] != nil else { return }
+        if let hold = scheduleHold(for: key) {
+            tileNextRun[key] = .held(hold)
+        } else if let due = scheduledDue[key] {
+            tileNextRun[key] = .due(due)
         }
     }
 
-    /// Brings every scheduled connector's line up to date with the gates.
+    /// Brings every scheduled tile's line up to date with the gates.
     ///
     /// Called from the two loops that already turn faster than a schedule does
     /// — the reachability poll at a minute and the microphone watch at five
@@ -1672,18 +1846,20 @@ final class AppModel: ObservableObject {
     /// connector or touches a gate's decision; it only re-reads the answer the
     /// panel is showing.
     private func refreshScheduleLabels() {
-        for id in timers.keys { publishNextRun(id) }
+        for key in timers.keys { publishNextRun(key) }
     }
 
-    /// Whether the clock has been asked and did not answer.
+    /// Whether this tile's clock has been asked and did not answer.
     ///
     /// Read off the monitor's three-state answer rather than off the
     /// `isDeviceOnline` mirror the glyph draws from. `.unknown` is not online
     /// there either, so a schedule gated on that mirror would run nothing at
     /// all between launch and the first poll landing — and "not asked yet" is
     /// not "not there", which is the conflation `DeviceState` exists to
-    /// prevent.
-    private var deviceIsUnreachable: Bool {
+    /// prevent. One monitor until B14 gives every clock a health of its own,
+    /// so a tile on any other clock is never held by this.
+    private func clockIsUnreachable(_ clockId: UUID) -> Bool {
+        guard clockId == clock?.id else { return false }
         if case .offline = monitor.state { return true }
         return false
     }
@@ -1709,9 +1885,9 @@ final class AppModel: ObservableObject {
     /// loop and says nothing, and silencing it froze the temperature on the
     /// matrix for the whole shipped 23:00–08:00 window while the panel blamed a
     /// microphone.
-    private func scheduleHold(for connectorId: String) -> String? {
-        if deviceIsUnreachable { return Self.deviceUnreachable }
-        guard isAudible(connectorId) else { return nil }
+    private func scheduleHold(for key: TileKey) -> String? {
+        if clockIsUnreachable(key.clockId) { return Self.deviceUnreachable }
+        guard isAudible(key.connectorId) else { return nil }
         if let quiet = focus.silence(quietHours: quietHours) { return quiet }
         return busyMicrophone.map { MicrophoneGate.inUse($0.name) }
     }
@@ -1746,7 +1922,7 @@ final class AppModel: ObservableObject {
         microphone.capturing(watching: watchedMicrophones)
     }
 
-    private func tick(_ id: String) async {
+    private func tick(_ key: TileKey) async {
         // The clock is asked before anything is spent on a delivery it cannot
         // receive. `produce()` pops an anecdote and RETIRES it before the
         // banner goes out, so a run against a device that is not answering
@@ -1809,9 +1985,9 @@ final class AppModel: ObservableObject {
         // A launch inside the window still restocks, and a "Run now" inside it
         // still restocks after itself. Both are the user's own hand on the
         // machine; what this removes is the unattended one.
-        guard scheduleHold(for: id) == nil else {
-            if isAudible(id), busyMicrophone != nil { heldRuns.insert(id) }
-            if duringTheQuietWindow == false { await restock(id) }
+        guard scheduleHold(for: key) == nil else {
+            if isAudible(key.connectorId), busyMicrophone != nil { heldRuns.insert(key) }
+            if duringTheQuietWindow == false { await restock(key) }
             return
         }
         // Marked before the maintain, not between it and the run. `maintain` IS
@@ -1820,26 +1996,34 @@ final class AppModel: ObservableObject {
         // full queue and is quick. Written after it, the marker lands exactly
         // where the wait is already over, and the panel shows the PREVIOUS run's
         // outcome for the whole minute.
-        markUnderWay(id)
+        markUnderWay(key)
         // Top up BEFORE the run, never inside it. `produce()` only awaits a
         // refill when the queue is empty, so a timer that never maintains turns
         // every firing into a 70-second model load on the play path — the whole
         // reason the queue exists.
-        await restock(id)
-        reportOutcome(await host.runOnce(connectorId: id), for: id)
+        await restock(key)
+        reportOutcome(
+            await session(for: key)?.runOnce(connectorId: key.connectorId)
+                ?? .failed("no clock \(key.clockId)"),
+            for: key
+        )
         // And again after it, because the run is what emptied the queue. See
         // `restock(_:)`.
-        await restock(id)
+        await restock(key)
     }
 
     /// The manual path. The bracket is spelled out here as well as in `tick`
     /// rather than shared, because the shared version would be a call that
     /// marks a second time — and a count that never returns to zero is a panel
     /// stuck on `running…` for good.
-    private func runAndReport(_ id: String) async {
-        markUnderWay(id)
-        reportOutcome(await host.runOnce(connectorId: id), for: id)
-        await restock(id)
+    private func runAndReport(_ key: TileKey) async {
+        markUnderWay(key)
+        reportOutcome(
+            await session(for: key)?.runOnce(connectorId: key.connectorId)
+                ?? .failed("no clock \(key.clockId)"),
+            for: key
+        )
+        await restock(key)
     }
 
     /// Runs a connector's background pass and keeps whatever it had to say.
@@ -1860,8 +2044,12 @@ final class AppModel: ObservableObject {
     /// anything to hand out is exactly the one that needs restocking, and
     /// `AwtrixClockSession` already answers `.skipped` for a connector the user
     /// switched off.
-    private func restock(_ id: String) async {
-        note(await host.maintain(connectorId: id), for: id)
+    private func restock(_ key: TileKey) async {
+        note(
+            await session(for: key)?.maintain(connectorId: key.connectorId)
+                ?? .failed("no clock \(key.clockId)"),
+            for: key
+        )
     }
 
     /// Says a delivery is under way before it says how it went.
@@ -1872,9 +2060,9 @@ final class AppModel: ObservableObject {
     /// model load. Without this the panel shows nothing for all of it — the
     /// outcome is the only thing ever written, and it arrives at the end — so a
     /// "Run now" reads as a button that does nothing.
-    private func markUnderWay(_ id: String) {
-        outstanding[id, default: 0] += 1
-        lastResults[id] = "running…"
+    private func markUnderWay(_ key: TileKey) {
+        outstanding[key, default: 0] += 1
+        tileLastResults[key] = "running…"
     }
 
     /// Shows a result only when it is the last one outstanding.
@@ -1891,17 +2079,17 @@ final class AppModel: ObservableObject {
     /// mentioned. Showing both wants a second line per connector rather than a
     /// word squeezed into this one, and that is a design decision nobody has
     /// asked for yet.
-    private func reportOutcome(_ result: RunResult, for id: String) {
+    private func reportOutcome(_ result: RunResult, for key: TileKey) {
         // Above the guard, never below it. What that guard decides is whose
         // outcome the panel gets to SHOW — an earlier run's word is dropped
         // while a later one is still going — and a delivery that happened is a
         // fact about the cadence whether or not there is a free line to say it
         // on. Below it, two overlapping runs would leave the first one's
         // delivery unrecorded and the next launch measuring from before it.
-        if case .delivered = result { noteDelivery(id) }
-        outstanding[id, default: 1] -= 1
-        guard outstanding[id, default: 0] <= 0 else { return }
-        record(result, for: id)
+        if case .delivered = result { noteDelivery(key) }
+        outstanding[key, default: 1] -= 1
+        guard outstanding[key, default: 0] <= 0 else { return }
+        record(result, for: key)
     }
 
     /// Keeps what a background pass complained about, and drops it when there is
@@ -1917,17 +2105,17 @@ final class AppModel: ObservableObject {
     /// producer is a quit part-way through a fetch, and clearing a real outage
     /// on the strength of having been interrupted is the same mistake as
     /// counting one as a failure.
-    private func note(_ result: MaintenanceResult, for id: String) {
+    private func note(_ result: MaintenanceResult, for key: TileKey) {
         switch result {
-        case .completed, .skipped: lastMaintenanceFailure[id] = nil
+        case .completed, .skipped: tileLastMaintenanceFailure[key] = nil
         case .cancelled: break
         case let .failed(message):
-            lastMaintenanceFailure[id] = "restock failed: \(message.prefix(60))"
+            tileLastMaintenanceFailure[key] = "restock failed: \(message.prefix(60))"
         }
     }
 
-    private func record(_ result: RunResult, for id: String) {
-        lastResults[id] = Self.words(for: result)
+    private func record(_ result: RunResult, for key: TileKey) {
+        tileLastResults[key] = Self.words(for: result)
     }
 
     /// Writes down that this connector has just put something on the clock, for
@@ -1950,11 +2138,9 @@ final class AppModel: ObservableObject {
     /// registered connector an entry, so this is an id the registry does not
     /// have, and inventing a row of choices in the store for one is worse than
     /// forgetting a delivery nobody can schedule anyway.
-    private func noteDelivery(_ id: String) {
-        guard var settings = chosen[id] else { return }
-        settings.lastDeliveredAt = Date()
-        chosen[id] = settings
-        store.save(settings, for: id)
+    private func noteDelivery(_ key: TileKey) {
+        guard let record = storedTile(key) else { return }
+        tiles.update(record) { $0.lastDeliveredAt = Date() }
     }
 
     /// What a delivery's outcome is called, in the words both surfaces use.

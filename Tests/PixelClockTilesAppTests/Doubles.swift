@@ -78,6 +78,8 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     /// the answer is in flight is a state the real app reaches and a
     /// straight-through double cannot pose.
     private let parkInDelay: Gate?
+    /// Holds the restore, so a quit can be caught giving several clocks back.
+    private let parkInRestore: Gate?
     private let delay: TimeInterval?
     /// How a replay ends. A clock that is not answering is the case the History
     /// has to say something about, and a double that always succeeds cannot
@@ -91,6 +93,7 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
         parkInMaintain: Gate? = nil,
         parkInDeliver: Gate? = nil,
         parkInDelay: Gate? = nil,
+        parkInRestore: Gate? = nil,
         delay: TimeInterval? = nil,
         deliverResult: RunResult = .delivered
     ) {
@@ -98,6 +101,7 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
         self.parkInMaintain = parkInMaintain
         self.parkInDeliver = parkInDeliver
         self.parkInDelay = parkInDelay
+        self.parkInRestore = parkInRestore
         self.delay = delay
         self.deliverResult = deliverResult
     }
@@ -149,6 +153,7 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     /// about no connector in particular.
     func restoreDeviceState(borrowedBy connectorId: String?) async {
         lock.withLock { recorded.append("restore:\(connectorId ?? "all")") }
+        await parkInRestore?.enter()
     }
 }
 
@@ -501,20 +506,51 @@ func testModel(
     // Nil, so no test acquires a browse it did not ask for: a model built
     // without one stays at the address it was given, however long the clock is
     // away.
-    relocate: AppModel.RelocatingHost? = nil
+    relocate: AppModel.RelocatingHost? = nil,
+    // One AWTRIX clock, so every test written before there were several keeps
+    // driving exactly one.
+    clocks: [ClockRecord] = [ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")],
+    // Nil: one tile per connector on the first clock, from the connector's own
+    // default policy — the installation the migration leaves.
+    tiles: [TileRecord]? = nil,
+    // Nil: `host` for the first clock and a fresh `SpyHost` for any other.
+    sessions: [UUID: any ConnectorRunning]? = nil
 ) -> AppModel {
+    var clocks = clocks
+    if clocks[0].address != deviceHost { clocks[0].address = deviceHost }
+    if let hardwareIdentity { clocks[0].hardwareIdentity = hardwareIdentity }
     let registry = ConnectorRegistry()
     for connector in connectors { registry.register(connector) }
     let device = AwtrixDevice(host: deviceHost, transport: transport)
+    // One tile per connector on the first clock. A saved choice in `store` is
+    // what the tile starts from — the choice the old model read out of the
+    // store at init — and a connector nobody configured starts from its own
+    // default, which is what the migration left.
+    let storedTiles: [TileRecord] = tiles ?? connectors.map { connector in
+        let saved = store.storedSettings(for: connector.id)
+        return TileRecord(
+            key: TileKey(clockId: clocks[0].id, connectorId: connector.id),
+            policy: TilePolicyRecord(
+                isPaused: !(saved?.isEnabled ?? true),
+                refreshSeconds: Int(IntervalScale.duration(
+                    atPosition: saved?.intervalPosition
+                        ?? IntervalScale.position(for: connector.defaultInterval)
+                ))
+            ),
+            lastDeliveredAt: saved?.lastDeliveredAt
+        )
+    }
+    try? TileStore(defaults: defaults).replaceAll(storedTiles)
+    try? ClockStore(defaults: defaults).replaceAll(clocks)
     return AppModel(
-        clock: ClockRecord(
-            name: "Clock", model: .awtrix3, address: deviceHost, hardwareIdentity: hardwareIdentity
-        ),
+        clocks: clocks,
+        tiles: TileStore(defaults: defaults),
+        makeSession: { clock in
+            sessions?[clock.id] ?? (clock.id == clocks.first?.id ? host : SpyHost())
+        },
         device: device,
         relocate: relocate,
         registry: registry,
-        host: host,
-        store: store,
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: uploads
         ),
@@ -834,17 +870,26 @@ func modelOverRealHost(
         audio: SilentAudioPlayer(),
         iconInstaller: NoIconInstaller()
     )
+    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+    let defaults = UserDefaults(suiteName: "realHost-\(UUID().uuidString)")!
+    try? ClockStore(defaults: defaults).replaceAll([clock])
+    try? TileStore(defaults: defaults).replaceAll([
+        TileRecord(
+            key: TileKey(clockId: clock.id, connectorId: connector.id),
+            policy: TilePolicyRecord(isPaused: false, refreshSeconds: 1_800)
+        )
+    ])
     let model = AppModel(
-        clock: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5"),
+        clocks: [clock],
+        tiles: TileStore(defaults: defaults),
+        makeSession: { _ in host },
         device: device,
         registry: registry,
-        host: host,
-        store: store,
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: InMemoryUploadedIconStore()
         ),
         anecdotes: anecdotes,
-        defaults: UserDefaults(suiteName: "realHost-\(UUID().uuidString)")!,
+        defaults: defaults,
         pasteboard: NSPasteboard(name: NSPasteboard.Name("realHost-\(UUID().uuidString)")),
         alerts: SpyAlerts(),
         focus: focus,

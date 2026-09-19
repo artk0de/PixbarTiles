@@ -178,7 +178,9 @@ private func temporaryDefaults() -> UserDefaults {
     #expect(await waitUntil { relocation.asked.isEmpty == false })
 
     #expect(subject.deviceHost == "10.0.0.5")
-    #expect(ClockStore(defaults: defaults).all().isEmpty)
+    // The stored record still names where it started: the answered-but-unchanged
+    // poll wrote nothing back over it.
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.5")
     await subject.teardown()
 }
 
@@ -229,6 +231,8 @@ private func temporaryDefaults() -> UserDefaults {
     #expect(await waitUntil { relocation.asked.isEmpty == false })
 
     #expect(subject.deviceHost == "192.168.1.72")
-    #expect(ClockStore(defaults: defaults).all().isEmpty)
+    // Nothing found, nothing written: the record keeps the address it started
+    // with.
+    #expect(ClockStore(defaults: defaults).all().first?.address == "192.168.1.72")
     await subject.teardown()
 }

@@ -363,3 +363,83 @@ private let settingsWithAStatusLine = #"""
     #expect(FileManager.default.fileExists(atPath: scratch.link.hook.path))
     #expect(scratch.defaults.data(forKey: ClaudeCodeStatusLine.previousKey) != nil)
 }
+
+// MARK: - The hook after an update, and the last document
+
+// An app update may ship a different script. Claude Code would go on running
+// the old one, and nothing would say so.
+@Test func aHookThatDriftedIsRewrittenWhileConnected() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.link.connect()
+    try Data("#!/bin/sh\n# an older hook\n".utf8).write(to: scratch.link.hook)
+
+    try scratch.link.refreshHookIfConnected()
+
+    #expect(try Data(contentsOf: scratch.link.hook) == Data(ClaudeCodeStatusLine.script.utf8))
+    #expect(try scratch.mode(of: scratch.link.hook) == 0o700)
+}
+
+// While Claude Code points at a hook that is not there, its status row is
+// broken; putting the hook back mends it.
+@Test func aMissingHookIsPutBackWhileConnected() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.link.connect()
+    try FileManager.default.removeItem(at: scratch.link.hook)
+
+    try scratch.link.refreshHookIfConnected()
+
+    #expect(FileManager.default.fileExists(atPath: scratch.link.hook.path))
+}
+
+@Test func nothingIsInstalledWhileNotConnected() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+
+    try scratch.link.refreshHookIfConnected()
+    #expect(FileManager.default.fileExists(atPath: scratch.link.hook.path) == false)
+
+    try scratch.writeSettings(settingsWithAStatusLine)
+    try scratch.link.refreshHookIfConnected()
+    #expect(FileManager.default.fileExists(atPath: scratch.link.hook.path) == false)
+}
+
+// A hook that already matches is not rewritten. Its modification time is the
+// witness.
+@Test func aHookThatMatchesIsLeftUntouched() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.link.connect()
+    let old = Date(timeIntervalSince1970: 1_000_000_000)
+    try FileManager.default.setAttributes(
+        [.modificationDate: old], ofItemAtPath: scratch.link.hook.path
+    )
+
+    try scratch.link.refreshHookIfConnected()
+
+    #expect(try FileManager.default.attributesOfItem(atPath: scratch.link.hook.path)[
+        .modificationDate
+    ] as? Date == old)
+}
+
+@Test func theLastDocumentTimeIsWhenTheHookLastWroteOne() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    #expect(scratch.link.lastDocumentAt() == nil)
+
+    try FileManager.default.createDirectory(
+        at: scratch.directory, withIntermediateDirectories: true
+    )
+    try Data("{}".utf8).write(to: scratch.link.document)
+    // In the future, on purpose: APFS moves a fresh file's creation date along
+    // when its modification date is set into the past, which would let a
+    // `.creationDate` reading pass for the real one. A future time leaves the
+    // creation date where it is, so the two are tellable apart.
+    let written = Date(timeIntervalSince1970: 1_938_419_000)
+    try FileManager.default.setAttributes(
+        [.modificationDate: written], ofItemAtPath: scratch.link.document.path
+    )
+
+    #expect(scratch.link.lastDocumentAt() == written)
+}

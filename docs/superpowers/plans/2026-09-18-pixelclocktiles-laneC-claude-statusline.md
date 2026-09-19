@@ -2004,7 +2004,11 @@ Append to `Tests/PixelClockKitTests/ClaudeCodeStatusLineTests.swift`:
         at: scratch.directory, withIntermediateDirectories: true
     )
     try Data("{}".utf8).write(to: scratch.link.document)
-    let written = Date(timeIntervalSince1970: 1_738_419_000)
+    // In the future, on purpose: APFS moves a fresh file's creation date along
+    // when its modification date is set into the past, which would let a
+    // `.creationDate` reading pass for the real one. A future time leaves the
+    // creation date where it is, so the two are tellable apart.
+    let written = Date(timeIntervalSince1970: 1_938_419_000)
     try FileManager.default.setAttributes(
         [.modificationDate: written], ofItemAtPath: scratch.link.document.path
     )
@@ -2052,7 +2056,7 @@ Expected: PASS, 22 + 8 = 30 tests.
 | --- | --- | --- | --- |
 | S15 | delete `guard isConnected() else { return }` | `swift test --filter ClaudeCodeStatusLineTests` | FAIL `nothingIsInstalledWhileNotConnected` |
 | S16 | delete the drift comparison `guard … != Data(Self.script.utf8) …` | same | FAIL `aHookThatMatchesIsLeftUntouched` |
-| S17 | `lastDocumentAt()` reads `.creationDate` | same | FAIL `theLastDocumentTimeIsWhenTheHookLastWroteOne` |
+| S17 | `lastDocumentAt()` reads `.creationDate` | same | FAIL `theLastDocumentTimeIsWhenTheHookLastWroteOne`. With the past-dated fixture this plan first wrote, the mutant SURVIVES: APFS moves a fresh file's creation date along when its modification date is set into the past, so the two read the same. The fixture above uses a future time, which leaves the creation date where it is, and kills it. |
 
 The connected check sits in front of the drift check, so re-run **S16** once S15 is reverted. It must still fail `aHookThatMatchesIsLeftUntouched`.
 
@@ -2900,7 +2904,7 @@ The executor fills in the last column with killed, survived (expected), or survi
 | S14 | 6 | document removed | `disconnectingTakesTheHookAndTheDocumentAway` | |
 | S15 | 7 | refresh only while connected | `nothingIsInstalledWhileNotConnected` | |
 | S16 | 7, re-run after S15 | drift comparison | `aHookThatMatchesIsLeftUntouched` | |
-| S17 | 7 | modification date | `theLastDocumentTimeIsWhenTheHookLastWroteOne` | |
+| S17 | 7 | modification date | `theLastDocumentTimeIsWhenTheHookLastWroteOne` | killed, after the fixture moved to a future time — see Task 7 Step 5 |
 | M1–M6 | 8 | model and paths | as listed in Task 8 | |
 | V1–V3 | 9 | the section on screen | as listed in Task 9 | |
 

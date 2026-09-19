@@ -109,6 +109,23 @@ public struct ClaudeCodeStatusLine {
         return outcome
     }
 
+    /// Brings the hook Claude Code runs in line with the one this build ships,
+    /// or puts it back when it has gone.
+    ///
+    /// Only while connected: a launch never creates anything for a user who has
+    /// not asked. A hook that already matches is not rewritten.
+    public func refreshHookIfConnected() throws {
+        guard isConnected() else { return }
+        guard (try? Data(contentsOf: hook)) != Data(Self.script.utf8) else { return }
+        try installHook()
+    }
+
+    /// When the hook last stored a document, or nil when there is none.
+    public func lastDocumentAt() -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: document.path))?[.modificationDate]
+            as? Date
+    }
+
     // MARK: - Settings
 
     /// The settings as one object. An absent file reads as an empty one, which

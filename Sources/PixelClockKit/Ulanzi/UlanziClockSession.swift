@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Pushes are event-driven only — a delivery, an idle mark, a removal, a
 /// recovery. There is no loop and no timer (D1): the Mac never rotates
-/// anything, and `switchDiyApp` does not exist here (D3).
+/// anything, and no page switch exists here (D3).
 ///
 /// Its one recovery rule is deliberately blunt (D4): after any failed device
 /// call the clock is marked offline, and the FIRST successful call after that

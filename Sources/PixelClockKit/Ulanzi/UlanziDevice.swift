@@ -28,9 +28,9 @@ public struct UlanziIdentity: Codable, Sendable, Equatable {
     }
 }
 
-/// The TC002 HTTP adapter. Endpoints phase 3 needs and nothing else — there is
-/// no `switchDiyApp` here (D3): the knob belongs to the user, and this type
-/// never turns it.
+/// The TC002 HTTP adapter. Endpoints phase 3 needs and nothing else — no page
+/// switch exists here (D3): the knob belongs to the user, and this type never
+/// turns it.
 public actor UlanziDevice {
     private var host: String
     private let transport: any Transport

@@ -1,40 +1,6 @@
 import Darwin
 import Foundation
-
-/// A VPN this app watches, described by where its tunnel runs from.
-///
-/// Two fields rather than one name, because neither alone is enough: both apps
-/// ship a binary called `wireguard-go`, and both keep a daemon running from
-/// login to shutdown. The bundle says WHOSE process it is and the binary says
-/// whether it is a tunnel — and the question needs both answers.
-struct WatchedVPN: Sendable, Equatable {
-    /// The application bundle the process must have come out of.
-    let bundle: String
-
-    /// The binaries that exist only while a tunnel is up.
-    ///
-    /// Deliberately not the app itself and not its service: `pritunl-service`
-    /// and `AmneziaVPN-service` are started with the login session and run with
-    /// nothing connected. They are what ACCEPTS a connection rather than what
-    /// is one, and a detector that watched them would report both VPNs up from
-    /// the moment the Mac finished booting.
-    let tunnelBinaries: Set<String>
-
-    static let pritunl = WatchedVPN(
-        bundle: "/Applications/Pritunl.app/",
-        tunnelBinaries: ["pritunl-openvpn", "pritunl-openvpn10", "wireguard-go"]
-    )
-
-    /// Amnezia carries a tunnel over whichever protocol its profile selects,
-    /// and the user can change that without this app being told — so the set is
-    /// the protocol list, not one name.
-    static let amnezia = WatchedVPN(
-        bundle: "/Applications/AmneziaVPN.app/",
-        tunnelBinaries: [
-            "wireguard-go", "openvpn", "tun2socks", "ck-client", "ss-local", "ss-tunnel",
-        ]
-    )
-}
+import PixelClockKit
 
 /// Everything running on this machine, by executable path.
 ///

@@ -61,3 +61,14 @@ extension AwtrixDevice {
         _ = try await postJSON("/api/indicator\(slot.rawValue)", signal.jsonObject)
     }
 }
+
+extension IndicatorSlot {
+    /// What the settings and a lamp refusal call it — top, middle, bottom.
+    public var lampName: String {
+        switch self {
+        case .topRight: "top"
+        case .middleRight: "middle"
+        case .bottomRight: "bottom"
+        }
+    }
+}

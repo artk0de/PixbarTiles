@@ -363,6 +363,26 @@ the rename) shadows the module name,
 which is why `IconRef` had to be renamed `IconReference` (LaunchServices declares
 its own `IconRef`). Pre-1.0, compile-time only, fails loudly. Its own task.
 
+**PixelClockTiles, left by phase 1** (plan
+`docs/superpowers/plans/2026-09-18-pixelclocktiles-phase1-domain-persistence.md`):
+
+- The migration is a series of steps, each with its own marker, written last.
+  Phase 1 ran `migration.clocks` and `migration.tiles`. A later step reads the
+  old keys when it lands — they are never removed — and moves a row in the
+  same commit that stops the app writing its source key.
+- Phase 4 owes the step for the quiet hours, `weatherLocation` and the VPN
+  lamps. It extends `TilePolicyRecord` with optional keys for the Focus and the
+  hours; a tile without them has not been through that step.
+- Whichever phase keys custody and health by clock owes the steps for
+  `borrowedOverlay` and `batteryHistory`, in the commit that re-keys them.
+- `TileSettingsStore.save` keeps the stored seconds while the slider position
+  they snap to has not moved. It retires with the adapter when the scheduler
+  reads `TileRecord` directly; until then nothing may write seconds that the
+  old scale cannot show except through a moved slider.
+- `ClockStore.firstClock(orCreatingAt:)` creates a clock when none is stored.
+  Phase 5 removes that branch once "No clocks yet" is a state the user can
+  reach, and decides what `ClockMigration` does on a fresh install.
+
 ## Running the demonstration
 
 The Python prototype does end to end what the Swift app will do, against the real
@@ -517,6 +537,15 @@ as much about whether it can be FOUND as about whether it works.
     and Sleep; revoke it and the same line must go back to naming any Focus.
     The sentence describes the RULE, so turning a Work Focus on must not change
     it — what changes is that the app keeps talking.
+
+### Added by PixelClockTiles phase 1
+
+30. **An upgrade keeps what the user had.** Install the phase 1 build over the
+    previous one and open the panel: the clock at the same address, the
+    anecdote interval and switch as they were, and the next anecdote due at the
+    remainder of the interval rather than a fresh one. Then let the clock drop
+    off the network and come back at a new address: the app follows it, which
+    is the migrated `deviceUID` at work.
 
 ## The panel's width belongs to the content, not to the window
 

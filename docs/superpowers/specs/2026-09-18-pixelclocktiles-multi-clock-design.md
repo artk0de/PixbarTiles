@@ -90,7 +90,7 @@ A record in the Clocks section of the settings.
 | `name` | What the user calls it — "Desk", "Kitchen" |
 | `model: ClockModel` | `.awtrix3` or `.ulanziTC002`, detected when the clock is added, never chosen |
 | `address` | Host or IP |
-| `hardwareIdentity` | AWTRIX `uid` from `/api/stats`; TC002 `devSn` from `/getBase` |
+| `hardwareIdentity` | AWTRIX `uid` from `/api/stats`; TC002 `devSn` from `/getBase`. Nil until the clock has answered once |
 
 Adoption and relocation work on `hardwareIdentity`: a DHCP lease moving is the
 same clock on a new address, not a new clock. This is `DeviceAdoption`'s rule,
@@ -478,19 +478,24 @@ New `UserDefaults` keys, JSON-encoded: `clocks: [ClockRecord]`,
 custody), `borrowedOverlay.<clockId>` (AWTRIX custody),
 `batteryHistory.<hardwareIdentity>`.
 
-Migration of an existing installation runs once and is idempotent. Its marker
-is written last, so a migration that fails part-way runs again from the start
-on the next launch rather than leaving half a model.
+Migration of an existing installation runs as steps. Each step runs once and is
+idempotent: its marker is written last, so a step that fails part-way runs
+again from the old keys on the next launch rather than leaving half a model.
+The old keys are never written or removed. A row moves in the phase that stops
+the app writing its source key. Before then the old UI still writes it, and a
+copy taken earlier would be stale by the time anything read it — for the
+borrowed overlay, a loan already given back.
 
-| Old | New |
-| --- | --- |
-| `deviceHost` | one AWTRIX clock named "Clock" |
-| `connector.<id>` | a tile on that clock; `isEnabled` → `!isPaused`; interval index → duration → seconds; `lastDeliveredAt` kept |
-| `quietStartHour` / `quietEndHour` | `window: .quiet(…)` on the audible tiles |
-| the stored location | the weather tile's `config` |
-| the always-on VPN lamps | two VPN tiles, both `whenUnknown: hold` (today a Focus that cannot be named leaves both lamps dark): Pritunl on the top lamp, working in Work only, `#90EE90`, down → blink `#FF0000`; Amnezia on the bottom lamp, working in Work and Personal, `#A855F7`, down → off |
-| the borrowed overlay | `borrowedOverlay.<clockId>` of that clock |
-| `batteryHistory` | `batteryHistory.<uid>` |
+| Old | New | Step · phase |
+| --- | --- | --- |
+| `deviceHost`; absent, `192.168.1.72`, the address the launch used | one AWTRIX clock named "Clock" | `migration.clocks` · 1 |
+| `deviceUID` | that clock's `hardwareIdentity` | `migration.clocks` · 1 |
+| `connector.<id>` for every registered connector; absent or unreadable, the connector's defaults | a tile on that clock; `isEnabled` → `!isPaused`; interval index → duration → seconds; `lastDeliveredAt` kept | `migration.tiles` · 1 |
+| `quietStartHour` / `quietEndHour` | `window: .quiet(…)` on the audible tiles | 4 |
+| `weatherLocation` | the weather tile's `config` | 4 |
+| the always-on VPN lamps | two VPN tiles, both `whenUnknown: hold` (today a Focus that cannot be named leaves both lamps dark): Pritunl on the top lamp, working in Work only, `#90EE90`, down → blink `#FF0000`; Amnezia on the bottom lamp, working in Work and Personal, `#A855F7`, down → off | 4 |
+| the borrowed overlay | `borrowedOverlay.<clockId>` of that clock | the phase that keys custody by clock |
+| `batteryHistory` | `batteryHistory.<uid>` | the phase that keys health by clock |
 
 Behaviour that changes on purpose, so it is not reported as a regression:
 

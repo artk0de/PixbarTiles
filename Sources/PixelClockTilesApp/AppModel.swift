@@ -37,6 +37,33 @@ protocol ConnectorRunning: Sendable {
 
 extension AwtrixClockSession: ConnectorRunning {}
 
+/// The app's view of a TC002 clock — what the panel and the settings may ask
+/// of one. The caller-side shape of `ConnectorRunning`, typed on the Ulanzi
+/// scene: pages go out per tile, and there is no borrow-and-restore, because
+/// a TC002 owns nothing device-wide.
+protocol UlanziConnectorRunning: Sendable {
+    func deliver(_ output: UlanziDelivery, toTile tileId: String) async -> RunResult
+    func markIdle(tileId: String) async -> RunResult
+    /// Startup: stale page names deleted first, live tiles registered.
+    func sweep(liveTiles: [String]) async
+    func tileRemoved(_ tileId: String) async
+    func shutdown() async
+}
+
+extension UlanziClockSession: UlanziConnectorRunning {}
+
+/// The `ConnectorRunning` the shell holds when the clock is not an AWTRIX
+/// one. Every answer is a skip and nothing reaches the wire: the schedule
+/// that drives this protocol does not exist for a TC002, and the multi-clock
+/// shell that replaces this stopgap is phase 4's work.
+struct NoClockHost: ConnectorRunning {
+    func maintain(connectorId: String) async -> MaintenanceResult { .skipped }
+    func runOnce(connectorId: String) async -> RunResult { .skipped }
+    func deliver(_ output: AwtrixDelivery) async -> RunResult { .skipped }
+    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
+    func restoreDeviceState(borrowedBy connectorId: String?) async {}
+}
+
 /// The anecdotes the menu can look back over.
 ///
 /// Declared here rather than in the kit for the reason `ConnectorRunning` is:
@@ -213,7 +240,7 @@ final class AppModel: ObservableObject {
     /// The clock this model drives: as it was stored at launch, plus what this
     /// launch has since learned about it. Its id is what every write below is
     /// keyed by.
-    private var clock: ClockRecord
+    private(set) var clock: ClockRecord
     /// Where what is learned about the clock is written down for the next
     /// launch.
     private let clocks: ClockStore
@@ -319,6 +346,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var watchedMicrophones: [WatchedMicrophone]
 
     private let host: any ConnectorRunning
+    /// The TC002 branch of the runtime route, or nil when the clock the app
+    /// drives is an AWTRIX one. The two never coexist — one app, one clock —
+    /// and which of them it is was `live()`'s decision, made once per launch.
+    private(set) var ulanzi: (any UlanziConnectorRunning)?
     private let store: any SettingsStore
     private let installer: CatalogueIconInstaller
     /// The connector whose history the menu can browse, or nil when none was
@@ -482,6 +513,9 @@ final class AppModel: ObservableObject {
         relocate: RelocatingHost? = nil,
         registry: ConnectorRegistry,
         host: any ConnectorRunning,
+        // Nil whenever the clock is an AWTRIX one — the default every existing
+        // caller keeps, and what `live()` passes on the AWTRIX branch.
+        ulanzi: (any UlanziConnectorRunning)? = nil,
         store: any SettingsStore,
         installer: CatalogueIconInstaller,
         anecdotes: (any AnecdoteReplaying)? = nil,
@@ -518,6 +552,7 @@ final class AppModel: ObservableObject {
             device: device, history: UserDefaultsBatteryHistoryStore(defaults: defaults)
         )
         self.host = host
+        self.ulanzi = ulanzi
         self.store = store
         self.installer = installer
         self.anecdotes = anecdotes
@@ -542,6 +577,10 @@ final class AppModel: ObservableObject {
     /// `transport` is a parameter because it is this app's one door to the
     /// outside: naming it here is what lets the wiring below be checked without
     /// a clock on the network.
+    ///
+    /// The route selects per `ClockRecord.model`: an AWTRIX clock gets the
+    /// phase-2 wiring, a TC002 one the Ulanzi session. One clock per launch —
+    /// the choice is made once and the branch not revisited.
     static func live(
         defaults: UserDefaults = .standard,
         transport: any Transport = URLSessionTransport(),
@@ -552,6 +591,24 @@ final class AppModel: ObservableObject {
         // whatever is stored, and the line below makes sure something is.
         try? ClockMigration(defaults: defaults, fallbackHost: defaultDeviceHost).run()
         let clock = ClockStore(defaults: defaults).firstClock(orCreatingAt: defaultDeviceHost)
+        switch clock.model {
+        case .ulanziTC002:
+            return ulanziLive(clock: clock, defaults: defaults, transport: transport)
+        case .awtrix3:
+            return awtrixLive(
+                clock: clock, defaults: defaults, transport: transport,
+                anecdoteStore: anecdoteStore
+            )
+        }
+    }
+
+    /// The AWTRIX branch: the phase-2 wiring, unchanged.
+    private static func awtrixLive(
+        clock: ClockRecord,
+        defaults: UserDefaults,
+        transport: any Transport,
+        anecdoteStore: URL
+    ) -> AppModel {
         let device = AwtrixDevice(host: clock.address, transport: transport)
         // Built here rather than inside the model so that the one door to the
         // outside stays this function's `transport` parameter: the probe below
@@ -653,6 +710,91 @@ final class AppModel: ObservableObject {
         )
     }
 
+    /// The TC002 branch: one Ulanzi device, custody, and the session the
+    /// panel talks to. The registry keeps the connectors whose TC002 faces
+    /// render the tile pages (weather, Claude usage — D6 leaves the anecdote
+    /// face to a later phase), and the tile store persists their settings.
+    ///
+    /// The shell AppModel requires is AWTRIX-shaped, and this phase does not
+    /// re-shape it: the device and installer below are never driven on this
+    /// branch — `start()` routes the device loops away, and `NoClockHost`
+    /// answers the schedule without wire traffic. The multi-clock shell that
+    /// replaces them is phase 4's work.
+    private static func ulanziLive(
+        clock: ClockRecord, defaults: UserDefaults, transport: any Transport
+    ) -> AppModel {
+        let device = UlanziDevice(host: clock.address, transport: transport)
+        let custody = UlanziCustody(
+            device: device,
+            // Durable, for the reason DeviceCustody's borrowed overlays are
+            // durable: TC002 pages outlive this process (D9), and a record
+            // that died with it would leave the app guessing at what it owns.
+            record: UserDefaultsAppRecord(defaults: defaults),
+            clockId: clock.id.uuidString
+        )
+        let session = UlanziClockSession(device: device, custody: custody)
+
+        let shell = AwtrixDevice(host: clock.address, transport: transport)
+        let registry = ConnectorRegistry()
+        let installer = CatalogueIconInstaller(
+            device: shell,
+            transport: transport,
+            uploads: UserDefaultsUploadedIconStore(defaults: defaults)
+        )
+        // The location is read on every produce rather than captured here, so
+        // a pair typed into the settings takes effect at the next poll instead
+        // of at the next launch.
+        let location = StoredLocation(defaults: defaults)
+        registry.register(
+            WeatherConnector(
+                source: OpenMeteoSource(transport: transport),
+                location: { location.current }
+            )
+        )
+        let focusStatus = SystemFocusStatus()
+        registry.register(
+            ClaudeUsageConnector(
+                reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document),
+                showsNow: { ClaudeFocusAudience.shows(focusStatus) }
+            )
+        )
+
+        // After every connector is registered: one the step does not hear
+        // about gets no tile, and runs on its own default until its first
+        // saved choice gives it one.
+        try? TileMigration(
+            defaults: defaults,
+            clockId: clock.id,
+            connectors: registry.all.map { (id: $0.id, defaultInterval: $0.defaultInterval) }
+        ).run()
+        let store = TileSettingsStore(defaults: defaults, clockId: clock.id)
+
+        return AppModel(
+            clock: clock,
+            device: shell,
+            registry: registry,
+            host: NoClockHost(),
+            ulanzi: session,
+            store: store,
+            installer: installer,
+            defaults: defaults,
+            alerts: BatteryAlert(
+                dialog: ModalBatteryDialog(), notifications: SystemBatteryNotifier()
+            ),
+            // The same reading of macOS the connector's own gate is built on,
+            // so the two cannot answer differently about the same moment.
+            focus: FocusGate(status: focusStatus),
+            focusGated: [
+                FocusGatedConnector(id: ClaudeUsageConnector.appName) {
+                    ClaudeFocusAudience.shows(focusStatus)
+                },
+            ],
+            quietHours: QuietWindow.stored(in: defaults),
+            microphone: MicrophoneGate(inputs: SystemAudioInputs()),
+            watching: WatchedMicrophone.stored(in: defaults)
+        )
+    }
+
     /// The anecdote connector, and the two collaborators whose agreement is the
     /// reaper's entire safety argument.
     ///
@@ -740,7 +882,14 @@ final class AppModel: ObservableObject {
         // a restore there would write a value that is already on the device.
         // Dragging the interval slider is neither, and must not touch the clock
         // at all.
-        if wasEnabled && !settings.isEnabled { giveBackDeviceState(connector.id) }
+        if wasEnabled && !settings.isEnabled {
+            giveBackDeviceState(connector.id)
+            // On the TC002 branch a switched-off connector's page stays in the
+            // knob cycle on the idle frame — paused, never deleted (D4).
+            if let ulanzi {
+                Task { await ulanzi.markIdle(tileId: connector.id) }
+            }
+        }
     }
 
     /// Puts back what one connector borrowed from the clock.
@@ -952,6 +1101,17 @@ final class AppModel: ObservableObject {
         // this method is synchronous and no task runs until it returns, but the
         // poll is what SPENDS this debt and reading it half-written is one
         // ordering nobody should have to reason about.
+        // The device loops below exist for an AWTRIX clock: stats to monitor,
+        // a notify endpoint to push, anecdotes to restock (D3, D6). A TC002
+        // answers none of it, and firing the AWTRIX schedule at one is
+        // traffic the firmware never asked for — its pages are pushed by the
+        // Ulanzi session, and what drives them lands with phase 4's
+        // multi-clock work.
+        guard clock.model == .awtrix3 else {
+            startWatchingMicrophones()
+            startWatchingTheWorld()
+            return
+        }
         noteLaunchDeliveries()
         startMonitoring()
         startWatchingMicrophones()

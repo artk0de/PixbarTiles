@@ -437,7 +437,12 @@ struct MenuPanel: View {
                     Text(model.deviceHost)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let battery = BatteryLine.text(for: monitor.battery) {
+                    // A TC002 row draws no battery line: the stock firmware
+                    // reads no level over its API — the cell is there, the
+                    // API does not answer it — so whatever showed here would
+                    // be a guess.
+                    if model.clock.model == .awtrix3,
+                       let battery = BatteryLine.text(for: monitor.battery) {
                         Text("· " + battery)
                             .font(.caption)
                             .foregroundStyle(BatteryLine.colour(for: monitor.battery))

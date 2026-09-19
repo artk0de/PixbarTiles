@@ -588,15 +588,13 @@ final class AppModel: ObservableObject {
                 location: { location.current }
             )
         )
-        // The credential is Claude Code's, not this app's, and the reporter
-        // only ever reads it — see `ClaudeCredentialReading` for why refreshing
-        // it here would drop that program out of its own session. A launch on a
-        // machine with no Claude Code signed in reports nothing and the app
-        // simply never appears in the loop.
+        // The figure is whatever Claude Code's status line last left in this
+        // app's folder. Until Claude Code is connected in the settings and has
+        // replied once there is no document, and the app never enters the loop.
         let focusStatus = SystemFocusStatus()
         registry.register(
             ClaudeUsageConnector(
-                reporter: ClaudeUsageReporter(transport: transport),
+                reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document),
                 showsNow: { ClaudeFocusAudience.shows(focusStatus) }
             )
         )

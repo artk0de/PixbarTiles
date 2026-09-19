@@ -2,14 +2,12 @@ import Foundation
 
 /// Where a source of weekly-allowance readings comes from.
 ///
-/// A protocol rather than the HTTP call itself, because the awkward part of
-/// this connector is not drawing the number — it is that the credential belongs
-/// to another program. Keeping the fetch behind this line lets the drawing be
-/// tested without one, and lets the credential question be answered once, in
-/// the type that implements it.
+/// A protocol rather than the file read itself, so the drawing can be tested
+/// against a figure, and where the figure comes from is answered once, in the
+/// type that implements it — `StatusLineClaudeUsageReporter` in this kit.
 public protocol ClaudeUsageReporting: Sendable {
-    /// The current weekly reading, or nil when the service cannot be asked —
-    /// no credential, an expired one, or an answer that carried no weekly bar.
+    /// The current weekly reading, or nil when there is none to be had: no
+    /// status-line document yet, or a week that has reset since the last one.
     func read() async throws -> ClaudeUsageReading?
 }
 

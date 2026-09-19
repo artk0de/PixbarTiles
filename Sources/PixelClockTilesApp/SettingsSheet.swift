@@ -17,6 +17,10 @@ struct SettingsSheet: View {
     /// takes one: it must not be evaluated on every redraw of a sheet whose
     /// other fields save as they are typed.
     private let loginItem: () -> LoginItemModel
+    /// Handed down for the reason `loginItem` is: a test can put a link over a
+    /// fixture file in, and the shipped default reads Claude Code's real
+    /// settings only inside an app bundle.
+    private let claudeCode: () -> ClaudeCodeLinkModel
 
     /// Where the width the three surfaces share is read.
     ///
@@ -28,10 +32,12 @@ struct SettingsSheet: View {
     init(
         model: AppModel,
         loginItem: @autoclosure @escaping () -> LoginItemModel = LoginItemModel(),
+        claudeCode: @autoclosure @escaping () -> ClaudeCodeLinkModel = ClaudeCodeLinkModel(),
         defaults: UserDefaults = .standard
     ) {
         _model = ObservedObject(wrappedValue: model)
         self.loginItem = loginItem
+        self.claudeCode = claudeCode
         self.defaults = defaults
     }
 
@@ -46,6 +52,8 @@ struct SettingsSheet: View {
             quietHoursSection
             Divider()
             microphonesSection
+            Divider()
+            ClaudeCodeSettings(link: claudeCode())
             Divider()
             iconSection
             Divider()

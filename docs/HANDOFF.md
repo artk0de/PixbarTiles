@@ -757,8 +757,58 @@ removes the apps, restores the overlay and darkens both corners.
 
 Found while running the suite, and not changed by Phase 2:
 `nothingButTheAnecdotesEverPutsSoundInTheRoom` produces every connector
-`live()` registers, so it reads the real login keychain through
-`KeychainClaudeCredentials`. Once, with the machine under heavy load, it sat in
+`live()` registers, so it read the real login keychain through
+`KeychainClaudeCredentials` — a reader lane C has since deleted, so the test no
+longer touches the keychain. Once, with the machine under heavy load, it sat in
 `SecItemCopyMatching` for more than ten minutes and held a serial run with it;
 alone, later, it passed in five seconds. A serial run that stops printing is
 worth sampling for that frame before anything else is suspected.
+
+## Claude usage from Claude Code's status line — lane C
+
+The Claude figure no longer comes from `/api/oauth/usage` with a token taken
+from the keychain. Connect Claude Code (in the settings) sets Claude Code's
+`statusLine` to `/bin/sh '<Application Support>/PixelClockTiles/claude-statusline.sh'`,
+followed by the previous command as a quoted argument when there was one. After
+each reply the hook stores the document, if it carries `rate_limits`, as
+`claude-status.json` beside itself, then runs the previous command. The
+replaced value is kept in the defaults key `claudeStatusLine.previous`, and
+Disconnect puts it back, removes the hook and removes the document.
+`StatusLineClaudeUsageReporter` reads the document on every Claude refresh.
+
+Known limits, which are not defects:
+
+- A project's own `.claude/settings.json` with a `statusLine` overrides the
+  user's in that project, so sessions there never run the hook.
+- `CLAUDE_CONFIG_DIR` moves Claude Code's settings. The app edits
+  `~/.claude/settings.json` only.
+- Two sessions signed in to different accounts: the last one to reply wins.
+- A `refreshInterval` carried over from a previous status line runs the hook on
+  that timer too, and Claude Code re-runs it when a window resets. The
+  document's time can move without a reply.
+- Rewriting `settings.json` keeps every value, but not its formatting or key
+  order.
+- A bare `swift run` build cannot connect. Without a bundle id there is no
+  link, and that guard is what keeps `swift test` off the real settings.
+
+### What only a person at the hardware can settle — added by lane C
+
+C1. **Connect.** Copy `~/.claude/settings.json` aside, open the settings, press
+    Connect Claude Code…, read the confirmation, press Connect. Diff the file
+    against the copy: `statusLine` is the only key that changed.
+C2. **The figure arrives.** Run an interactive `claude` session and send one
+    message. `claude-status.json` appears beside the hook, the settings line
+    shows its time when the settings are reopened, and within one Claude
+    refresh (five minutes at most) the clock shows the same weekly percentage
+    that `/usage` reports.
+C3. **An empty status row.** With nothing chained, the hook prints nothing. The
+    documentation says an empty output blanks the row. Look at what Claude Code
+    actually draws there, and confirm that `esc to interrupt` is gone, as the
+    confirmation says.
+C4. **Disconnect.** `statusLine` is back to what the copy from C1 holds, or
+    absent if it was absent. The hook and the document are gone. The figure
+    leaves the clock within its lifetime (fifteen minutes).
+C5. **Launch refresh.** While connected, overwrite the hook with any text and
+    relaunch the app. The hook is back to the shipped script, with mode 0700.
+C6. **No keychain prompt.** From this build on, no dialog ever asks for the
+    "Claude Code-credentials" keychain item.

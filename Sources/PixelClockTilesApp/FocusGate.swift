@@ -1,5 +1,6 @@
 import Foundation
 import Intents
+import PixelClockKit
 
 /// What macOS has been asked about Focus, and what it answered.
 ///
@@ -102,30 +103,22 @@ struct QuietWindow: Equatable, Sendable {
     /// Read to the hour, in the machine's own calendar: the user set hours, and
     /// the question is which hour it is where they are sitting.
     func contains(_ moment: Date, in calendar: Calendar = .current) -> Bool {
-        let hour = calendar.component(.hour, from: moment)
-        // Zero length is zero quiet. The other reading of two pickers landing
-        // on the same hour — a window that swallows the whole day — is an app
-        // that has gone permanently mute because somebody scrolled one wheel
-        // too far, with nothing on the panel to say why.
-        guard startHour != endHour else { return false }
-        // The default wraps midnight, so this is the case rather than the edge
-        // case: 23 to 8 is two stretches with the day boundary between them.
-        guard startHour < endHour else { return hour >= startHour || hour < endHour }
-        return hour >= startHour && hour < endHour
+        hours.contains(hour: calendar.component(.hour, from: moment))
     }
 
     /// The window as the settings say it, `23:00–08:00`.
-    var label: String {
-        "\(Self.clockFace(startHour))–\(Self.clockFace(endHour))"
-    }
+    var label: String { hours.label }
 
     /// An hour as a clock reads it.
-    ///
-    /// Written out rather than handed to `DateFormatter`, for the reason
-    /// `BatteryLine.duration` is: a locale-dependent formatter would have the
-    /// suite say one thing on this machine and another on anybody else's.
     static func clockFace(_ hour: Int) -> String {
-        String(format: "%02d:00", hour)
+        HourWindow.clockFace(hour)
+    }
+
+    /// The same two hours as the kit's window, which owns the arithmetic —
+    /// the wrap past midnight and the zero-length rule — for this window and
+    /// for every tile's.
+    private var hours: HourWindow {
+        HourWindow(startHour: startHour, endHour: endHour)
     }
 
     /// What the last launch left behind, or the default when nothing was ever
@@ -467,10 +460,9 @@ enum DoNotDisturbDatabase {
     /// what these two identifiers already say, and every other mode in it is
     /// one to speak through — including the ones a user invents, which no list
     /// here could enumerate.
-    static let silencing: Set<String> = [
-        "com.apple.donotdisturb.mode.default",
-        "com.apple.sleep.sleep-mode",
-    ]
+    static let silencing: Set<String> = Set(
+        [MacFocus.doNotDisturb, .sleep].compactMap(\.modeIdentifier)
+    )
 
     /// Where macOS keeps it.
     ///

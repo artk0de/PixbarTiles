@@ -54,7 +54,15 @@ public actor UlanziDevice {
     /// replies bare, with no `code` envelope around the identity.
     public func identity() async throws -> UlanziIdentity {
         let data = try await perform("GET", "/getBase")
-        guard let identity = try? JSONDecoder().decode(UlanziIdentity.self, from: data) else {
+        guard
+            let identity = try? JSONDecoder().decode(UlanziIdentity.self, from: data),
+            // Every field is optional, so a decode alone proves nothing: any
+            // JSON object — an AWTRIX stats body, an HTML error page — comes
+            // back as an identity with nothing in it. At least one field has
+            // to be present for the answer to count as an identity at all.
+            identity.serial != nil || identity.mac != nil || identity.ip != nil
+                || identity.mcuVersion != nil || identity.appVersion != nil
+        else {
             throw UlanziError.malformed("/getBase did not answer an identity")
         }
         return identity

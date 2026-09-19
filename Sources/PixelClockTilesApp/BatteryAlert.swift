@@ -9,7 +9,7 @@ import UserNotifications
 /// the kit works out THAT a threshold was crossed, and what to do about it —
 /// steal focus, ask the system for permission to post — is the app's.
 protocol BatteryWarningPresenting: Sendable {
-    @MainActor func warn(_ warning: BatteryWarning) async
+    @MainActor func warn(_ warning: BatteryWarning, on clock: String) async
 }
 
 /// The in-app half: a dialog the user cannot miss.
@@ -46,13 +46,15 @@ enum BatteryAlertWords {
 
     /// Names where the battery IS, not where the line was. A poll every twenty
     /// seconds can find it at 19% having last seen it at 25%, and "20%" would
-    /// be the one number on screen that is not a reading.
-    static func body(for warning: BatteryWarning) -> String {
+    /// be the one number on screen that is not a reading. The clock's own name
+    /// leads, because with more than one on the desk the first word is what
+    /// says whose battery it is.
+    static func body(for warning: BatteryWarning, on clock: String) -> String {
         switch warning.threshold {
-        case 1: "\(warning.percent)% left. The next thing it does is switch off."
-        case 5: "\(warning.percent)% left. Plug it in now."
-        case 10: "\(warning.percent)% left. Plug it in soon."
-        default: "\(warning.percent)% left, and falling."
+        case 1: "\(clock): \(warning.percent)% left. The next thing it does is switch off."
+        case 5: "\(clock): \(warning.percent)% left. Plug it in now."
+        case 10: "\(clock): \(warning.percent)% left. Plug it in soon."
+        default: "\(clock): \(warning.percent)% left, and falling."
         }
     }
 }
@@ -85,9 +87,9 @@ final class BatteryAlert: BatteryWarningPresenting {
         self.notifications = notifications
     }
 
-    func warn(_ warning: BatteryWarning) async {
+    func warn(_ warning: BatteryWarning, on clock: String) async {
         let title = BatteryAlertWords.title(for: warning)
-        let body = BatteryAlertWords.body(for: warning)
+        let body = BatteryAlertWords.body(for: warning, on: clock)
         // First, and before anything is awaited. An authorization request that
         // never comes back — the system prompt is up and the user is elsewhere
         // — would otherwise hold the warning that matters behind the one that

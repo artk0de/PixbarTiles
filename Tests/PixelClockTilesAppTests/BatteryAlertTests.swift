@@ -20,7 +20,7 @@ private let lowBattery = BatteryWarning(threshold: 20, percent: 19)
     let notifications = StubNotifications(granted: false)
     let subject = BatteryAlert(dialog: dialog, notifications: notifications)
 
-    await subject.warn(lowBattery)
+    await subject.warn(lowBattery, on: "Clock")
 
     #expect(dialog.shown.count == 1)
     // And nothing was posted, which is the other half: a denied app that posts
@@ -34,7 +34,7 @@ private let lowBattery = BatteryWarning(threshold: 20, percent: 19)
     let notifications = StubNotifications(granted: true)
     let subject = BatteryAlert(dialog: dialog, notifications: notifications)
 
-    await subject.warn(lowBattery)
+    await subject.warn(lowBattery, on: "Clock")
 
     #expect(dialog.shown.count == 1)
     #expect(notifications.posted.count == 1)
@@ -53,7 +53,7 @@ private let lowBattery = BatteryWarning(threshold: 20, percent: 19)
     // what it wants, and the refusal is permanent until System Settings.
     #expect(notifications.authorizationRequests == 0)
 
-    await subject.warn(lowBattery)
+    await subject.warn(lowBattery, on: "Clock")
 
     #expect(notifications.authorizationRequests == 1)
 }
@@ -62,9 +62,9 @@ private let lowBattery = BatteryWarning(threshold: 20, percent: 19)
     let notifications = StubNotifications(granted: true)
     let subject = BatteryAlert(dialog: RecordingDialog(), notifications: notifications)
 
-    await subject.warn(lowBattery)
-    await subject.warn(BatteryWarning(threshold: 10, percent: 9))
-    await subject.warn(BatteryWarning(threshold: 5, percent: 4))
+    await subject.warn(lowBattery, on: "Clock")
+    await subject.warn(BatteryWarning(threshold: 10, percent: 9), on: "Clock")
+    await subject.warn(BatteryWarning(threshold: 5, percent: 4), on: "Clock")
 
     #expect(notifications.authorizationRequests == 1)
     #expect(notifications.posted.count == 3)
@@ -75,8 +75,8 @@ private let lowBattery = BatteryWarning(threshold: 20, percent: 19)
     let dialog = RecordingDialog()
     let subject = BatteryAlert(dialog: dialog, notifications: notifications)
 
-    await subject.warn(lowBattery)
-    await subject.warn(BatteryWarning(threshold: 10, percent: 9))
+    await subject.warn(lowBattery, on: "Clock")
+    await subject.warn(BatteryWarning(threshold: 10, percent: 9), on: "Clock")
 
     // The refusal is the answer, not the absence of one. Asking again on every
     // crossing is a permission prompt the user already said no to.
@@ -91,7 +91,7 @@ private let lowBattery = BatteryWarning(threshold: 20, percent: 19)
     // with two of the four lines identical — the numbers accounted for the whole
     // difference, and the test claimed the wording.
     let bodies = [20, 10, 5, 1].map { threshold in
-        BatteryAlertWords.body(for: BatteryWarning(threshold: threshold, percent: 4))
+        BatteryAlertWords.body(for: BatteryWarning(threshold: threshold, percent: 4), on: "Clock")
     }
 
     // Four lines that read the same are four dialogs whose only information is
@@ -104,7 +104,7 @@ private let lowBattery = BatteryWarning(threshold: 20, percent: 19)
     // it at 25%. "20%" would be the one number on screen that is not a reading.
     for threshold in [20, 10, 5, 1] {
         let body = BatteryAlertWords.body(
-            for: BatteryWarning(threshold: threshold, percent: threshold - 1)
+            for: BatteryWarning(threshold: threshold, percent: threshold - 1), on: "Clock"
         )
         #expect(body.contains("\(threshold - 1)%"), "\(body) does not name the reading")
     }

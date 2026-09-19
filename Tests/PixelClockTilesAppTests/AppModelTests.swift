@@ -1352,6 +1352,7 @@ private func modelWithARealAnecdoteConnector(
         clocks: [clock],
         tiles: TileStore(defaults: defaults),
         makeSession: { _ in host },
+        makeDeviceAndHistory: { _ in (device, InMemoryBatteryHistoryStore()) },
         device: device,
         registry: registry,
         installer: CatalogueIconInstaller(

@@ -665,11 +665,11 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
         samples: [BatterySample(raw: 574, at: at(0)), BatterySample(raw: 570, at: at(1_800))]
     )
 
-    UserDefaultsBatteryHistoryStore(defaults: defaults).save(stored)
+    UserDefaultsBatteryHistoryStore(defaults: defaults, hardwareIdentity: "awtrix_a07f9c").save(stored)
 
     // Read back through a second store on the same defaults, because the
     // question is what a LAUNCH finds rather than what one instance remembers.
-    #expect(UserDefaultsBatteryHistoryStore(defaults: defaults).storedHistory() == stored)
+    #expect(UserDefaultsBatteryHistoryStore(defaults: defaults, hardwareIdentity: "awtrix_a07f9c").storedHistory() == stored)
 }
 
 @Test func aFirstLaunchFindsNothingInTheStoreRatherThanAnEmptySeries() throws {
@@ -677,7 +677,7 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
 
-    #expect(UserDefaultsBatteryHistoryStore(defaults: defaults).storedHistory() == nil)
+    #expect(UserDefaultsBatteryHistoryStore(defaults: defaults, hardwareIdentity: "awtrix_a07f9c").storedHistory() == nil)
 }
 
 @Test func aKeyHoldingSomethingElseReadsAsAFirstLaunch() throws {
@@ -687,9 +687,12 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
     // A shape from an older version of this app, or another key's value written
     // over it. Whatever it is, it is not a series — and a launch that starts
     // cold is exactly what the discard rules produce anyway.
-    defaults.set(Data("not a series".utf8), forKey: "batteryHistory")
+    defaults.set(
+        Data("not a series".utf8),
+        forKey: UserDefaultsBatteryHistoryStore.key(forHardwareIdentity: "awtrix_a07f9c")
+    )
 
-    #expect(UserDefaultsBatteryHistoryStore(defaults: defaults).storedHistory() == nil)
+    #expect(UserDefaultsBatteryHistoryStore(defaults: defaults, hardwareIdentity: "awtrix_a07f9c").storedHistory() == nil)
 }
 
 // MARK: - How long is left

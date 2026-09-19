@@ -41,27 +41,36 @@ public final class InMemoryBatteryHistoryStore: BatteryHistoryStore, @unchecked 
 }
 
 public final class UserDefaultsBatteryHistoryStore: BatteryHistoryStore, @unchecked Sendable {
-    /// One key for the whole series, because the readings and the clock they
-    /// came off are only ever read together: samples without the uid beside
-    /// them cannot be checked against the device now answering, which is the
-    /// one thing that makes resuming safe.
-    private static let key = "batteryHistory"
+    /// One key per clock, under the name the clock gives itself, so two
+    /// clocks' trends never mix and a clock that moves address keeps its own.
+    /// The uid stays inside the series as well: samples without it beside them
+    /// cannot be checked against the device now answering, which is the one
+    /// thing that makes resuming safe.
+    public static func key(forHardwareIdentity identity: String) -> String {
+        "batteryHistory.\(identity)"
+    }
 
     /// No lock, for the reason `UserDefaultsBorrowedOverlayStore` has none:
     /// both members write the whole value or read it, and `UserDefaults` is
     /// safe for that on its own. It is the read-modify-write stores that need
     /// one.
     private let defaults: UserDefaults
+    /// The clock this store resumes for, or nil while it has never answered —
+    /// and so has nothing of its own to resume.
+    private let hardwareIdentity: String?
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard, hardwareIdentity: String?) {
         self.defaults = defaults
+        self.hardwareIdentity = hardwareIdentity
     }
 
     /// A key holding something that will not decode reads as a first launch,
     /// not as a failure: whatever is in there, it is not a series this app
     /// wrote, and starting cold is what the discard rules produce anyway.
     public func storedHistory() -> BatteryHistory? {
-        guard let data = defaults.data(forKey: Self.key) else { return nil }
+        guard let hardwareIdentity,
+            let data = defaults.data(forKey: Self.key(forHardwareIdentity: hardwareIdentity))
+        else { return nil }
         return try? JSONDecoder().decode(BatteryHistory.self, from: data)
     }
 
@@ -76,8 +85,12 @@ public final class UserDefaultsBatteryHistoryStore: BatteryHistoryStore, @unchec
     /// to disk. Writing every tenth poll was the alternative, and it buys
     /// nothing measurable while making what survives a crash depend on where
     /// in the cycle it happened.
+    ///
+    /// Under the clock the series itself names, so a clock that learns its
+    /// name on this very poll still lands its first series where the next
+    /// launch, which reads the name off the clock record, will look.
     public func save(_ history: BatteryHistory) {
         guard let data = try? JSONEncoder().encode(history) else { return }
-        defaults.set(data, forKey: Self.key)
+        defaults.set(data, forKey: Self.key(forHardwareIdentity: history.uid))
     }
 }

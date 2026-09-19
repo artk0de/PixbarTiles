@@ -206,7 +206,14 @@ final class AppModel: ObservableObject {
     /// terminal has to be dealt with where the URL is built.
     @Published private(set) var deviceHost: String
     let registry: ConnectorRegistry
-    let monitor: DeviceMonitor
+    /// The selected clock's health, which is what the glyph is about.
+    var monitor: DeviceMonitor {
+        let id = selectedClockId ?? clock?.id
+        return id.flatMap { healths[$0] }?.monitor
+            ?? DeviceMonitor(device: device, history: InMemoryBatteryHistoryStore())
+    }
+    /// One health per clock: its own monitor, its own unanswered-poll count.
+    private var healths: [UUID: ClockHealth] = [:]
     /// Held so that a relocation can re-point it, which is the whole reason
     /// this reference exists here rather than only inside the monitor.
     private let device: AwtrixDevice
@@ -231,12 +238,6 @@ final class AppModel: ObservableObject {
     /// field reads and saves through the same record the connector polls.
     private let location: StoredLocation
     private let relocate: RelocatingHost?
-    /// How many polls in a row the clock has not answered.
-    ///
-    /// The only input `RelocationSchedule` needs, and the reason it needs no
-    /// clock: the polls are a fixed cadence, so this count is the length of the
-    /// outage in the one unit this model already holds.
-    private var unansweredPolls = 0
 
     @Published private(set) var tileLastResults: [TileKey: String] = [:]
     /// What the last background pass had to complain about, per tile, and
@@ -522,6 +523,9 @@ final class AppModel: ObservableObject {
         clocks: [ClockRecord],
         tiles: TileStore,
         makeSession: @MainActor @escaping (ClockRecord) -> any ConnectorRunning,
+        makeDeviceAndHistory: @MainActor @escaping (ClockRecord) -> (
+            device: AwtrixDevice, history: any BatteryHistoryStore
+        ),
         device: AwtrixDevice,
         // Nil by default, so that no test acquires a browse it did not ask for:
         // a model built without one stays where it was put, however long the
@@ -559,14 +563,6 @@ final class AppModel: ObservableObject {
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.registry = registry
-        // Durable, for the reason the borrowed overlay is: what this app learned
-        // is not recoverable by looking at the device afterwards. `/api/stats`
-        // never says which way the battery is going — that takes a series of
-        // readings — and an in-memory one has every launch spend twenty minutes
-        // earning a trend the launch before it already had.
-        self.monitor = DeviceMonitor(
-            device: device, history: UserDefaultsBatteryHistoryStore(defaults: defaults)
-        )
         self.installer = installer
         self.anecdotes = anecdotes
         self.alerts = alerts
@@ -582,6 +578,17 @@ final class AppModel: ObservableObject {
         self.micSleep = micSleep
         for clock in self.clocks {
             sessions[clock.id] = makeSession(clock)
+            let wired = makeDeviceAndHistory(clock)
+            healths[clock.id] = ClockHealth(
+                clock: clock,
+                device: wired.device,
+                history: wired.history,
+                relocate: relocate,
+                clocks: clockStore,
+                didMove: { [weak self] clockId, address in
+                    await self?.clockDidMove(clockId, to: address)
+                }
+            )
         }
         let saved = defaults.string(forKey: Self.selectedClockKey).flatMap(UUID.init(uuidString:))
         selectedClockId = clocks.contains(where: { $0.id == saved })
@@ -657,6 +664,7 @@ final class AppModel: ObservableObject {
             connectors: registry.all.map { (id: $0.id, defaultInterval: $0.defaultInterval) }
         ).run()
         try? WeatherLocationMigration(defaults: defaults).run()
+        BatteryHistoryMigration(defaults: defaults).run()
 
         // One shared audio player and one shared weather source; everything
         // else below is per clock.
@@ -708,11 +716,23 @@ final class AppModel: ObservableObject {
         let makeSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
             sessionsByClock[clock.id] ?? buildSession(clock)
         }
+        let makeDeviceAndHistory: @MainActor (ClockRecord) -> (
+            device: AwtrixDevice, history: any BatteryHistoryStore
+        ) = { clock in
+            (
+                clock.id == first.id
+                    ? device : AwtrixDevice(host: clock.address, transport: transport),
+                UserDefaultsBatteryHistoryStore(
+                    defaults: defaults, hardwareIdentity: clock.hardwareIdentity
+                )
+            )
+        }
 
         return AppModel(
             clocks: clocks,
             tiles: TileStore(defaults: defaults),
             makeSession: makeSession,
+            makeDeviceAndHistory: makeDeviceAndHistory,
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
@@ -1402,8 +1422,33 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Asks the clock how it is, once, and hands on everything that answer
-    /// changes.
+    /// Follows one clock to where it was found: the panel labels that are
+    /// about the selected clock, and a session rebuilt at the new address.
+    /// Each health has already re-pointed its own device and written the store.
+    private func clockDidMove(_ clockId: UUID, to address: String) async {
+        deviceHost = address
+        if selectedClockId == clockId || selectedClockId == nil {
+            typedHost = address
+            // `typedHost` has a `didSet` that saves and then says so, and what
+            // it says is "Saved — takes effect at next launch". Both halves are
+            // wrong here: nobody typed, and it took effect at once.
+            hostNote = nil
+        }
+        // The session's own device was built at the old address; it is dropped
+        // so `reloadClocks` builds one at the new one.
+        sessions[clockId] = nil
+        reloadClocks()
+    }
+
+    /// One clock's threshold crossing out of the poll: which clock it was
+    /// about, and what it crossed.
+    private struct Crossing: Sendable {
+        let clock: String
+        let warning: BatteryWarning?
+    }
+
+    /// Asks every clock how it is, once, and hands on everything those answers
+    /// change.
     ///
     /// Lifted out of the loop rather than duplicated into `refreshOnPanelOpen`,
     /// because the reading is only half of what a poll is: the glyph's mirror,
@@ -1411,11 +1456,24 @@ final class AppModel: ObservableObject {
     /// a second caller that took the reading alone would leave a panel showing
     /// a fresh percentage beside a stale hold reason.
     private func poll() async {
-        // The instant is spelled out here rather than defaulted inside the
-        // monitor: this app is what decides when a reading was taken, and the
-        // trajectory's whole answer is a function of when as much as of what.
-        let crossed = await monitor.refresh(at: Date())
-        isDeviceOnline = monitor.isOnline
+        let now = Date()
+        // Every clock concurrently: a clock inside its 15-second timeout does
+        // not hold up the others' readings. Each health's poll carries its own
+        // follow-up — the identity write and, when one is due, the move. One
+        // task per health rather than a task group, whose isolation checker
+        // this pattern otherwise trips a compiler bug in.
+        let polls = Array(healths.values).map { health -> Task<Crossing, Never> in
+            Task { @MainActor in
+                let warning = await health.poll(at: now)
+                return Crossing(clock: health.name, warning: warning)
+            }
+        }
+        var crossings: [Crossing] = []
+        for task in polls {
+            let crossing = await task.value
+            if crossing.warning != nil { crossings.append(crossing) }
+        }
+        isDeviceOnline = selectedClockId.flatMap { healths[$0]?.isOnline } ?? false
         // The clock going down or coming back changes what is holding every
         // schedule, and this is what learns it. Without the refresh the panel
         // kept naming an hour right through an outage until the next beat — up
@@ -1448,60 +1506,10 @@ final class AppModel: ObservableObject {
         // which happens once. A detached task would be one more thing teardown
         // cannot wait for, for a warning that fires four times in the life of a
         // charge.
-        if let crossed { await alerts.warn(crossed) }
-        // Last, and awaited rather than detached. It is the only part of a poll
-        // that can spend seconds — a browse has a settle window to wait out —
-        // and everything above is what the panel is about to draw. Detaching it
-        // would be one more thing teardown cannot wait for, for the sake of a
-        // few seconds on the polls where the clock is already unreachable.
-        await followTheClock()
-    }
-
-    /// Keeps track of which clock is ours, and goes looking for it when it
-    /// stops answering.
-    ///
-    /// The two halves are one method because they are one rule: the reading
-    /// that tells us the clock is fine is the same reading that tells us its
-    /// name, and the failure that starts a search is the same failure that has
-    /// to be counted for the search to be rationed.
-    private func followTheClock() async {
-        guard let clock = self.clock else { return }
-        if case let .online(stats) = monitor.state {
-            unansweredPolls = 0
-            if let index = clocks.firstIndex(where: { $0.id == clock.id }) {
-                clocks[index].hardwareIdentity = stats.uid
-            }
-            clockStore.update(clock) { $0.hardwareIdentity = stats.uid }
-            return
+        for crossing in crossings {
+            guard let warning = crossing.warning else { continue }
+            await alerts.warn(warning, on: crossing.clock)
         }
-        unansweredPolls += 1
-        guard let relocate,
-              RelocationSchedule.isDue(afterConsecutiveFailures: unansweredPolls)
-        else { return }
-        // The count is NOT reset by a successful move, only by a clock that
-        // answers. A move onto the wrong address would otherwise reset the
-        // rationing and browse again on the very next poll, and again after
-        // that — the browse storm this schedule exists to prevent, rebuilt out
-        // of an optimistic reset.
-        guard let found = await relocate(clock.hardwareIdentity),
-              found != deviceHost
-        else { return }
-
-        // The device first: it is the actor the monitor, the custody and every
-        // connector hold, so this is the line that actually moves the app. The
-        // rest is bookkeeping about a move that has already happened.
-        await device.adopt(host: found)
-        deviceHost = found
-        if let index = clocks.firstIndex(where: { $0.id == clock.id }) {
-            clocks[index].address = found
-        }
-        clockStore.update(clock) { $0.address = found }
-        typedHost = found
-        // `typedHost` has a `didSet` that saves and then says so, and what it
-        // says is "Saved — takes effect at next launch". Both halves are wrong
-        // here: nobody typed, and it took effect at once. The note is what a
-        // person's own editing earns.
-        hostNote = nil
     }
 
     /// Asks for what the panel is about to need: one reading, and what has
@@ -1851,16 +1859,15 @@ final class AppModel: ObservableObject {
 
     /// Whether this tile's clock has been asked and did not answer.
     ///
-    /// Read off the monitor's three-state answer rather than off the
+    /// Read off the named clock's own health, rather than off the
     /// `isDeviceOnline` mirror the glyph draws from. `.unknown` is not online
     /// there either, so a schedule gated on that mirror would run nothing at
     /// all between launch and the first poll landing — and "not asked yet" is
     /// not "not there", which is the conflation `DeviceState` exists to
-    /// prevent. One monitor until B14 gives every clock a health of its own,
-    /// so a tile on any other clock is never held by this.
+    /// prevent. Each clock answers for its own tiles only.
     private func clockIsUnreachable(_ clockId: UUID) -> Bool {
-        guard clockId == clock?.id else { return false }
-        if case .offline = monitor.state { return true }
+        guard let health = healths[clockId] else { return false }
+        if case .offline = health.monitor.state { return true }
         return false
     }
 

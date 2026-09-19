@@ -452,6 +452,27 @@ let parked: @Sendable (TimeInterval) async throws -> Void = { _ in
     try await Task.sleep(for: .seconds(86_400))
 }
 
+/// Answers `onlineStats` for a request whose URL host is in `online`, and
+/// throws as an unreachable clock would otherwise. `StubTransport` is fixed at
+/// construction, which cannot pose two clocks where one answers and one does
+/// not.
+final class RoutingByHostTransport: Transport, @unchecked Sendable {
+    private let online: Set<String>
+
+    init(online: Set<String>) {
+        self.online = online
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        guard let host = request.url?.host, online.contains(host) else {
+            throw URLError(.cannotConnectToHost)
+        }
+        return (onlineStats, HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: [:]
+        )!)
+    }
+}
+
 @MainActor
 func testModel(
     connectors: [any Connector] = [StubConnector()],
@@ -547,6 +568,15 @@ func testModel(
         tiles: TileStore(defaults: defaults),
         makeSession: { clock in
             sessions?[clock.id] ?? (clock.id == clocks.first?.id ? host : SpyHost())
+        },
+        makeDeviceAndHistory: { clock in
+            (
+                clock.id == clocks[0].id
+                    ? device : AwtrixDevice(host: clock.address, transport: transport),
+                UserDefaultsBatteryHistoryStore(
+                    defaults: defaults, hardwareIdentity: clock.hardwareIdentity
+                )
+            )
         },
         device: device,
         relocate: relocate,
@@ -883,6 +913,7 @@ func modelOverRealHost(
         clocks: [clock],
         tiles: TileStore(defaults: defaults),
         makeSession: { _ in host },
+        makeDeviceAndHistory: { _ in (device, InMemoryBatteryHistoryStore()) },
         device: device,
         registry: registry,
         installer: CatalogueIconInstaller(
@@ -961,12 +992,14 @@ func statsBody(percent: Int, raw: Int, uptime: Int = 9_000) -> Data {
 /// Records the crossings a poll handed over, and raises nothing.
 final class SpyAlerts: BatteryWarningPresenting, @unchecked Sendable {
     private let lock = NSLock()
-    private var recorded: [BatteryWarning] = []
+    private var recorded: [(clock: String, warning: BatteryWarning)] = []
 
-    var warnings: [BatteryWarning] { lock.withLock { recorded } }
+    var warnings: [BatteryWarning] { lock.withLock { recorded.map(\.warning) } }
+    /// Which clock each warning was about, beside it.
+    var named: [(clock: String, warning: BatteryWarning)] { lock.withLock { recorded } }
 
-    @MainActor func warn(_ warning: BatteryWarning) async {
-        lock.withLock { recorded.append(warning) }
+    @MainActor func warn(_ warning: BatteryWarning, on clock: String) async {
+        lock.withLock { recorded.append((clock, warning)) }
     }
 }
 

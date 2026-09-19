@@ -290,6 +290,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watchWhetherTheClockAnswers()
         model.start()
         watchThePanelsWindow()
+        // An update may ship a different hook. The one Claude Code runs is
+        // brought in line with it here, and only while connected. A failure is
+        // left for the next launch: the old hook still stores documents.
+        try? ClaudeCodePaths.shippedLink?.refreshHookIfConnected()
     }
 
     /// Starts or stops the browse, from the two things that decide it.

@@ -31,3 +31,27 @@ public struct FocusRule: Equatable, Sendable {
         }
     }
 }
+
+/// The hours a tile keeps: all of them, all but a quiet stretch, or only a
+/// working stretch.
+public enum TileWindow: Equatable, Sendable {
+    case always
+    /// Silent inside the window.
+    case quiet(HourWindow)
+    /// Silent outside the window.
+    case active(HourWindow)
+
+    public func silences(atHour hour: Int) -> Bool {
+        switch self {
+        case .always:
+            false
+        case let .quiet(window):
+            window.contains(hour: hour)
+        case let .active(window):
+            // An empty window restricts nothing in either direction. Read as
+            // "no working hours", it would be a tile that never runs again
+            // because a picker landed on the hour it started from.
+            !window.isEmpty && !window.contains(hour: hour)
+        }
+    }
+}

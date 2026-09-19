@@ -6,7 +6,7 @@ import Foundation
 /// the bounding box of its lit pixels — pins glyph geometry without pixel-
 /// coordinate arithmetic. Black pixels are off; anything else is on.
 func goldenASCII(of draw: UlanziDraw) -> [String] {
-    guard case let .bitmap(width, height, pixels, _) = draw else { return [] }
+    guard case let .bitmap(width, _, pixels, _) = draw else { return [] }
     let lit = pixels.enumerated().filter { $0.element != 0 }
     guard let first = lit.first else { return [] }
     let xs = lit.map { $0.offset % width }

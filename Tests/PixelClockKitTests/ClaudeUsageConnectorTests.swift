@@ -56,7 +56,7 @@ import Testing
         #expect(star.base64.utf8.count <= 60_000)
         // And the scene carries it: an overage reading past a hundred is a
         // true thing to say, and the encoder takes it.
-        #expect(try UlanziScene(frames: [frame]).jsonObject() != nil)
+        #expect((try UlanziScene(frames: [frame]).jsonObject()).isEmpty == false)
     }
 
     @Test func brandColourInksTheDigits() throws {

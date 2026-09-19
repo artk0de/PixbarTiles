@@ -26,7 +26,7 @@ import Testing
         // Never-returning call — simplest form: document that out-of-range is a
         // programmer error, cover the in-range paths elsewhere.
         let canvas = PixelCanvas()
-        #expect(canvas[51, 15] != nil)
+        #expect(canvas[51, 15] == .black)
     }
 
     @Test func rectDrawingClipsToTheCanvas() {

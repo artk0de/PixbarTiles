@@ -36,7 +36,7 @@ import Testing
 
     @Test func thirtyTwoDrawCommandsPass() throws {
         let draw = Array(repeating: UlanziDraw.pixel(.zero, .white), count: 32)
-        #expect(try UlanziScene(frames: [UlanziFrame(duration: 5, draw: draw)]).jsonObject() != nil)
+        #expect((try UlanziScene(frames: [UlanziFrame(duration: 5, draw: draw)]).jsonObject()).isEmpty == false)
     }
 
     private let still = UlanziImage(

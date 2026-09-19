@@ -113,13 +113,18 @@ protocol Connector: Sendable {
     var isAudible: Bool { get }
     var instancing: Instancing { get }      // .single | .perKey
     func read(config: Config) async throws -> Reading
-    var awtrixFace: AwtrixFace<Reading>? { get }   // Reading -> AwtrixScene
+    var awtrixFace: AwtrixFace<Reading> { get }    // Reading -> AwtrixScene
     var ulanziFace: UlanziFace<Reading>? { get }   // Reading -> UlanziScene
 }
 ```
 
 - The models a connector supports are the faces it has. Nothing else declares
   support, so the two cannot disagree.
+- `awtrixFace` is required while every connector has one; it becomes optional
+  in the phase that adds the first connector without one. `ulanziFace` is
+  optional, with a `nil` default, from phase 3.
+- `Config` arrives in phase 4 with its first reader, the weather tile's
+  location. Until then a connector has no per-tile settings.
 - A face is a pure function. It never reaches a network or a device, which is
   what lets every drawing be tested against a value.
 - `isAmbient` is removed. It existed to hide rows the user had not asked for;
@@ -232,15 +237,18 @@ from waves 1–3 kept as it is. Sessions do not share a chain: a clock that has
 stopped answering holds up only its own tiles.
 
 Audio is not part of a scene. A face produces
-`Delivery<Scene>{scene, audio: [SpokenClip], holdUntilAudioEnds}`, and the audio
+`Delivery<Scene>{scene, localAudio: [SpokenClip], holdUntilAudioEnds}`, and the audio
 goes to an `AudioSink` port — `MacSpeakers` today, which is the existing
 `SequentialAudioPlayer`. Which clock a tile is on does not decide where its
 sound plays.
 
 ### AWTRIX adapter (TC001)
 
-- Scene: `.notification(…)`, `.app(name, payload, overlay?)`,
-  `.indicator(slot, signal)`.
+- Scene: a struct whose `surface` is `.notification(…)` or
+  `.app(name, payload, overlay?)`, beside the fields the send reads.
+- Lamps are not scenes. An indicator write goes straight to
+  `IndicatorCustody`, off the delivery chain, so a lamp never waits behind a
+  playing anecdote.
 - Port: the existing `AwtrixDevice` actor, unchanged.
 - Icons: `IconReference` (`catalogue`, `bundled`, `installed`) and
   `CatalogueIconInstaller` become AWTRIX vocabulary.
@@ -300,12 +308,14 @@ sound plays.
 | weather | `WeatherReading` → `WeatherTheme` | every 600 s | as today: `.app("weather")`, 8×8 icon, overlay, lifetime 3600 | `.app("weather")`: 16×16 sky GIF on the left, temperature coloured by how it feels; `°` is outside the font's ASCII and is drawn as pixels; no overlay exists, so the icon carries the sky; lifetime 3600 emulated |
 | claude | `ClaudeUsageReading`, from the status-line file | every 300 s | as today: progress bar, `ClaudeStar` 8×8, lifetime 900 | `.app("claude")`: `ClaudeStar` 16 px, `42%`, bar from `dr` and `df` along the bottom, lifetime 900 emulated |
 | anecdotes | `PreparedAnecdote`; reading it retires it | every 1800 s + maintenance | as today: held banner, RTTTL jingle, audio on the Mac | none in this design — the Cyrillic banner and on-device sound are F1's |
-| vpn | `VPNState` for one watched VPN | events + 60 s recheck | `.indicator(slot, signal)` | none — the TC002 has no global indicators |
+| vpn | `VPNState` for one watched VPN | events + 60 s recheck | a lamp write through `IndicatorCustody`, not a scene | none — the TC002 has no global indicators |
 
 Carried-over rules:
 
 - The existing drawing tests (`ClaudeUsageConnector.output(for:)`, the weather
-  output) move to face tests. They are moved, not rewritten.
+  output) stay where they are: they already exercise the face through
+  `output(for:)` and `produce()`. Moving them to face files is optional, and
+  moving is all it may ever be — never a rewrite.
 - A Focus change retracts a tile whose policy no longer allows it, on both
   models: `removeApp` on AWTRIX, `{}` on the TC002. This is what
   `FocusGatedConnector` does for Claude today, generalised. On the TC002 it is
@@ -545,7 +555,7 @@ Behaviour that changes on purpose, so it is not reported as a regression:
 
 ## Testing
 
-- Faces: pure functions; the drawing tests move over from the connectors.
+- Faces: pure functions; the existing drawing tests already exercise them.
 - `TilePolicy`: every one of the 144 cells, the lamp overlap, the 30 s floor,
   the scale and its snapping.
 - Adapters: against the existing `Transport` double. `UlanziDeviceSendTests`
@@ -587,7 +597,7 @@ Each phase is a series of small commits with the tree green before and after.
 | 1 | Domain and persistence | Clock and tile records and the migration. The app reads its one clock from `clocks` instead of `deviceHost`, and each connector's cadence and pause from its tile instead of `connector.<id>` — the records have a reader from the commit that adds them |
 | 2 | Ports and AWTRIX parity | `DeliveryChain`, the AWTRIX `ClockSession`, connectors split into `read` and `awtrixFace`, indicator custody. No behaviour change; the existing tests are moved, not rewritten |
 | 3 | TC002 adapter | `UlanziDevice`, `UlanziCustody`, the UDP listener, model detection, the weather and Claude TC002 faces. The app still drives one clock — the first in `clocks`, of whichever model — so the TC002 works with the current panel from here |
-| 4 | Several clocks and tiles | A session per clock, scheduling by `TileKey`, `TilePolicy` with its grid and overlap check in place of the global `FocusGate`, `TileCatalogue.availability`, VPN tiles with lamp ownership, the keyed weather cache, retraction on Focus change |
+| 4 | Several clocks and tiles | A session per clock, scheduling by `TileKey`, `TilePolicy` with its grid and overlap check in place of the global `FocusGate`, `TileCatalogue.availability`, VPN tiles with lamp ownership, the keyed weather cache, retraction on Focus change, health and battery history per session |
 | 5 | UI | The switcher, tile rows, Add tile, tile detail with the policy editor and colour picker, the Clocks section; `MenuPanel` split up |
 | C | Claude via the status line | The hook, Connect / Disconnect, `StatusLineClaudeUsageReporter`; the keychain reader and `/api/oauth/usage` removed |
 

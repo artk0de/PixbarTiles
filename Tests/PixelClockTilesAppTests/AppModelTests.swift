@@ -1331,7 +1331,7 @@ private func modelWithARealAnecdoteConnector(
         clock: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5"),
         device: device,
         registry: registry,
-        host: ConnectorHost(
+        host: AwtrixClockSession(
             device: device,
             registry: registry,
             store: settings,

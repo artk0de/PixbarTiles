@@ -16,11 +16,22 @@ CONFIG="${1:-release}"
 APP="build/PixelClockTiles.app"
 
 swift build -c "$CONFIG" --product PixelClockTilesApp
-BINARY="$(swift build -c "$CONFIG" --show-bin-path)/PixelClockTilesApp"
+BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)"
+BINARY="$BIN_PATH/PixelClockTilesApp"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/PixelClockTiles"
+
+# The kit's resources (the bundled GIFs), as SwiftPM built them. Without this
+# copy the app finds them only through the absolute build path compiled into
+# the binary, and SwiftPM's lookup stops the process once that directory is
+# gone — a build installed from a worktree dies with the worktree.
+# `KitResources` reads this copy first. `Contents/Resources` rather than the
+# `.app` root, where SwiftPM would look on its own: codesign refuses anything
+# at the root but `Contents`. The name is SwiftPM's, package then target; a
+# rename makes this `cp` fail rather than ship an app with no art.
+cp -R "$BIN_PATH/PixelClockTiles_PixelClockKit.bundle" "$APP/Contents/Resources/"
 
 # The artwork is generated, never committed: build/ is git-ignored, so the only
 # thing under version control is the code that draws it. Deterministic by

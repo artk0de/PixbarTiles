@@ -11,7 +11,7 @@ import Foundation
 ///
 /// Declared here rather than in the kit because scheduling is the app's job and
 /// this is the app's view of what it schedules — what to do, and how long to
-/// wait before doing it; no device, no registry. `ConnectorHost` satisfies it as
+/// wait before doing it; no device, no registry. `AwtrixClockSession` satisfies it as
 /// written.
 protocol ConnectorRunning: Sendable {
     func maintain(connectorId: String) async -> MaintenanceResult
@@ -19,7 +19,7 @@ protocol ConnectorRunning: Sendable {
     /// Plays something already produced. A replay is this and nothing else: no
     /// produce, so nothing is retired, and no outcome recorded against the
     /// connector, so the backoff is untouched.
-    func deliver(_ output: ConnectorOutput) async -> RunResult
+    func deliver(_ output: AwtrixDelivery) async -> RunResult
     /// The host owns this rather than the schedule, because the answer is a
     /// function of how the last runs went and the schedule does not watch them.
     func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval
@@ -35,7 +35,7 @@ protocol ConnectorRunning: Sendable {
     func restoreDeviceState(borrowedBy connectorId: String?) async
 }
 
-extension ConnectorHost: ConnectorRunning {}
+extension AwtrixClockSession: ConnectorRunning {}
 
 /// The anecdotes the menu can look back over.
 ///
@@ -51,7 +51,7 @@ extension ConnectorHost: ConnectorRunning {}
 protocol AnecdoteReplaying: Sendable {
     var id: String { get }
     func history() async -> [PlayedAnecdote]
-    func output(for anecdote: PreparedAnecdote) -> ConnectorOutput
+    func output(for anecdote: PreparedAnecdote) -> AwtrixDelivery
 }
 
 extension AnecdoteConnector: AnecdoteReplaying {}
@@ -435,7 +435,7 @@ final class AppModel: ObservableObject {
     ///
     /// A count rather than a flag because two presses are two runs: 37 seconds
     /// of silence is exactly the thing that makes a person press again, and
-    /// `ConnectorHost` serialises the pair rather than merging them. With only
+    /// `AwtrixClockSession` serialises the pair rather than merging them. With only
     /// a flag, the first run finishing writes its outcome while the second is
     /// still in flight — the panel claiming a finished delivery during a
     /// running one, which is the lie this whole line of fixes is about.
@@ -610,25 +610,26 @@ final class AppModel: ObservableObject {
             connectors: registry.all.map { (id: $0.id, defaultInterval: $0.defaultInterval) }
         ).run()
         let store = TileSettingsStore(defaults: defaults, clockId: clock.id)
+        let session = AwtrixClockSession(
+            device: device,
+            registry: registry,
+            store: store,
+            audio: SequentialAudioPlayer(),
+            iconInstaller: installer,
+            // Durable, for the reason the uploaded-icon record is: what
+            // this app did to the device is not knowable by looking at the
+            // device afterwards. One exit without a teardown and an
+            // in-memory record turns this app's own weather overlay into
+            // the value it restores for ever.
+            borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
+        )
 
         return AppModel(
             clock: clock,
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
-            host: ConnectorHost(
-                device: device,
-                registry: registry,
-                store: store,
-                audio: SequentialAudioPlayer(),
-                iconInstaller: installer,
-                // Durable, for the reason the uploaded-icon record is: what
-                // this app did to the device is not knowable by looking at the
-                // device afterwards. One exit without a teardown and an
-                // in-memory record turns this app's own weather overlay into
-                // the value it restores for ever.
-                borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
-            ),
+            host: session,
             store: store,
             installer: installer,
             anecdotes: anecdotes.connector,
@@ -644,9 +645,10 @@ final class AppModel: ObservableObject {
                     ClaudeFocusAudience.shows(focusStatus)
                 },
             ],
-            // The same device the connectors write through. Indicators do
-            // not go into the loop, so they contend with nothing that does.
-            vpnLamps: VPNLampDisplay(clock: device),
+            // The session's own lamp custody, over the same device the
+            // connectors write through. Indicators do not go into the loop, so
+            // they contend with nothing that does.
+            vpnLamps: VPNLampDisplay(indicators: session.indicators),
             quietHours: QuietWindow.stored(in: defaults),
             microphone: MicrophoneGate(inputs: SystemAudioInputs()),
             watching: WatchedMicrophone.stored(in: defaults)
@@ -981,7 +983,7 @@ final class AppModel: ObservableObject {
     /// two claims about one thing with nothing to keep them in step.
     ///
     /// Switched-off connectors are left out, for the reason `restockAtLaunch`
-    /// leaves them out: `ConnectorHost` answers `.skipped` for them anyway, so
+    /// leaves them out: `AwtrixClockSession` answers `.skipped` for them anyway, so
     /// nothing would break, but a connector the user turned off is not one this
     /// app should be asking about at all.
     private func noteLaunchDeliveries() {
@@ -1851,7 +1853,7 @@ final class AppModel: ObservableObject {
     ///
     /// Unconditional on how the run went. A run that failed for want of
     /// anything to hand out is exactly the one that needs restocking, and
-    /// `ConnectorHost` already answers `.skipped` for a connector the user
+    /// `AwtrixClockSession` already answers `.skipped` for a connector the user
     /// switched off.
     private func restock(_ id: String) async {
         note(await host.maintain(connectorId: id), for: id)

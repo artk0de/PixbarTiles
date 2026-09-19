@@ -617,10 +617,10 @@ private struct SeededGenerator: RandomNumberGenerator {
 
 /// A host wired to this connector, with the two collaborators a replay would
 /// otherwise put on the network and the speakers stubbed out.
-private func makeAnecdoteHost(for connector: AnecdoteConnector) -> ConnectorHost {
+private func makeAnecdoteHost(for connector: AnecdoteConnector) -> AwtrixClockSession {
     let registry = ConnectorRegistry()
     registry.register(connector)
-    return ConnectorHost(
+    return AwtrixClockSession(
         device: AwtrixDevice(host: "10.0.0.5", transport: RecordingTransport()),
         registry: registry,
         store: InMemorySettingsStore(),

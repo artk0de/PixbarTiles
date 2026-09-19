@@ -127,14 +127,14 @@ private func weatherHost(
     /// relaunch is posed here: a second host over the same store and the same
     /// device, with nothing in between.
     borrowedOverlays: any BorrowedOverlayStore = InMemoryBorrowedOverlayStore()
-) -> (host: ConnectorHost, connector: WeatherConnector) {
+) -> (host: AwtrixClockSession, connector: WeatherConnector) {
     let connector = WeatherConnector(
         source: OpenMeteoSource(transport: transport, now: clock.now),
         location: { desk }
     )
     let registry = ConnectorRegistry()
     registry.register(connector)
-    let host = ConnectorHost(
+    let host = AwtrixClockSession(
         device: AwtrixDevice(host: "10.0.0.5", transport: transport),
         registry: registry,
         store: store,

@@ -14,7 +14,13 @@ public enum BundledIcon {
     /// `name` reaches `Bundle` as a resource name rather than a path, so it
     /// cannot climb out of the bundle however it is spelled.
     public static func data(named name: String) -> Data? {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "gif") else {
+        data(named: name, in: KitResources.bundle)
+    }
+
+    /// The same lookup in a bundle of the caller's choosing, so a test can
+    /// point it at a copy laid out the way `Scripts/bundle.sh` ships one.
+    static func data(named name: String, in bundle: Bundle) -> Data? {
+        guard let url = bundle.url(forResource: name, withExtension: "gif") else {
             return nil
         }
         return try? Data(contentsOf: url)

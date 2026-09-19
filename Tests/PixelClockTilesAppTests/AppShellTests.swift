@@ -181,7 +181,7 @@ private func scratchStore() -> URL {
 /// machines: `localAudio` is this Mac speaking through its own speakers, and
 /// `jingle` is the clock's buzzer playing RTTTL. A guard watching one of them
 /// would wave the other straight through.
-private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
+private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
     output.jingle != nil || output.localAudio.isEmpty == false
 }
 
@@ -210,7 +210,7 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
 //     measurement. The count below is what says at least one real output was
 //     inspected.
 //   - Anything a connector hands to the device that is not carried on its
-//     output — this reads the value `produce()` returns, and `ConnectorHost` is
+//     output — this reads the value `produce()` returns, and `AwtrixClockSession` is
 //     what turns it into sound.
 @Test @MainActor func nothingButTheAnecdotesEverPutsSoundInTheRoom() async throws {
     let suite = "app-model-\(UUID().uuidString)"
@@ -243,10 +243,10 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
     #expect(inspected > 0)
     // And the question being asked is one that can answer yes, or the loop
     // passes for a connector singing through either channel.
-    #expect(putsSoundInTheRoom(ConnectorOutput(text: "x", jingle: AnecdoteConnector.nokiaJingle)))
+    #expect(putsSoundInTheRoom(AwtrixDelivery(text: "x", jingle: AnecdoteConnector.nokiaJingle)))
     #expect(
         putsSoundInTheRoom(
-            ConnectorOutput(
+            AwtrixDelivery(
                 text: "x", localAudio: [SpokenClip(url: URL(fileURLWithPath: "/tmp/x.wav"))]
             )
         )
@@ -356,7 +356,7 @@ private func putsSoundInTheRoom(_ output: ConnectorOutput) -> Bool {
 
 // The same argument one field over, and the one the final review found still
 // open: the record of the overlay this app borrowed has to outlive the process
-// that borrowed it. `live()` handing `ConnectorHost` the in-memory default
+// that borrowed it. `live()` handing `AwtrixClockSession` the in-memory default
 // meant a force quit — or any teardown that outran the quit budget — left the
 // user's own overlay unrecoverable, and nothing in the suite could see it.
 @Test @MainActor func whatAnEarlierLaunchBorrowedIsStillGivenBackInThisOne() async throws {

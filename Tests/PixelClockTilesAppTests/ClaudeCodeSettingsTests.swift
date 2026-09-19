@@ -148,3 +148,58 @@ private struct ClaudeSettingsFixture {
     #expect(ClaudeCodeLinkModel.documentLine(written)
         == "Last status-line document: \(written.formatted(date: .abbreviated, time: .shortened))")
 }
+
+// MARK: - On the screen
+
+@MainActor
+private func laidOut(_ view: some View) -> NSView {
+    let host = NSHostingView(rootView: view)
+    host.frame = NSRect(origin: .zero, size: host.fittingSize)
+    host.layoutSubtreeIfNeeded()
+    return host
+}
+
+@MainActor
+private func drawn(_ view: some View) -> Data? {
+    let host = laidOut(view)
+    guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
+    host.cacheDisplay(in: host.bounds, to: target)
+    return target.representation(using: .png, properties: [:])
+}
+
+// The section is ON the settings surface, which every model test above would
+// pass without. Two answers compared rather than a count of controls: Connect
+// and Disconnect are one push button each, so only the pixels tell them apart.
+@Test @MainActor func theSectionIsOnTheSettingsSurface() throws {
+    let connected = ClaudeSettingsFixture()
+    defer { connected.remove() }
+    try connected.link.connect()
+    let notConnected = ClaudeSettingsFixture()
+    defer { notConnected.remove() }
+
+    let on = drawn(SettingsSheet(
+        model: testModel(), claudeCode: ClaudeCodeLinkModel(link: connected.link)
+    ))
+    let off = drawn(SettingsSheet(
+        model: testModel(), claudeCode: ClaudeCodeLinkModel(link: notConnected.link)
+    ))
+
+    #expect(on != nil)
+    #expect(on != off)
+}
+
+// The reason reaches the screen too. Deleting the note from the section's body
+// leaves every model test green; this is the one that catches it.
+@Test @MainActor func aRefusalIsDrawnAndNotOnlyHeld() throws {
+    let fixture = ClaudeSettingsFixture()
+    defer { fixture.remove() }
+    try fixture.write(#"{"model": "opus","#)
+    let refused = ClaudeCodeLinkModel(link: fixture.link)
+    refused.connect()
+    let quiet = ClaudeCodeLinkModel(link: fixture.link)
+
+    let said = drawn(ClaudeCodeSettings(link: refused))
+
+    #expect(said != nil)
+    #expect(said != drawn(ClaudeCodeSettings(link: quiet)))
+}

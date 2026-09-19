@@ -1,6 +1,7 @@
 // Sources/PixelClockTilesApp/ClaudeCodeSettings.swift
 import Foundation
 import PixelClockKit
+import SwiftUI
 
 /// Where the Claude figure comes from, on this Mac.
 enum ClaudeCodePaths {
@@ -112,5 +113,59 @@ final class ClaudeCodeLinkModel: ObservableObject {
     nonisolated static func documentLine(_ at: Date?) -> String {
         guard let at else { return "No status-line document yet" }
         return "Last status-line document: \(at.formatted(date: .abbreviated, time: .shortened))"
+    }
+}
+
+/// Connect / Disconnect Claude Code, with the time of the last status-line
+/// document.
+///
+/// A view of its own, for the reason `LoginItemSettings` is one: the whole
+/// settings surface costs 57 ms to lay out, and a test about this section has
+/// no business spending it. It lives on the current settings surface until
+/// phase 5 moves it; the view moves as it is.
+///
+/// Confirmation is inline rather than an alert. The menu bar window dismisses
+/// when it loses focus, and takes any sheet or alert over it with it.
+struct ClaudeCodeSettings: View {
+    /// `@StateObject` for the reason `LoginItemSettings` uses one: the note
+    /// has to survive the redraws every keystroke elsewhere on the surface
+    /// causes.
+    @StateObject private var link: ClaudeCodeLinkModel
+
+    init(link: @autoclosure @escaping () -> ClaudeCodeLinkModel = ClaudeCodeLinkModel()) {
+        _link = StateObject(wrappedValue: link())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Claude usage").font(.caption).foregroundStyle(.secondary)
+            if link.isConnected {
+                Button("Disconnect Claude Code") { link.disconnect() }
+                    .controlSize(.small)
+            } else if link.isConfirming {
+                Text(ClaudeCodeLinkModel.costOfConnecting)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    Button("Connect") { link.connect() }
+                    Button("Cancel") { link.cancel() }
+                }
+                .controlSize(.small)
+            } else {
+                Button("Connect Claude Code…") { link.askToConnect() }
+                    .controlSize(.small)
+                    .disabled(link.canAct == false)
+            }
+            Text(ClaudeCodeLinkModel.documentLine(link.lastDocumentAt))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if let note = link.note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }

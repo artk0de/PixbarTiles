@@ -33,7 +33,7 @@ struct StubConnector: Connector {
         self.isAmbient = isAmbient
     }
 
-    func produce() async throws -> ConnectorOutput { ConnectorOutput(text: "hello") }
+    func read() async throws -> AwtrixDelivery { AwtrixDelivery(text: "hello") }
 }
 
 /// A connector that makes no sound at all, and claims nothing beyond that.
@@ -139,7 +139,7 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
         return .delivered
     }
 
-    func deliver(_ output: ConnectorOutput) async -> RunResult {
+    func deliver(_ output: AwtrixDelivery) async -> RunResult {
         lock.withLock { recorded.append("deliver:\(output.text)") }
         await parkInDeliver?.enter()
         return deliverResult
@@ -463,6 +463,9 @@ func testModel(
     sleep: @escaping AppModel.Sleeping = parked,
     pollSleep: @escaping AppModel.Sleeping = parked,
     deviceHost: String = "10.0.0.5",
+    // Nil, as a clock that has never answered: a test that needs the model to
+    // remember which clock is its own says so.
+    hardwareIdentity: String? = nil,
     anecdotes: (any AnecdoteReplaying)? = nil,
     // Named rather than `.general`, so no test can put anything on the
     // clipboard of whoever is running the suite.
@@ -504,7 +507,9 @@ func testModel(
     for connector in connectors { registry.register(connector) }
     let device = AwtrixDevice(host: deviceHost, transport: transport)
     return AppModel(
-        deviceHost: deviceHost,
+        clock: ClockRecord(
+            name: "Clock", model: .awtrix3, address: deviceHost, hardwareIdentity: hardwareIdentity
+        ),
         device: device,
         relocate: relocate,
         registry: registry,
@@ -549,8 +554,8 @@ final class StubAnecdotes: AnecdoteReplaying, @unchecked Sendable {
 
     func history() async -> [PlayedAnecdote] { entries }
 
-    func output(for anecdote: PreparedAnecdote) -> ConnectorOutput {
-        ConnectorOutput(text: anecdote.text, localAudio: anecdote.clips)
+    func output(for anecdote: PreparedAnecdote) -> AwtrixDelivery {
+        AwtrixDelivery(text: anecdote.text, localAudio: anecdote.clips)
     }
 }
 
@@ -620,7 +625,7 @@ final class QueueingHost: ConnectorRunning, @unchecked Sendable {
         return .delivered
     }
 
-    func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+    func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
     /// Nothing was borrowed, so there is nothing to give back. Spelled out
     /// rather than defaulted on the protocol: a default would let the SHIPPED
@@ -628,7 +633,7 @@ final class QueueingHost: ConnectorRunning, @unchecked Sendable {
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }
 
-/// Answers `.cancelled` when its run is cancelled, as `ConnectorHost` does.
+/// Answers `.cancelled` when its run is cancelled, as `AwtrixClockSession` does.
 final class CancellingHost: ConnectorRunning, @unchecked Sendable {
     private let lock = NSLock()
     private var arrived = 0
@@ -650,14 +655,14 @@ final class CancellingHost: ConnectorRunning, @unchecked Sendable {
         return .cancelled
     }
 
-    func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+    func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }
 
 // MARK: - A real host, with the two collaborators a background pass never uses
 
-/// Plays nothing. `ConnectorHost.maintain` never reaches the audio path, and a
+/// Plays nothing. `AwtrixClockSession.maintain` never reaches the audio path, and a
 /// test that wired the shipped player in would have `swift test` speaking.
 struct SilentAudioPlayer: AudioPlaying {
     func play(_ clips: [SpokenClip]) async {}
@@ -709,7 +714,7 @@ func waitForQueue(
 /// write the same words, so a wait on `lastResults` returns before the run that
 /// is being waited for has started.
 func waitForFailures(
-    of id: String, on host: ConnectorHost, toReach target: Int, limit: TimeInterval = 2
+    of id: String, on host: AwtrixClockSession, toReach target: Int, limit: TimeInterval = 2
 ) async -> Int {
     let deadline = Date().addingTimeInterval(limit)
     var count = await host.consecutiveFailures(connectorId: id)
@@ -744,7 +749,7 @@ final class RestockReportingHost: ConnectorRunning, @unchecked Sendable {
 
     func runOnce(connectorId: String) async -> RunResult { .delivered }
 
-    func deliver(_ output: ConnectorOutput) async -> RunResult { .delivered }
+    func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }
@@ -795,7 +800,7 @@ struct BrokenConnector: Connector {
         self.defaultInterval = defaultInterval
     }
 
-    func produce() async throws -> ConnectorOutput { throw FeedIsDown() }
+    func read() async throws -> AwtrixDelivery { throw FeedIsDown() }
 }
 
 /// A model over the SHIPPED host, so the failure count a test reads is the real
@@ -817,12 +822,12 @@ func modelOverRealHost(
     sleep: @escaping AppModel.Sleeping = parked,
     pollSleep: @escaping AppModel.Sleeping = parked,
     micSleep: @escaping AppModel.Sleeping = parked
-) -> (model: AppModel, host: ConnectorHost) {
+) -> (model: AppModel, host: AwtrixClockSession) {
     let registry = ConnectorRegistry()
     registry.register(connector)
     let store = InMemorySettingsStore()
     let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
-    let host = ConnectorHost(
+    let host = AwtrixClockSession(
         device: device,
         registry: registry,
         store: store,
@@ -830,7 +835,7 @@ func modelOverRealHost(
         iconInstaller: NoIconInstaller()
     )
     let model = AppModel(
-        deviceHost: "10.0.0.5",
+        clock: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5"),
         device: device,
         registry: registry,
         host: host,

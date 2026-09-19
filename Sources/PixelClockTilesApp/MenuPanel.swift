@@ -94,7 +94,8 @@ enum DeviceHostField {
     /// guessing which part of what they typed this app objected to.
     static let unusable = "That is not an address — for example 192.168.1.72"
 
-    /// Stores a typed address for the next launch, and answers what to say.
+    /// Stores a typed address on the clock record for the next launch, and
+    /// answers what to say.
     ///
     /// Nil when there is nothing to store. A blank or whitespace-only entry is
     /// refused rather than written: the next launch would come up pointed at an
@@ -108,11 +109,11 @@ enum DeviceHostField {
     /// machine literally named `http`. `DeviceAddress` owns the rule; this is
     /// where the user hears about it.
     @discardableResult
-    static func save(_ typed: String, to defaults: UserDefaults) -> String? {
+    static func save(_ typed: String, to clocks: ClockStore, for clock: ClockRecord) -> String? {
         let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else { return nil }
         guard let host = DeviceAddress.host(from: trimmed) else { return unusable }
-        defaults.set(host, forKey: AppModel.deviceHostKey)
+        clocks.update(clock) { $0.address = host }
         return takesEffectNextLaunch
     }
 }

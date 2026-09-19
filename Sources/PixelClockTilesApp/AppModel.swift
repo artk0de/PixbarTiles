@@ -11,7 +11,7 @@ import Foundation
 ///
 /// Declared here rather than in the kit because scheduling is the app's job and
 /// this is the app's view of what it schedules — what to do, and how long to
-/// wait before doing it; no device, no registry. `ConnectorHost` satisfies it as
+/// wait before doing it; no device, no registry. `AwtrixClockSession` satisfies it as
 /// written.
 protocol ConnectorRunning: Sendable {
     func maintain(connectorId: String) async -> MaintenanceResult
@@ -19,7 +19,7 @@ protocol ConnectorRunning: Sendable {
     /// Plays something already produced. A replay is this and nothing else: no
     /// produce, so nothing is retired, and no outcome recorded against the
     /// connector, so the backoff is untouched.
-    func deliver(_ output: ConnectorOutput) async -> RunResult
+    func deliver(_ output: AwtrixDelivery) async -> RunResult
     /// The host owns this rather than the schedule, because the answer is a
     /// function of how the last runs went and the schedule does not watch them.
     func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval
@@ -35,7 +35,7 @@ protocol ConnectorRunning: Sendable {
     func restoreDeviceState(borrowedBy connectorId: String?) async
 }
 
-extension ConnectorHost: ConnectorRunning {}
+extension AwtrixClockSession: ConnectorRunning {}
 
 /// The anecdotes the menu can look back over.
 ///
@@ -51,7 +51,7 @@ extension ConnectorHost: ConnectorRunning {}
 protocol AnecdoteReplaying: Sendable {
     var id: String { get }
     func history() async -> [PlayedAnecdote]
-    func output(for anecdote: PreparedAnecdote) -> ConnectorOutput
+    func output(for anecdote: PreparedAnecdote) -> AwtrixDelivery
 }
 
 extension AnecdoteConnector: AnecdoteReplaying {}
@@ -131,18 +131,15 @@ final class AppModel: ObservableObject {
     /// real interval. The shipped value is the only one that sleeps.
     typealias Sleeping = @Sendable (TimeInterval) async throws -> Void
 
-    /// The defaults key the address is read from at launch, and the one the
-    /// panel's address field writes for the next one.
+    /// Where an installation from before the clock records kept the address.
+    /// `ClockMigration` reads it once; nothing writes it any more.
     static let deviceHostKey = "deviceHost"
+    /// What a launch with no address of its own talks to.
     static let defaultDeviceHost = "192.168.1.72"
-    /// Which clock this app has been talking to, as the firmware names itself
-    /// in `/api/stats`.
-    ///
-    /// Written down for one purpose, and it is the purpose that makes silent
-    /// relocation safe: a browse run during an outage can tell OUR clock from a
-    /// neighbour's. Without it the only rule available is "exactly one device
-    /// is advertising", which moves this app onto somebody else's device the
-    /// first time ours is unplugged.
+    /// Where an installation from before the clock records kept the clock's
+    /// name for itself, as `/api/stats` gives it. `ClockMigration` reads it
+    /// once into `ClockRecord.hardwareIdentity`, which is what relocation asks
+    /// for now — the one thing that tells OUR clock from a neighbour's.
     static let deviceUIDKey = "deviceUID"
 
     /// One bounded attempt to find where the clock went, as one answer.
@@ -213,6 +210,13 @@ final class AppModel: ObservableObject {
     /// Held so that a relocation can re-point it, which is the whole reason
     /// this reference exists here rather than only inside the monitor.
     private let device: AwtrixDevice
+    /// The clock this model drives: as it was stored at launch, plus what this
+    /// launch has since learned about it. Its id is what every write below is
+    /// keyed by.
+    private var clock: ClockRecord
+    /// Where what is learned about the clock is written down for the next
+    /// launch.
+    private let clocks: ClockStore
     private let relocate: RelocatingHost?
     /// How many polls in a row the clock has not answered.
     ///
@@ -238,7 +242,7 @@ final class AppModel: ObservableObject {
     /// `didSet` does not run during initialization, which is what keeps seeding
     /// the field from writing this launch's address straight back to disk.
     @Published var typedHost: String {
-        didSet { hostNote = DeviceHostField.save(typedHost, to: defaults) }
+        didSet { hostNote = DeviceHostField.save(typedHost, to: clocks, for: clock) }
     }
     @Published private(set) var hostNote: String?
     /// What is in the location field.
@@ -431,7 +435,7 @@ final class AppModel: ObservableObject {
     ///
     /// A count rather than a flag because two presses are two runs: 37 seconds
     /// of silence is exactly the thing that makes a person press again, and
-    /// `ConnectorHost` serialises the pair rather than merging them. With only
+    /// `AwtrixClockSession` serialises the pair rather than merging them. With only
     /// a flag, the first run finishing writes its outcome while the second is
     /// still in flight — the panel claiming a finished delivery during a
     /// running one, which is the lie this whole line of fixes is about.
@@ -470,7 +474,7 @@ final class AppModel: ObservableObject {
     private var iconRemoval: Task<Void, Never>?
 
     init(
-        deviceHost: String,
+        clock: ClockRecord,
         device: AwtrixDevice,
         // Nil by default, so that no test acquires a browse it did not ask for:
         // a model built without one stays where it was put, however long the
@@ -495,8 +499,10 @@ final class AppModel: ObservableObject {
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         micSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
-        self.deviceHost = deviceHost
-        self.typedHost = deviceHost
+        self.clock = clock
+        self.clocks = ClockStore(defaults: defaults)
+        self.deviceHost = clock.address
+        self.typedHost = clock.address
         self.device = device
         self.relocate = relocate
         self.typedLocation = LocationField.text(for: Coordinates.stored(in: defaults))
@@ -541,8 +547,12 @@ final class AppModel: ObservableObject {
         transport: any Transport = URLSessionTransport(),
         anecdoteStore: URL = AppPaths.anecdoteStore
     ) -> AppModel {
-        let deviceHost = defaults.string(forKey: deviceHostKey) ?? defaultDeviceHost
-        let device = AwtrixDevice(host: deviceHost, transport: transport)
+        // Before anything reads a record. A step that fails leaves its marker
+        // unwritten and runs again at the next launch; this launch drives
+        // whatever is stored, and the line below makes sure something is.
+        try? ClockMigration(defaults: defaults, fallbackHost: defaultDeviceHost).run()
+        let clock = ClockStore(defaults: defaults).firstClock(orCreatingAt: defaultDeviceHost)
+        let device = AwtrixDevice(host: clock.address, transport: transport)
         // Built here rather than inside the model so that the one door to the
         // outside stays this function's `transport` parameter: the probe below
         // is an HTTP request, and it goes through the same door every other
@@ -558,7 +568,6 @@ final class AppModel: ObservableObject {
             }
         )
         let registry = ConnectorRegistry()
-        let store = UserDefaultsSettingsStore(defaults: defaults)
         let installer = CatalogueIconInstaller(
             device: device,
             transport: transport,
@@ -592,24 +601,35 @@ final class AppModel: ObservableObject {
             )
         )
 
+        // After every connector is registered: one the step does not hear
+        // about gets no tile, and runs on its own default until its first
+        // saved choice gives it one.
+        try? TileMigration(
+            defaults: defaults,
+            clockId: clock.id,
+            connectors: registry.all.map { (id: $0.id, defaultInterval: $0.defaultInterval) }
+        ).run()
+        let store = TileSettingsStore(defaults: defaults, clockId: clock.id)
+        let session = AwtrixClockSession(
+            device: device,
+            registry: registry,
+            store: store,
+            audio: SequentialAudioPlayer(),
+            iconInstaller: installer,
+            // Durable, for the reason the uploaded-icon record is: what
+            // this app did to the device is not knowable by looking at the
+            // device afterwards. One exit without a teardown and an
+            // in-memory record turns this app's own weather overlay into
+            // the value it restores for ever.
+            borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
+        )
+
         return AppModel(
-            deviceHost: deviceHost,
+            clock: clock,
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
-            host: ConnectorHost(
-                device: device,
-                registry: registry,
-                store: store,
-                audio: SequentialAudioPlayer(),
-                iconInstaller: installer,
-                // Durable, for the reason the uploaded-icon record is: what
-                // this app did to the device is not knowable by looking at the
-                // device afterwards. One exit without a teardown and an
-                // in-memory record turns this app's own weather overlay into
-                // the value it restores for ever.
-                borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
-            ),
+            host: session,
             store: store,
             installer: installer,
             anecdotes: anecdotes.connector,
@@ -625,9 +645,10 @@ final class AppModel: ObservableObject {
                     ClaudeFocusAudience.shows(focusStatus)
                 },
             ],
-            // The same device the connectors write through. Indicators do
-            // not go into the loop, so they contend with nothing that does.
-            vpnLamps: VPNLampDisplay(clock: device),
+            // The session's own lamp custody, over the same device the
+            // connectors write through. Indicators do not go into the loop, so
+            // they contend with nothing that does.
+            vpnLamps: VPNLampDisplay(indicators: session.indicators),
             quietHours: QuietWindow.stored(in: defaults),
             microphone: MicrophoneGate(inputs: SystemAudioInputs()),
             watching: WatchedMicrophone.stored(in: defaults)
@@ -962,7 +983,7 @@ final class AppModel: ObservableObject {
     /// two claims about one thing with nothing to keep them in step.
     ///
     /// Switched-off connectors are left out, for the reason `restockAtLaunch`
-    /// leaves them out: `ConnectorHost` answers `.skipped` for them anyway, so
+    /// leaves them out: `AwtrixClockSession` answers `.skipped` for them anyway, so
     /// nothing would break, but a connector the user turned off is not one this
     /// app should be asking about at all.
     private func noteLaunchDeliveries() {
@@ -1315,7 +1336,8 @@ final class AppModel: ObservableObject {
     private func followTheClock() async {
         if case let .online(stats) = monitor.state {
             unansweredPolls = 0
-            defaults.set(stats.uid, forKey: Self.deviceUIDKey)
+            clock.hardwareIdentity = stats.uid
+            clocks.update(clock) { $0.hardwareIdentity = stats.uid }
             return
         }
         unansweredPolls += 1
@@ -1327,7 +1349,7 @@ final class AppModel: ObservableObject {
         // rationing and browse again on the very next poll, and again after
         // that — the browse storm this schedule exists to prevent, rebuilt out
         // of an optimistic reset.
-        guard let found = await relocate(defaults.string(forKey: Self.deviceUIDKey)),
+        guard let found = await relocate(clock.hardwareIdentity),
               found != deviceHost
         else { return }
 
@@ -1336,7 +1358,8 @@ final class AppModel: ObservableObject {
         // rest is bookkeeping about a move that has already happened.
         await device.adopt(host: found)
         deviceHost = found
-        defaults.set(found, forKey: Self.deviceHostKey)
+        clock.address = found
+        clocks.update(clock) { $0.address = found }
         typedHost = found
         // `typedHost` has a `didSet` that saves and then says so, and what it
         // says is "Saved — takes effect at next launch". Both halves are wrong
@@ -1830,7 +1853,7 @@ final class AppModel: ObservableObject {
     ///
     /// Unconditional on how the run went. A run that failed for want of
     /// anything to hand out is exactly the one that needs restocking, and
-    /// `ConnectorHost` already answers `.skipped` for a connector the user
+    /// `AwtrixClockSession` already answers `.skipped` for a connector the user
     /// switched off.
     private func restock(_ id: String) async {
         note(await host.maintain(connectorId: id), for: id)

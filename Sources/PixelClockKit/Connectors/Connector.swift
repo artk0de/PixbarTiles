@@ -16,128 +16,16 @@ public struct SpokenClip: Sendable, Equatable, Codable {
     }
 }
 
-/// Spelled out rather than `IconRef`: LaunchServices publicly declares
-/// `typedef struct OpaqueIconRef* IconRef`, so that name is ambiguous in any
-/// file reaching CoreServices — which is every file in the app target and every
-/// file in the test target. Module qualification cannot rescue it either,
-/// because this module declares an `enum PixelClockKit` that shadows its own
-/// name.
-public enum IconReference: Sendable, Equatable {
-    /// Already present on the device, referenced by basename.
-    ///
-    /// The one case that promises nothing: it names a file this app never put
-    /// there and cannot put back. Right for art a user placed on their own
-    /// flash, wrong for anything this app draws by itself — on a clock that has
-    /// been reset the picture is simply gone, and a banner with no icon beside
-    /// it reads as ordinary.
-    case installed(String)
-    /// Fetched from the LaMetric catalogue by id, then installed.
-    case catalogue(Int)
-    /// Art shipped inside this app, uploaded to the flash on demand.
-    ///
-    /// The case for a picture the catalogue does not have. It installs by
-    /// exactly the same route as `catalogue` — list, skip or upload — and
-    /// differs only in where the bytes come from, so it keeps the same promise
-    /// on a clock that has never seen this app.
-    case bundled(String)
-}
-
-/// Where an output is drawn on the clock.
+/// A source of content. Reads and returns; never talks to a clock.
 ///
-/// Two surfaces, and they are not settings of one thing. A notification
-/// interrupts whatever the loop is showing and then goes away; an app IS the
-/// loop, and stays there until it is replaced or removed. An anecdote is an
-/// interruption; the weather is ambient and should be there when you glance at
-/// the clock. The two coexist without arbitration — a notification draws over
-/// the loop, which is exactly what it is for.
-public enum DeliverySurface: Sendable, Equatable {
-    case notification
-    /// An app in the device's own loop, under this name.
-    case app(String)
-}
-
-/// A bar filled from the left under an app's text.
-///
-/// Named for what the firmware calls it — `progress`, and not `bar`, which is a
-/// different field drawing a little graph of a series. The percentage is what
-/// the device draws rather than what is true: a reading past a hundred belongs
-/// in the text, where it can be read, and not in a bar that has no room for it.
-public struct ProgressBar: Sendable, Equatable {
-    /// Nought to a hundred, clamped on the way in — the firmware has nothing to
-    /// draw outside that and does not say so.
-    public let percent: Int
-    public let fill: String
-    public let track: String
-
-    public init(percent: Int, fill: String, track: String) {
-        self.percent = min(100, max(0, percent))
-        self.fill = fill
-        self.track = track
-    }
-}
-
-public struct ConnectorOutput: Sendable, Equatable {
-    public var text: String
-    public var icon: IconReference?
-    /// The bar drawn under the text, or nil for an output that is only words.
-    public var progress: ProgressBar?
-    public var jingle: String?
-    public var localAudio: [SpokenClip]
-    /// Keep the banner on the clock until the audio finishes, rather than for a
-    /// fixed duration. The producer knows how long it will speak; the host does
-    /// not, and guessing a scroll count was worse.
-    public var holdUntilAudioEnds: Bool
-    public var duration: Int?
-    public var color: String?
-    /// Where this is drawn. Defaulted to the notification, which is what every
-    /// output was before there was a choice.
-    public var surface: DeliverySurface
-    /// Seconds without a fresh delivery after which the clock takes this off
-    /// itself, or nil to stay until this app removes it.
-    ///
-    /// Next to `surface` because it belongs to one: an app in the loop is the
-    /// only thing that outlives the delivery that made it. Defaulted to none,
-    /// so a producer that says nothing about staleness behaves exactly as it
-    /// did before there was anything to say.
-    public var lifetime: Int?
-    /// The device-wide weather layer this output wants, or nil to leave
-    /// whatever is on the device alone.
-    ///
-    /// Carried on the output rather than written by the connector, because a
-    /// connector produces and returns and never talks to the device. It is
-    /// global state with one borrower and a value to put back afterwards, which
-    /// is `DeviceCustody`'s job and not a producer's.
-    public var overlay: DeviceOverlay?
-
-    public init(
-        text: String,
-        icon: IconReference? = nil,
-        progress: ProgressBar? = nil,
-        jingle: String? = nil,
-        localAudio: [SpokenClip] = [],
-        holdUntilAudioEnds: Bool = false,
-        duration: Int? = nil,
-        color: String? = nil,
-        surface: DeliverySurface = .notification,
-        lifetime: Int? = nil,
-        overlay: DeviceOverlay? = nil
-    ) {
-        self.text = text
-        self.icon = icon
-        self.progress = progress
-        self.jingle = jingle
-        self.localAudio = localAudio
-        self.holdUntilAudioEnds = holdUntilAudioEnds
-        self.duration = duration
-        self.color = color
-        self.surface = surface
-        self.lifetime = lifetime
-        self.overlay = overlay
-    }
-}
-
-/// A source of content. Produces and returns; never talks to the device.
+/// Two halves. `read()` goes out for a value — a feed, a service, a queue —
+/// and `awtrixFace` draws that value for an AWTRIX clock without going
+/// anywhere. Kept apart so every drawing can be tested against a value, and so
+/// another clock model gets a face of its own over the same reading.
 public protocol Connector: Sendable {
+    /// What `read()` hands the faces.
+    associatedtype Reading: Sendable
+
     var id: String { get }
     var displayName: String { get }
     var defaultInterval: TimeInterval { get }
@@ -193,7 +81,10 @@ public protocol Connector: Sendable {
     /// answering its own question untouched: it is what a Focus and a busy
     /// microphone are asked before a run is held.
     var isAmbient: Bool { get }
-    func produce() async throws -> ConnectorOutput
+    /// Goes out for the value this connector shows. May throw; never draws.
+    func read() async throws -> Reading
+    /// How the reading looks on an AWTRIX clock.
+    var awtrixFace: AwtrixFace<Reading> { get }
 }
 
 extension Connector {
@@ -226,4 +117,40 @@ extension Connector {
     /// that says nothing, keeps its row. Only one that has declared itself
     /// ambient out loud loses one.
     public var isAmbient: Bool { false }
+
+    /// What the AWTRIX session delivers for this connector: the reading,
+    /// drawn.
+    ///
+    /// The one place the two halves meet, so a reading never reaches a clock
+    /// undrawn and a face never draws without a fresh reading. A connector
+    /// whose read spends something — the anecdotes retire what they pop —
+    /// spends it exactly once per delivery.
+    public func produce() async throws -> AwtrixDelivery {
+        awtrixFace.draw(try await read())
+    }
+}
+
+/// Work a connector does away from the delivery path.
+///
+/// Two things belong here, and they are the same pass: restocking whatever the
+/// connector hands out, and confirming that what it already handed out reached
+/// disk. Neither may sit inside `runOnce` — restocking can cost a model load
+/// and a minute of synthesis, which is exactly the bill the timer tick must not
+/// pay, and the durability question is only worth asking once the run that
+/// mutated the state is over.
+///
+/// Optional by design: a connector that holds nothing and prepares nothing has
+/// no background pass, and should not be made to declare an empty one.
+public protocol ConnectorMaintaining: Sendable {
+    func maintain() async throws
+}
+
+/// How one background pass went. Separate from `RunResult` because `delivered`
+/// would be a lie about a pass that never goes near the clock.
+public enum MaintenanceResult: Sendable, Equatable {
+    case completed
+    /// Switched off, or a connector with no background work to do.
+    case skipped
+    case cancelled
+    case failed(String)
 }

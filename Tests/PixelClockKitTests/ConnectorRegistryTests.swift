@@ -6,9 +6,9 @@ private struct FakeConnector: Connector {
     let id: String
     let displayName: String
     let defaultInterval: TimeInterval = 300
-    var output = ConnectorOutput(text: "hi")
+    var output = AwtrixDelivery(text: "hi")
 
-    func produce() async throws -> ConnectorOutput { output }
+    func read() async throws -> AwtrixDelivery { output }
 }
 
 // MARK: - The registry
@@ -57,10 +57,10 @@ private struct FakeConnector: Connector {
 @Test func aConnectorFoundInTheRegistryCanBeAskedToProduce() async throws {
     let registry = ConnectorRegistry()
     registry.register(
-        FakeConnector(id: "a", displayName: "A", output: ConnectorOutput(text: "first"))
+        FakeConnector(id: "a", displayName: "A", output: AwtrixDelivery(text: "first"))
     )
     registry.register(
-        FakeConnector(id: "b", displayName: "B", output: ConnectorOutput(text: "second"))
+        FakeConnector(id: "b", displayName: "B", output: AwtrixDelivery(text: "second"))
     )
 
     let connector = try #require(registry.connector(id: "b"))
@@ -98,7 +98,7 @@ private struct FakeConnector: Connector {
 // MARK: - The output shape
 
 @Test func outputDefaultsToNoIconNoJingleNoAudio() {
-    let output = ConnectorOutput(text: "plain")
+    let output = AwtrixDelivery(text: "plain")
 
     #expect(output.icon == nil)
     #expect(output.jingle == nil)
@@ -108,7 +108,7 @@ private struct FakeConnector: Connector {
 // The banner holds for a fixed duration unless the producer says otherwise.
 // Holding by default would strand a silent connector's text on the clock.
 @Test func outputDoesNotHoldForAudioUnlessAsked() {
-    #expect(ConnectorOutput(text: "plain").holdUntilAudioEnds == false)
+    #expect(AwtrixDelivery(text: "plain").holdUntilAudioEnds == false)
 }
 
 // MARK: - The clip shape

@@ -48,10 +48,17 @@ public struct TileRecord: Codable, Sendable, Equatable {
     /// When this tile last put something on its clock, or nil while it never
     /// has. The cadence is measured from it across launches.
     public var lastDeliveredAt: Date?
+    /// What this tile needs that no other tile does, or nil for a connector
+    /// that needs nothing. Optional, so every record Phase 1 wrote decodes.
+    public var config: TileConfig?
 
-    public init(key: TileKey, policy: TilePolicyRecord, lastDeliveredAt: Date? = nil) {
+    public init(
+        key: TileKey, policy: TilePolicyRecord, lastDeliveredAt: Date? = nil,
+        config: TileConfig? = nil
+    ) {
         self.key = key
         self.policy = policy
         self.lastDeliveredAt = lastDeliveredAt
+        self.config = config
     }
 }

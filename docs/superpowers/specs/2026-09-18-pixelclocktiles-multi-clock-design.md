@@ -44,24 +44,35 @@ from documentation.
 | AWTRIX's stats endpoint does not exist on it | `GET /api/stats` → HTTP 301 |
 | A custom app is created by name | `POST /api/custom?name=probe_claude` → `{"code":200,"message":"ok"}` |
 | Custom apps are listed | `GET /api/customList` → `{"apps":["probe_claude"],"count":1}` |
-| An empty object deletes one | `POST /api/custom?name=probe_claude` with `{}` → list back to `{"apps":[],"count":0}` |
+| An empty body deletes one; `{}` does not | `POST /api/custom?name=probe_claude` with an empty body → list back to `{"apps":[],"count":0}`. `{}` alone does not delete — corrected on re-measurement, 2026-09-18 |
 | `switchDiyApp` takes the UI away from where the user left it | `{"code":200,"message":"app switch requested","data":{"name":"probe_claude","index":100}}`; the user saw the interface move from L3 to L2 |
-| A pushed frame shows full screen | the probe (`CLAUDE 42%` over a drawn bar) was shown full screen, and read to the user as a picture rather than as a native app |
+| A pushed frame shows full screen — because `switchDiyApp` was called | the probe (`CLAUDE 42%` over a drawn bar) was shown full screen, and read to the user as a picture rather than as a native app. A push alone never brings a custom app on screen; the screen changed because the same session called `switchDiyApp` |
 | Ports | 80 open, 5555 (adb) open, 1883 closed |
 
 From the reverse-engineered documentation (`atomicstack/tc002-customisation`,
-`CUSTOM-APP.md`, `HTTP-API.md`) and the official repository — **not yet
-verified here**, and each one the plan leans on gets a live check first:
+`CUSTOM-APP.md`, `HTTP-API.md`), the official repository and protocol —
+reconciled by the F1 spike (research § 5); each one the plan leans on got its
+live check:
 
-- The payload is `{duration, text[], draw[], image[]}`, shared by HTTP and MQTT.
-- Text is ASCII 0x20–0x7E; lowercase letters render blank; `fontHeight: 10` is
-  the size known to work; the device does not scroll.
+- The payload schema is `{text[], image[], draw[]}`, shared by HTTP and MQTT;
+  `duration` is sent by the community but is not in the official schema and is
+  not a TTL.
+- Text is ASCII 0x20–0x7E; the device does not scroll. Whether lowercase
+  letters render is unresolved — official samples use lowercase after the
+  v1.1.0 font fix (this clock runs 1.1.1), while the community still reports
+  partial glyphs (#20); experiment E5 settles it. `fontHeight` is 5 or 10
+  (official; the community also reports tiers 3–5, 6–8 and 10, #25).
 - `draw` primitives: `dp` pixel, `dl` line, `dr` rectangle outline, `df` filled
-  rectangle, `db` bitmap. Colours are `#RRGGBB` strings.
-- `image` takes a data URI; animated GIFs play at any size up to 52×16.
+  rectangle, `db` bitmap, plus `dc`, `dfc` and `dt` — at most 32 commands per
+  app. Colours are `#RRGGBB` strings.
+- `image` elements carry base64 — the exact spelling on the wire (bare base64
+  or a data URI) is unverified and sits on the hardware checklist. GIFs up to
+  256×256 and 50 frames are accepted and clipped to 52×16; stills go up to
+  512×512; base64 up to 60 KB; at most 6 images per app.
 - There is no `lifetime`: an app persists after its sender goes away.
-- No notification, indicator, overlay, battery, or audio endpoint exists on the
-  stock firmware. Audio is reachable only from software running on the clock.
+- No notification, indicator, overlay, battery-reading, or audio endpoint
+  exists on the stock firmware. Audio is reachable only from software running
+  on the clock.
 
 ## Architecture
 
@@ -265,28 +276,46 @@ sound plays.
 
 ### Ulanzi adapter (TC002)
 
-- Scene: `.app(name, UlanziFrame)`, where `UlanziFrame` is
-  `{duration, text[], draw[], image[]}`.
-- Port: a new `UlanziDevice` actor — `showApp(_:named:)`, `removeApp(named:)`,
-  `customApps()`, `identity()`. It does not call `switchDiyApp`: the measured
-  effect is the user's interface moving away from where they left it.
-- How a frame is realised on the clock — custom app or something else — is
-  follow-up F1's to decide, inside this adapter. The scene does not change with
-  it.
+- One DIY app per tile — the tile's own page on the clock. Custom apps take
+  DIY pages 100–120, so a clock holds at most 21 of them; the user flips
+  between the pages with the clock's knob, at DIY level 2. A push alone never
+  brings a custom app on screen: the user parks on the page once, and from
+  then on every push shows at once. The Mac never rotates anything and never
+  times a dwell.
+- Scene: `.app(name, UlanziFrame)`, where `UlanziFrame` is `{text[], image[],
+  draw[]}` — the official schema's three fields. A constant `duration` is
+  still sent, the way the community does; it is not a TTL and nothing relies
+  on it.
+- Port: a new `UlanziDevice` actor — `showApp(_:named:)` (an upsert),
+  `removeApp(named:)`, `customApps()`, `identity()`. Deleting an app is a POST
+  to `/api/custom?name=` with an **empty body**; `{}` does not delete —
+  measured. It has no `switchDiyApp`: the measured effect of that call is the
+  user's interface moving away from where they left it. Only an explicit user
+  action — a "Show on clock" panel action, if one comes — may ever call it;
+  never a schedule, a launch, or any automatic path.
 - Images: `UlanziImage.bundled(name)`, 16 px art shipped as resources and sent
-  inline as base64. There is no flash to install into and no catalogue.
-- Custody: `UlanziCustody` keeps a **durable** record of the app names this app
-  pushed to each clock, because apps outlive the sender here. The rule is the
-  opposite of AWTRIX's, which is why custody belongs to the adapter:
-  - at session start, `customApps()` ∩ record, minus the names of live tiles →
-    `{}` each;
-  - a tile paused or removed → `{}` at once;
-  - quit → `{}` for everything recorded;
+  inline as bare base64 per element. There is no flash to install into and no
+  catalogue.
+- Custody: `UlanziCustody` keeps a **durable** record of the app names this
+  app pushed to each clock, one per tile, because apps outlive the sender
+  here. The rule is the opposite of AWTRIX's, which is why custody belongs to
+  the adapter:
+  - every push is an upsert; at session start and on offline→online recovery
+    the session re-pushes ALL tile apps at once, because custom apps most
+    likely do not survive a clock reboot;
+  - the start-up sweep (`customApps()` ∩ record) deletes the names no live
+    tile claims — leftovers from crashes or older builds;
+  - a paused tile keeps its page, held by an idle frame; it is never deleted;
+  - a tile removed → its app deleted at once; quit → everything recorded
+    deleted;
   - `lifetime` is emulated: a tile with no successful delivery for longer than
-    its face's lifetime has its app removed by the session. After a crash of the
-    Mac the last frame stays until the next launch; that residual is accepted.
-- Health: reachable when `/getBase` answers. There is no battery, so the panel
-  draws no battery line at all rather than a placeholder.
+    its face's lifetime has its page flipped to the idle frame — the stale
+    figure must not stand, and the page is not deleted while the tile lives.
+    After a crash of the Mac the last frame stays until the next launch; that
+    residual is accepted.
+- Health: reachable when `/getBase` answers. The clock has a 3600 mAh battery,
+  but no stock API reports its level, so the panel draws no battery line at
+  all rather than a placeholder.
 
 ### Discovery and model detection
 
@@ -307,7 +336,7 @@ sound plays.
 | --- | --- | --- | --- | --- |
 | weather | `WeatherReading` → `WeatherTheme` | every 600 s | as today: `.app("weather")`, 8×8 icon, overlay, lifetime 3600 | `.app("weather")`: 16×16 sky GIF on the left, temperature coloured by how it feels; `°` is outside the font's ASCII and is drawn as pixels; no overlay exists, so the icon carries the sky; lifetime 3600 emulated |
 | claude | `ClaudeUsageReading`, from the status-line file | every 300 s | as today: progress bar, `ClaudeStar` 8×8, lifetime 900 | `.app("claude")`: `ClaudeStar` 16 px, `42%`, bar from `dr` and `df` along the bottom, lifetime 900 emulated |
-| anecdotes | `PreparedAnecdote`; reading it retires it | every 1800 s + maintenance | as today: held banner, RTTTL jingle, audio on the Mac | none in this design — the Cyrillic banner and on-device sound are F1's |
+| anecdotes | `PreparedAnecdote`; reading it retires it | every 1800 s + maintenance | as today: held banner, RTTTL jingle, audio on the Mac | none yet — on-device sound does not exist on the stock firmware, so audio stays on the Mac; a visual banner face (raster, Mac-side marquee) is a possible later follow-up |
 | vpn | `VPNState` for one watched VPN | events + 60 s recheck | a lamp write through `IndicatorCustody`, not a scene | none — the TC002 has no global indicators |
 
 Carried-over rules:
@@ -317,9 +346,9 @@ Carried-over rules:
   `output(for:)` and `produce()`. Moving them to face files is optional, and
   moving is all it may ever be — never a rewrite.
 - A Focus change retracts a tile whose policy no longer allows it, on both
-  models: `removeApp` on AWTRIX, `{}` on the TC002. This is what
-  `FocusGatedConnector` does for Claude today, generalised. On the TC002 it is
-  what keeps a figure from standing for a whole emulated lifetime.
+  models: `removeApp` on AWTRIX, an empty-body delete on the TC002. This is
+  what `FocusGatedConnector` does for Claude today, generalised. On the TC002
+  it is what keeps a figure from standing for a whole emulated lifetime.
 - `OpenMeteoSource` caches one answer today, `(reading, at, of: Coordinates)?`.
   Two weather tiles at two locations would evict each other on every poll. The
   cache becomes keyed by coordinates.
@@ -586,6 +615,9 @@ What only a person at the hardware can settle, added to HANDOFF's list:
    tile depends on them.
 4. Removing a TC002 tile takes its app off the clock, and a relaunch after a
    force quit removes an app whose tile is gone.
+5. The `image[]` element spelling on the wire: the encoder emits bare base64
+   per element; whether the device also accepts a data URI prefix is
+   unverified.
 
 ## Phases
 
@@ -631,15 +663,17 @@ structure stands on the moved tests.
 
 ## Follow-ups
 
-- **F1 — TC002 rendering and on-device sound.** How the screens work (the L1,
-  L2 and L3 the user sees and why `switchDiyApp` moved between them), where
-  custom apps sit next to the built-in tools, custom app against a native
-  screen, and on-device sound: root adb on 5555, the official `AudioManager`
-  from a device-side FlyThings app, or the community runtime's `POST /sound` —
-  which stops the stock app and with it `/api/custom`. Its outcome may add an
-  anecdote face for the TC002 and a `DeviceSpeaker` sink, which is when
-  availability rule 3 starts to matter per clock.
+- **F1 — TC002 rendering and on-device sound.** Done, 2026-09-18
+  (`research/2026-09-18-tc002-screens-and-sound.md`): the screens, the DIY
+  pages, the payload limits and the delete semantics are in "Measured device
+  facts" above, and the per-tile app model is in the Ulanzi adapter. No
+  `DeviceSpeaker`: the stock protocol exposes no audio endpoint, so anecdotes
+  stay on `MacSpeakers` on both models. A visual anecdote face (raster banner,
+  Mac-side marquee) remains possible later; a device audio sink would be what
+  makes availability rule 3 matter per clock.
 - More VPN presets in the catalogue.
+- An anecdote face for the TC002 — a raster banner scrolled by re-pushing;
+  audio stays on `MacSpeakers` either way.
 
 ## Out of scope
 

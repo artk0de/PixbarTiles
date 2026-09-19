@@ -83,3 +83,47 @@ import Testing
     #expect((0..<24).allSatisfy { TileWindow.quiet(nothing).silences(atHour: $0) == false })
     #expect((0..<24).allSatisfy { TileWindow.active(nothing).silences(atHour: $0) == false })
 }
+
+// MARK: - The policy
+
+private let sleepsAtNight = TilePolicy(
+    refreshSeconds: 1_800,
+    focus: FocusRule(silencedIn: [.sleep]),
+    window: .quiet(HourWindow(startHour: 23, endHour: 8))
+)
+
+@Test func aTileHeldByItsFocusSaysSo() {
+    #expect(sleepsAtNight.hold(in: .sleep, atHour: 12) == .focus)
+    #expect(sleepsAtNight.hold(in: .work, atHour: 12) == nil)
+    #expect(sleepsAtNight.runs(in: .work, atHour: 12))
+}
+
+// The window is asked first, and the reason it names is load-bearing: the
+// nightly refresh reads `.hours` to decide whether it may spend.
+@Test func silentHoursAreTheReasonEvenWhenTheFocusAgrees() {
+    #expect(sleepsAtNight.hold(in: .sleep, atHour: 3) == .hours)
+    #expect(sleepsAtNight.hold(in: .work, atHour: 3) == .hours)
+}
+
+@Test func aPausedTileIsPausedWhateverTheHourAndTheFocus() {
+    var paused = sleepsAtNight
+    paused.isPaused = true
+
+    for focus in MacFocus.allCases {
+        for hour in 0..<24 {
+            #expect(paused.hold(in: focus, atHour: hour) == .paused, "\(focus) at \(hour):00")
+        }
+    }
+}
+
+@Test func theRefreshIsReadOnTheScale() {
+    #expect(TilePolicy(refreshSeconds: 5).refresh == 30)
+    #expect(TilePolicy(refreshSeconds: 1_800).refresh == 1_800)
+    #expect(TilePolicy(refreshSeconds: 1_000).refresh == 900)
+}
+
+// Stored in seconds, snapped only when read: the stored value is what the user
+// or the migration wrote, and nothing rewrites it behind their back.
+@Test func theStoredRefreshIsKeptAsWritten() {
+    #expect(TilePolicy(refreshSeconds: 1_000).refreshSeconds == 1_000)
+}

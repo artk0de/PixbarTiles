@@ -55,3 +55,62 @@ public enum TileWindow: Equatable, Sendable {
         }
     }
 }
+
+/// Why a tile is not running at a given moment.
+public enum TileHold: Equatable, Sendable {
+    /// Stopped by the user, with its settings kept.
+    case paused
+    /// Its hours say not now — inside quiet hours, or outside working ones.
+    case hours
+    /// The Mac is in a Focus the tile does not work in.
+    case focus
+}
+
+/// What every tile carries about when it runs, whatever its connector.
+///
+/// Copied from the connector's defaults when the tile is created, then the
+/// tile's own.
+public struct TilePolicy: Equatable, Sendable {
+    public var isPaused: Bool
+    /// Seconds between runs as stored — for an event-driven tile, between
+    /// rechecks. Read through `refresh`, which puts it on the scale.
+    public var refreshSeconds: Int
+    public var focus: FocusRule
+    public var window: TileWindow
+
+    public init(
+        isPaused: Bool = false,
+        refreshSeconds: Int,
+        focus: FocusRule = FocusRule(),
+        window: TileWindow = .always
+    ) {
+        self.isPaused = isPaused
+        self.refreshSeconds = refreshSeconds
+        self.focus = focus
+        self.window = window
+    }
+
+    /// Seconds between runs, on the refresh scale and never under its floor.
+    public var refresh: TimeInterval {
+        RefreshScale.snapped(TimeInterval(refreshSeconds))
+    }
+
+    /// What holds the tile in this Focus at this hour, or nil when it runs.
+    ///
+    /// Paused first, then the hours, then the Focus. The hours come before the
+    /// Focus because the answer is a reason as well as a verdict: the nightly
+    /// refresh reads `.hours` to decide whether it may spend, and a 3 a.m.
+    /// Sleep answered as `.focus` would let it load a model and spin the fans
+    /// inside the hours somebody set aside for quiet. `FocusGate.silence`
+    /// fixed that order, and it stays.
+    public func hold(in current: MacFocus, atHour hour: Int) -> TileHold? {
+        if isPaused { return .paused }
+        if window.silences(atHour: hour) { return .hours }
+        if focus.silences(current) { return .focus }
+        return nil
+    }
+
+    public func runs(in current: MacFocus, atHour hour: Int) -> Bool {
+        hold(in: current, atHour: hour) == nil
+    }
+}

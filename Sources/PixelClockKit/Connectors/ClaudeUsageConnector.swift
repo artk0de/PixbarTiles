@@ -36,6 +36,7 @@ public struct ClaudeUsageConnector: Connector {
     /// expiring. Three polls inside one lifetime survives a couple of misses
     /// while still clearing the matrix within a quarter of an hour.
     public let defaultInterval: TimeInterval = 300
+    public var defaultPolicy: TilePolicy { TileDefaults.claude }
     public let narrator: Voice = .crystal
     public let isAudible = false
     public let isAmbient = true

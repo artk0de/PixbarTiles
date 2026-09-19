@@ -221,6 +221,7 @@ public struct AnecdoteConnector: Connector {
     public let id = "anecdotes"
     public let displayName = "Anecdotes"
     public let defaultInterval: TimeInterval = 30 * 60
+    public var defaultPolicy: TilePolicy { TileDefaults.anecdotes }
 
     /// Answered by the preparer, which is what actually casts the turns.
     ///

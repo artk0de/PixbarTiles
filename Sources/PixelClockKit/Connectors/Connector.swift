@@ -81,6 +81,9 @@ public protocol Connector: Sendable {
     /// answering its own question untouched: it is what a Focus and a busy
     /// microphone are asked before a run is held.
     var isAmbient: Bool { get }
+    /// The policy a new tile of this connector starts from: copied into the
+    /// tile when it is made, and the tile's own from then on.
+    var defaultPolicy: TilePolicy { get }
     /// Goes out for the value this connector shows. May throw; never draws.
     func read() async throws -> Reading
     /// How the reading looks on an AWTRIX clock.
@@ -117,6 +120,21 @@ extension Connector {
     /// that says nothing, keeps its row. Only one that has declared itself
     /// ambient out loud loses one.
     public var isAmbient: Bool { false }
+
+    /// What a connector that names no policy starts from: exactly what the
+    /// app-wide quiet rules did to it before tiles. Those were asked of an
+    /// audible connector only — Do Not Disturb, Sleep, any Focus that could not
+    /// be named, and the shipped 23:00–08:00 — and of a silent one never. So an
+    /// undeclared connector behaves as it did, and it takes the recoverable
+    /// direction `isAudible`'s own default takes.
+    public var defaultPolicy: TilePolicy {
+        guard isAudible else { return TilePolicy(refreshSeconds: Int(defaultInterval)) }
+        return TilePolicy(
+            refreshSeconds: Int(defaultInterval),
+            focus: FocusRule(silencedIn: [.doNotDisturb, .sleep], whenUnknown: .hold),
+            window: .quiet(HourWindow(startHour: 23, endHour: 8))
+        )
+    }
 
     /// What the AWTRIX session delivers for this connector: the reading,
     /// drawn.

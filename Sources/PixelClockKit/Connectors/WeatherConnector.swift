@@ -44,6 +44,7 @@ public struct WeatherConnector: Connector {
     /// refreshing it so rarely that fewer than a handful fit inside `lifetime`
     /// puts a blank slot on the matrix the first time the network hiccups.
     public let defaultInterval: TimeInterval = 600
+    public var defaultPolicy: TilePolicy { TileDefaults.weather }
     /// Nothing here is heard. The reading is drawn into the device's own loop
     /// and the sky is a setting on the matrix — no speech, no jingle, nothing
     /// that reaches the room. So the two quiet rules do not apply to it: a

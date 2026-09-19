@@ -26,10 +26,19 @@ public struct TilePolicyRecord: Codable, Sendable, Equatable {
     /// Seconds between runs. Seconds rather than a position on the slider's
     /// scale, so the scale can gain steps without moving what is stored.
     public var refreshSeconds: Int
+    /// The Focuses the tile does not work in, or nil for a record written
+    /// before Phase 4 — read as the connector's own defaults row.
+    public var focus: FocusRule?
+    /// The hours the tile keeps, or nil for a record written before Phase 4.
+    public var window: TileWindow?
 
-    public init(isPaused: Bool, refreshSeconds: Int) {
+    public init(
+        isPaused: Bool, refreshSeconds: Int, focus: FocusRule? = nil, window: TileWindow? = nil
+    ) {
         self.isPaused = isPaused
         self.refreshSeconds = refreshSeconds
+        self.focus = focus
+        self.window = window
     }
 }
 

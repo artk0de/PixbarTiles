@@ -217,6 +217,9 @@ final class AppModel: ObservableObject {
     /// Where what is learned about the clock is written down for the next
     /// launch.
     private let clocks: ClockStore
+    /// The place this clock's weather tile reads for. Held so the settings
+    /// field reads and saves through the same record the connector polls.
+    private let location: StoredLocation
     private let relocate: RelocatingHost?
     /// How many polls in a row the clock has not answered.
     ///
@@ -255,7 +258,7 @@ final class AppModel: ObservableObject {
     /// `didSet` does not run during initialization, which is what keeps seeding
     /// the field from writing the stored location straight back to disk.
     @Published var typedLocation: String {
-        didSet { locationNote = LocationField.save(typedLocation, to: defaults) }
+        didSet { locationNote = LocationField.save(typedLocation, to: location) }
     }
     @Published private(set) var locationNote: String?
     /// Whether the settings are showing instead of the panel.
@@ -505,7 +508,8 @@ final class AppModel: ObservableObject {
         self.typedHost = clock.address
         self.device = device
         self.relocate = relocate
-        self.typedLocation = LocationField.text(for: Coordinates.stored(in: defaults))
+        self.location = StoredLocation(defaults: defaults, clockId: clock.id)
+        self.typedLocation = LocationField.text(for: location.current)
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.registry = registry
@@ -581,7 +585,7 @@ final class AppModel: ObservableObject {
         // at the next launch. One source of weather for the whole app: the
         // source caches its own answers, and a second instance would poll a
         // free public service twice as often for the same reading.
-        let location = StoredLocation(defaults: defaults)
+        let location = StoredLocation(defaults: defaults, clockId: clock.id)
         registry.register(
             WeatherConnector(
                 source: OpenMeteoSource(transport: transport),
@@ -609,6 +613,7 @@ final class AppModel: ObservableObject {
             clockId: clock.id,
             connectors: registry.all.map { (id: $0.id, defaultInterval: $0.defaultInterval) }
         ).run()
+        try? WeatherLocationMigration(defaults: defaults).run()
         let store = TileSettingsStore(defaults: defaults, clockId: clock.id)
         let session = AwtrixClockSession(
             device: device,

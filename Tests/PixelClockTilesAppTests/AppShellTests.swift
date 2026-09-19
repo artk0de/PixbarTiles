@@ -964,22 +964,27 @@ private func launchedForBrowsing(
     let suite = "location-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    let clock = try storeAClock(in: defaults)
+    try storeTheMigratedTiles(on: clock, in: defaults)
+    let place = StoredLocation(defaults: defaults, clockId: clock.id)
 
-    LocationField.save("52.52, 13.405", to: defaults)
+    LocationField.save("52.52, 13.405", to: place)
 
     // Read back the way the connector reads it, not the way it was written: a
     // field writing some other key would save happily and change nothing.
-    #expect(Coordinates.stored(in: defaults) == Coordinates(latitude: 52.52, longitude: 13.405))
+    #expect(place.current == Coordinates(latitude: 52.52, longitude: 13.405))
 }
 
 @Test @MainActor func aLocationNobodyHasTypedFallsBackToSomewhereRatherThanNowhere() throws {
     let suite = "location-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    let clock = try storeAClock(in: defaults)
+    try storeTheMigratedTiles(on: clock, in: defaults)
 
     // A connector with no coordinates has nothing to ask about and would report
     // a failure on every poll until somebody opened the settings.
-    #expect(Coordinates.stored(in: defaults) == Coordinates.default)
+    #expect(StoredLocation(defaults: defaults, clockId: clock.id).current == Coordinates.default)
 }
 
 // Open-Meteo answers a 400 for coordinates off the globe, so the panel says so
@@ -988,25 +993,31 @@ private func launchedForBrowsing(
     let suite = "location-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
-    LocationField.save("52.52, 13.405", to: defaults)
+    let clock = try storeAClock(in: defaults)
+    try storeTheMigratedTiles(on: clock, in: defaults)
+    let place = StoredLocation(defaults: defaults, clockId: clock.id)
+    place.save(Coordinates(latitude: 52.52, longitude: 13.405))
 
     for refused in ["91, 0", "-91, 0", "0, 181", "0, -181", "north, east", "52.52", "", "  "] {
-        #expect(LocationField.save(refused, to: defaults) == LocationField.unreadable, "\(refused)")
+        #expect(LocationField.save(refused, to: place) == LocationField.unreadable, "\(refused)")
     }
 
     // And what was there is still there.
-    #expect(Coordinates.stored(in: defaults) == Coordinates(latitude: 52.52, longitude: 13.405))
+    #expect(place.current == Coordinates(latitude: 52.52, longitude: 13.405))
 }
 
 @Test @MainActor func aLocationIsTypedTheWayItIsShown() throws {
     let suite = "location-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    let clock = try storeAClock(in: defaults)
+    try storeTheMigratedTiles(on: clock, in: defaults)
+    let place = StoredLocation(defaults: defaults, clockId: clock.id)
 
     let shown = LocationField.text(for: Coordinates(latitude: 52.52, longitude: 13.405))
-    #expect(LocationField.save(shown, to: defaults) == LocationField.takesEffectAtTheNextPoll)
+    #expect(LocationField.save(shown, to: place) == LocationField.takesEffectAtTheNextPoll)
 
-    #expect(Coordinates.stored(in: defaults) == Coordinates(latitude: 52.52, longitude: 13.405))
+    #expect(place.current == Coordinates(latitude: 52.52, longitude: 13.405))
 }
 
 @Test @MainActor func theAppIsWiredWithTheWeatherConnector() throws {

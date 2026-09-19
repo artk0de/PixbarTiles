@@ -10,44 +10,36 @@ extension Coordinates {
     /// on every poll until the user found the settings — and the app would have
     /// nothing to show for itself on the launch that is supposed to sell it.
     public static let `default` = Coordinates(latitude: 55.7558, longitude: 37.6173)
-
-    /// One key holding the pair, rather than two holding halves of it. A
-    /// latitude saved without its longitude is not half a location; it is a
-    /// different place.
-    static let storageKey = "weatherLocation"
-
-    static func stored(in defaults: UserDefaults) -> Coordinates {
-        guard
-            let data = defaults.data(forKey: storageKey),
-            let saved = try? JSONDecoder().decode(Coordinates.self, from: data)
-        else { return .default }
-        return saved
-    }
-
-    func save(to defaults: UserDefaults) {
-        guard let data = try? JSONEncoder().encode(self) else { return }
-        defaults.set(data, forKey: Self.storageKey)
-    }
 }
 
-/// Reads the stored location, from wherever the connector happens to ask.
+/// The place one clock's weather tile reads for.
 ///
-/// A holder rather than a `UserDefaults` captured directly in the connector's
-/// location closure: that closure is `@Sendable` and `UserDefaults` is not, so
-/// the capture is refused under strict concurrency. `@unchecked` is not a
-/// waiver — `UserDefaults` is documented as thread-safe, and this reads one key
-/// and holds nothing — and it is the same conformance `UserDefaultsSettingsStore`
-/// carries for the same reason.
+/// Read on every produce rather than captured, so a place typed into the
+/// settings takes effect at the next poll. The tile is looked up each time
+/// for the same reason: it is the record, and a copy would go stale.
 final class StoredLocation: @unchecked Sendable {
     private let defaults: UserDefaults
+    private let clockId: UUID
 
-    init(defaults: UserDefaults) {
+    init(defaults: UserDefaults, clockId: UUID) {
         self.defaults = defaults
+        self.clockId = clockId
     }
 
-    /// Read on every call rather than cached, so a pair typed into the settings
-    /// takes effect at the next poll instead of at the next launch.
-    var current: Coordinates { Coordinates.stored(in: defaults) }
+    var current: Coordinates { weatherTile?.config?.location ?? .default }
+
+    /// Onto the tile, and only onto one that exists: saving a place is not a
+    /// way to put back a weather tile the user took off the clock.
+    func save(_ place: Coordinates) {
+        guard let tile = weatherTile else { return }
+        TileStore(defaults: defaults).update(tile) { $0.config = .weather(place) }
+    }
+
+    private var weatherTile: TileRecord? {
+        TileStore(defaults: defaults).all().first {
+            $0.key == TileKey(clockId: clockId, connectorId: WeatherConnector.appName)
+        }
+    }
 }
 
 /// Where the clock is, as the settings write it.
@@ -109,9 +101,9 @@ enum LocationField {
     /// standing between the user and a connector that quietly reports the
     /// weather somewhere else.
     @discardableResult
-    static func save(_ typed: String, to defaults: UserDefaults) -> String {
-        guard let place = parse(typed) else { return unreadable }
-        place.save(to: defaults)
+    static func save(_ typed: String, to place: StoredLocation) -> String {
+        guard let parsed = parse(typed) else { return unreadable }
+        place.save(parsed)
         return takesEffectAtTheNextPoll
     }
 }

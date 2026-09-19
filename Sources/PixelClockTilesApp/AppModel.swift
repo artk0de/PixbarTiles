@@ -568,7 +568,6 @@ final class AppModel: ObservableObject {
             }
         )
         let registry = ConnectorRegistry()
-        let store = UserDefaultsSettingsStore(defaults: defaults)
         let installer = CatalogueIconInstaller(
             device: device,
             transport: transport,
@@ -601,6 +600,16 @@ final class AppModel: ObservableObject {
                 showsNow: { ClaudeFocusAudience.shows(focusStatus) }
             )
         )
+
+        // After every connector is registered: one the step does not hear
+        // about gets no tile, and runs on its own default until its first
+        // saved choice gives it one.
+        try? TileMigration(
+            defaults: defaults,
+            clockId: clock.id,
+            connectors: registry.all.map { (id: $0.id, defaultInterval: $0.defaultInterval) }
+        ).run()
+        let store = TileSettingsStore(defaults: defaults, clockId: clock.id)
 
         return AppModel(
             clock: clock,

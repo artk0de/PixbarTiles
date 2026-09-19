@@ -51,3 +51,80 @@ private func scratchStore() -> URL {
     #expect(launched.deviceHost == AppModel.defaultDeviceHost)
     #expect(ClockStore(defaults: defaults).all().map(\.address) == [AppModel.defaultDeviceHost])
 }
+
+/// The tile `TileMigration` gave a connector on the launch's clock, changed
+/// the way a later phase's editor would change it.
+private func editTile(
+    _ connectorId: String, in defaults: UserDefaults, _ change: (inout TileRecord) -> Void
+) throws {
+    let clock = try #require(ClockStore(defaults: defaults).all().first)
+    let key = TileKey(clockId: clock.id, connectorId: connectorId)
+    let tile = try #require(TileStore(defaults: defaults).all().first(where: { $0.key == key }))
+    TileStore(defaults: defaults).update(tile, change)
+}
+
+// The phase's second claim, for the schedule's half: the switch and the
+// interval the panel shows are the tile's.
+@Test @MainActor func theLaunchReadsEachConnectorsCadenceFromItsTile() throws {
+    let suite = "records-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    _ = AppModel.live(defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore())
+    try editTile("anecdotes", in: defaults) {
+        $0.policy.isPaused = true
+        $0.policy.refreshSeconds = 3600
+    }
+
+    let relaunched = AppModel.live(
+        defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore()
+    )
+
+    let anecdotes = try #require(relaunched.registry.connector(id: "anecdotes"))
+    #expect(
+        relaunched.settings(for: anecdotes)
+            == ConnectorSettings(isEnabled: false, intervalPosition: 11)
+    )
+}
+
+// And the host's half. `live()` builds the host and the model separately, and
+// a host still reading `connector.<id>` would run a paused connector on
+// "Run now" — its enablement guard answers `.skipped` only from the store it
+// was given.
+@Test @MainActor func aPausedTileIsOffForTheHostAsWell() async throws {
+    let suite = "records-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    _ = AppModel.live(defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore())
+    try editTile("weather", in: defaults) { $0.policy.isPaused = true }
+    let relaunched = AppModel.live(
+        defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore()
+    )
+
+    relaunched.runNow("weather")
+
+    #expect(await waitUntil { relaunched.lastResults["weather"] == "off" })
+    await relaunched.teardown()
+}
+
+// The upgrade, end to end. Green before this task as well — the old store
+// read the old key directly — and kept because from here on it is the only
+// thing proving the step runs at launch, on the clock the launch drives, after
+// every connector is registered.
+@Test @MainActor func anUpgradedInstallationKeepsEachConnectorsChoice() throws {
+    let suite = "records-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    UserDefaultsSettingsStore(defaults: defaults).save(
+        ConnectorSettings(isEnabled: false, intervalPosition: 11), for: "anecdotes"
+    )
+
+    let launched = AppModel.live(
+        defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore()
+    )
+
+    let anecdotes = try #require(launched.registry.connector(id: "anecdotes"))
+    #expect(
+        launched.settings(for: anecdotes)
+            == ConnectorSettings(isEnabled: false, intervalPosition: 11)
+    )
+}

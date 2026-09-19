@@ -85,6 +85,16 @@ public protocol Connector: Sendable {
     func read() async throws -> Reading
     /// How the reading looks on an AWTRIX clock.
     var awtrixFace: AwtrixFace<Reading> { get }
+    /// How the reading looks on a TC002 clock, or nil when this connector has
+    /// no page there (D11).
+    ///
+    /// A requirement rather than an extension-only member, and the dispatch is
+    /// why: an extension member is resolved statically, so a connector's own
+    /// face would be invisible to any code holding `any Connector` — every
+    /// `produceUlanzi()` would answer nil for every connector. A requirement
+    /// dispatches on the real type, and the default below keeps every
+    /// connector that says nothing faceless, which is the D11 default.
+    var ulanziFace: UlanziFace<Reading>? { get }
 }
 
 extension Connector {
@@ -127,6 +137,18 @@ extension Connector {
     /// spends it exactly once per delivery.
     public func produce() async throws -> AwtrixDelivery {
         awtrixFace.draw(try await read())
+    }
+}
+
+public extension Connector {
+    /// TC002 face; nil means the connector has no page on a TC002 clock (D11).
+    var ulanziFace: UlanziFace<Reading>? { nil }
+
+    /// TC002 counterpart of `produce()`: nil for a connector with no TC002
+    /// face, the reading drawn for one that has it.
+    func produceUlanzi() async throws -> UlanziDelivery? {
+        guard let ulanziFace else { return nil }
+        return ulanziFace.draw(try await read())
     }
 }
 

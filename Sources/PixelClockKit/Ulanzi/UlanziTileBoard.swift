@@ -63,4 +63,12 @@ public struct UlanziTileBoard: Sendable, Equatable {
         let live = Set(liveIds)
         return tileIds.filter { !live.contains($0) }
     }
+
+    /// The tile is gone entirely — including its last scene, so a recovery
+    /// sweep after a removal cannot re-create the page that was taken back.
+    public mutating func remove(tileId: String) {
+        tileIds.removeAll { $0 == tileId }
+        current[tileId] = nil
+        lastDelivered[tileId] = nil
+    }
 }

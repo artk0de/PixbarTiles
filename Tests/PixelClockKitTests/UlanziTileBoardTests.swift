@@ -58,4 +58,16 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
         #expect(board.lastScene(forTile: "weather") == scene)
         #expect(board.lastScene(forTile: "never-seen") == nil)
     }
+
+    @Test func removedTileIsForgottenSoRecoveryCannotRecreateItsPage() {
+        var board = UlanziTileBoard()
+        board.register(tileId: "a")
+        board.register(tileId: "b")
+
+        board.remove(tileId: "a")
+
+        #expect(board.tileIds == ["b"])
+        #expect(board.frame(forTile: "a") == nil)
+        #expect(board.lastScene(forTile: "a") == nil)
+    }
 }

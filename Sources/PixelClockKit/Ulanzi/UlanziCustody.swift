@@ -104,4 +104,15 @@ public actor UlanziCustody {
         }
         record.save([], forClock: clockId)
     }
+
+    /// One tile's page: the empty-body delete for its name, then the record
+    /// without it. A name this clock never claimed has nothing to release.
+    public func release(tileId: String) async throws {
+        let name = tileName(tileId)
+        var owned = record.names(forClock: clockId)
+        guard owned.contains(name) else { return }
+        try await device.removeApp(named: name)
+        owned.removeAll { $0 == name }
+        record.save(owned, forClock: clockId)
+    }
 }

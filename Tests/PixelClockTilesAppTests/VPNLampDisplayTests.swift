@@ -15,7 +15,7 @@ private let lit = VPNLamps(
 // thinks have changed.
 @Test func theFirstShowingWritesBothCorners() async throws {
     let clock = RecordingLamps()
-    let display = VPNLampDisplay(clock: clock)
+    let display = VPNLampDisplay(indicators: IndicatorCustody(lamps: clock))
 
     await display.show(lit)
 
@@ -30,7 +30,7 @@ private let lit = VPNLamps(
 // clock every time it flapped.
 @Test func showingTheSameThingAgainWritesNothing() async throws {
     let clock = RecordingLamps()
-    let display = VPNLampDisplay(clock: clock)
+    let display = VPNLampDisplay(indicators: IndicatorCustody(lamps: clock))
 
     for _ in 0..<3 { await display.show(lit) }
 
@@ -39,7 +39,7 @@ private let lit = VPNLamps(
 
 @Test func onlyTheCornerThatMovedIsWritten() async throws {
     let clock = RecordingLamps()
-    let display = VPNLampDisplay(clock: clock)
+    let display = VPNLampDisplay(indicators: IndicatorCustody(lamps: clock))
     await display.show(lit)
 
     var dropped = lit
@@ -59,7 +59,7 @@ private let lit = VPNLamps(
 // wrong until the VPN itself next moves — which on a quiet afternoon is never.
 @Test func aWriteThatFailedIsNotRememberedAsShown() async throws {
     let clock = RecordingLamps()
-    let display = VPNLampDisplay(clock: clock)
+    let display = VPNLampDisplay(indicators: IndicatorCustody(lamps: clock))
     clock.refuse([.topRight, .bottomRight])
 
     await display.show(lit)
@@ -76,7 +76,7 @@ private let lit = VPNLamps(
 // remembered, what did not must not.
 @Test func aPartialDeliveryRemembersOnlyWhatLanded() async throws {
     let clock = RecordingLamps()
-    let display = VPNLampDisplay(clock: clock)
+    let display = VPNLampDisplay(indicators: IndicatorCustody(lamps: clock))
     clock.refuse([.bottomRight])
 
     await display.show(lit)
@@ -93,7 +93,7 @@ private let lit = VPNLamps(
 // the desk with nothing left running that could ever stop it.
 @Test func clearingPutsBothCornersOut() async throws {
     let clock = RecordingLamps()
-    let display = VPNLampDisplay(clock: clock)
+    let display = VPNLampDisplay(indicators: IndicatorCustody(lamps: clock))
     await display.show(lit)
 
     await display.clear()

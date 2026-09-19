@@ -54,7 +54,31 @@ private func temporaryDefaults() -> UserDefaults {
     subject.start()
     #expect(await waitUntil { subject.isDeviceOnline })
 
-    #expect(defaults.string(forKey: AppModel.deviceUIDKey) == "abc")
+    #expect(ClockStore(defaults: defaults).all().first?.hardwareIdentity == "abc")
+    await subject.teardown()
+}
+
+// Learned and needed in the same launch. The name is written to the record for
+// the next launch, but this one keeps its own copy of the clock, and a copy that
+// never heard the name would search for "whichever clock is advertising" — the
+// rule that finds a neighbour's.
+@Test @MainActor func aNameLearnedThisLaunchIsWhatThisLaunchLooksFor() async {
+    let poll = Metronome()
+    let clock = SwitchableTransport(answering: true)
+    let relocation = SpyRelocation(answering: nil)
+    let subject = testModel(
+        transport: clock, defaults: temporaryDefaults(), pollSleep: poll.sleep,
+        relocate: relocation.relocate
+    )
+    subject.start()
+    #expect(await waitUntil { subject.isDeviceOnline })
+    #expect(await waitUntil { poll.parked == 1 })
+
+    clock.nowFails()
+    poll.tick()
+
+    #expect(await waitUntil { relocation.asked.isEmpty == false })
+    #expect(relocation.asked == ["abc"])
     await subject.teardown()
 }
 
@@ -83,11 +107,10 @@ private func temporaryDefaults() -> UserDefaults {
 @Test @MainActor func aClockThatStoppedAnsweringIsLookedForAndMovedOnto() async {
     let poll = Metronome()
     let defaults = temporaryDefaults()
-    defaults.set("awtrix_a07f9c", forKey: AppModel.deviceUIDKey)
     let relocation = SpyRelocation(answering: "awtrix_a07f9c.local")
     let subject = testModel(
         transport: unreachable(), defaults: defaults, pollSleep: poll.sleep,
-        relocate: relocation.relocate
+        hardwareIdentity: "awtrix_a07f9c", relocate: relocation.relocate
     )
 
     subject.start()
@@ -113,7 +136,7 @@ private func temporaryDefaults() -> UserDefaults {
     subject.start()
     #expect(await waitUntil { subject.deviceHost == "awtrix_a07f9c.local" })
 
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == "awtrix_a07f9c.local")
+    #expect(ClockStore(defaults: defaults).all().first?.address == "awtrix_a07f9c.local")
     await subject.teardown()
 }
 
@@ -155,7 +178,7 @@ private func temporaryDefaults() -> UserDefaults {
     #expect(await waitUntil { relocation.asked.isEmpty == false })
 
     #expect(subject.deviceHost == "10.0.0.5")
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == nil)
+    #expect(ClockStore(defaults: defaults).all().isEmpty)
     await subject.teardown()
 }
 
@@ -206,6 +229,6 @@ private func temporaryDefaults() -> UserDefaults {
     #expect(await waitUntil { relocation.asked.isEmpty == false })
 
     #expect(subject.deviceHost == "192.168.1.72")
-    #expect(defaults.string(forKey: AppModel.deviceHostKey) == nil)
+    #expect(ClockStore(defaults: defaults).all().isEmpty)
     await subject.teardown()
 }

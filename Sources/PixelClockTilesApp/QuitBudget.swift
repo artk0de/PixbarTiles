@@ -15,7 +15,7 @@ struct QuitBudget: Sendable {
     /// The transport's own request timeout, and deliberately not a number
     /// chosen here.
     ///
-    /// The wait exists for one collaborator: `ConnectorHost` sends the dismiss
+    /// The wait exists for one collaborator: `AwtrixClockSession` sends the dismiss
     /// that takes a held banner off the clock on an uncancellable task, so it
     /// takes as long as that request takes and no longer. Anything shorter kills
     /// the app mid-release and leaves the banner up until somebody walks over

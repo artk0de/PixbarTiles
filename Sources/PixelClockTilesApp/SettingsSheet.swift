@@ -90,8 +90,9 @@ struct SettingsSheet: View {
     ///
     /// Saves as it is typed — `AppModel.typedHost` writes on every change — so
     /// there is no Save button and no submit to remember. What it writes is the
-    /// same `UserDefaults` key `AppModel.live()` reads at launch, and it says
-    /// as much: a typed address rebuilds nothing and waits for the next launch.
+    /// address on the clock record `AppModel.live()` reads at launch, and it
+    /// says as much: a typed address rebuilds nothing and waits for the next
+    /// launch.
     ///
     /// A relocation writes the same two places without waiting, and the field
     /// follows it — so what is shown here can change without anybody typing.

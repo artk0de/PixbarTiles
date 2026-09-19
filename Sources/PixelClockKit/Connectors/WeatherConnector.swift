@@ -13,7 +13,7 @@ import Foundation
 ///
 /// A source of content like every other connector: it reaches the weather
 /// service and never the clock. What is written to the device, and what has to
-/// be remembered before it is written, belongs to `ConnectorHost` and
+/// be remembered before it is written, belongs to `AwtrixClockSession` and
 /// `DeviceCustody`.
 public struct WeatherConnector: Connector {
     /// The name this app's reading lives under in the device's loop. One name,
@@ -68,7 +68,7 @@ public struct WeatherConnector: Connector {
     public let isAmbient = true
 
     private let source: OpenMeteoSource
-    /// Read on every produce rather than held, so a location typed into the
+    /// Read on every read rather than held, so a location typed into the
     /// settings takes effect at the next poll instead of at the next launch.
     private let location: @Sendable () -> Coordinates
 
@@ -77,8 +77,26 @@ public struct WeatherConnector: Connector {
         self.location = location
     }
 
-    public func produce() async throws -> ConnectorOutput {
-        let reading = try await source.reading(at: location())
+    /// Goes out for the sky where the clock is. Nothing is drawn here; see
+    /// `output(for:)`.
+    public func read() async throws -> WeatherReading {
+        try await source.reading(at: location())
+    }
+
+    public var awtrixFace: AwtrixFace<WeatherReading> {
+        AwtrixFace { Self.output(for: $0) }
+    }
+
+    public var ulanziFace: UlanziFace<WeatherReading>? {
+        UlanziFace { Self.ulanziOutput(for: $0) }
+    }
+
+    /// What a reading looks like on the matrix.
+    ///
+    /// Separated from `read()` so the drawing can be tested against a reading
+    /// rather than against a network, as `ClaudeUsageConnector.output(for:)`
+    /// already is.
+    static func output(for reading: WeatherReading) -> AwtrixDelivery {
         let theme = WeatherTheme(code: reading.code, isDay: reading.isDay)
         // Two quantities in one element: the digits are the AIR temperature,
         // which is what a thermometer would agree with, and the colour is what
@@ -87,7 +105,7 @@ public struct WeatherConnector: Connector {
         // temperature when the service omitted the felt one, because a reading
         // with no colour is drawn in whatever the previous app left behind.
         let felt = reading.apparentTemperature ?? reading.temperature
-        return ConnectorOutput(
+        return AwtrixDelivery(
             text: Self.degrees(reading.temperature),
             // The sky, drawn inside the app rather than over the whole matrix.
             // The overlay below already carries it to the device, but four
@@ -128,5 +146,42 @@ public struct WeatherConnector: Connector {
     /// scrolls anything that does not.
     static func degrees(_ celsius: Double) -> String {
         "\(Int(celsius.rounded()))°C"
+    }
+
+    /// What a reading looks like on the TC002's 52×16 panel.
+    ///
+    /// The device has no text rendering to hand the reading to, so the face
+    /// rasters it here — the 3×5 font at scale 2, the biggest the 16 rows
+    /// carry, centred, in the same felt-temperature colour the AWTRIX face
+    /// names in hex. No `C` after the degrees: the panel is 52 pixels wide and
+    /// the colour already says what the letter would.
+    static func ulanziOutput(for reading: WeatherReading) -> UlanziDelivery {
+        let felt = reading.apparentTemperature ?? reading.temperature
+        let ink = UlanziColour(hex: TemperatureColour(celsius: felt).hex)
+        return UlanziDelivery(
+            scene: UlanziScene(
+                frames: [
+                    UlanziFrame(
+                        duration: 5,
+                        draw: [Self.raster("\(Int(reading.temperature.rounded()))°", ink: ink)]
+                    )
+                ]
+            )
+        )
+    }
+
+    /// `text` centred on a fresh panel at `scale`, as one full-screen bitmap.
+    private static func raster(_ text: String, ink: UlanziColour, scale: Int = 2) -> UlanziDraw {
+        var canvas = PixelCanvas()
+        let width = text.unicodeScalars.count * 4 * scale - scale
+        canvas.drawText(
+            text,
+            at: PixelPoint(
+                x: (PixelCanvas.width - width) / 2, y: (PixelCanvas.height - 5 * scale) / 2
+            ),
+            ink: Pixel(colour: ink),
+            scale: scale
+        )
+        return canvas.drawCommands()
     }
 }

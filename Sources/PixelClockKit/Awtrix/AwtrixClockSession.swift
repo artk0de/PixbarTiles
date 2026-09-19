@@ -1,79 +1,34 @@
 import Foundation
 
-/// Plays prepared audio on the Mac. The clock cannot decode audio, so every
-/// spoken thing this app produces comes out of the local speakers.
-public protocol AudioPlaying: Sendable {
-    func play(_ clips: [SpokenClip]) async
-}
-
-public protocol IconInstalling: Sendable {
-    /// Returns the name the device will accept in a notify payload.
-    func ensureInstalled(_ ref: IconReference) async throws -> String
-}
-
-/// Work a connector does away from the delivery path.
+/// The AWTRIX clock's session: everything a connector must not care about —
+/// enablement, delivery to the device, custody of what was borrowed, and
+/// containment of failures — for the one clock this app drives.
 ///
-/// Two things belong here, and they are the same pass: restocking whatever the
-/// connector hands out, and confirming that what it already handed out reached
-/// disk. Neither may sit inside `runOnce` — restocking can cost a model load
-/// and a minute of synthesis, which is exactly the bill the timer tick must not
-/// pay, and the durability question is only worth asking once the run that
-/// mutated the state is over.
-///
-/// Optional by design: a connector that holds nothing and prepares nothing has
-/// no background pass, and should not be made to declare an empty one.
-public protocol ConnectorMaintaining: Sendable {
-    func maintain() async throws
-}
-
-/// How one delivery went.
-public enum RunResult: Sendable, Equatable {
-    case delivered
-    /// The user switched this connector off.
-    case skipped
-    /// Called off. Not a failure — nobody is waiting for the result any more,
-    /// and a feed outage is a different thing entirely. Anything already put on
-    /// the clock was taken back down first.
-    case cancelled
-    case failed(String)
-}
-
-/// How one background pass went. Separate from `RunResult` because `delivered`
-/// would be a lie about a pass that never goes near the clock.
-public enum MaintenanceResult: Sendable, Equatable {
-    case completed
-    /// Switched off, or a connector with no background work to do.
-    case skipped
-    case cancelled
-    case failed(String)
-}
-
-/// Owns everything a connector must not care about: enablement, delivery to the
-/// device, and containment of failures.
-public actor ConnectorHost {
+/// Its deliveries take their turn in a `DeliveryChain`, which is what keeps two
+/// of them off the clock at once and what the backoff is read from. What stays
+/// here is what only an AWTRIX clock has: the notify and custom-app payloads,
+/// the held banner and its release, the icon installer, and `DeviceCustody`.
+public actor AwtrixClockSession {
     private let device: AwtrixDevice
     private let registry: ConnectorRegistry
     private let store: any SettingsStore
     private let audio: any AudioPlaying
     private let iconInstaller: any IconInstalling
-    private let retryPolicy: RetryPolicy
     /// What this app has borrowed or added on the device, and how to give it
     /// back. Here rather than on a connector, because a connector produces and
     /// returns and never talks to the device — and because the overlay it
     /// borrows is global, so the record of it belongs beside the device rather
     /// than beside any one producer.
     private let custody: DeviceCustody
+    /// The lamps' custody, over the same device every delivery goes through.
+    /// Nonisolated because it is an actor of its own: the app hands it to the
+    /// VPN display when it composes itself, without a hop through this one.
+    public nonisolated let indicators: IndicatorCustody
 
-    /// The last delivery to have claimed a place. Deliveries run one at a time
-    /// by waiting on it — see `queued(_:)` for how, and `runOnce(connectorId:)`
-    /// for why they must. Runs and replays share it, which is the whole point:
-    /// two chains would be no serialisation at all.
-    private var tail: Task<Void, Never>?
-
-    /// Deliveries failed in a row, per connector. An id that is not in here has
-    /// none. In memory only: a relaunch is a fresh start, and a connector that
-    /// is still down earns its backoff again within a couple of intervals.
-    private var failureCounts: [String: Int] = [:]
+    /// Deliveries one at a time, and how the last runs went. Runs and replays
+    /// both take their turn in it — see `runOnce(connectorId:)` for why they
+    /// must.
+    private let chain: DeliveryChain
 
     public init(
         device: AwtrixDevice,
@@ -95,8 +50,9 @@ public actor ConnectorHost {
         self.store = store
         self.audio = audio
         self.iconInstaller = iconInstaller
-        self.retryPolicy = retryPolicy
+        self.chain = DeliveryChain(retryPolicy: retryPolicy)
         self.custody = DeviceCustody(device: device, overlays: borrowedOverlays)
+        self.indicators = IndicatorCustody(lamps: device)
     }
 
     /// Puts back the device-wide state this app borrowed.
@@ -118,59 +74,15 @@ public actor ConnectorHost {
     }
 
     /// How many deliveries this connector has failed in a row.
-    public func consecutiveFailures(connectorId: String) -> Int {
-        failureCounts[connectorId] ?? 0
+    public func consecutiveFailures(connectorId: String) async -> Int {
+        await chain.consecutiveFailures(connectorId: connectorId)
     }
 
-    /// How long to wait before the next attempt: the cadence the user chose
-    /// while the connector is healthy, a growing backoff while it is failing,
-    /// and never longer than that cadence either way.
-    ///
-    /// Worth being plain about which direction this moves, because "backoff"
-    /// suggests the other one: the clip is to the connector's OWN interval, so
-    /// a failing connector is retried SOONER than its cadence and decays back
-    /// towards it, rather than ever being pushed past it. A blip on a
-    /// half-hourly feed is retried in thirty seconds instead of costing the
-    /// user half an hour of blank clock; a feed that is genuinely down doubles
-    /// its way back to the half hour and settles there. It is the retry
-    /// interval that is capped at the cadence, which is what the spec asks for.
-    public func nextDelay(connectorId: String, interval: TimeInterval) -> TimeInterval {
-        let failures = consecutiveFailures(connectorId: connectorId)
-        guard failures > 0 else { return interval }
-        return min(retryPolicy.delay(afterConsecutiveFailures: failures), interval)
-    }
-
-    /// Reads the count off the OUTCOME, not off the path that produced it.
-    ///
-    /// There are three ways a run ends up `.cancelled` and they arrive from
-    /// three different places — a connector throwing `CancellationError`, the
-    /// transport reporting `URLError(.cancelled)`, and a delivery that got all
-    /// the way through only to find the task torn down. Deciding here, on the
-    /// one value all three become, is what stops the next guard added to
-    /// `send` from quietly re-classifying one of them.
-    private func record(_ result: RunResult, for connectorId: String) {
-        switch result {
-        case .delivered:
-            failureCounts[connectorId] = 0
-        case .failed:
-            failureCounts[connectorId, default: 0] += 1
-        case .cancelled:
-            // Not evidence about the feed. The user quitting, a connector
-            // switched off mid-delivery, a schedule rebuilt — none of them say
-            // whether the source is up. Counting one would back a healthy
-            // connector off for having been interrupted; resetting on one would
-            // clear a real backoff for the same non-reason.
-            break
-        case .skipped:
-            // Never actually arrives. `runOnce` answers `.skipped` from its
-            // enablement guard, before there is a run to have an outcome, so
-            // this branch exists because the switch is exhaustive and not
-            // because it decides anything — a mutation of it changes nothing,
-            // and the rule it looks like it implements is pinned on that guard
-            // instead. The answer would be the same either way: a connector the
-            // user switched off has not failed, and has not recovered either.
-            break
-        }
+    /// How long to wait before the next attempt. Answered by the chain,
+    /// because the chain is what watched the last runs — see
+    /// `DeliveryChain.nextDelay(connectorId:interval:)`.
+    public func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval {
+        await chain.nextDelay(connectorId: connectorId, interval: interval)
     }
 
     /// Produces, delivers and speaks, one delivery at a time.
@@ -209,13 +121,7 @@ public actor ConnectorHost {
         }
         guard store.settings(for: connectorId).isEnabled else { return .skipped }
 
-        let result = await queued { [self] in await produceAndSend(connector) }
-        // Awaiting a task is not interrupted by cancellation, so this is
-        // reached even when the caller gave up — which is the point. A run torn
-        // down still has an outcome, and the backoff has to be told it was a
-        // cancellation rather than left reading the last failure.
-        record(result, for: connectorId)
-        return result
+        return await chain.run(for: connectorId) { [self] in await produceAndSend(connector) }
     }
 
     /// Puts something already produced on the clock and speaks it.
@@ -236,42 +142,8 @@ public actor ConnectorHost {
     /// morning's anecdote again is not evidence about anekdot.ru in either
     /// direction. There is no connector id to record against, and that is the
     /// point rather than an omission.
-    public func deliver(_ output: ConnectorOutput) async -> RunResult {
-        await queued { [self] in await send(output, from: nil) }
-    }
-
-    /// Takes a place in the delivery chain, waits for whatever is ahead, and
-    /// runs `work` when it gets there.
-    ///
-    /// Claiming a place is a single actor-isolated step — there is no
-    /// suspension between reading `tail` and writing it — so no caller can slip
-    /// between the two and take the same place twice.
-    ///
-    /// Shared by both entry points rather than written twice, because a second
-    /// copy is a second chain the moment one of them is edited, and two chains
-    /// are no serialisation at all.
-    private func queued(
-        _ work: @escaping @Sendable () async -> RunResult
-    ) async -> RunResult {
-        let predecessor = tail
-        let claimed = Task { () -> RunResult in
-            await predecessor?.value
-            // Checked on the far side of the wait. Cancellation cannot break
-            // `predecessor?.value`, so without this a delivery cancelled while
-            // queued goes on to put a banner up that nobody is waiting for.
-            if Task.isCancelled { return .cancelled }
-            return await work()
-        }
-        tail = Task { _ = await claimed.value }
-
-        // `claimed` is unstructured, so it inherits neither the caller's
-        // cancellation nor breaks on it when awaited. Forwarded by hand, or a
-        // caller that gives up gets neither the work stopped nor itself back.
-        return await withTaskCancellationHandler {
-            await claimed.value
-        } onCancel: {
-            claimed.cancel()
-        }
+    public func deliver(_ output: AwtrixDelivery) async -> RunResult {
+        await chain.deliver { [self] in await send(output, from: nil) }
     }
 
     /// Runs a connector's background pass — restock, and confirm durability.
@@ -308,7 +180,7 @@ public actor ConnectorHost {
     /// Asks the connector for something, then delivers it.
     ///
     /// The produce stays inside the chain, which is where it has always been:
-    /// `AnecdoteConnector.produce()` pops an anecdote and retires it as played,
+    /// `AnecdoteConnector.read()` pops an anecdote and retires it as played,
     /// and a produce that ran ahead of its turn would spend anecdotes on
     /// deliveries that had not happened yet — and, when the queue is empty,
     /// would put a whole batch of synthesis in front of the run behind it.
@@ -316,14 +188,14 @@ public actor ConnectorHost {
         do {
             return await send(try await connector.produce(), from: connector.id)
         } catch {
-            return classify(error)
+            return DeliveryChain.classify(error)
         }
     }
 
     /// - Parameter connectorId: who this output is for, or nil on the replay
     ///   path, which has no connector to be for. Only a run can borrow device
     ///   state, because only a run has somebody to give it back on behalf of.
-    private func send(_ output: ConnectorOutput, from connectorId: String?) async -> RunResult {
+    private func send(_ output: AwtrixDelivery, from connectorId: String?) async -> RunResult {
         do {
             var iconName: String?
             if let icon = output.icon {
@@ -405,27 +277,8 @@ public actor ConnectorHost {
             if Task.isCancelled { return .cancelled }
             return .delivered
         } catch {
-            return classify(error)
+            return DeliveryChain.classify(error)
         }
-    }
-
-    /// What a thrown error means for the delivery that raised it.
-    ///
-    /// One reading, shared by the produce and by the delivery, because the two
-    /// halves must not classify the same error differently — a connector
-    /// throwing `CancellationError` and a notify killed by the same quit are
-    /// the same event seen from two places.
-    ///
-    /// `URLError(.cancelled)` is the transport naming this specific event
-    /// rather than the ambient task state: `URLSession` reports a request
-    /// killed by its task's cancellation that way, and app quit killing an
-    /// in-flight notify is the ordinary producer. As typed as
-    /// `CancellationError`, and it cannot swallow a device fault — those arrive
-    /// as `AwtrixError.http`, never as a `URLError`.
-    private func classify(_ error: any Error) -> RunResult {
-        if error is CancellationError { return .cancelled }
-        if let urlError = error as? URLError, urlError.code == .cancelled { return .cancelled }
-        return .failed(String(describing: error))
     }
 
     /// Takes the held banner down.

@@ -363,6 +363,26 @@ the rename) shadows the module name,
 which is why `IconRef` had to be renamed `IconReference` (LaunchServices declares
 its own `IconRef`). Pre-1.0, compile-time only, fails loudly. Its own task.
 
+**PixelClockTiles, left by phase 1** (plan
+`docs/superpowers/plans/2026-09-18-pixelclocktiles-phase1-domain-persistence.md`):
+
+- The migration is a series of steps, each with its own marker, written last.
+  Phase 1 ran `migration.clocks` and `migration.tiles`. A later step reads the
+  old keys when it lands — they are never removed — and moves a row in the
+  same commit that stops the app writing its source key.
+- Phase 4 owes the step for the quiet hours, `weatherLocation` and the VPN
+  lamps. It extends `TilePolicyRecord` with optional keys for the Focus and the
+  hours; a tile without them has not been through that step.
+- Whichever phase keys custody and health by clock owes the steps for
+  `borrowedOverlay` and `batteryHistory`, in the commit that re-keys them.
+- `TileSettingsStore.save` keeps the stored seconds while the slider position
+  they snap to has not moved. It retires with the adapter when the scheduler
+  reads `TileRecord` directly; until then nothing may write seconds that the
+  old scale cannot show except through a moved slider.
+- `ClockStore.firstClock(orCreatingAt:)` creates a clock when none is stored.
+  Phase 5 removes that branch once "No clocks yet" is a state the user can
+  reach, and decides what `ClockMigration` does on a fresh install.
+
 ## Running the demonstration
 
 The Python prototype does end to end what the Swift app will do, against the real
@@ -517,6 +537,15 @@ as much about whether it can be FOUND as about whether it works.
     and Sleep; revoke it and the same line must go back to naming any Focus.
     The sentence describes the RULE, so turning a Work Focus on must not change
     it — what changes is that the app keeps talking.
+
+### Added by PixelClockTiles phase 1
+
+30. **An upgrade keeps what the user had.** Install the phase 1 build over the
+    previous one and open the panel: the clock at the same address, the
+    anecdote interval and switch as they were, and the next anecdote due at the
+    remainder of the interval rather than a fresh one. Then let the clock drop
+    off the network and come back at a new address: the app follows it, which
+    is the migrated `deviceUID` at work.
 
 ## The panel's width belongs to the content, not to the window
 
@@ -694,6 +723,46 @@ directly. Phase 3's TC002 images included.
 
 The ledger carries roughly forty deferred minor findings from the task reviews,
 each with the reason it was deferred. The final whole-branch review triages them.
+
+## PixelClockTiles Phase 2 — what it leaves for later phases
+
+Phase 2 (`docs/superpowers/plans/2026-09-18-pixelclocktiles-phase2-ports-awtrix-parity.md`)
+changed no behaviour. What it deliberately did not do, so the next phases do not
+look for it:
+
+- `ConnectorRunning` is still the app's name for a session; the kit type is
+  `AwtrixClockSession`. Phase 4 renames the protocol when `AppModel` holds a
+  session per clock.
+- `DeliveryChain` is keyed by `String`. Phase 4 makes it generic over `TileKey`.
+- Health — `DeviceMonitor`, `BatteryTrajectory`, relocation — is still in
+  `AppModel`. It moves into the session in Phase 4.
+- `AwtrixScene` is a struct with a `surface`, not the spec's enum. `.indicator`
+  joins it in Phase 4 with the VPN tile's face, and indicator writes must stay
+  off the delivery chain there too.
+- `awtrixFace` is non-optional. Phase 3b adds `ulanziFace` as optional with a
+  `nil` default in a protocol extension.
+- No `Config` on `Connector`. It lands in Phase 4 with the weather tile's
+  location, its first reader.
+- `produce()` is the AWTRIX program. Phase 3b names the TC002 counterpart.
+- The drawing tests stayed in their connector test files; Phase 3b moves them
+  when TC002 face tests land beside them.
+- `VPNLampDisplayTests` still pins lamp custody through the app's two corners.
+  When Phase 4 deletes `VPNLampDisplay`, `IndicatorCustodyTests` carries the
+  rules, and the generic "put out every lit lamp on quit" is Phase 4's to add.
+
+Owed at the hardware (the desk clock is now a TC002, so this waits for a TC001
+on the network): the weather app, the Claude app and an anecdote banner look as
+they did before Phase 2; the VPN corners follow a Focus switch; a clean quit
+removes the apps, restores the overlay and darkens both corners.
+
+Found while running the suite, and not changed by Phase 2:
+`nothingButTheAnecdotesEverPutsSoundInTheRoom` produces every connector
+`live()` registers, so it read the real login keychain through
+`KeychainClaudeCredentials` — a reader lane C has since deleted, so the test no
+longer touches the keychain. Once, with the machine under heavy load, it sat in
+`SecItemCopyMatching` for more than ten minutes and held a serial run with it;
+alone, later, it passed in five seconds. A serial run that stops printing is
+worth sampling for that frame before anything else is suspected.
 
 ## Claude usage from Claude Code's status line — lane C
 

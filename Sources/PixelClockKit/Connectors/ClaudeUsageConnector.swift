@@ -52,11 +52,20 @@ public struct ClaudeUsageConnector: Connector {
         self.showsNow = showsNow
     }
 
-    public func produce() async throws -> ConnectorOutput {
+    /// The reporter's reading, or the reason there is none.
+    public func read() async throws -> ClaudeUsageReading {
         // The gate first, so a poll outside working hours costs no request.
         guard showsNow() else { throw Failure.outOfFocus }
         guard let reading = try await reporter.read() else { throw Failure.noReading }
-        return Self.output(for: reading)
+        return reading
+    }
+
+    public var awtrixFace: AwtrixFace<ClaudeUsageReading> {
+        AwtrixFace { Self.output(for: $0) }
+    }
+
+    public var ulanziFace: UlanziFace<ClaudeUsageReading>? {
+        UlanziFace { Self.ulanziOutput(for: $0) }
     }
 
     public enum Failure: Error, Sendable, Equatable {
@@ -73,11 +82,11 @@ public struct ClaudeUsageConnector: Connector {
 
     /// What a reading looks like on the matrix.
     ///
-    /// Separated from `produce` so the drawing can be tested against a figure
+    /// Separated from `read()` so the drawing can be tested against a figure
     /// rather than against a network. Everything decided here is decided from
     /// the one number.
-    public static func output(for reading: ClaudeUsageReading) -> ConnectorOutput {
-        ConnectorOutput(
+    public static func output(for reading: ClaudeUsageReading) -> AwtrixDelivery {
+        AwtrixDelivery(
             // The true figure, including one past a hundred. The bar clamps
             // because the firmware has nowhere to draw the rest; the text has
             // no such excuse, and hiding an overage from the reader is not the
@@ -105,4 +114,38 @@ public struct ClaudeUsageConnector: Connector {
     /// two, light enough that the bar's full width is still visible — an unlit
     /// track makes a half-full bar look like a short one.
     static let trackColour = "#303030"
+
+    /// The bundled star as the TC002 image layer, measured from the file it
+    /// ships as: 8×8 and 8 frames, inside every measured image limit (A4).
+    static let star = UlanziImage(
+        base64: (BundledIcon.data(named: "ClaudeStar") ?? Data()).base64EncodedString(),
+        isAnimated: true,
+        frameCount: 8,
+        pixelSize: (width: 8, height: 8)
+    )
+
+    /// What a reading looks like on the TC002's 52×16 panel: the percentage
+    /// rastered through the 3×5 font at scale 2 in the brand colour, the star
+    /// riding beside it as the image layer.
+    static func ulanziOutput(for reading: ClaudeUsageReading) -> UlanziDelivery {
+        var canvas = PixelCanvas()
+        let text = "\(reading.utilization)%"
+        let ink = UlanziColour(hex: ClaudeUsage.brandColour)
+        let width = text.unicodeScalars.count * 4 * 2 - 2
+        canvas.drawText(
+            text,
+            at: PixelPoint(
+                x: (PixelCanvas.width - width) / 2, y: (PixelCanvas.height - 10) / 2
+            ),
+            ink: Pixel(colour: ink),
+            scale: 2
+        )
+        return UlanziDelivery(
+            scene: UlanziScene(
+                frames: [
+                    UlanziFrame(duration: 5, draw: [canvas.drawCommands()], image: [star])
+                ]
+            )
+        )
+    }
 }

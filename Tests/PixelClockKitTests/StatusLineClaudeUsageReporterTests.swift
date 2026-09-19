@@ -7,7 +7,7 @@ import Testing
 // Claude Code hands its status-line command a JSON document on stdin after
 // each reply, and this app's hook stores the ones that carry `rate_limits`.
 // The shape is a documented contract — https://code.claude.com/docs/en/statusline
-// — where `/api/oauth/usage`, which this replaces, never was.
+// — not something this app invented.
 
 /// The document as Claude Code's documentation gives it, trimmed to the fields
 /// around `rate_limits` but not reshaped. `spend_limit` is left in: it rides in

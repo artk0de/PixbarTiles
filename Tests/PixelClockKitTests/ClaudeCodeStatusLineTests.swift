@@ -245,3 +245,121 @@ private let settingsWithAStatusLine = #"""
     }
     #expect(try scratch.settingsBytes() == Data(claudeSettings.utf8))
 }
+
+// MARK: - Disconnect
+
+@Test func disconnectingPutsThePreviousStatusLineBackExactly() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(settingsWithAStatusLine)
+    let before = try scratch.settingsObject()
+    try scratch.link.connect()
+
+    #expect(try scratch.link.disconnect() == .restored)
+
+    #expect(NSDictionary(dictionary: try scratch.settingsObject()).isEqual(to: before))
+    #expect(scratch.defaults.object(forKey: ClaudeCodeStatusLine.previousKey) == nil)
+}
+
+// Absent, not `null`: there was no key before, so there is no key after.
+@Test func disconnectingWhenThereWasNoStatusLineRemovesTheKey() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(claudeSettings)
+    let before = try scratch.settingsObject()
+    try scratch.link.connect()
+
+    try scratch.link.disconnect()
+
+    let after = try scratch.settingsObject()
+    #expect(after["statusLine"] == nil)
+    #expect(NSDictionary(dictionary: after).isEqual(to: before))
+}
+
+// The figure leaves the clock with the document: the reporter reads nothing
+// once it is gone, and the tile lapses at the end of its lifetime.
+@Test func disconnectingTakesTheHookAndTheDocumentAway() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.link.connect()
+    try Data("{}".utf8).write(to: scratch.link.document)
+
+    try scratch.link.disconnect()
+
+    #expect(FileManager.default.fileExists(atPath: scratch.link.hook.path) == false)
+    #expect(FileManager.default.fileExists(atPath: scratch.link.document.path) == false)
+}
+
+// Somebody — the user, or Claude Code's own `/statusline` — replaced this
+// app's status line after it connected. Putting the old one back would destroy
+// theirs, so the file is left alone and this app forgets what it held.
+@Test func aStatusLineChangedSinceConnectingIsLeftAsItIs() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(settingsWithAStatusLine)
+    try scratch.link.connect()
+    let theirs = #"{"statusLine":{"type":"command","command":"~/.claude/other.sh"}}"#
+    try scratch.writeSettings(theirs)
+
+    #expect(try scratch.link.disconnect() == .leftAlone)
+
+    #expect(try scratch.settingsBytes() == Data(theirs.utf8))
+    #expect(scratch.defaults.object(forKey: ClaudeCodeStatusLine.previousKey) == nil)
+    #expect(FileManager.default.fileExists(atPath: scratch.link.hook.path) == false)
+}
+
+// A second Connect must not record this app's own status line as "previous":
+// Disconnect would then put the hook back instead of the user's line.
+@Test func connectingTwiceKeepsTheFirstPrevious() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(settingsWithAStatusLine)
+    let before = try scratch.settingsObject()
+    try scratch.link.connect()
+    let once = try scratch.settingsBytes()
+
+    try scratch.link.connect()
+    #expect(try scratch.settingsBytes() == once)
+
+    try scratch.link.disconnect()
+    #expect(NSDictionary(dictionary: try scratch.settingsObject()).isEqual(to: before))
+}
+
+// Connected is read from the file every time. A command that merely STARTS
+// like this app's — the hook's path with something glued to it — is not this
+// app's.
+@Test func connectedMeansTheSettingsPointAtThisHookAndAtNothingThatMerelyStartsLikeIt() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    #expect(scratch.link.isConnected() == false)
+
+    try scratch.link.connect()
+    #expect(scratch.link.isConnected())
+
+    let base = ClaudeCodeStatusLine.command(hook: scratch.link.hook, chaining: nil)
+    let lookalike = try JSONSerialization.data(
+        withJSONObject: ["statusLine": ["type": "command", "command": base + "x"]]
+    )
+    try lookalike.write(to: scratch.settings)
+    #expect(scratch.link.isConnected() == false)
+
+    try scratch.writeSettings(settingsWithAStatusLine)
+    #expect(scratch.link.isConnected() == false)
+}
+
+// A settings file that cannot be read is not evidence of anything. Disconnect
+// refuses before it touches the hook or the stored previous value, since the
+// settings may still point at both.
+@Test func disconnectingOverAnUnparseableSettingsFileTouchesNothing() throws {
+    let scratch = try ClaudeLinkScratch()
+    defer { scratch.remove() }
+    try scratch.writeSettings(settingsWithAStatusLine)
+    try scratch.link.connect()
+    try scratch.writeSettings(#"{"statusLine": "#)
+
+    #expect(throws: ClaudeCodeSettingsRefusal.notAJSONObject(path: scratch.settings.path)) {
+        try scratch.link.disconnect()
+    }
+    #expect(FileManager.default.fileExists(atPath: scratch.link.hook.path))
+    #expect(scratch.defaults.data(forKey: ClaudeCodeStatusLine.previousKey) != nil)
+}

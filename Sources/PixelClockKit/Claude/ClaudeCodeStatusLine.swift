@@ -49,6 +49,25 @@ public struct ClaudeCodeStatusLine {
     public var hook: URL { directory.appendingPathComponent(Self.hookName) }
     public var document: URL { directory.appendingPathComponent(Self.documentName) }
 
+    /// What `disconnect()` did.
+    public enum Disconnection: Equatable, Sendable {
+        /// The value this app replaced is back, or the key is gone when there
+        /// was none.
+        case restored
+        /// Something else had replaced this app's status line since; it was kept.
+        case leftAlone
+    }
+
+    /// Whether Claude Code's settings point at this hook right now.
+    ///
+    /// Read from the file every time. The user, or Claude Code's `/statusline`,
+    /// can change it while this app is not looking, and a remembered answer
+    /// would be a Disconnect button for something that is no longer there.
+    public func isConnected() -> Bool {
+        guard let root = try? readSettings() else { return false }
+        return isOurs(root["statusLine"])
+    }
+
     /// Points Claude Code's status line at the hook.
     ///
     /// The order is the safety argument. The settings are read, and refused,
@@ -57,10 +76,37 @@ public struct ClaudeCodeStatusLine {
     public func connect() throws {
         var root = try readSettings()
         let previous = root["statusLine"]
+        // Already connected. Remembering this app's own status line as the
+        // previous one would have Disconnect put the hook back.
+        guard isOurs(previous) == false else { return }
         try remember(previous)
         try installHook()
         root["statusLine"] = replacement(for: previous)
         try writeSettings(root)
+    }
+
+    /// Puts back what Connect replaced, and takes the hook and its document
+    /// away.
+    ///
+    /// Only while the settings still point at this hook. A status line set up
+    /// since is somebody's newer choice, and restoring over it would destroy
+    /// it. Either way the stored previous value, the hook and the document go:
+    /// the reporter reads nothing once the document is gone, and the figure
+    /// leaves the clock at the end of its lifetime.
+    @discardableResult
+    public func disconnect() throws -> Disconnection {
+        var root = try readSettings()
+        var outcome = Disconnection.leftAlone
+        if isOurs(root["statusLine"]) {
+            // Nil removes the key, which is what "there was none" restores to.
+            root["statusLine"] = remembered()
+            try writeSettings(root)
+            outcome = .restored
+        }
+        defaults.removeObject(forKey: Self.previousKey)
+        try? FileManager.default.removeItem(at: hook)
+        try? FileManager.default.removeItem(at: document)
+        return outcome
     }
 
     // MARK: - Settings
@@ -114,6 +160,24 @@ public struct ClaudeCodeStatusLine {
         }
         let wrapped = try JSONSerialization.data(withJSONObject: ["statusLine": previous])
         defaults.set(wrapped, forKey: Self.previousKey)
+    }
+
+    private func remembered() -> Any? {
+        guard
+            let data = defaults.data(forKey: Self.previousKey),
+            let wrapped = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return nil }
+        return wrapped["statusLine"]
+    }
+
+    /// Whether a `statusLine` value is this app's: its command is exactly the
+    /// hook's, or the hook's followed by a chained argument.
+    private func isOurs(_ statusLine: Any?) -> Bool {
+        guard let command = (statusLine as? [String: Any])?["command"] as? String else {
+            return false
+        }
+        let base = Self.command(hook: hook, chaining: nil)
+        return command == base || command.hasPrefix(base + " ")
     }
 
     // MARK: - Hook

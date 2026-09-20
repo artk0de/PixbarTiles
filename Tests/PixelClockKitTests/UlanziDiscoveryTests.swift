@@ -1,5 +1,6 @@
 // Tests/PixelClockKitTests/UlanziDiscoveryTests.swift
 import Foundation
+import Network
 import Testing
 @testable import PixelClockKit
 
@@ -18,6 +19,38 @@ import Testing
         #expect(UlanziAnnouncement.parse("garbage") == nil)
         #expect(UlanziAnnouncement.parse("Ulanzi TC002 nope") == nil)
         #expect(UlanziAnnouncement.parse("Ulanzi TC002 one:two:three") == nil)
+    }
+}
+
+// A sighting is the announcement together with the address it arrived from —
+// the one thing the line itself does not carry and the one thing "Add" needs.
+// The datagram's source is the device's own, which is what makes the pair
+// enough to add a clock from.
+@Suite struct UlanziSightingTests {
+    /// A datagram from the device on the desk renders as the bare address.
+    @Test func theDatagramsSourceAddressBecomesTheHost() throws {
+        let v4 = try #require(IPv4Address("192.168.1.72"))
+        let from = NWEndpoint.hostPort(host: .ipv4(v4), port: 41_952)
+        #expect(UlanziBroadcastListener.host(of: from) == "192.168.1.72")
+    }
+
+    /// A name-carrying endpoint hands its name over unchanged — the app talks
+    /// to hosts it was given, and rewriting one here would be inventing data.
+    @Test func aNamedEndpointHandsItsNameOverUnchanged() {
+        let from = NWEndpoint.hostPort(
+            host: .name("ulanzi.local", nil), port: 41_952
+        )
+        #expect(UlanziBroadcastListener.host(of: from) == "ulanzi.local")
+    }
+
+    /// An endpoint without an address has nothing to add a clock from, and a
+    /// sighting without an address is dropped upstream of the list rather than
+    /// becoming a row "Add" cannot act on.
+    @Test func anEndpointWithoutAnAddressYieldsNoHost() {
+        let service = NWEndpoint.service(
+            name: "ulanzi", type: "_http._tcp", domain: "", interface: nil
+        )
+        #expect(UlanziBroadcastListener.host(of: service) == nil)
     }
 }
 

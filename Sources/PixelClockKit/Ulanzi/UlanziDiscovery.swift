@@ -29,9 +29,25 @@ public struct UlanziAnnouncement: Equatable, Sendable {
     }
 }
 
-/// Passive UDP 55555 listener yielding parsed announcements. Untested by
-/// design (D13): the socket is the only untested surface, and the parser above
-/// carries all of the logic. Phase 4 owns the first caller.
+/// An announcement together with the address it arrived from. The broadcast
+/// line carries no address, and the datagram's source is the device's own —
+/// the pair is what lets a sighting become a clock record with somewhere to
+/// talk to.
+public struct UlanziSighting: Sendable, Equatable {
+    public let announcement: UlanziAnnouncement
+    /// The host the broadcast was sent from, already bare — no port, no brackets.
+    public let host: String
+
+    public init(announcement: UlanziAnnouncement, host: String) {
+        self.announcement = announcement
+        self.host = host
+    }
+}
+
+/// Passive UDP 55555 listener yielding sightings. Untested by
+/// design (D13): the socket is the only untested surface, and the parser and
+/// the endpoint mapping above it carry all of the logic — the mapping is pure
+/// and tested, the socket is not.
 public final class UlanziBroadcastListener: Sendable {
     private let port: UInt16
 
@@ -39,7 +55,22 @@ public final class UlanziBroadcastListener: Sendable {
         self.port = port
     }
 
-    public func announcements() -> AsyncStream<UlanziAnnouncement> {
+    /// The address a datagram arrived from, as the app talks to hosts.
+    ///
+    /// Nil for an endpoint that names no address — a service announcement is
+    /// somebody else's way of speaking, and a sighting without an address
+    /// cannot become a record "Add" could act on, so the caller drops it.
+    static func host(of endpoint: NWEndpoint) -> String? {
+        guard case let .hostPort(host, _) = endpoint else { return nil }
+        switch host {
+        case .ipv4, .ipv6, .name:
+            return String(describing: host)
+        default:
+            return nil
+        }
+    }
+
+    public func announcements() -> AsyncStream<UlanziSighting> {
         AsyncStream { continuation in
             let queue = DispatchQueue(label: "dev.artk0re.pixelclocktiles.ulanzi-broadcast")
             let parameters = NWParameters.udp
@@ -54,14 +85,15 @@ public final class UlanziBroadcastListener: Sendable {
             }
 
             listener.newConnectionHandler = { connection in
+                let host = Self.host(of: connection.endpoint)
                 connection.receiveMessage { data, _, _, _ in
                     defer { connection.cancel() }
-                    if let data,
+                    guard let data,
                         let line = String(data: data, encoding: .utf8),
-                        let announcement = UlanziAnnouncement.parse(line)
-                    {
-                        continuation.yield(announcement)
-                    }
+                        let announcement = UlanziAnnouncement.parse(line),
+                        let host
+                    else { return }
+                    continuation.yield(UlanziSighting(announcement: announcement, host: host))
                 }
                 connection.start(queue: queue)
             }

@@ -803,6 +803,40 @@ private func launchedForBrowsing(
     await delegate.model.teardown()
 }
 
+// The zero-clocks arm, pinned because a fresh install lands here first and
+// the browse rule does not ask it as a separate question: nothing configured
+// means nothing answering, so the outage arm holds — a panel open, and with
+// it the Clocks section, is a browse. The panel is opened the way the app
+// opens it (the window takes key), and the sheet adds nothing the zero-clock
+// state has not already started.
+@Test @MainActor func atZeroClocksAPanelOpenStartsTheBrowseAndTheSheetKeepsIt() async {
+    let browsing = FakeBonjourBrowser()
+    let notifications = NotificationCenter()
+    let panel = aWindow()
+    let delegate = AppDelegate(
+        model: testModel(clocks: [], tiles: []),
+        budget: QuitBudget(),
+        discovery: ClockDiscovery(
+            browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
+            sightings: { AsyncStream { $0.finish() } }
+        ),
+        notifications: notifications
+    )
+    delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
+    #expect(browsing.liveBrowses == 0)
+
+    delegate.panelMoved(to: panel)
+    takeFocus(panel, through: notifications)
+    #expect(await waitUntil { browsing.liveBrowses == 1 })
+
+    delegate.model.openSettings()
+    await afterTheQueuedObserversHaveRun()
+    // One browse still, not a second: the sheet arm is OR'd onto the
+    // zero-clock arm, and an OR restarts nothing that already runs.
+    #expect(browsing.starts == 1)
+    await delegate.model.teardown()
+}
+
 // The sheet arm cannot outlive the panel either: the Clocks section is drawn
 // in the panel's window, so a panel that lost key while the sheet was open
 // has nowhere left to show what a browse found.

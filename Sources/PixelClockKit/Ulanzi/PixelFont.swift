@@ -1,7 +1,7 @@
 /// 3×5 pixel font for the glyphs the TC002 faces actually draw (D12): digits
 /// 0–9, `-`, `%`, `°`, space, and the letters the usage rows' labels draw —
 /// nothing more. No speculative alphabet; a time face adds `:` when one
-/// exists.
+/// exists, and a usage label adds its letters when one is drawn.
 ///
 /// Rows are top-first, one byte per row, low 3 bits = left-to-right (bit 0 is
 /// the leftmost column).
@@ -35,9 +35,12 @@ public enum PixelFont {
         "°": [0b011, 0b011, 0b000, 0b000, 0b000],
         " ": [0b000, 0b000, 0b000, 0b000, 0b000],
         "A": [0b010, 0b101, 0b111, 0b101, 0b101],
+        "C": [0b011, 0b100, 0b100, 0b100, 0b011],
         "D": [0b011, 0b101, 0b101, 0b101, 0b011],
         "E": [0b111, 0b001, 0b111, 0b001, 0b111],
         "K": [0b101, 0b011, 0b001, 0b011, 0b101],
+        "M": [0b101, 0b111, 0b111, 0b101, 0b101],
+        "P": [0b111, 0b101, 0b111, 0b001, 0b001],
         "S": [0b011, 0b100, 0b010, 0b001, 0b110],
         "W": [0b101, 0b101, 0b101, 0b101, 0b010],
         "Y": [0b101, 0b101, 0b010, 0b010, 0b010],

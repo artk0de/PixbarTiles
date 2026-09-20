@@ -57,17 +57,11 @@ public struct ZaiUsageConnector: Connector {
         case noReading
     }
 
-    /// PHASE 6C CALL SITE — the shared three-row usage face.
-    ///
-    /// The design gives this connector the shared three-row usage layout on
-    /// both models, the component the Claude TC002 face uses; it lands with
-    /// the phase 6c merge. Until then this function is the ONLY place this
-    /// connector draws an AWTRIX output, and wiring the shared face in must be
-    /// a swap of this one body — nothing above it reads the drawing.
-    ///
-    /// Provisionally the figures stand in a row in the order the plan names
-    /// them, five hours, week, MCP month, the windows the quota route did not
-    /// name leaving no figure behind.
+    /// What a reading looks like on the matrix: the figures in a row, in the
+    /// order the plan names them, the windows the quota route did not name
+    /// leaving no figure behind. The shared three-row face has no AWTRIX
+    /// counterpart — its layout is the TC002 panel's — so the AWTRIX page
+    /// carries the metrics as one line.
     public static func output(for reading: ZaiUsageReading) -> AwtrixDelivery {
         let rows = reading.usageRows
         return AwtrixDelivery(
@@ -81,32 +75,42 @@ public struct ZaiUsageConnector: Connector {
         )
     }
 
-    /// PHASE 6C CALL SITE — see `output(for:)`; this is its TC002 half.
-    ///
-    /// Provisionally the three rows are rastered through the 3×5 font, one
-    /// figure per row, in the plan's order. The row order carries the meaning:
-    /// the font holds digits and the percent sign and nothing else (D12), so
-    /// there are no labels to spell.
-    public static func ulanziOutput(for reading: ZaiUsageReading) -> UlanziDelivery {
-        var canvas = PixelCanvas()
-        let ink = Pixel(colour: UlanziColour(hex: ZaiUsage.brandColour))
-        let rows = reading.usageRows
-        // Five rows of glyphs, then a one-row gap, sits three times in the
-        // sixteen the panel holds: 0–4, 6–10, 11–15.
-        let tops = [0, 6, 11]
-        for (index, row) in rows.enumerated() where index < tops.count {
-            let text = "\(row.percentUsed)%"
-            let width = text.unicodeScalars.count * 4 - 1
-            canvas.drawText(
-                text,
-                at: PixelPoint(x: (PixelCanvas.width - width) / 2, y: tops[index]),
-                ink: ink
-            )
-        }
-        return UlanziDelivery(
+    /// What a reading looks like on the TC002's panel: the shared three-row
+    /// usage face fed the plan's windows in the order the plan names them —
+    /// five hours, week, MCP month. A window the quota route did not name is
+    /// a dash, never a zero, and it keeps its band: the page's shape does not
+    /// depend on what the route felt like saying today.
+    static func ulanziOutput(for reading: ZaiUsageReading) -> UlanziDelivery {
+        UlanziDelivery(
             scene: UlanziScene(
-                frames: [UlanziFrame(duration: 5, draw: [canvas.drawCommands()])]
+                frames: [
+                    UlanziFrame(duration: 5, draw: [UsageRows.drawCommands(rows(for: reading))])
+                ]
             )
+        )
+    }
+
+    /// The page's three rows, in the order the plan names them. The values are
+    /// inked in the plan's own blue; the dash a missing window leaves is in
+    /// the layout's dim grey, which is what an absent figure is drawn in
+    /// anywhere on the panel.
+    static func rows(for reading: ZaiUsageReading) -> [UsageRows.Row] {
+        [
+            row("DAY", reading.fiveHour),
+            row("WK", reading.weekly),
+            row("MCP", reading.mcpMonthly),
+        ]
+    }
+
+    /// One band from a window that may not be there: the percent as text, in
+    /// the plan's colour, or the dash in the layout's own grey.
+    private static func row(_ label: String, _ window: ZaiUsageWindow?) -> UsageRows.Row {
+        UsageRows.Row(
+            label: label,
+            value: window.map { "\($0.percentUsed)%" } ?? "-",
+            colour: window != nil
+                ? UlanziColour(hex: ZaiUsage.brandColour)
+                : UsageRows.labelColour
         )
     }
 }

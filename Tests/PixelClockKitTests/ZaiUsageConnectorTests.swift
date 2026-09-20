@@ -241,9 +241,34 @@ private let usageBody = Data("""
         #expect(drawn.scene.text.contains("12%") == false)
     }
 
-    /// The TC002 page is the provisional three-row raster: one frame, one db
-    /// command, and the scene it builds always encodes.
-    @Test func theTC002FaceRasterizesTheThreeRows() throws {
+    /// The TC002 page is the shared three-row usage face, fed the plan's
+    /// windows in the order the plan names them: five hours, week, MCP month.
+    @Test func theTC002FaceFeedsTheSharedThreeRowFace() {
+        let rows = ZaiUsageConnector.rows(for: reading)
+
+        #expect(rows.map(\.label) == ["DAY", "WK", "MCP"])
+        #expect(rows.map(\.value) == ["12%", "35%", "7%"])
+    }
+
+    /// A window the quota route did not name is a dash, never a zero — the
+    /// shared face's own rule, and the band keeps its place on the page.
+    @Test func aWindowTheRouteDidNotNameIsADashNeverAZero() {
+        let sparse = ZaiUsageReading(
+            limits: ZaiUsageLimits(weekly: ZaiUsageWindow(percentUsed: 35)),
+            totals: ZaiUsageTotals(), observedAt: nil
+        )
+
+        let rows = ZaiUsageConnector.rows(for: sparse)
+
+        #expect(rows.map(\.label) == ["DAY", "WK", "MCP"])
+        #expect(rows[0].value == "-")
+        #expect(rows[1].value == "35%")
+        #expect(rows[2].value == "-")
+    }
+
+    /// One frame, one db command — the shared face's whole page — and the
+    /// scene it builds always encodes.
+    @Test func theTC002FaceShipsTheSharedFaceAsOneBitmap() throws {
         let connector = makeConnector(reading)
         let delivery = try #require(connector.ulanziFace?.draw(reading))
 

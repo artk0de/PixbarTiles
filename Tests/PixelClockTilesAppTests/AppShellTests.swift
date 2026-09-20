@@ -722,6 +722,49 @@ private func launchedForBrowsing(
     await delegate.model.teardown()
 }
 
+// The Add-clock sheet is the other thing that makes looking worth doing: the
+// Clocks section is where a clock seen advertising itself becomes a
+// configured one, so a sheet open on an installation whose clock answers
+// perfectly well still needs the list fed. The outage arm is the tests above.
+// The sheet is drawn in the panel's window, so the panel is open first — how
+// the app itself reaches a settings sheet.
+@Test @MainActor func openingTheAddClockSheetLooksEvenWhenTheClockAnswers() async {
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(browsing)
+    #expect(await waitUntil { delegate.model.isDeviceOnline })
+    delegate.panelMoved(to: aWindow())
+    #expect(browsing.liveBrowses == 0)
+
+    delegate.model.openSettings()
+    #expect(await waitUntil { browsing.liveBrowses == 1 })
+
+    // And closing the sheet takes the browse back down: the clock answers,
+    // so the sheet was the only reason left to look.
+    delegate.model.closeSettings()
+    #expect(await waitUntil { browsing.liveBrowses == 0 })
+    await delegate.model.teardown()
+}
+
+// The sheet arm cannot outlive the panel either: the Clocks section is drawn
+// in the panel's window, so a panel that lost key while the sheet was open
+// has nowhere left to show what a browse found.
+@Test @MainActor func closingThePanelWithTheSheetOpenStopsTheBrowse() async {
+    let notifications = NotificationCenter()
+    let panel = aWindow()
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(browsing, notifications: notifications)
+    #expect(await waitUntil { delegate.model.isDeviceOnline })
+
+    delegate.model.openSettings()
+    delegate.panelMoved(to: panel)
+    #expect(await waitUntil { browsing.liveBrowses == 1 })
+
+    loseFocus(panel, through: notifications)
+
+    #expect(await waitUntil { browsing.liveBrowses == 0 })
+    await delegate.model.teardown()
+}
+
 @Test @MainActor func quittingStopsTheBrowse() async {
     let browsing = FakeBonjourBrowser()
     let delegate = launchedForBrowsing(

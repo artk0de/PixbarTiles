@@ -12,7 +12,12 @@ public struct ZaiUsageConnector: Connector {
     /// replaces the previous reading rather than growing a rotation.
     public static let appName = "zai"
 
-    public let id = "zai"
+    /// The connector's identifier — the tile key's connector half, and the
+    /// keychain account's suffix. Written once here, read by the wiring and
+    /// the derivation alike, so the three never drift.
+    public static let connectorId = appName
+
+    public let id = ZaiUsageConnector.connectorId
     public let displayName = "z.ai usage"
     /// Ten minutes, and chosen against `lifetime` rather than on its own: the
     /// figure moves slowly, but the app must leave the clock soon after a

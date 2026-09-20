@@ -212,6 +212,12 @@ struct MenuPanel: View {
             // whatever tile's detail it is edited from edits it for every
             // Claude tile, because the state is one file, not a tile's.
             ClaudeCodeSettings(link: claudeCode())
+        } else if connector is ZaiUsageConnector {
+            ZaiTileBlock(
+                hasKey: model.hasZaiKey(for: key),
+                outcome: model.lastZaiKeyOutcome,
+                onSaveKey: { model.saveZaiKey($0, for: key) }
+            )
         } else {
             EmptyView()
         }

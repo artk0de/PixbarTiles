@@ -11,6 +11,10 @@ private struct NoReading: ClaudeUsageReporting {
     func read() async throws -> ClaudeUsageReading? { nil }
 }
 
+private struct NoZaiReading: ZaiUsageReporting {
+    func read() async throws -> ZaiUsageReading? { nil }
+}
+
 @MainActor private func shipped() -> [(connector: any Connector, row: TilePolicy)] {
     [
         (weatherConnector(over: StubTransport(body: Data())), TileDefaults.weather),
@@ -22,6 +26,12 @@ private struct NoReading: ClaudeUsageReporting {
                     .appendingPathComponent("defaults-\(UUID().uuidString).json")
             ).connector,
             TileDefaults.anecdotes
+        ),
+        (
+            ZaiUsageConnector(
+                source: ZaiUsageAPI(transport: StubTransport(body: Data()), key: { nil })
+            ),
+            TileDefaults.zai
         ),
     ]
 }

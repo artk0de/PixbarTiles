@@ -501,6 +501,9 @@ final class AppModel: ObservableObject {
     private var verdicts = TileVerdicts()
     /// Whether a microphone the user cares about is capturing.
     private let microphone: MicrophoneGate
+    /// Where a tile's API key lives. The record holds the handle, this holds
+    /// the secret — the split the z.ai tile's whole config is built around.
+    let keychain: any TileKeyStoring
     private var timers: [TileKey: Task<Void, Never>] = [:]
     private var monitorLoop: Task<Void, Never>?
     /// The one-off reading a panel open asked for, still going.
@@ -636,6 +639,9 @@ final class AppModel: ObservableObject {
         now: @escaping @Sendable () -> Date = Date.init,
         microphone: MicrophoneGate,
         watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
+        // The login keychain, unless the caller names another store — the
+        // suite does, because no test may touch the real one.
+        keychain: any TileKeyStoring = LoginKeychainStore(),
         sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         micSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
@@ -666,6 +672,7 @@ final class AppModel: ObservableObject {
         self.now = now
         self.microphone = microphone
         self.watchedMicrophones = watching
+        self.keychain = keychain
         self.scheduleSleep = sleep
         self.pollSleep = pollSleep
         self.micSleep = micSleep
@@ -752,6 +759,15 @@ final class AppModel: ObservableObject {
                 reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document)
             )
         )
+        // Offered so the Add tile menu can name it; no clock produces through
+        // this instance — each clock's session builds its own, closed over
+        // that clock's tile's key. The panel copy has no clock, hence no key.
+        let keychain = LoginKeychainStore()
+        registry.register(
+            ZaiUsageConnector(
+                source: ZaiUsageAPI(transport: transport, key: { nil })
+            )
+        )
 
         // After every connector is registered: one the step does not hear
         // about gets no tile, and runs on its own default until its first
@@ -792,6 +808,21 @@ final class AppModel: ObservableObject {
             let place = StoredLocation(defaults: defaults, clockId: clock.id)
             registry.register(WeatherConnector(source: weather, location: { place.current }))
             registry.register(claude)
+            // The key is looked up at every read, never held: a key pasted
+            // into the tile's detail is on its way to the service at the next
+            // poll, and one removed from it is gone just as fast.
+            registry.register(
+                ZaiUsageConnector(
+                    source: ZaiUsageAPI(
+                        transport: transport,
+                        key: {
+                            keychain.key(for: ZaiTileConfig.account(for: TileKey(
+                                clockId: clock.id, connectorId: ZaiUsageConnector.connectorId
+                            )))
+                        }
+                    )
+                )
+            )
             let store = TileSettingsStore(defaults: defaults, clockId: clock.id)
             let device = AwtrixDevice(host: clock.address, transport: transport)
             return AwtrixClockSession(
@@ -1052,6 +1083,60 @@ final class AppModel: ObservableObject {
         if key.connectorId == VPNConnector.id { refreshLamps() } else { reschedule(key) }
         reconcileTiles()
         return .saved
+    }
+
+    // MARK: - The z.ai key
+
+    /// What a paste did, as the detail surface says it.
+    enum ZaiKeyOutcome: Equatable {
+        case saved
+        case removed
+        /// The store refused, and the field says so — a paste the user
+        /// believes was taken must not quietly never have been.
+        case refused
+    }
+
+    /// The last paste's outcome, for the field to say it out loud.
+    @Published private(set) var lastZaiKeyOutcome: ZaiKeyOutcome?
+
+    /// The key a paste put in, taken out of the record's way: it goes to the
+    /// keychain under the tile's own account, and the tile record remembers
+    /// only the handle. A blank paste is the removal, so the one field is how
+    /// a key is both given and taken back.
+    @discardableResult
+    func saveZaiKey(_ typed: String, for key: TileKey) -> ZaiKeyOutcome {
+        let account = ZaiTileConfig.account(for: key)
+        let pasted = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outcome: ZaiKeyOutcome
+        do {
+            if pasted.isEmpty {
+                try keychain.removeKey(for: account)
+                outcome = .removed
+            } else {
+                try keychain.save(pasted, for: account)
+                outcome = .saved
+            }
+        } catch {
+            outcome = .refused
+        }
+        lastZaiKeyOutcome = outcome
+
+        // The policy stands; only the handle joins the record, derived the
+        // same way the connector reads it back. A tile saved before any paste
+        // still gets its config here — there is nothing to read first.
+        if outcome != .refused, let policy = storedPolicy(of: key) {
+            _ = saveTile(
+                key: key, policy: policy,
+                config: .zai(ZaiTileConfig(keyAccount: account))
+            )
+        }
+        return outcome
+    }
+
+    /// Whether a key stands behind this tile — as the field's presence line
+    /// puts it, without ever saying what the key is.
+    func hasZaiKey(for key: TileKey) -> Bool {
+        keychain.key(for: ZaiTileConfig.account(for: key)) != nil
     }
 
     func removeTile(_ key: TileKey) {

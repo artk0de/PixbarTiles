@@ -55,6 +55,18 @@ private let tc002 = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "
     )
 }
 
+// The display metric is the Claude tile's own config: chosen in the detail,
+// saved with the policy untouched, and read back by the next open.
+@Test @MainActor func theClaudeTilesMetricIsStoredInItsConfig() throws {
+    let subject = testModel(connectors: [StubConnector(id: "claude")], clocks: [desk], tiles: [])
+    _ = subject.addTile("claude", to: desk.id)
+    let key = TileKey(clockId: desk.id, connectorId: "claude")
+    let stored = try #require(subject.storedPolicy(of: key))
+
+    #expect(subject.saveTile(key: key, policy: stored, config: .claude(.session)) == .saved)
+    #expect(subject.detailValue(for: key)?.config == .claude(.session))
+}
+
 @Test @MainActor func aVPNTileClaimingAHeldLampIsRefusedInTheDesignsWords() {
     let subject = testModel(clocks: [desk], tiles: VPNTileMigration.tiles(on: desk.id))
     let amnezia = TileKey(clockId: desk.id, connectorId: "vpn", instance: "amnezia")

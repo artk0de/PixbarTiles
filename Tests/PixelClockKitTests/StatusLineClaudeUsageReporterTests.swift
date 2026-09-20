@@ -188,6 +188,33 @@ private struct StatusDocumentFolder {
     #expect(try await reporter.read()?.utilization == 41)
 }
 
+// MARK: - The session's context window
+
+// The current session's context usage rides beside the rate limits, read
+// fresh from every document: it is the figure OF the session that wrote the
+// document, and carrying a previous session's context across a switch would
+// show a session that is gone.
+@Test func theContextWindowIsReadFreshFromEveryDocument() async throws {
+    let folder = try StatusDocumentFolder()
+    defer { folder.remove() }
+    let reporter = StatusLineClaudeUsageReporter(
+        document: folder.document, now: { beforeEitherReset }
+    )
+
+    try folder.write(statusLineDocument)
+    #expect(try await reporter.read()?.contextWindow == 8)
+
+    // Nearest whole percent, like every window's figure.
+    try folder.write(
+        #"{"rate_limits":{"seven_day":{"used_percentage":41,"resets_at":1738857600}},"context_window":{"used_percentage":8.4,"remaining_percentage":91.6}}"#
+    )
+    #expect(try await reporter.read()?.contextWindow == 8)
+
+    // A document without one says so rather than repeating the last session.
+    try folder.write(#"{"rate_limits":{"seven_day":{"used_percentage":41,"resets_at":1738857600}}}"#)
+    #expect(try await reporter.read()?.contextWindow == nil)
+}
+
 // Until one has been seen, there is nothing to keep.
 @Test func aDocumentWithoutAWeeklyWindowIsNoReadingUntilOneHasBeenSeen() async throws {
     let folder = try StatusDocumentFolder()

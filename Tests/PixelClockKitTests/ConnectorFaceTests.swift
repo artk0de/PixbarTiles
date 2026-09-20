@@ -66,6 +66,69 @@ private struct Reports: ClaudeUsageReporting {
     #expect(connector.awtrixFace.draw(reading) == ClaudeUsageConnector.output(for: reading))
 }
 
+// MARK: - Claude display metrics
+
+/// A reading carrying all three figures, for the faces to pick from.
+private let metricReading = ClaudeUsageReading(
+    utilization: 41,
+    resetsAt: nil,
+    fiveHour: ClaudeUsageWindow(utilization: 23, resetsAt: Date(timeIntervalSince1970: 1_738_425_600)),
+    contextWindow: 8,
+    observedAt: nil
+)
+
+// The weekly face is the one the tile always drew; the daily and the session
+// face draw the same bar around their own figure.
+@Test func theWeeklyFaceIsTheOneItAlwaysDrew() {
+    #expect(
+        ClaudeUsageConnector.output(for: metricReading, metric: .weekly)
+            == ClaudeUsageConnector.output(for: metricReading)
+    )
+}
+
+@Test func theDailyFaceDrawsTheRollingWindowNotTheWeek() throws {
+    let daily = try #require(ClaudeUsageConnector.output(for: metricReading, metric: .daily))
+    #expect(daily.text == "23%")
+    #expect(daily.progress?.percent == 23)
+}
+
+@Test func theSessionFaceDrawsTheContextWindow() throws {
+    let session = try #require(ClaudeUsageConnector.output(for: metricReading, metric: .session))
+    #expect(session.text == "8%")
+    #expect(session.progress?.percent == 8)
+}
+
+// A metric whose figure the reading does not carry has nothing to draw: nil,
+// which the run turns into no delivery — never the week's figure drawn under
+// another window's name.
+@Test func aFaceWithNoFigureForItsMetricDrawsNothing() {
+    let bare = ClaudeUsageReading(utilization: 41, resetsAt: nil)
+
+    #expect(ClaudeUsageConnector.output(for: bare, metric: .daily) == nil)
+    #expect(ClaudeUsageConnector.output(for: bare, metric: .weekly) != nil)
+    #expect(ClaudeUsageConnector.output(for: bare, metric: .session) == nil)
+}
+
+// The run is where the gate lives: a chosen metric with no figure is no
+// reading, so the tile leaves the clock until its figure returns.
+@Test func theRunRefusesAMetricWithNoFigure() async {
+    let bare = ClaudeUsageReading(utilization: 41, resetsAt: nil)
+    let connector = ClaudeUsageConnector(reporter: Reports(reading: bare), metric: { .daily })
+
+    await #expect(throws: ClaudeUsageConnector.Failure.noReading) {
+        try await connector.produce()
+    }
+}
+
+@Test func theRunDeliversTheChosenFace() async throws {
+    let connector = ClaudeUsageConnector(reporter: Reports(reading: metricReading), metric: { .session })
+
+    let delivered = try await connector.produce()
+    let chosen = try #require(ClaudeUsageConnector.output(for: metricReading, metric: .session))
+
+    #expect(delivered == chosen)
+}
+
 // MARK: - Anecdotes
 
 private let oneAnecdote = """

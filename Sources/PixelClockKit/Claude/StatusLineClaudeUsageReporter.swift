@@ -36,9 +36,13 @@ public actor StatusLineClaudeUsageReporter: ClaudeUsageReporting {
         // In front of the memory, on purpose: a deleted document is how
         // Disconnect takes the figure away.
         guard let data = try? Data(contentsOf: document) else { return nil }
-        let limits = Self.rateLimits(in: data)
+        let root = Self.object(in: data)
+        let limits = root["rate_limits"] as? [String: Any] ?? [:]
         if let seen = Self.window(limits["seven_day"]) { weekly = seen }
         if let seen = Self.window(limits["five_hour"]) { fiveHour = seen }
+        // Fresh from every document, not remembered: the context figure belongs
+        // to the session that wrote this one. See `ClaudeUsageReading`.
+        let context = Self.percent(root["context_window"])
 
         let moment = now()
         guard let current = weekly, current.resetsAt > moment else { return nil }
@@ -46,20 +50,30 @@ public actor StatusLineClaudeUsageReporter: ClaudeUsageReporting {
             utilization: current.utilization,
             resetsAt: current.resetsAt,
             fiveHour: fiveHour.flatMap { $0.resetsAt > moment ? $0 : nil },
+            contextWindow: context,
             observedAt: modificationDate()
         )
+    }
+
+    /// The document as an object, or an empty one for a document that is not
+    /// JSON at all. Both read as "every window missing".
+    private static func object(in data: Data) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+
+    /// A used percentage from a `{"used_percentage": n}` object, rounded to the
+    /// nearest whole percent — the same rounding the rate-limit windows get, so
+    /// the bar and the number beside it cannot disagree.
+    private static func percent(_ value: Any?) -> Int? {
+        guard let used = (value as? [String: Any])?["used_percentage"] as? Double else {
+            return nil
+        }
+        return Int(used.rounded())
     }
 
     private func modificationDate() -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: document.path))?[.modificationDate]
             as? Date
-    }
-
-    /// The `rate_limits` object, or an empty one for a document that has none
-    /// or is not JSON at all. Both read as "every window missing".
-    private static func rateLimits(in data: Data) -> [String: Any] {
-        let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        return root?["rate_limits"] as? [String: Any] ?? [:]
     }
 
     /// One window, or nil unless both of its figures are numbers. Without

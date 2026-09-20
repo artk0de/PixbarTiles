@@ -336,9 +336,15 @@ final class AppModel: ObservableObject {
     /// the first, which for a one-clock install is the only one. B14 gives
     /// every clock a health of its own.
     private var clock: ClockRecord? { clocks.first }
-    /// Whether that clock is an AWTRIX one — the only kind with a battery line,
-    /// a polled health or a scheduled delivery. The panel's status row reads it.
-    var selectedClockIsAwtrix: Bool { clock?.model == .awtrix3 }
+    /// Whether the SELECTED clock is an AWTRIX one — the only kind with a
+    /// battery line, a polled health or a scheduled delivery. The panel's
+    /// status row reads it.
+    var selectedClockIsAwtrix: Bool { selectedClock.map { $0.model == .awtrix3 } ?? false }
+    /// The selected clock's address, as the panel's status block draws it.
+    var selectedAddress: String { selectedClock?.address ?? "" }
+
+    /// The clock the selection names, as this launch has it.
+    private var selectedClock: ClockRecord? { selectedClockId.flatMap { clock($0) } }
     /// What is in the address field: what the NEXT launch will use, where
     /// `deviceHost` is what this one is using.
     ///
@@ -1061,6 +1067,74 @@ final class AppModel: ObservableObject {
         if watched { watching.append(WatchedMicrophone(uid: input.uid, name: input.name)) }
         watchedMicrophones = watching
         WatchedMicrophone.save(watching, to: defaults)
+    }
+
+    // MARK: - What the panel draws
+
+    /// The tile whose detail surface is open, or nil while none is. The key it
+    /// was opened for travels with the surface, so the editor never has to ask
+    /// which tile it is editing.
+    @Published private(set) var detailTileKey: TileKey?
+
+    func openDetail(for key: TileKey) { detailTileKey = key }
+    func closeDetail() { detailTileKey = nil }
+
+    /// One row per tile on the selected clock, in stored order.
+    ///
+    /// The value carries the actions as closures and the wording whole — the
+    /// removal question names the clock, because with more than one clock on
+    /// the tree the row cannot say which one loses the tile.
+    var tileRows: [TileRowValue] {
+        guard let selection = selectedClockId else { return [] }
+        return tiles.all().compactMap { record in
+            guard record.key.clockId == selection else { return nil }
+            return row(for: record)
+        }
+    }
+
+    private func row(for record: TileRecord) -> TileRowValue {
+        let key = record.key
+        let isLamp = key.connectorId == VPNConnector.id
+        let name = isLamp
+            ? record.config?.lamp.map { WatchedVPN.preset(id: $0.vpn)?.displayName ?? $0.vpn } ?? "VPN"
+            : registry.connector(id: key.connectorId)?.displayName ?? key.connectorId
+        return TileRowValue(
+            name: name,
+            result: tileLastResults[key],
+            hold: policy(of: key)?.hold(in: currentFocus, atHour: currentHour),
+            failing: tileLastMaintenanceFailure[key] != nil,
+            // The lamp tile runs itself, off the delivery chain entirely.
+            isAmbient: isLamp || (registry.connector(id: key.connectorId)?.isAmbient ?? false),
+            removeQuestion: "Remove \(name) from \(clock(key.clockId)?.name ?? "this clock")?",
+            onRun: { self.runNow(key) },
+            onDetail: { self.openDetail(for: key) },
+            onRemove: { self.removeTile(key) }
+        )
+    }
+
+    /// One menu entry per connector the registry holds, minus the ones a
+    /// single tile already covers on the selected clock — `notListed` means
+    /// not listed.
+    var addTileMenuItems: [AddTileMenuItem] {
+        guard let selection = selectedClockId else { return [] }
+        return registry.all.compactMap { connector in
+            switch availability(of: connector.id, on: selection) {
+            case .notListed:
+                return nil
+            case let .unavailable(reason):
+                return AddTileMenuItem(
+                    title: connector.displayName,
+                    availability: .unavailable(reason: reason),
+                    onAdd: { _ = self.addTile(connector.id, to: selection) }
+                )
+            case .available:
+                return AddTileMenuItem(
+                    title: connector.displayName,
+                    availability: .available,
+                    onAdd: { _ = self.addTile(connector.id, to: selection) }
+                )
+            }
+        }
     }
 
     // MARK: - Settings

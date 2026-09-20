@@ -13,7 +13,14 @@ struct AddTileMenu: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+            // The menu's name, drawn even when nothing is offered: a bare
+            // cluster of connector names reads as a row of static text, and
+            // an exhausted clock still says where tiles would have come
+            // from.
+            Text("+ Add tile")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ForEach(items, id: \.title) { item in
                 HStack(spacing: 6) {
                     Button(item.title) { item.onAdd() }
                         .buttonStyle(.borderless)

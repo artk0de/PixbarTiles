@@ -52,23 +52,26 @@ private func tile(_ connector: String, on clock: ClockRecord) -> TileRecord {
     )
 
     // Claude's single tile is already on the desk clock, so the connector is
-    // not listed there at all.
+    // not listed there at all — the lamp is what the menu offers.
     subject.selectedClockId = desk.id
-    #expect(subject.addTileMenuItems.isEmpty)
+    #expect(subject.addTileMenuItems.map(\.title) == ["VPN"])
 
     subject.selectedClockId = loft.id
-    #expect(subject.addTileMenuItems.map(\.title) == ["Claude"])
+    #expect(subject.addTileMenuItems.map(\.title) == ["Claude", "VPN"])
     #expect(
         subject.addTileMenuItems.map(\.availability)
-            == [.unavailable(reason: "already speaking through Desk")]
+            == [.unavailable(reason: "already speaking through Desk"), .available]
     )
 
     // The face rule is the catalogue's first: the same connector on the TC002
-    // carries that reason instead of the audible one.
+    // carries that reason instead of the audible one — and so does the lamp,
+    // which has no face for the TC002 either.
     subject.selectedClockId = kitchen.id
+    #expect(subject.addTileMenuItems.map(\.title) == ["Claude", "VPN"])
     #expect(
         subject.addTileMenuItems.map(\.availability)
-            == [.unavailable(reason: "not supported on TC002")]
+            == [.unavailable(reason: "not supported on TC002"),
+                .unavailable(reason: "not supported on TC002")]
     )
 }
 

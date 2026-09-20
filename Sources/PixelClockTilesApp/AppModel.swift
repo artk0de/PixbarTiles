@@ -1221,28 +1221,39 @@ final class AppModel: ObservableObject {
         healths[clockId]?.monitor.state ?? .unknown
     }
 
-    /// One menu entry per connector the registry holds, minus the ones a
-    /// single tile already covers on the selected clock — `notListed` means
-    /// not listed.
+    /// One menu entry per connector the registry holds, plus the lamp's —
+    /// it has no face and no session of its own, so it never joined the
+    /// registry, and this is where it is offered — minus the ones a single
+    /// tile already covers on the selected clock, `notListed` meaning not
+    /// listed. The lamp is LAST because it is the connector a full clock can
+    /// still take: the exhausted-clock menu offers it and nothing else.
     var addTileMenuItems: [AddTileMenuItem] {
         guard let selection = selectedClockId else { return [] }
-        return registry.all.compactMap { connector in
-            switch availability(of: connector.id, on: selection) {
-            case .notListed:
-                return nil
-            case let .unavailable(reason):
-                return AddTileMenuItem(
-                    title: connector.displayName,
-                    availability: .unavailable(reason: reason),
-                    onAdd: { _ = self.addTile(connector.id, to: selection) }
-                )
-            case .available:
-                return AddTileMenuItem(
-                    title: connector.displayName,
-                    availability: .available,
-                    onAdd: { _ = self.addTile(connector.id, to: selection) }
-                )
-            }
+        let offered = registry.all.compactMap { connector in
+            menuEntry(connector.id, named: connector.displayName, on: selection)
+        }
+        return offered + [menuEntry(VPNConnector.id, named: vpn.displayName, on: selection)].compactMap { $0 }
+    }
+
+    /// One menu entry, or nil for a connector the selected clock may not list.
+    private func menuEntry(
+        _ connectorId: String, named title: String, on clockId: UUID
+    ) -> AddTileMenuItem? {
+        switch availability(of: connectorId, on: clockId) {
+        case .notListed:
+            nil
+        case let .unavailable(reason):
+            AddTileMenuItem(
+                title: title,
+                availability: .unavailable(reason: reason),
+                onAdd: { _ = self.addTile(connectorId, to: clockId) }
+            )
+        case .available:
+            AddTileMenuItem(
+                title: title,
+                availability: .available,
+                onAdd: { _ = self.addTile(connectorId, to: clockId) }
+            )
         }
     }
 

@@ -244,7 +244,10 @@ room, not about any one tile.
 
 `TileCatalogue.availability(connector, on: clock)` returns `.available` or
 `.unavailable(reason)`, and the Add tile menu shows the reason beside a
-disabled entry.
+disabled entry. Uniqueness is **per clock**: a `.single` connector is placed
+once per clock and may sit on every clock at once — never once per install.
+A `.multi` connector may be placed several times, even on the same clock;
+the VPN presets are `.multi`.
 
 1. No face for `clock.model` → "not supported on TC002".
 2. A `.single` connector already on this clock → not listed.
@@ -513,6 +516,12 @@ Claude settings — the whole of them, Connect / Disconnect included. The state
 they edit is machine-wide and shared by every Claude tile: editing it in any
 one tile's detail edits it for all of them. General settings carries no
 Claude section.
+
+The Claude tile's block also carries a display selector — daily limit, weekly
+window, or current session. On the TC001 the choice picks one of three faces;
+on the TC002 the face draws all three at once on the tile's page. That
+three-row usage layout is a **shared face component**, not Claude's own: any
+usage tile reuses it, and a z.ai coding-plan-usage tile ships on it.
 
 ### General settings
 

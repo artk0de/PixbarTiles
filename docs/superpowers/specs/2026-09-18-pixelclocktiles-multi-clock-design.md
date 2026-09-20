@@ -363,6 +363,12 @@ sound plays.
 | claude | `ClaudeUsageReading`, from the status-line file | every 300 s | as today: progress bar, `ClaudeStar` 8×8, lifetime 900 | `.app("claude")`: `ClaudeStar` 16 px, `42%`, bar from `dr` and `df` along the bottom, lifetime 900 emulated |
 | anecdotes | `PreparedAnecdote`; reading it retires it | every 1800 s + maintenance | as today: held banner, RTTTL jingle, audio on the Mac | none yet — on-device sound does not exist on the stock firmware, so audio stays on the Mac; a visual banner face (raster, Mac-side marquee) is a possible later follow-up |
 | vpn | `VPNState` for one watched VPN | events + 60 s recheck | a lamp write through `IndicatorCustody`, not a scene | none — the TC002 has no global indicators |
+| z.ai usage | `ZaiUsageReading` from the z.ai coding-plan usage API, keyed by the tile's API key | every 600 s | the shared three-row usage face, the metrics the API returns | the shared three-row usage face |
+
+The z.ai tile's config carries its API key. The key is pasted in the tile's
+detail and stored in the login keychain, keyed by the tile; the tile record
+itself holds no secret. Its face is the shared three-row usage layout, the
+same component the Claude TC002 face uses.
 
 Carried-over rules:
 

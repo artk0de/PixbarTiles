@@ -241,13 +241,13 @@ private func drawn(_ view: some View) -> Data? {
     defer { fixture.remove() }
     try fixture.link.connect()
 
-    let sheet = drawn(SettingsSheet(model: testModel()))
+    let sheet = drawn(SettingsSheet(model: testModel(), discovery: inertDiscovery()))
 
     #expect(sheet != nil)
     // The surface that no longer holds the section is also the surface that
     // no longer takes a link model: what the section said is said on the
     // tile's detail instead (pinned just above).
-    #expect(sheet == drawn(SettingsSheet(model: testModel())))
+    #expect(sheet == drawn(SettingsSheet(model: testModel(), discovery: inertDiscovery())))
 }
 
 // The reason reaches the screen too. Deleting the note from the section's body

@@ -363,6 +363,22 @@ sound plays.
 | claude | `ClaudeUsageReading`, from the status-line file | every 300 s | three faces, one per display metric: the bar as today around the metric's own figure — daily limit, weekly window, current session — `ClaudeStar` 8×8, lifetime 900; a figure the reading does not carry is no delivery, and the tile leaves the clock | `.app("claude")` on the shared three-row usage face (`UsageRows`): the DAY / WK / SES rows drawn at once, the metric ignored — a window the document did not carry is a dash; lifetime 900 emulated |
 | anecdotes | `PreparedAnecdote`; reading it retires it | every 1800 s + maintenance | as today: held banner, RTTTL jingle, audio on the Mac | none yet — on-device sound does not exist on the stock firmware, so audio stays on the Mac; a visual banner face (raster, Mac-side marquee) is a possible later follow-up |
 | vpn | `VPNState` for one watched VPN | events + 60 s recheck | a lamp write through `IndicatorCustody`, not a scene | none — the TC002 has no global indicators |
+| z.ai usage | `ZaiUsageReading` from the z.ai coding-plan usage API, keyed by the tile's API key | every 600 s | the shared three-row usage face, the metrics the API returns | the shared three-row usage face |
+
+The z.ai tile's config carries its API key. The key is pasted in the tile's
+detail and stored in the login keychain, keyed by the tile; the tile record
+itself holds no secret. Its face is the shared three-row usage layout, the
+same component the Claude TC002 face uses.
+
+The usage endpoints are the dashboard's own routes: `GET
+https://api.z.ai/api/monitor/usage/model-usage`, per-model consumption over a
+time range, is the tile's reading source; `GET
+api.z.ai/api/monitor/usage/quota/limit` carries the limits beside it (Zhipu
+plans: host `open.bigmodel.cn`). `Authorization: <key>` without `Bearer`.
+z.ai documents no usage API — these are the dashboard routes the community
+trackers use, and they carry no stability contract. The decoder tolerates
+missing and extra fields and pins only what a live response shows; when a
+route dies, the connector reports failing and nothing else breaks.
 
 Carried-over rules:
 

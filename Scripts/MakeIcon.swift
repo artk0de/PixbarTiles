@@ -79,27 +79,30 @@ func colour(_ hex: UInt32) -> NSColor {
             blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
 }
 
-/// The four variants where they will live: a light and a dark menu bar, each
-/// with its appearance's glyph online and offline, at true 2x. The view a human
-/// eyeballs without opening twelve PNG files — the same role the drawn
-/// candidates' comparison sheet played when the design was being chosen.
+/// The six variants where they will live: a light and a dark menu bar, each
+/// with its appearance's glyph online, offline and empty — the no-clock
+/// screen — at true 2x. The view a human eyeballs without opening eighteen
+/// PNG files — the same role the drawn candidates' comparison sheet played
+/// when the design was being chosen.
 func drawUserClockContext() -> CGContext {
-    let scale = 2, pt = 18 * scale, barHeight = 24 * scale, width = 200 * scale
+    let scale = 2, pt = 18 * scale, barHeight = 24 * scale, width = 240 * scale
     let ctx = makeContext(width)
     ctx.setFillColor(NSColor(white: 0.55, alpha: 1).cgColor)
     ctx.fill(CGRect(x: 0, y: 0, width: width, height: width))
 
-    let bars: [(NSColor, UserClock.Palette, UserClock.Palette, CGFloat)] = [
-        (colour(0xF2F2F2), UserClock.lightOnline, UserClock.lightOffline,
+    let bars: [(NSColor, [UserClock.Palette], CGFloat)] = [
+        (colour(0xF2F2F2),
+         [UserClock.lightOnline, UserClock.lightOffline, UserClock.empty(UserClock.lightOnline)],
          CGFloat(width - barHeight)),
-        (colour(0x212121), UserClock.darkOnline, UserClock.darkOffline,
+        (colour(0x212121),
+         [UserClock.darkOnline, UserClock.darkOffline, UserClock.empty(UserClock.darkOnline)],
          CGFloat(width - barHeight * 3)),
     ]
-    for (background, online, offline, y) in bars {
+    for (background, palettes, y) in bars {
         ctx.setFillColor(background.cgColor)
         ctx.fill(CGRect(x: 0, y: y, width: CGFloat(width), height: CGFloat(barHeight)))
         let inset = CGFloat(barHeight - pt) / 2
-        for (index, palette) in [online, offline].enumerated() {
+        for (index, palette) in palettes.enumerated() {
             let image = renderClock(palette, scale: scale)
             let x = CGFloat(width) - (CGFloat(image.width) + CGFloat(barHeight) / 2) * CGFloat(index + 1)
             ctx.draw(image, in: CGRect(x: x, y: y + inset, width: CGFloat(image.width),
@@ -114,12 +117,14 @@ func drawUserClockContext() -> CGContext {
 func drawUserClockZoom() -> CGContext {
     let magnify = 4, margin = 12
     let wide = UserClock.width * magnify, high = UserClock.height * magnify
-    let ctx = makeContext(margin + (wide + margin) * 4, high + margin * 2)
+    let ctx = makeContext(margin + (wide + margin) * 6, high + margin * 2)
     ctx.setFillColor(colour(0xE8E8EA).cgColor)
     ctx.fill(CGRect(x: 0, y: 0, width: ctx.width, height: ctx.height))
     ctx.interpolationQuality = .none
-    for (index, palette) in [UserClock.lightOnline, UserClock.lightOffline,
-                             UserClock.darkOnline, UserClock.darkOffline].enumerated() {
+    for (index, palette) in [
+        UserClock.lightOnline, UserClock.lightOffline, UserClock.empty(UserClock.lightOnline),
+        UserClock.darkOnline, UserClock.darkOffline, UserClock.empty(UserClock.darkOnline),
+    ].enumerated() {
         let x = margin + (wide + margin) * index
         ctx.draw(renderClock(palette, scale: 1),
                  in: CGRect(x: x, y: margin, width: wide, height: high))
@@ -271,17 +276,21 @@ struct MakeIcon {
             write(target, to: "\(out)/AppIcon.iconset/icon_\(points)x\(points)\(suffix).png")
         }
 
-        // Menu bar: the user's clock, both appearances and both device states at
-        // 1x/2x/3x. The names are the ones `NSImage(named:)` resolves from loose
-        // files in `Contents/Resources` — the 1x file carries no scale suffix,
-        // the @2x and @3x do.
+        // Menu bar: the user's clock, both appearances and all three device
+        // states at 1x/2x/3x. The names are the ones `NSImage(named:)`
+        // resolves from loose files in `Contents/Resources` — the 1x file
+        // carries no scale suffix, the @2x and @3x do. `empty` is the
+        // no-clock screen: the `AppGlyph.emptyDrawing` table names it.
         for (scale, suffix) in [(1, ""), (2, "@2x"), (3, "@3x")] {
-            for (appearance, online, offline) in [
-                ("dark", UserClock.darkOnline, UserClock.darkOffline),
-                ("light", UserClock.lightOnline, UserClock.lightOffline),
+            for (appearance, online, offline, empty) in [
+                ("dark", UserClock.darkOnline, UserClock.darkOffline,
+                 UserClock.empty(UserClock.darkOnline)),
+                ("light", UserClock.lightOnline, UserClock.lightOffline,
+                 UserClock.empty(UserClock.lightOnline)),
             ] {
                 write(renderClock(online, scale: scale), to: "\(out)/userclock-\(appearance)-online\(suffix).png")
                 write(renderClock(offline, scale: scale), to: "\(out)/userclock-\(appearance)-offline\(suffix).png")
+                write(renderClock(empty, scale: scale), to: "\(out)/userclock-\(appearance)-empty\(suffix).png")
             }
         }
 

@@ -351,6 +351,14 @@ final class FakeBonjourBrowser: BonjourBrowsing {
     func emit(_ event: BonjourEvent) { handlers.forEach { $0(event) } }
 }
 
+/// A merged discovery that has seen nothing and never looks.
+///
+/// For surfaces that need a `ClockDiscovery` to exist rather than to answer:
+/// the sighting stream ends before anything opens, so no test construction
+/// binds the real UDP port, and the browse is a fake that reports only what a
+/// test emits. Fresh per call, because every observed object a view holds
+/// should be that test's own.
+
 // MARK: - The panel's window
 
 /// One of the app's windows. Which one it is, is decided by what it is passed
@@ -396,16 +404,19 @@ func takeFocus(_ window: NSWindow, through notifications: NotificationCenter) {
     notifications.post(name: NSWindow.didBecomeKeyNotification, object: window)
 }
 
-/// A `DeviceBrowser` that cannot reach the network, for tests about something
+/// A `ClockDiscovery` that cannot reach the network, for tests about something
 /// else.
 ///
 /// Every `AppDelegate` in this target takes one. The initialiser has no default
 /// on purpose — the default would be the real factory, and a test that later
-/// called `applicationDidFinishLaunching` would browse the user's LAN from
-/// inside `swift test`.
+/// called `applicationDidFinishLaunching` would browse the user's LAN and bind
+/// the broadcast port from inside `swift test`.
 @MainActor
-func inertDiscovery() -> DeviceBrowser {
-    DeviceBrowser(browsing: { FakeBonjourBrowser() }, sleep: { _ in })
+func inertDiscovery() -> ClockDiscovery {
+    ClockDiscovery(
+        browse: DeviceBrowser(browsing: { FakeBonjourBrowser() }, sleep: { _ in }),
+        sightings: { AsyncStream { $0.finish() } }
+    )
 }
 
 // MARK: - Device

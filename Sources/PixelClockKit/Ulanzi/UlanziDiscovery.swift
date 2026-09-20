@@ -1,5 +1,5 @@
+import Darwin
 import Foundation
-import Network
 
 /// One UDP 55555 broadcast line, parsed (research A1). The devices shout
 /// roughly one line per second:
@@ -29,48 +29,181 @@ public struct UlanziAnnouncement: Equatable, Sendable {
     }
 }
 
-/// Passive UDP 55555 listener yielding parsed announcements. Untested by
-/// design (D13): the socket is the only untested surface, and the parser above
-/// carries all of the logic. Phase 4 owns the first caller.
+/// An announcement together with the address it arrived from. The broadcast
+/// line carries no address, and the datagram's source is the device's own —
+/// the pair is what lets a sighting become a clock record with somewhere to
+/// talk to.
+public struct UlanziSighting: Sendable, Equatable {
+    public let announcement: UlanziAnnouncement
+    /// The host the broadcast was sent from, already bare — no port, no brackets.
+    public let host: String
+
+    public init(announcement: UlanziAnnouncement, host: String) {
+        self.announcement = announcement
+        self.host = host
+    }
+}
+
+/// Passive UDP 55555 listener yielding sightings. Untested by
+/// design (D13): the socket is the only untested surface — the address
+/// mapping, the handoff's ownership contract, and the parser are pure and
+/// tested above and below it.
+///
+/// A BSD datagram socket, deliberately not `NWListener`: it is call for call
+/// the shape that demonstrably receives the clock's broadcasts on this
+/// machine — a `0.0.0.0` bind with `recvfrom` — with no framework layer
+/// between the kernel and the parser. The `NWListener` phase-3 shape never
+/// heard the device from this environment, but that observation is confounded
+/// by the macOS application firewall, which silently drops inbound datagrams
+/// for binaries it has not been asked about; only the shipped app, allowed
+/// like any other, settles which shape the firewall was hiding.
+///
+/// The receive buffer is one raw allocation the loop owns for its life — not
+/// a Swift array. A crash in the field read an Array's object header as
+/// datagram payload bytes; with no array on the wire path there is no header
+/// for payload to land in, and the handoff copies the received bytes into an
+/// owned value before the loop reuses the buffer for the next datagram.
 public final class UlanziBroadcastListener: Sendable {
+    /// How long one `recvfrom` waits before the loop checks whether the
+    /// stream was cancelled. Short enough that stopping is prompt, long
+    /// enough that a one-a-second broadcast costs almost nothing.
+    static let pollInterval: TimeInterval = 0.5
+
     private let port: UInt16
 
     public init(port: UInt16 = 55_555) {
         self.port = port
     }
 
-    public func announcements() -> AsyncStream<UlanziAnnouncement> {
+    /// The address a datagram arrived from, as the app talks to hosts.
+    ///
+    /// Nil for an address that cannot be rendered — a sighting without an
+    /// address cannot become a record "Add" could act on, so the receiver
+    /// drops it.
+    static func host(of address: sockaddr_in) -> String? {
+        var address = address
+        guard address.sin_family == sa_family_t(AF_INET) else { return nil }
+        var rendered = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        let result = withUnsafePointer(to: &address.sin_addr) { pointer in
+            pointer.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<in_addr>.size) {
+                inet_ntop(AF_INET, $0, &rendered, socklen_t(INET_ADDRSTRLEN))
+            }
+        }
+        guard result != nil else { return nil }
+        let bytes = rendered.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    /// The read thread's handoff, and the ownership contract of the whole
+    /// listener: the bytes on the wire become an owned, immutable sighting at
+    /// the moment of the COPY, here, on the read thread — nothing downstream
+    /// ever sees the buffer the loop is about to reuse for the next datagram.
+    ///
+    /// Nil for a count the kernel cannot have written (it is refused, not
+    /// sliced), for bytes that do not decode, and for a datagram with no
+    /// renderable source address.
+    static func sighting(
+        from wire: UnsafeRawBufferPointer, count: Int, host: String?
+    ) -> UlanziSighting? {
+        guard count > 0, count <= wire.count, let base = wire.baseAddress, let host else {
+            return nil
+        }
+        let bytes = Data(bytes: base, count: count)
+        guard let line = String(data: bytes, encoding: .utf8),
+            let announcement = UlanziAnnouncement.parse(line)
+        else { return nil }
+        return UlanziSighting(announcement: announcement, host: host)
+    }
+
+    /// Binds the datagram socket, or nil when it cannot — the port taken by a
+    /// second listener in the same process, most likely.
+    private static func makeSocket(port: UInt16) -> Int32? {
+        let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return nil }
+        var reuse: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+        var timeout = timeval(tv_sec: 0, tv_usec: suseconds_t(pollInterval * 1_000_000))
+        setsockopt(
+            fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)
+        )
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
+        address.sin_addr = in_addr(s_addr: INADDR_ANY)
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0 else {
+            close(fd)
+            return nil
+        }
+        return fd
+    }
+
+    /// How many bytes one datagram can bring. The device's line is ~55 bytes;
+    /// this is headroom for a line that grows, not a limit anybody measured.
+    static let datagramLimit = 2048
+
+    public func announcements() -> AsyncStream<UlanziSighting> {
         AsyncStream { continuation in
-            let queue = DispatchQueue(label: "dev.artk0re.pixelclocktiles.ulanzi-broadcast")
-            let parameters = NWParameters.udp
-            parameters.allowLocalEndpointReuse = true
-            guard let endpoint = NWEndpoint.Port(rawValue: port),
-                let listener = try? NWListener(using: parameters, on: endpoint)
-            else {
-                // The port is taken — a second listener in the same process,
-                // most likely. Yield nothing rather than half-listen.
+            guard let fd = Self.makeSocket(port: port) else {
+                // The port is taken. Yield nothing rather than half-listen.
                 continuation.finish()
                 return
             }
 
-            listener.newConnectionHandler = { connection in
-                connection.receiveMessage { data, _, _, _ in
-                    defer { connection.cancel() }
-                    if let data,
-                        let line = String(data: data, encoding: .utf8),
-                        let announcement = UlanziAnnouncement.parse(line)
-                    {
-                        continuation.yield(announcement)
+            let stopped = Stopped()
+            continuation.onTermination = { _ in
+                stopped.stop()
+                close(fd)
+            }
+
+            DispatchQueue.global(qos: .utility).async {
+                // One raw allocation for the loop's whole life, written by
+                // nothing but recvfrom and read by nothing but the handoff
+                // below — no Swift object shares this memory, so no optimiser
+                // decision about some Array's header can touch the wire path.
+                let wire = UnsafeMutableRawBufferPointer.allocate(
+                    byteCount: Self.datagramLimit, alignment: 1
+                )
+                defer { wire.deallocate() }
+                while !stopped.isStopped {
+                    var source = sockaddr_in()
+                    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+                    let received = withUnsafeMutablePointer(to: &source) { address in
+                        address.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
+                            recvfrom(
+                                fd, wire.baseAddress, wire.count, 0,
+                                address, &length
+                            )
+                        }
                     }
+                    guard received > 0 else { continue }
+                    // The copy happens inside the handoff, on this thread,
+                    // before the loop turns: whatever the next datagram does
+                    // to the buffer cannot reach what was handed on.
+                    let sighting = Self.sighting(
+                        from: UnsafeRawBufferPointer(wire), count: received,
+                        host: Self.host(of: source)
+                    )
+                    guard let sighting else { continue }
+                    continuation.yield(sighting)
                 }
-                connection.start(queue: queue)
             }
-            listener.stateUpdateHandler = { state in
-                if case .failed = state { continuation.finish() }
-            }
-            continuation.onTermination = { _ in listener.cancel() }
-            listener.start(queue: queue)
         }
+    }
+
+    /// The loop's exit flag. A `close` does not reliably wake a `recvfrom`
+    /// blocked on the same file descriptor, so the receiver polls this on
+    /// every timeout instead of trusting the close to interrupt it.
+    private final class Stopped: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+
+        func stop() { lock.withLock { value = true } }
+        var isStopped: Bool { lock.withLock { value } }
     }
 }
 

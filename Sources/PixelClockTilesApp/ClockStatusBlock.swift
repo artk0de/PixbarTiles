@@ -87,13 +87,17 @@ enum DeviceStatusLine {
 /// of them is fixed by plugging the clock in. A panel that says "no devices
 /// found" to somebody who declined the permission prompt has sent them to look
 /// at their router.
+///
+/// No line names a model: the discovery is two ears — the AWTRIX browse and
+/// the TC002 broadcasts — and a line that claimed only AWTRIX read as a lie
+/// to everybody whose clock is a TC002.
 enum DiscoveryStatusLine {
     static func text(for state: DiscoveryState) -> String? {
         switch state {
         case .idle:
             nil
         case .searching:
-            "Looking for AWTRIX devices…"
+            "Looking for clocks…"
         case let .listed(devices):
             listing(devices)
         case let .unavailable(reason):
@@ -115,7 +119,7 @@ enum DiscoveryStatusLine {
     /// and it is not something discovery may pick on the user's behalf.
     private static func listing(_ devices: [DiscoveredDevice]) -> String {
         guard devices.isEmpty == false else {
-            return "No AWTRIX device is advertising itself on this network"
+            return "No clock is advertising itself on this network"
         }
         let names = devices.map(\.instanceName).joined(separator: ", ")
         guard devices.count > 1 else { return "Seen on the network: \(names)" }

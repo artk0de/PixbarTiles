@@ -100,7 +100,10 @@ struct MenuBarGlyph: View {
         // No rendering mode on purpose. The old glyph was a template because
         // it was drawn shapeless; this one is the user's own clock in the four
         // approved palettes, and a template is macOS discarding exactly that.
-        Image(nsImage: AppGlyph.menuBar(lit: model.isDeviceOnline))
+        Image(nsImage: AppGlyph.menuBar(for: AppGlyph.state(
+            hasNoClocks: model.hasNoClocks,
+            isDeviceOnline: model.isDeviceOnline
+        )))
     }
 }
 
@@ -173,14 +176,43 @@ enum AppGlyph {
         symbol: "square.grid.3x2"
     )
 
-    /// Which drawing a reachability answer selects.
+    /// The clock with a blank screen: no clock has ever been configured, so
+    /// there is nothing on it to show — no sliders, no sparkles, the frame
+    /// and feet whole.
+    static let emptyDrawing = Drawing(
+        darkResource: "userclock-dark-empty",
+        lightResource: "userclock-light-empty",
+        symbol: "rectangle"
+    )
+
+    /// Which of the three drawings the bar is showing.
+    enum State: Equatable {
+        case online, offline, empty
+    }
+
+    /// The state a glyph draws, from the two facts the model holds, decided
+    /// once rather than at each caller. With no clocks configured the
+    /// reachability question has nothing to be about — there is no clock to
+    /// be answering or not — so the empty screen wins over both answers.
+    static func state(hasNoClocks: Bool, isDeviceOnline: Bool) -> State {
+        if hasNoClocks { return .empty }
+        return isDeviceOnline ? .online : .offline
+    }
+
+    /// Which drawing a state selects.
     ///
-    /// A function of its own, and the ONLY place the two are told apart.
-    /// Inverting this line is the one edit that inverts the menu bar, so it is
-    /// the one thing a test has to be able to read — which is what it could not
-    /// do while the choice lived inside conditionals in the middle of an image
-    /// lookup.
-    static func drawing(lit: Bool) -> Drawing { lit ? litDrawing : unlitDrawing }
+    /// A function of its own, and the ONLY place the three are told apart.
+    /// Inverting this table is the one edit that inverts the menu bar, so it
+    /// is the one thing a test has to be able to read — which is what it could
+    /// not do while the choice lived inside conditionals in the middle of an
+    /// image lookup.
+    static func drawing(for state: State) -> Drawing {
+        switch state {
+        case .online: litDrawing
+        case .offline: unlitDrawing
+        case .empty: emptyDrawing
+        }
+    }
 
     /// The menu bar mark: an image whose drawing handler picks the variant for
     /// whichever bar is drawing it, so the dark menu bar gets the source as
@@ -198,8 +230,8 @@ enum AppGlyph {
     /// there is no bundle and this returns nil. The SF Symbol fallback is what
     /// keeps the unbundled binary usable rather than showing an empty slot, and
     /// it is what the tests exercise: they run outside a bundle too.
-    static func menuBar(lit: Bool) -> NSImage {
-        let chosen = drawing(lit: lit)
+    static func menuBar(for state: State) -> NSImage {
+        let chosen = drawing(for: state)
         let image = NSImage(size: menuBarSize, flipped: false) { rect in
             let appearance = BarAppearance.of(NSAppearance.currentDrawing())
             // Force-unwrapped deliberately. The symbol ships with macOS 14, so
@@ -225,7 +257,8 @@ enum AppGlyph {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: AppModel
-    /// Which AWTRIX clocks are advertising themselves on the network.
+    /// Which clocks are advertising themselves on the network — both models:
+    /// the AWTRIX browse merged with the TC002 broadcasts.
     ///
     /// Owned here rather than by `AppModel`, and that is a boundary rather than
     /// a filing decision. `AppModel` is the schedule, the device and what the
@@ -233,7 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// thing the quit budget waits on — `AppModel.teardown` — has no browse in
     /// it to wait for, and the schedule cannot be disturbed by a device
     /// appearing on the network because there is nothing between them.
-    let discovery: DeviceBrowser
+    let discovery: ClockDiscovery
     private let budget: QuitBudget
     /// Where the window's comings and goings are heard.
     ///
@@ -245,6 +278,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowWatchers: [any NSObjectProtocol] = []
     /// The subscription that hears whether the clock is answering.
     private var reachability: AnyCancellable?
+    /// The subscription that hears the Add clock sheet open and close.
+    private var sheetWatch: AnyCancellable?
     /// Whether the panel is on screen.
     ///
     /// Kept here rather than asked of AppKit, because the question is "has this
@@ -252,6 +287,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// is what the browse is allowed to depend on. `NSWindow.isKeyWindow` would
     /// answer about a window that may not exist yet.
     private var panelIsOpen = false
+    /// The two halves of the browsing rule, as the last event left them.
+    ///
+    /// Mirrors rather than reads: `@Published` delivers in `willSet`, so a
+    /// subscriber that read back off the model would see the previous answer.
+    /// Each subscription hands its own value down and stores it here; a read
+    /// at `panelDidOpen` time is current, because that call is not inside a
+    /// publisher's delivery.
+    private var clockIsAnswering = false
+    private var addClockSheetIsOpen = false
     /// Whether a browse has been asked for.
     ///
     /// What this delegate INTENDED, not what the browser is doing — the browser
@@ -278,7 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             through: .standard
         )
         self.model = .live()
-        self.discovery = DeviceBrowser()
+        self.discovery = ClockDiscovery(browse: DeviceBrowser())
         self.budget = QuitBudget()
         self.notifications = .default
         super.init()
@@ -292,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     init(
         model: AppModel,
         budget: QuitBudget,
-        discovery: DeviceBrowser,
+        discovery: ClockDiscovery,
         notifications: NotificationCenter = .default
     ) {
         self.model = model
@@ -332,18 +376,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// One place rather than a decision at each edge. The edges arrive in any
     /// order — a panel opened onto a clock that is already down, a clock that
-    /// comes back while the panel is open — and three call sites each making up
-    /// their own mind is three chances for them to disagree about whether a
-    /// browse is running.
+    /// comes back while the panel is open, the Add clock sheet opening onto a
+    /// clock that answers — and any more call sites each making up their own
+    /// mind is more chances for them to disagree about whether a browse is
+    /// running.
     ///
-    /// **What stops a browse:** the panel closing, or the clock answering.
-    /// **What starts one again:** the panel opening while the clock is not
-    /// answering. There is no state in which a browse outlives both, which is
-    /// what keeps an `NWBrowser` off the network for the whole of a working
-    /// installation's life. Nothing else is a bound worth having: an
-    /// unreachable-for-N-polls timer was the alternative and it is a browse
-    /// that runs for as long as the outage does, which for a clock left
-    /// unplugged over a holiday is the defect again with an extra counter.
+    /// **What starts a browse:** the panel opening while the clock is not
+    /// answering, or the Add clock sheet opening — the Clocks section is
+    /// where a clock seen advertising itself becomes a configured one, and a
+    /// sheet open on an installation whose clock answers perfectly well still
+    /// needs the list fed. **What stops one:** the panel closing, the clock
+    /// answering, or the sheet closing. There is no state in which a browse
+    /// outlives every reason for it, which is what keeps an `NWBrowser` off
+    /// the network for the whole of a working installation's life. Nothing
+    /// else is a bound worth having: an unreachable-for-N-polls timer was the
+    /// alternative and it is a browse that runs for as long as the outage
+    /// does, which for a clock left unplugged over a holiday is the defect
+    /// again with an extra counter.
     ///
     /// Two conditions and no third. "Is an address configured" is deliberately
     /// not asked: `AppModel.live()` falls back to `defaultDeviceHost` when the
@@ -351,21 +400,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// and a guess nothing answers at is already a clock that is not answering.
     /// A separate check would be a second way to say the same thing, with its
     /// own way of being wrong.
-    private func reconsiderBrowsing(clockIsAnswering: Bool) {
+    private func reconsiderBrowsing() {
         // A panel that is not on screen has nowhere to show what a browse
-        // found: the discovery row is drawn there and nowhere else.
-        let wanted = panelIsOpen && clockIsAnswering == false
+        // found: the discovery row and the Clocks section are both drawn
+        // there and nowhere else.
+        let wanted = panelIsOpen && (addClockSheetIsOpen || clockIsAnswering == false)
         guard wanted != isBrowsing else { return }
         isBrowsing = wanted
         if wanted { discovery.start() } else { discovery.stop() }
     }
 
     /// Hears every reachability answer, because one of them is a reason to stop
-    /// looking.
+    /// looking — and hears the sheet, because it is a reason to start.
     ///
-    /// The value is passed down rather than read back off the model: `@Published`
-    /// publishes in `willSet`, so at this point `model.isDeviceOnline` is still
-    /// the previous answer and the one that matters is the argument.
+    /// The values are passed down rather than read back off the model:
+    /// `@Published` publishes in `willSet`, so at this point the model's own
+    /// stored answers are still the previous ones and the ones that matter are
+    /// the arguments.
     ///
     /// `assumeIsolated` for the reason the window observer below uses it — the
     /// mutation that publishes this happens on the main actor, so delivery does
@@ -373,7 +424,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func watchWhetherTheClockAnswers() {
         reachability = model.$isDeviceOnline.sink { [weak self] answering in
             MainActor.assumeIsolated {
-                self?.reconsiderBrowsing(clockIsAnswering: answering)
+                self?.clockIsAnswering = answering
+                self?.reconsiderBrowsing()
+            }
+        }
+        sheetWatch = model.$settingsAreOpen.sink { [weak self] open in
+            MainActor.assumeIsolated {
+                self?.addClockSheetIsOpen = open
+                self?.reconsiderBrowsing()
             }
         }
     }
@@ -388,13 +446,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // surface left is exactly what did not change. Flagging the whole
         // content view is the cheap way to start every open from clean glass.
         panelWindow?.contentView?.needsDisplay = true
-        reconsiderBrowsing(clockIsAnswering: model.isDeviceOnline)
+        reconsiderBrowsing()
     }
 
     /// The panel has gone: whatever the browse was for, nobody can read it now.
     private func panelDidClose() {
         panelIsOpen = false
-        reconsiderBrowsing(clockIsAnswering: model.isDeviceOnline)
+        reconsiderBrowsing()
     }
 
     /// Told which window the panel was put on, by the panel itself.
@@ -418,15 +476,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `reconsiderBrowsing` compares against what it has already asked for.
     func panelMoved(to window: NSWindow?) {
         guard let window else { return }
-        // Composite the panel through one layer, and re-render that layer
-        // when the window's frame changes, rather than letting AppKit scale
-        // or keep the old buffer. The window's fitting size is re-imposed by
-        // SwiftUI on every layout pass (see `MenuPanel`'s width note), and a
-        // frame change on a view that is not layer-backed redraws only the
-        // dirty rects — which is how a resize or a surface switch leaves the
-        // previous frame's pixels standing next to the new ones.
-        window.contentView?.wantsLayer = true
-        window.contentView?.layerContentsRedrawPolicy = .duringViewResize
+        // Deliberately no touch of the window's layer setup here. A runtime
+        // `wantsLayer` on the panel's contentView took the whole window's
+        // buttons dead — Quit, the gear, every row control — because the
+        // SwiftUI host owns its layer and event routing through it, and an
+        // AppKit-forced layer under a `MenuBarExtra` window desynchronizes
+        // the two. The ghost defenses live in `panelDidOpen` instead: a full
+        // repaint per open, which changes no view structure at all.
         panelWindow = window
         panelDidOpen()
     }
@@ -535,12 +591,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         discovery.stop()
         panelIsOpen = false
         isBrowsing = false
+        clockIsAnswering = false
+        addClockSheetIsOpen = false
         // Both wires cut, for the same reason: what is left of this app is a
         // teardown, and neither a window taking key nor a last reading landing
         // is a reason to put a browse back on the network during it.
         for watcher in windowWatchers { notifications.removeObserver(watcher) }
         windowWatchers = []
         reachability = nil
+        sheetWatch = nil
         Task {
             _ = await budget.settle { await self.model.teardown() }
             reply(true)

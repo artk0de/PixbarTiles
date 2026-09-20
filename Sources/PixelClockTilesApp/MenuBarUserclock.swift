@@ -27,6 +27,13 @@ enum UserClock {
     ///     F frame        T top blocks and feet (shaded darker in the source)
     ///     M screen margin S screen LED area
     ///     b w p  blue, white, purple slider    * sparkle
+    ///
+    /// The transcription is the BOLD reading: at one point per art pixel the
+    /// approved art read wispy next to the SF Symbols beside it, so every
+    /// stroke that carried one pixel carries two — the slider stems are two
+    /// columns wide, and the bottom wall takes the same second row the top
+    /// bar has always had, with the feet one row lower for it. The canvas
+    /// absorbs both; nothing grew past 21x18.
     static let map = [
         "................**...",
         "................**.*.",
@@ -35,16 +42,16 @@ enum UserClock {
         "...FFFFFFFFFFFFFFF...",
         "..FFFFFFFFFFFFFFFFF..",
         ".FFMMMMMMMMMMMMMMMFF.",
-        ".FMSSSbSSSwSSSpSSSMF.",
-        ".FMSSSbSSSwSSSpSSSMF.",
-        ".FMSSSbSSSwSSpppSSMF.",
-        ".FMSSbbbSwwwSSpSSSMF.",
-        ".FMSSSbSSSwSSSpSSSMF.",
-        ".FMSSSbSSSwSSSpSSSMF.",
+        ".FMSSSbbSSwwSSppSSMF.",
+        ".FMSSSbbSSwwSSppSSMF.",
+        ".FMSSSbbSSwwSpppSSMF.",
+        ".FMSSbbbSwwwSSppSSMF.",
+        ".FMSSSbbSSwwSSppSSMF.",
+        ".FMSSSbbSSwwSSppSSMF.",
         ".FFMMMMMMMMMMMMMMMFF.",
         "..FFFFFFFFFFFFFFFFF..",
+        "..FFFFFFFFFFFFFFFFF..",
         "....TT.........TT....",
-        ".....................",
         ".....................",
     ]
     static let width = 21
@@ -87,6 +94,16 @@ enum UserClock {
         var out = palette
         for key: Character in ["b", "w", "p"] { out[key] = slider }
         out["*"] = .some(nil)
+        return out
+    }
+
+    /// The no-clock state keeps the clock and leaves its screen BLANK: no
+    /// sliders, no sparkles — nothing has ever been shown on it. The frame,
+    /// the shaded bevel and the feet stay, because the device is drawn, not
+    /// its contents.
+    static func empty(_ palette: Palette) -> Palette {
+        var out = palette
+        for key: Character in ["b", "w", "p", "*"] { out[key] = .some(nil) }
         return out
     }
 

@@ -1,3 +1,4 @@
+import PixelClockKit
 import SwiftUI
 
 /// One configured clock, as the Clocks section lists it.
@@ -9,16 +10,13 @@ struct ClockListEntry: Identifiable {
     let status: String
 }
 
-/// A clock the discovery has seen advertising itself, not yet configured.
-struct DiscoveredClock {
-    let name: String
-    let model: String
-    let address: String
-}
+// `DiscoveredClock` — a clock the discovery has seen advertising itself, not
+// yet configured — moved to the kit next to the discovery that publishes it
+// (`ClockDiscovery.found`); the list here is what that type's rows render.
 
 /// The Clocks section of the general settings: the clocks on the tree, the
-/// two ways to add one, and nothing from `AppModel` — the dual-probe and the
-/// UDP discovery behind it are the clock actions' task to wire.
+/// two ways to add one, and nothing from `AppModel` — the list comes in fed
+/// (`discovered`, both models) and the dual probe runs behind Add-by-address.
 ///
 /// Removal confirms inline and says what custody will do, because it is
 /// irreversible from this surface: every tile on the clock goes through its

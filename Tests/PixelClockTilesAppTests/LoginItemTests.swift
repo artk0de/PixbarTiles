@@ -279,10 +279,15 @@ private func reporting(_ state: LoginItemState) -> LoginItemModel {
 // then be a test that fails for a reason it is not about.
 @Test @MainActor func theCheckboxIsOnTheSettingsSurfaceRatherThanOnlyInItsOwnSection() {
     let registered = buttonStates(
-        in: laidOut(SettingsSheet(model: testModel(), loginItem: reporting(.enabled)))
+        in: laidOut(SettingsSheet(
+            model: testModel(), discovery: inertDiscovery(), loginItem: reporting(.enabled)
+        ))
     )
     let not = buttonStates(
-        in: laidOut(SettingsSheet(model: testModel(), loginItem: reporting(.notRegistered)))
+        in: laidOut(SettingsSheet(
+            model: testModel(), discovery: inertDiscovery(),
+            loginItem: reporting(.notRegistered)
+        ))
     )
 
     #expect(registered.isEmpty == false)

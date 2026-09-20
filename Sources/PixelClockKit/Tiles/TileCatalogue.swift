@@ -28,12 +28,17 @@ public struct TileCandidate: Equatable, Sendable {
         self.isAudible = isAudible
     }
 
-    /// A scene connector. Every one has an AWTRIX face; the TC002 face arrives
-    /// with Phase 3b's `UlanziFace`, and inserts `.ulanziTC002` there.
+    /// A scene connector. The faces it HAS are the models it supports, and
+    /// nothing else says so — the AWTRIX face is required, and a connector
+    /// carrying a TC002 face carries `.ulanziTC002` with it.
     public init(_ connector: some Connector) {
+        var models: Set<ClockModel> = [.awtrix3]
+        if connector.ulanziFace != nil {
+            models.insert(.ulanziTC002)
+        }
         self.init(
             connectorId: connector.id,
-            models: [.awtrix3],
+            models: models,
             instancing: .single,
             isAudible: connector.isAudible
         )

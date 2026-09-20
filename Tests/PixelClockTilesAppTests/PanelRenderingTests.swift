@@ -159,17 +159,18 @@ private func renderedGlyph(for model: AppModel) -> Data? {
 /// The same, for a drawing chosen by hand rather than by a device state.
 ///
 /// The reference half of the direction assertion. `MenuBarGlyph`'s body is
-/// `Image(nsImage:).renderingMode(.template)`, so hosting that expression in
-/// the same frame renders the same bytes — measured, and relied on below.
+/// `Image(nsImage:)` — the glyph carries its own colours, so there is no
+/// rendering mode to add — and hosting that expression in the same frame
+/// renders the same bytes.
 @MainActor
 private func renderedGlyph(lit: Bool) -> Data? {
-    renderedInTheBar(Image(nsImage: AppGlyph.menuBar(lit: lit)).renderingMode(.template))
+    renderedInTheBar(Image(nsImage: AppGlyph.menuBar(lit: lit)))
 }
 
 @MainActor
 private func renderedInTheBar(_ view: some View) -> Data? {
     let host = NSHostingView(rootView: view)
-    host.frame = NSRect(x: 0, y: 0, width: 30, height: 18)
+    host.frame = NSRect(x: 0, y: 0, width: 21, height: 18)
     host.layoutSubtreeIfNeeded()
     guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
     host.cacheDisplay(in: host.bounds, to: target)

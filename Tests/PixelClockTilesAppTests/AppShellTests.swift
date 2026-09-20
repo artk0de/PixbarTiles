@@ -6,22 +6,23 @@ import Testing
 
 // MARK: - The menu bar glyph
 
-// 30x18, not square. The bar caps an item's height and not its width, the
-// device is wide, and `Scripts/MakeIcon.swift` emits the glyph at exactly this
-// aspect — a size set here that disagrees is macOS stretching the art.
-@Test @MainActor func theMenuBarGlyphIsATemplateAtTheAspectTheGeneratorEmits() {
+// 21x18: one art pixel of the user's clock is one point, and that is the
+// canvas `Scripts/MakeIcon.swift` emits at every scale. A size set here that
+// disagrees is macOS stretching the art. And not a template — a template is
+// macOS DISCARDING the colour, and the four approved palettes are what the
+// glyph is.
+@Test @MainActor func theMenuBarGlyphIsAtItsPointsPerArtPixelSizeAndKeepsItsColours() {
     let glyph = AppGlyph.menuBar(lit: true)
 
-    #expect(glyph.size == NSSize(width: 30, height: 18))
-    // Template: macOS discards the colour and recolours the shape for light,
-    // dark and the highlighted state. Without this the glyph stays black on a
-    // dark menu bar.
-    #expect(glyph.isTemplate)
+    #expect(glyph.size == NSSize(width: 21, height: 18))
+    #expect(glyph.isTemplate == false)
 }
 
 @Test @MainActor func theOfflineGlyphIsDrawnToTheSameSize() {
-    #expect(AppGlyph.menuBar(lit: false).size == NSSize(width: 30, height: 18))
-    #expect(AppGlyph.menuBar(lit: false).isTemplate)
+    let glyph = AppGlyph.menuBar(lit: false)
+
+    #expect(glyph.size == AppGlyph.menuBarSize)
+    #expect(glyph.isTemplate == false)
 }
 
 // Online and offline are two drawings, not one drawing plus a badge — a badge
@@ -30,7 +31,7 @@ import Testing
 //
 // What it does NOT pin is which of the two means which, and that is not a
 // nuance: `lit != unlit` is satisfied by an inverted mapping exactly as well as
-// by a correct one. The two tests below are the direction.
+// by a correct one. The mapping test below is the direction.
 @Test @MainActor func onlineAndOfflineAreTwoDifferentGlyphs() {
     let lit = AppGlyph.menuBar(lit: true).tiffRepresentation
     let unlit = AppGlyph.menuBar(lit: false).tiffRepresentation
@@ -39,56 +40,56 @@ import Testing
     #expect(lit != unlit)
 }
 
-// A reachable clock is the panel with its pixels lit; an unreachable one is the
-// hollow panel. Named here rather than inferred from a comparison, because the
-// comparison above stays green with the two swapped — measured, on the shipped
-// tree, with all 653 tests passing while the menu bar showed a lit AWTRIX panel
-// for a dead clock.
-@Test @MainActor func aReachableClockSelectsTheLitPanelAndAnUnreachableOneTheHollowOne() {
+// A reachable clock selects the online drawing, an unreachable one the offline
+// drawing — and each drawing carries BOTH appearances, because the shipped
+// PNGs are four, not two. Inverting any one cell of this table puts, say, the
+// dark bar's offline art on an online light bar, which no comparison of two
+// whole images would catch. The names are written here and nowhere else in the
+// app, which is what makes the table assertable at all.
+@Test func aReachableClockSelectsTheOnlineDrawingAndAnUnreachableOneTheOfflineOne() {
     #expect(
         AppGlyph.drawing(lit: true)
-            == AppGlyph.Drawing(resource: "MenuBarIcon", symbol: "square.grid.3x2.fill")
+            == AppGlyph.Drawing(
+                darkResource: "userclock-dark-online",
+                lightResource: "userclock-light-online",
+                symbol: "square.grid.3x2.fill"
+            )
     )
     #expect(
         AppGlyph.drawing(lit: false)
-            == AppGlyph.Drawing(resource: "MenuBarIconOffline", symbol: "square.grid.3x2")
+            == AppGlyph.Drawing(
+                darkResource: "userclock-dark-offline",
+                lightResource: "userclock-light-offline",
+                symbol: "square.grid.3x2"
+            )
     )
 }
 
-// And the image handed back is drawn from the drawing that table names, or the
-// table is a decoration nothing reads. Outside a bundle the fallback symbol is
-// what gets drawn, so the reference is built from the symbol name THIS test
-// states and compared pixel for pixel — the same technique the panel tests use,
-// aimed at identity rather than at difference.
-@Test @MainActor func theGlyphIsDrawnFromTheDrawingItsStateNames() {
-    #expect(AppGlyph.menuBar(lit: true).tiffRepresentation == glyphDrawnFrom("square.grid.3x2.fill"))
-    #expect(AppGlyph.menuBar(lit: false).tiffRepresentation == glyphDrawnFrom("square.grid.3x2"))
-    // Or two nils would satisfy both lines above without anything being drawn.
-    #expect(glyphDrawnFrom("square.grid.3x2.fill") != nil)
+// And a drawing hands the handler the variant drawn FOR the bar being drawn —
+// the split `resource(for:)` makes is the one place appearance and state meet.
+@Test func aDrawingNamesTheVariantForTheBarItIsDrawnOn() {
+    let drawing = AppGlyph.Drawing(darkResource: "d", lightResource: "l", symbol: "s")
+
+    #expect(drawing.resource(for: .dark) == "d")
+    #expect(drawing.resource(for: .light) == "l")
 }
 
-/// An SF Symbol put through the same preparation `menuBar(lit:)` applies, as
-/// bytes. Two separately built images of one symbol render identically — a
-/// determinism control this depends on, and the reason it is safe to compare
-/// against a reference rather than against the other state.
-@MainActor
-private func glyphDrawnFrom(_ symbol: String) -> Data? {
-    AppGlyph.prepare(NSImage(systemSymbolName: symbol, accessibilityDescription: "PixelClockTiles")!)
-        .tiffRepresentation
+// The variant is chosen from the appearance AppKit is drawing WITH, not the
+// app's or the system's: a status item follows the menu bar, which on recent
+// macOS can follow the wallpaper and differ from both. `bestMatch` against the
+// two concrete names IS the resolution — a light bar answers aqua, a dark one
+// darkAqua.
+@Test @MainActor func theVariantFollowsTheAppearanceItIsDrawnUnder() {
+    #expect(AppGlyph.BarAppearance.of(NSAppearance(named: .aqua)!) == .light)
+    #expect(AppGlyph.BarAppearance.of(NSAppearance(named: .darkAqua)!) == .dark)
 }
 
-// The bundled case, which nothing running outside a bundle can otherwise reach.
-// A loose PNG in `Contents/Resources` arrives with `isTemplate` false; the SF
-// Symbol the other tests fall back to arrives with it true, so only an image
-// that starts out plain can tell whether the glyph is made a template at all.
-@Test @MainActor func anImageLoadedFromTheBundleIsMadeATemplateAtTheGlyphsSize() {
-    let loaded = NSImage(size: NSSize(width: 90, height: 54))
-    #expect(loaded.isTemplate == false)
-
-    let glyph = AppGlyph.prepare(loaded)
-
-    #expect(glyph.isTemplate)
-    #expect(glyph.size == AppGlyph.menuBarSize)
+// The image carries no cached rendering. A status item whose bar flips
+// appearance — theme or wallpaper — is only redrawn from the handler if
+// nothing stands between the redraw and it; a cached bitmap would keep the
+// previous bar's variant on screen until relaunch.
+@Test @MainActor func theGlyphIsNeverCachedSoALiveAppearanceChangeRedrawsIt() {
+    #expect(AppGlyph.menuBar(lit: true).cacheMode == .never)
 }
 
 // MARK: - Where this app writes

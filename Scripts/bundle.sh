@@ -35,15 +35,20 @@ cp -R "$BIN_PATH/PixelClockTiles_PixelClockKit.bundle" "$APP/Contents/Resources/
 
 # The artwork is generated, never committed: build/ is git-ignored, so the only
 # thing under version control is the code that draws it. Deterministic by
-# construction — every lit pixel comes from a hash of its own coordinates — so a
-# diff in the art means someone changed the design.
-swift Scripts/MakeIcon.swift
+# construction — two runs are byte-identical — so a diff in the art means
+# someone changed the design.
+#
+# The generator compiles the app target's MenuBarUserclock.swift alongside
+# itself: the map is that file's, and this is what keeps the shipped PNGs and
+# the tested map one thing.
+swiftc Sources/PixelClockTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift -o build/icon-maker
+build/icon-maker
 iconutil -c icns build/icon/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
-# The menu bar glyph, at 1x/2x/3x and in both device states. Loose PNGs rather
-# than an asset catalogue: `NSImage(named:)` finds them in Resources, and
-# compiling a catalogue would drag actool into a package that has no Xcode
-# project.
-cp build/icon/MenuBarIcon*.png "$APP/Contents/Resources/"
+# The menu bar glyph, at 1x/2x/3x, in both appearances and both device states.
+# Loose PNGs rather than an asset catalogue: `NSImage(named:)` finds them in
+# Resources, and compiling a catalogue would drag actool into a package that has
+# no Xcode project.
+cp build/icon/userclock-*.png "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

@@ -43,10 +43,21 @@ import Testing
     ))
 }
 
+// The z.ai figure is ambient and silent, exactly like the weather's reading:
+// drawn into the device's own loop, nothing to trigger, nothing to witness.
+@Test func aNewZaiTileRunsEveryTenMinutesThroughEverything() {
+    #expect(TileDefaults.zai == TilePolicy(
+        isPaused: false,
+        refreshSeconds: 600,
+        focus: FocusRule(silencedIn: [], whenUnknown: .run),
+        window: .always
+    ))
+}
+
 // Every default is already on the scale, so no new tile starts at a refresh
 // the slider cannot show.
 @Test func everyDefaultRefreshIsAStepOfTheScale() {
-    for policy in [TileDefaults.weather, TileDefaults.claude, TileDefaults.anecdotes, TileDefaults.vpn] {
+    for policy in [TileDefaults.weather, TileDefaults.claude, TileDefaults.anecdotes, TileDefaults.vpn, TileDefaults.zai] {
         #expect(policy.refresh == TimeInterval(policy.refreshSeconds))
     }
 }

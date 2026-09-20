@@ -29,4 +29,10 @@ public enum TileDefaults {
 
     /// Event-driven: the sixty seconds are the recheck between events.
     public static let vpn = TilePolicy(refreshSeconds: 60)
+
+    /// Ambient and silent like the weather: the z.ai figure is drawn into the
+    /// device's own loop and says nothing, so nothing about a Focus or the
+    /// hour applies. Ten minutes is the poll the design's connector row asks
+    /// for — a plan's usage moves slowly, and the route is a dashboard one.
+    public static let zai = TilePolicy(refreshSeconds: 600)
 }

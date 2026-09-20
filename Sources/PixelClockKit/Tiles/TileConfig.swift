@@ -14,6 +14,7 @@ import Foundation
 public enum TileConfig: Equatable, Sendable {
     case weather(Coordinates)
     case vpn(VPNTileConfig)
+    case zai(ZaiTileConfig)
 
     /// The weather tile's place, or nil for any other tile.
     public var location: Coordinates? {
@@ -26,11 +27,18 @@ public enum TileConfig: Equatable, Sendable {
         guard case let .vpn(lamp) = self else { return nil }
         return lamp
     }
+
+    /// The z.ai tile's key handle, or nil for any other tile. A handle: the
+    /// key itself lives in the login keychain and is never stored here.
+    public var key: ZaiTileConfig? {
+        guard case let .zai(handle) = self else { return nil }
+        return handle
+    }
 }
 
 extension TileConfig: Codable {
     private enum Key: String, CodingKey {
-        case weather, vpn
+        case weather, vpn, zai
     }
 
     public init(from decoder: any Decoder) throws {
@@ -48,6 +56,8 @@ extension TileConfig: Codable {
             self = .weather(try container.decode(Coordinates.self, forKey: .weather))
         case .vpn:
             self = .vpn(try container.decode(VPNTileConfig.self, forKey: .vpn))
+        case .zai:
+            self = .zai(try container.decode(ZaiTileConfig.self, forKey: .zai))
         }
     }
 
@@ -58,6 +68,8 @@ extension TileConfig: Codable {
             try container.encode(place, forKey: .weather)
         case let .vpn(lamp):
             try container.encode(lamp, forKey: .vpn)
+        case let .zai(handle):
+            try container.encode(handle, forKey: .zai)
         }
     }
 }

@@ -16,6 +16,7 @@ private let moscow = Coordinates(latitude: 55.7558, longitude: 37.6173)
 private let pritunl = VPNTileConfig(
     vpn: "pritunl", slot: .topRight, upColour: "#90EE90", whenDown: .blink("#FF0000")
 )
+private let zaiHandle = ZaiTileConfig(keyAccount: "8C0D2E7A-6A4B-4E5C-9D1F-2B3A4C5D6E7F.zai")
 
 @Test func aTileConfigIsStoredUnderTheConnectorItBelongsTo() throws {
     #expect(try json(TileConfig.weather(moscow)) == #"{"weather":{"latitude":55.7558,"longitude":37.6173}}"#)
@@ -23,10 +24,13 @@ private let pritunl = VPNTileConfig(
     {"vpn":{"slot":"top","upColour":"#90EE90","vpn":"pritunl",\
     "whenDown":{"colour":"#FF0000","kind":"blink"}}}
     """)
+    #expect(try json(TileConfig.zai(zaiHandle)) == """
+    {"zai":{"keyAccount":"8C0D2E7A-6A4B-4E5C-9D1F-2B3A4C5D6E7F.zai"}}
+    """)
 }
 
 @Test func aTileConfigSurvivesARoundTrip() throws {
-    for config in [TileConfig.weather(moscow), .vpn(pritunl)] {
+    for config in [TileConfig.weather(moscow), .vpn(pritunl), .zai(zaiHandle)] {
         #expect(try decoded(TileConfig.self, try json(config)) == config)
     }
 }
@@ -42,6 +46,9 @@ private let pritunl = VPNTileConfig(
     #expect(TileConfig.weather(moscow).lamp == nil)
     #expect(TileConfig.vpn(pritunl).lamp == pritunl)
     #expect(TileConfig.vpn(pritunl).location == nil)
+    #expect(TileConfig.zai(zaiHandle).key == zaiHandle)
+    #expect(TileConfig.zai(zaiHandle).lamp == nil)
+    #expect(TileConfig.vpn(pritunl).key == nil)
 }
 
 // Phase 1's records carry no config, and they still decode.

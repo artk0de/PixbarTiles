@@ -105,16 +105,16 @@ enum ClockModel: Sendable { case awtrix3, ulanziTC002 }
 
 protocol Connector: Sendable {
     associatedtype Reading: Sendable
-    associatedtype Config: Codable & Sendable   // per-tile settings; Void-like for most
     var id: String { get }
     var displayName: String { get }
     var trigger: Trigger { get }            // .every(interval) | .events(stream, recheck: interval)
     var narrator: Voice { get }
     var isAudible: Bool { get }
     var instancing: Instancing { get }      // .single | .perKey
-    func read(config: Config) async throws -> Reading
-    var awtrixFace: AwtrixFace<Reading> { get }    // Reading -> AwtrixScene
-    var ulanziFace: UlanziFace<Reading>? { get }   // Reading -> UlanziScene
+    var defaultPolicy: TilePolicy { get }   // what a new tile of this connector starts from
+    func read() async throws -> Reading
+    var awtrixFace: AwtrixFace<Reading> { get }    // Reading -> AwtrixDelivery
+    var ulanziFace: UlanziFace<Reading>? { get }   // Reading -> UlanziScene, nil by default
 }
 ```
 
@@ -123,8 +123,17 @@ protocol Connector: Sendable {
 - `awtrixFace` is required while every connector has one; it becomes optional
   in the phase that adds the first connector without one. `ulanziFace` is
   optional, with a `nil` default, from phase 3.
-- `Config` arrives in phase 4 with its first reader, the weather tile's
-  location. Until then a connector has no per-tile settings.
+- There is no `Config` associated type. A tile's settings are
+  `TileRecord.config: TileConfig?`, a closed enum (`.weather(Coordinates)`,
+  `.vpn(VPNTileConfig)`), and they reach a connector through the connector each
+  clock's session is built with — the weather connector of a clock reads its
+  place from that clock's weather tile, closed over at session build.
+- The VPN is not a `Connector`. A lamp is not a scene, so it cannot carry the
+  required `awtrixFace` honestly; it is a lamp connector of its own
+  (`VPNConnector`, `read(config:)` and a lamp face), offered on AWTRIX clocks
+  as `.perKey`, written through the clock's indicator custody off the delivery
+  chain. `awtrixFace` therefore stays required, and the "becomes optional when
+  the first connector without one lands" clause is not triggered by it.
 - A face is a pure function. It never reaches a network or a device, which is
   what lets every drawing be tested against a value.
 - `isAmbient` is removed. It existed to hide rows the user had not asked for;
@@ -163,39 +172,48 @@ the connector when the tile is created, then belong to the tile.
 | --- | --- |
 | `isPaused` | Stop without losing the settings. Removing a tile is `✕`, and is a different act |
 | `refresh` | Seconds between runs. Floor 30 s for every connector. For an event-driven tile it is the recheck period between events |
-| `focus.silencedIn: Set<FocusState>` | The Focuses the tile does not work in, edited as "works in" checkboxes |
-| `focus.whenUnknown: .run \| .hold` | What to do under a Focus outside the four, or one that cannot be named |
+| `focus.silencedIn: Set<MacFocus>` | The Focuses the tile does not work in, edited as "works in" checkboxes |
+| `focus.whenUnknown: .run \| .hold` | What to do under a Focus outside the four. It alone decides the Focus that cannot be named; a `.unknown` in `silencedIn` is inert |
 | `window: .always \| .quiet(HourWindow) \| .active(HourWindow)` | Silent hours, or working hours, or neither |
 
 The refresh scale: 30 s, 1, 2, 3 min, then 5–60 min in steps of 5, then 2–12 h.
-It is **stored in seconds** and snapped to the nearest scale value when read.
+It is **stored in seconds** and snapped to the nearest scale value when read;
+a tie — only a value nobody chose on the slider can tie — takes the longer
+step.
 Today the stored value is an index into the scale; putting 30 s in front of it
 would move every stored interval, so migration goes index → duration →
 seconds.
 
-`FocusState` is closed: `.none`, `.work`, `.personal`, `.doNotDisturb`,
-`.sleep`, `.unknown`. The four built-in modes are matched on identifiers macOS
-ships and users cannot edit — `com.apple.focus.work`, `com.apple.focus.personal`,
+`MacFocus` is closed: `.noFocus`, `.work`, `.personal`, `.doNotDisturb`,
+`.sleep`, `.unknown`. It is `MacFocus` rather than the spec's first choice
+`FocusState` because SwiftUI declares `FocusState`, and the collision breaks
+every Phase 5 view file that imports both. The idle case is `.noFocus` rather
+than `.none` because `if last == .none` on an optional reads as `Optional`'s
+own case and compiles to the wrong thing. The four built-in modes are matched
+on identifiers macOS ships and users cannot edit — `com.apple.focus.work`,
+`com.apple.focus.personal`,
 `com.apple.donotdisturb.mode.default`, `com.apple.sleep.sleep-mode`.
-`ModeConfigurations.json` is not read. How the state is resolved, keeping
-`FocusGate`'s rules:
+`ModeConfigurations.json` is not read. How the state is resolved, keeping the
+app-wide gate's rules:
 
-| What macOS says | FocusState |
+| What macOS says | MacFocus |
 | --- | --- |
-| `INFocusStatusCenter` not authorized | `.none` — the window alone decides, as `QuietRule.quietHours` does today |
+| `INFocusStatusCenter` not authorized | `.noFocus` — the hours alone decide, as the app-wide window did |
 | Authorized, a mode read from `Assertions.json` | the matching case, or `.unknown` for any other identifier |
-| Authorized, no mode readable, `isFocused == false` | `.none` |
+| Authorized, no mode readable, `isFocused == false` | `.noFocus` |
 | Authorized, no mode readable, `isFocused == true` | `.unknown` |
 
-`HourWindow` is today's `QuietWindow` without the direction: whole hours,
-wrapping midnight, zero length meaning no window. `.quiet` silences inside it;
-`.active` silences outside it.
+`HourWindow` is the app-wide quiet window without the direction: whole hours,
+wrapping midnight. A zero-length window restricts nothing, for `.quiet` and
+`.active` alike — read as "no working hours", `.active` of zero length is a
+tile that never runs again because a picker landed on its own start. `.quiet`
+silences inside it; `.active` silences outside it.
 
 Evaluation order stays what `FocusGate.silence` fixed: the window first, then
 the Focus. The reason the first answer names the window is load-bearing today —
 the nightly refresh reads it to decide whether it may spend — and it stays so.
 
-Every policy is a function of (FocusState, hour): six states by 24 hours, a
+Every policy is a function of (MacFocus, hour): six states by 24 hours, a
 144-cell boolean grid. That makes two checks exact rather than heuristic: the
 lamp-overlap refusal (below) and the tests, which enumerate the grid.
 
@@ -229,7 +247,11 @@ disabled entry.
 ### ClockSession — one per clock
 
 Replaces `ConnectorHost`. It holds the model's adapter, a delivery chain,
-backoff counts by `TileKey`, the model's custody, and the clock's health.
+the model's custody, and the clock's health. Backoff stays by `TileKey` in the
+spec's sense — a session is one clock, so inside it a scene connector's id
+already is the tile key — and the delivery chain stays keyed by connector id
+rather than re-keyed: renaming it would move every session test for no change
+in behaviour.
 
 `DeliveryChain` is `ConnectorHost` with the model taken out: `queued`,
 `classify`, the outcome recording and `nextDelay`, with every cancellation rule
@@ -501,11 +523,11 @@ borrowed overlay, a loan already given back.
 | `deviceHost`; absent, `192.168.1.72`, the address the launch used | one AWTRIX clock named "Clock" | `migration.clocks` · 1 |
 | `deviceUID` | that clock's `hardwareIdentity` | `migration.clocks` · 1 |
 | `connector.<id>` for every registered connector; absent or unreadable, the connector's defaults | a tile on that clock; `isEnabled` → `!isPaused`; interval index → duration → seconds; `lastDeliveredAt` kept | `migration.tiles` · 1 |
-| `quietStartHour` / `quietEndHour` | `window: .quiet(…)` on the audible tiles | 4 |
-| `weatherLocation` | the weather tile's `config` | 4 |
-| the always-on VPN lamps | two VPN tiles, both `whenUnknown: hold` (today a Focus that cannot be named leaves both lamps dark): Pritunl on the top lamp, working in Work only, `#90EE90`, down → blink `#FF0000`; Amnezia on the bottom lamp, working in Work and Personal, `#A855F7`, down → off | 4 |
-| the borrowed overlay | `borrowedOverlay.<clockId>` of that clock | the phase that keys custody by clock |
-| `batteryHistory` | `batteryHistory.<uid>` | the phase that keys health by clock |
+| `quietStartHour` / `quietEndHour` | `window: .quiet(…)` on the audible tiles; hours never written are the 23:00–08:00 the app kept | `migration.quietHours` · 4 |
+| `weatherLocation` | the weather tile's `config` | `migration.weatherLocation` · 4 |
+| the always-on VPN lamps | two VPN tiles, both `whenUnknown: hold` (today a Focus that cannot be named leaves both lamps dark): Pritunl on the top lamp, working in Work only, `#90EE90`, down → blink `#FF0000`; Amnezia on the bottom lamp, working in Work and Personal, `#A855F7`, down → off | `migration.vpnTiles` · 4 — on the first clock, and not at all when it is a TC002: a TC002 has no lamps |
+| the borrowed overlay | `borrowedOverlay.<clockId>` of that clock | `migration.borrowedOverlay` · 4 — an AWTRIX first clock only; a TC002 now answering at the old address inherits no loan |
+| `batteryHistory` | `batteryHistory.<uid>` | `migration.batteryHistory` · 4 |
 
 Behaviour that changes on purpose, so it is not reported as a regression:
 

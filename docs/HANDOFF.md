@@ -869,3 +869,45 @@ phase 4's multi-clock work, not here.
    payload per image element — the one wire detail no phase-3 capture pins.
    Before any face ships a positioned or timed image, pin the element spelling
    (durations, frame counts) against a real exchange.
+
+## Added by PixelClockTiles phase 4
+
+Several clocks, one policy per tile. Every tile — including the two VPN tiles
+— is held by its own `TilePolicy` (paused, then its hours, then its Focus
+rule); the app-wide `FocusGate` and the quiet-hours pickers are gone. Health
+is one `ClockHealth` per clock, so a clock that stops answering is counted and
+looked for on its own and holds only its own tiles. Custody, battery history
+and the schedule are per clock. Five migration steps moved the old app-wide
+rows onto the records they belong to (`migration.weatherLocation`,
+`migration.batteryHistory`, `migration.borrowedOverlay`, `migration.quietHours`,
+`migration.vpnTiles`), each marker written last and each old key left in place.
+
+What only a person at the hardware can settle:
+
+1. **Two VPN tiles sharing a lamp.** Move Amnezia onto the top lamp, working
+   in Personal only. Switching Work → Personal goes green → purple with no
+   dark frame in between — the lamp handover is resolved per clock before
+   anything is written.
+2. **Focus naming.** With Full Disk Access on a signed build, Work and
+   Personal are told apart by `com.apple.focus.work` and
+   `com.apple.focus.personal`: the migrated Pritunl lamp lights in Work only.
+   Every tile's Focus rule depends on this read now.
+3. **Upgrade from Phase 3.** The weather place, the quiet hours (on the
+   audible tiles now) and both VPN corners survive the upgrade. On the desk's
+   TC002, no VPN tiles appear and no old overlay is restored.
+4. **Two AWTRIX clocks, one unplugged.** The first keeps delivering on its
+   own cadence, and the glyph stays online while the first clock is selected.
+
+What later tasks owe:
+
+- Phase 5 owes the UI named in the contact-points table: the clock switcher,
+  tile rows, the Add tile menu (over `AppModel.availability(of:on:)`),
+  the tile detail (over `saveTile`/`removeTile`) and the Clocks section.
+- A VPN tile's recheck below 60 s needs a loop of its own; phase 4 reads it as
+  the poll's minute.
+- The uploaded-icon record (`UserDefaultsUploadedIconStore`, one key) does not
+  say which clock an icon went to, and "Remove installed icons" acts on one
+  device. With two AWTRIX clocks it needs keying per clock, like the overlay
+  loan. No phase owns it yet.
+- `ClaudeUsageConnector.showsNow` and `Failure.outOfFocus` were removed in
+  phase 4 (lane C had already landed), so nothing is owed there.

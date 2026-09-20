@@ -1396,6 +1396,17 @@ final class AppModel: ObservableObject {
     /// not trusted — this firmware answers the AWTRIX stats path with a
     /// redirect — so the model is whichever body DECODES.
     func addClock(address raw: String) async -> ClockSaveOutcome {
+        let outcome = await self.addOutcome(at: raw)
+        // Logged where the outcome is known rather than at the button: a
+        // refusal the sheet did not show (it closed, the surface switched) is
+        // still diagnosable from the system log.
+        AppLog.clocks.notice(
+            "add by address: \(self.outcomeLine(outcome, name: raw), privacy: .public)"
+        )
+        return outcome
+    }
+
+    private func addOutcome(at raw: String) async -> ClockSaveOutcome {
         guard let host = DeviceAddress.host(from: raw) else {
             return .refused("not an address: \(raw)")
         }
@@ -1420,9 +1431,27 @@ final class AppModel: ObservableObject {
         let model: ClockModel = name.contains("tc002") || name.contains("ulanzi")
             ? .ulanziTC002 : .awtrix3
         if clockStore.all().contains(where: { $0.address == discovered.address }) {
-            return .refused("already configured at \(discovered.address)")
+            let outcome = ClockSaveOutcome.refused("already configured at \(discovered.address)")
+            AppLog.clocks.notice(
+                "add from discovery: \(self.outcomeLine(outcome, name: discovered.name), privacy: .public)"
+            )
+            return outcome
         }
-        return store(ClockRecord(name: discovered.name, model: model, address: discovered.address))
+        let outcome = store(
+            ClockRecord(name: discovered.name, model: model, address: discovered.address)
+        )
+        AppLog.clocks.notice(
+            "add from discovery: \(self.outcomeLine(outcome, name: discovered.name), privacy: .public)"
+        )
+        return outcome
+    }
+
+    /// The sentence the log carries for an outcome — the same words the
+    /// Clocks section says, minus the name an addition already carries.
+    private func outcomeLine(
+        _ outcome: ClockSaveOutcome, name: String
+    ) -> String {
+        ClockAddOutcomeLine.title(for: outcome, added: name)
     }
 
     /// A rename writes through the store and touches nothing else.

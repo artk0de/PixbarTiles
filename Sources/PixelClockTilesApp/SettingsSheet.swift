@@ -15,6 +15,11 @@ struct SettingsSheet: View {
     /// and the Clocks section below is where its list is read.
     @ObservedObject var discovery: ClockDiscovery
 
+    /// What the last Add answered, said under the Clocks section. Cleared the
+    /// moment the next attempt starts, so a line never outlives the attempt
+    /// that earned it.
+    @State private var addOutcome: String?
+
     /// Handed down rather than built in `LoginItemSettings`'s own default, so a
     /// test can prove the section is on THIS surface without touching the real
     /// login-item database.
@@ -54,11 +59,26 @@ struct SettingsSheet: View {
                     )
                 },
                 discovered: discovery.found,
+                outcome: addOutcome,
                 onRename: { model.renameClock($0, to: $1) },
                 onRemove: { model.removeClock($0) },
-                onAddDiscovered: { _ = model.addClock(from: $0) },
+                onAddDiscovered: { discovered in
+                    let outcome = model.addClock(from: discovered)
+                    addOutcome = ClockAddOutcomeLine.title(
+                        for: outcome, added: discovered.name
+                    )
+                },
                 onAddByAddress: { address in
-                    Task { _ = await model.addClock(address: address) }
+                    // Cleared at the press rather than at the answer: the
+                    // probe is a round trip, and the old line has nothing to
+                    // say while it is being asked again.
+                    addOutcome = nil
+                    Task {
+                        let outcome = await model.addClock(address: address)
+                        addOutcome = ClockAddOutcomeLine.title(
+                            for: outcome, added: address
+                        )
+                    }
                 }
             )
             Divider()

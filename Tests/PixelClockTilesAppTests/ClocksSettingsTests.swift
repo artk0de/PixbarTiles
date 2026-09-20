@@ -40,10 +40,12 @@ private func entry(
     private func section(
         entries: [ClockListEntry] = [entry()],
         discovered: [DiscoveredClock] = [],
-        confirming: Bool = false
+        confirming: Bool = false,
+        outcome: String? = nil
     ) -> ClocksSettings {
         ClocksSettings(
             entries: entries, discovered: discovered, confirming: confirming,
+            outcome: outcome,
             onRename: { _, _ in }, onRemove: { _ in },
             onAddDiscovered: { _ in }, onAddByAddress: { _ in }
         )
@@ -88,5 +90,43 @@ private func entry(
         ])))
         // And a configured clock's row is what the empty state lacks.
         #expect(empty != drawn(section(entries: [entry()], discovered: [])))
+    }
+}
+
+@MainActor @Suite struct ClockAddOutcomeTests {
+    private func section(outcome: String?) -> ClocksSettings {
+        ClocksSettings(
+            entries: [entry()], discovered: [],
+            outcome: outcome,
+            onRename: { _, _ in }, onRemove: { _ in },
+            onAddDiscovered: { _ in }, onAddByAddress: { _ in }
+        )
+    }
+
+    // The wording lives in one plain type, because two add paths must not
+    // grow two vocabularies: an addition is said with the clock's own name,
+    // and a refusal is said in its own words, verbatim.
+    @Test func theOutcomeLineSaysWhatWasAddedAndRefusalsVerbatim() {
+        #expect(ClockAddOutcomeLine.title(for: .added, added: "Kitchen") == "Added Kitchen.")
+        #expect(
+            ClockAddOutcomeLine.title(
+                for: .refused("already configured at 10.0.0.5"), added: "Kitchen"
+            ) == "already configured at 10.0.0.5"
+        )
+    }
+
+    // The section answers the attempt: a line under it, and nothing when the
+    // next attempt clears it. The user's twice-added TC002 is the case — the
+    // store stayed empty both times and nothing ever said why.
+    @Test func theSectionSaysTheOutcomeUntilTheNextAttemptClearsIt() {
+        #expect(drawn(section(outcome: "already configured at 192.168.1.72")) != nil)
+        #expect(
+            drawn(section(outcome: "already configured at 192.168.1.72"))
+                != drawn(section(outcome: nil))
+        )
+        #expect(
+            drawn(section(outcome: "Added Kitchen."))
+                != drawn(section(outcome: "already configured at 192.168.1.72"))
+        )
     }
 }

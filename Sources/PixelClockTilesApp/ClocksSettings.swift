@@ -14,6 +14,24 @@ struct ClockListEntry: Identifiable {
 // yet configured — moved to the kit next to the discovery that publishes it
 // (`ClockDiscovery.found`); the list here is what that type's rows render.
 
+/// What an Add answered, as the Clocks section says it.
+///
+/// The wording lives here rather than at the two buttons, because the two add
+/// paths must not grow two vocabularies: an addition is said with the clock's
+/// own name — the row's name, or the address a clock was typed at — and a
+/// refusal is said in its own words, verbatim, since the model already wrote
+/// them for exactly this reader.
+enum ClockAddOutcomeLine {
+    static func title(
+        for outcome: AppModel.ClockSaveOutcome, added name: String
+    ) -> String {
+        switch outcome {
+        case .added: "Added \(name)."
+        case let .refused(reason): reason
+        }
+    }
+}
+
 /// The Clocks section of the general settings: the clocks on the tree, the
 /// two ways to add one, and nothing from `AppModel` — the list comes in fed
 /// (`discovered`, both models) and the dual probe runs behind Add-by-address.
@@ -24,6 +42,10 @@ struct ClockListEntry: Identifiable {
 struct ClocksSettings: View {
     let entries: [ClockListEntry]
     let discovered: [DiscoveredClock]
+    /// What the last Add answered, or nil while nothing stands to be said.
+    /// The twice-added clock is the case this exists for: the store stayed
+    /// empty twice and nothing ever said why.
+    let outcome: String?
     let onRename: (UUID, String) -> Void
     let onRemove: (UUID) -> Void
     let onAddDiscovered: (DiscoveredClock) -> Void
@@ -39,6 +61,7 @@ struct ClocksSettings: View {
     init(
         entries: [ClockListEntry], discovered: [DiscoveredClock],
         confirming: Bool = false,
+        outcome: String? = nil,
         onRename: @escaping (UUID, String) -> Void,
         onRemove: @escaping (UUID) -> Void,
         onAddDiscovered: @escaping (DiscoveredClock) -> Void,
@@ -47,6 +70,7 @@ struct ClocksSettings: View {
         self.entries = entries
         self.discovered = discovered
         self.confirmingID = confirming ? entries.first?.id : nil
+        self.outcome = outcome
         self.onRename = onRename
         self.onRemove = onRemove
         self.onAddDiscovered = onAddDiscovered
@@ -86,6 +110,14 @@ struct ClocksSettings: View {
                 }
             }
             AddByAddressRow(onAdd: onAddByAddress)
+            // Under the section rather than beside either button: both paths
+            // answer here, so the reader of one refusal is the reader of both.
+            if let outcome {
+                Text(outcome)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

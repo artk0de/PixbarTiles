@@ -25,8 +25,8 @@ private func rendered(
     discovery state: DiscoveryState, deviceHost: String = "10.0.0.5"
 ) -> Data? {
     let browsing = FakeBonjourBrowser()
-    let browser = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
-    browser.start()
+    let discovery = panelDiscovery(browsing: browsing)
+    discovery.browse.start()
     switch state {
     case let .listed(devices) where devices.isEmpty:
         // An empty network is an ANSWERED question, so the double has to
@@ -38,14 +38,14 @@ private func rendered(
     case .denied: browsing.emit(.denied)
     case let .unavailable(reason): browsing.emit(.unavailable(reason))
     case let .failed(reason): browsing.emit(.failed(reason))
-    case .idle: browser.stop()
+    case .idle: discovery.browse.stop()
     case .searching: break
     }
-    #expect(browser.state == state, "the double did not reach \(state)")
+    #expect(discovery.state == state, "the double did not reach \(state)")
 
     let model = testModel(deviceHost: deviceHost)
     let host = NSHostingView(
-        rootView: MenuPanel(model: model, monitor: model.monitor, discovery: browser)
+        rootView: MenuPanel(model: model, monitor: model.monitor, discovery: discovery)
     )
     host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
     host.layoutSubtreeIfNeeded()
@@ -76,6 +76,59 @@ private let oneDevice = DiscoveryState.listed([DiscoveredDevice(instanceName: "a
     #expect(rendered(discovery: oneDevice) == rendered(discovery: oneDevice))
 }
 
+// The feed, at the surface it matters on: the Clocks section is where a
+// clock seen advertising itself becomes a configured one, and what it lists
+// is the merged discovery's own rows — the TC002 captured line included,
+// spelled exactly as the device announces it. A discovery nobody fed draws
+// the section without the list.
+@Test @MainActor func theClocksSectionListsWhatDiscoveryFound() async throws {
+    func drawnSheet(_ discovery: ClockDiscovery) -> Data? {
+        let model = testModel(deviceHost: "10.0.0.5")
+        model.openSettings()
+        let host = NSHostingView(
+            rootView: MenuPanel(model: model, monitor: model.monitor, discovery: discovery)
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 900)
+        host.layoutSubtreeIfNeeded()
+        guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            return nil
+        }
+        host.cacheDisplay(in: host.bounds, to: target)
+        return target.representation(using: .png, properties: [:])
+    }
+
+    func discoveryFed(_ line: String?, from address: String) -> ClockDiscovery {
+        let browsing = FakeBonjourBrowser()
+        let (stream, feed) = AsyncStream<UlanziSighting>.makeStream()
+        let subject = ClockDiscovery(
+            browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
+            sightings: { stream }
+        )
+        subject.start()
+        if let line,
+            let announcement = UlanziAnnouncement.parse(line)
+        {
+            feed.yield(UlanziSighting(announcement: announcement, host: address))
+        }
+        return subject
+    }
+
+    // The captured broadcast, verbatim (2026-09-20, the clock on the desk).
+    let fed = discoveryFed(
+        "Ulanzi TC002 9b9a:ccc4b2779b9a:B0D32I008U3671403:false", from: "192.168.1.72"
+    )
+    #expect(await waitUntil { !fed.found.isEmpty })
+    #expect(fed.found.first == DiscoveredClock(
+        name: "TC002 9b9a", model: "TC002", address: "192.168.1.72"
+    ))
+
+    let withRow = drawnSheet(fed)
+    let withoutRow = drawnSheet(discoveryFed(nil as String?, from: "192.168.1.72"))
+
+    #expect(withRow != nil)
+    #expect(withRow != withoutRow)
+}
+
 /// Every editable text field on the panel, by what is in it.
 ///
 /// SwiftUI draws `Text` rather than backing it with a control, so the pixel
@@ -96,14 +149,24 @@ private func fields(in view: NSView) -> [String] {
 @MainActor
 private var seededLocation: String { LocationField.text(for: .default) }
 
+/// A discovery for the surfaces under render: never started by these tests
+/// beyond the browse they drive by hand, no socket.
+@MainActor
+private func panelDiscovery(browsing: FakeBonjourBrowser) -> ClockDiscovery {
+    ClockDiscovery(
+        browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
+        sightings: { AsyncStream { $0.finish() } }
+    )
+}
+
 @MainActor
 private func panelFields(deviceHost: String) -> [String] {
     let browsing = FakeBonjourBrowser()
-    let browser = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
-    browser.start()
+    let discovery = panelDiscovery(browsing: browsing)
+    discovery.browse.start()
     let model = testModel(deviceHost: deviceHost)
     let host = NSHostingView(
-        rootView: MenuPanel(model: model, monitor: model.monitor, discovery: browser)
+        rootView: MenuPanel(model: model, monitor: model.monitor, discovery: discovery)
     )
     host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
     host.layoutSubtreeIfNeeded()
@@ -231,7 +294,7 @@ private func bitmap(_ host: NSView) -> NSBitmapImageRep? {
 @MainActor
 private func settingsFields(deviceHost: String) -> [String] {
     let model = testModel(deviceHost: deviceHost)
-    return fields(in: hosted(SettingsSheet(model: model)))
+    return fields(in: hosted(SettingsSheet(model: model, discovery: inertDiscovery())))
 }
 
 /// The panel, hosted and laid out, with a browse that reaches no network.
@@ -243,9 +306,9 @@ private func settingsFields(deviceHost: String) -> [String] {
 @MainActor
 private func hostedPanel(_ model: AppModel) -> NSHostingView<MenuPanel> {
     let browsing = FakeBonjourBrowser()
-    let browser = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
-    browser.start()
-    return hosted(MenuPanel(model: model, monitor: model.monitor, discovery: browser))
+    let discovery = panelDiscovery(browsing: browsing)
+    discovery.browse.start()
+    return hosted(MenuPanel(model: model, monitor: model.monitor, discovery: discovery))
 }
 
 /// The panel, or the settings when they are open, as pixels.
@@ -272,9 +335,9 @@ private func drawnAfterTheOpeningReading(_ model: AppModel) async -> Data? {
 @MainActor
 private func panelControls(_ model: AppModel) -> [String] {
     let browsing = FakeBonjourBrowser()
-    let browser = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
-    browser.start()
-    return fields(in: hosted(MenuPanel(model: model, monitor: model.monitor, discovery: browser)))
+    let discovery = panelDiscovery(browsing: browsing)
+    discovery.browse.start()
+    return fields(in: hosted(MenuPanel(model: model, monitor: model.monitor, discovery: discovery)))
 }
 
 // The whole point of the move: the panel that opens dozens of times a day holds
@@ -309,8 +372,12 @@ private func panelControls(_ model: AppModel) -> [String] {
     reported.removeInstalledIcons()
     #expect(await waitUntil { reported.iconStatus != nil })
 
-    let before = bitmap(hosted(SettingsSheet(model: quiet)))?.representation(using: .png, properties: [:])
-    let after = bitmap(hosted(SettingsSheet(model: reported)))?.representation(using: .png, properties: [:])
+    let before = bitmap(hosted(SettingsSheet(
+        model: quiet, discovery: inertDiscovery()
+    )))?.representation(using: .png, properties: [:])
+    let after = bitmap(hosted(SettingsSheet(
+        model: reported, discovery: inertDiscovery()
+    )))?.representation(using: .png, properties: [:])
     #expect(before != nil)
     #expect(before != after)
 }
@@ -386,9 +453,9 @@ private func inkedColumns(of rep: NSBitmapImageRep, rows: Range<Int>) -> Range<I
 @Test @MainActor func theGearIsAtTheEndOfTheRowTheQuitButtonIsOnRatherThanOnARowOfItsOwn() throws {
     let model = testModel(deviceHost: "10.0.0.5")
     let browsing = FakeBonjourBrowser()
-    let browser = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
-    browser.start()
-    let host = hosted(MenuPanel(model: model, monitor: model.monitor, discovery: browser))
+    let discovery = panelDiscovery(browsing: browsing)
+    discovery.browse.start()
+    let host = hosted(MenuPanel(model: model, monitor: model.monitor, discovery: discovery))
     let rep = try #require(bitmap(host))
     let scale = rep.pixelsWide / Int(host.bounds.width)
 
@@ -1275,7 +1342,7 @@ private func segments(in view: NSView) -> [NSSegmentedControl] {
 @Test @MainActor func theSettingsCarryTheClocksSectionWhereTheAddressFieldWas() {
     let model = testModel(deviceHost: "10.0.0.5")
 
-    let sheet = fields(in: hosted(SettingsSheet(model: model)))
+    let sheet = fields(in: hosted(SettingsSheet(model: model, discovery: inertDiscovery())))
 
     // The add-by-address box, and nothing else: no address field, no location
     // field — both left with the sections that carried them.
@@ -1287,9 +1354,9 @@ private func segments(in view: NSView) -> [NSSegmentedControl] {
     let loft = testModel(
         deviceHost: "10.0.0.5", clocks: [assembledLoft], tiles: []
     )
-    let deskSheet = bitmap(hosted(SettingsSheet(model: desk)))?
+    let deskSheet = bitmap(hosted(SettingsSheet(model: desk, discovery: inertDiscovery())))?
         .representation(using: .png, properties: [:])
-    let loftSheet = bitmap(hosted(SettingsSheet(model: loft)))?
+    let loftSheet = bitmap(hosted(SettingsSheet(model: loft, discovery: inertDiscovery())))?
         .representation(using: .png, properties: [:])
     // The Clocks section lists the clocks by name: renaming one changes the
     // drawing, so the list is drawn and not just the add-by-address row.

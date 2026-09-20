@@ -25,8 +25,10 @@ struct MenuPanel: View {
     /// to watch the monitor itself.
     @ObservedObject var monitor: DeviceMonitor
     /// Observed separately for the same reason `monitor` is: a nested
-    /// `ObservableObject` publishes nothing to whoever holds it.
-    @ObservedObject var discovery: DeviceBrowser
+    /// `ObservableObject` publishes nothing to whoever holds it. The merged
+    /// discovery — both models — rather than the bare browse: the status line
+    /// reads its state and the Clocks section reads its list.
+    @ObservedObject var discovery: ClockDiscovery
     /// Where the width is read at launch and written when a drag ends.
     ///
     /// Handed in rather than reached for, so a test can put a width in the
@@ -41,7 +43,7 @@ struct MenuPanel: View {
     init(
         model: AppModel,
         monitor: DeviceMonitor,
-        discovery: DeviceBrowser,
+        discovery: ClockDiscovery,
         defaults: UserDefaults = .standard
     ) {
         self.model = model
@@ -54,7 +56,7 @@ struct MenuPanel: View {
     /// because the width is one number for all of them.
     var body: some View {
         if model.settingsAreOpen {
-            SettingsSheet(model: model, defaults: defaults)
+            SettingsSheet(model: model, discovery: discovery, defaults: defaults)
         } else if model.historyIsOpen {
             HistoryMenu(model: model, defaults: defaults)
         } else if let key = model.detailTileKey {
@@ -92,7 +94,6 @@ struct MenuPanel: View {
                     )
                 )
                 statusBlock
-                discoverySection
                 Divider()
                 ForEach(Array(model.tileRows.enumerated()), id: \.offset) { _, row in
                     TileRow(value: row)
@@ -128,6 +129,11 @@ struct MenuPanel: View {
     /// clock reports one — which the TC002 never does — and the discovery line
     /// when there is something to say. The readings are the SELECTED clock's;
     /// the monitor observed above stays the redraw handle.
+    ///
+    /// The discovery line lives HERE, inside the block, and nowhere else: two
+    /// renderers of one string shipped once, and the panel said everything
+    /// twice. `ClockStatusBlock` is the one place `DiscoveryStatusLine` is
+    /// drawn.
     private var statusBlock: some View {
         ClockStatusBlock(
             state: model.monitor.state,
@@ -135,27 +141,6 @@ struct MenuPanel: View {
             battery: model.selectedClockIsAwtrix ? model.monitor.battery : nil,
             discovery: discovery.state
         )
-    }
-
-    /// What is advertising itself on the network, kept apart from the status
-    /// block above it.
-    ///
-    /// Two lines with two sources, deliberately not merged: the status is the
-    /// monitor's answer about the address this app is pointed at, and this one
-    /// is a Bonjour advertisement. A clock can advertise itself and still not
-    /// answer `/api/stats` — so being seen here is not being reachable, and
-    /// the panel never says it is. The row appears exactly when it is worth
-    /// reading — the clock has moved, or has never been found — and it is the
-    /// browse that is conditional here, not the row.
-    private var discoverySection: some View {
-        Group {
-            if let line = DiscoveryStatusLine.text(for: discovery.state) {
-                Text(line)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
     }
 
     /// Quit, and the gear.
@@ -188,7 +173,7 @@ struct MenuPanel: View {
                 clockName: model.clocks.first { $0.id == key.clockId }?.name ?? "",
                 policy: stored,
                 connector: AnyView(connectorBlock(for: key, config: value.config)),
-                onPolicy: { model.saveTile(key: key, policy: $0, config: value.config) },
+                onPolicy: { _ = model.saveTile(key: key, policy: $0, config: value.config) },
                 onBack: { model.closeDetail() }
             )
         } else {
@@ -209,7 +194,7 @@ struct MenuPanel: View {
                     guard let place = LocationField.parse(typed),
                         let stored = model.storedPolicy(of: key)
                     else { return }
-                    model.saveTile(key: key, policy: stored, config: .weather(place))
+                    _ = model.saveTile(key: key, policy: stored, config: .weather(place))
                 }
             )
         } else if connector is AnecdoteConnector {

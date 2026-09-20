@@ -242,10 +242,13 @@ private func panelPixels(percent: Int, raw: [Int]) async -> Data? {
         await model.monitor.refresh(at: origin.addingTimeInterval(Double(step) * 60))
     }
     let browsing = FakeBonjourBrowser()
-    let browser = DeviceBrowser(browsing: { browsing }, sleep: { _ in })
-    browser.start()
+    let discovery = ClockDiscovery(
+        browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
+        sightings: { AsyncStream { $0.finish() } }
+    )
+    discovery.browse.start()
     let host = NSHostingView(
-        rootView: MenuPanel(model: model, monitor: model.monitor, discovery: browser)
+        rootView: MenuPanel(model: model, monitor: model.monitor, discovery: discovery)
     )
     host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
     host.layoutSubtreeIfNeeded()

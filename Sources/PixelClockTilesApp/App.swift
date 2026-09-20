@@ -225,7 +225,8 @@ enum AppGlyph {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: AppModel
-    /// Which AWTRIX clocks are advertising themselves on the network.
+    /// Which clocks are advertising themselves on the network — both models:
+    /// the AWTRIX browse merged with the TC002 broadcasts.
     ///
     /// Owned here rather than by `AppModel`, and that is a boundary rather than
     /// a filing decision. `AppModel` is the schedule, the device and what the
@@ -233,7 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// thing the quit budget waits on — `AppModel.teardown` — has no browse in
     /// it to wait for, and the schedule cannot be disturbed by a device
     /// appearing on the network because there is nothing between them.
-    let discovery: DeviceBrowser
+    let discovery: ClockDiscovery
     private let budget: QuitBudget
     /// Where the window's comings and goings are heard.
     ///
@@ -289,7 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             through: .standard
         )
         self.model = .live()
-        self.discovery = DeviceBrowser()
+        self.discovery = ClockDiscovery(browse: DeviceBrowser())
         self.budget = QuitBudget()
         self.notifications = .default
         super.init()
@@ -303,7 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     init(
         model: AppModel,
         budget: QuitBudget,
-        discovery: DeviceBrowser,
+        discovery: ClockDiscovery,
         notifications: NotificationCenter = .default
     ) {
         self.model = model

@@ -181,7 +181,7 @@ private func hostedPanel(readingWidthFrom defaults: UserDefaults) -> NSHostingVi
 @MainActor
 private func hostedSettings(readingWidthFrom defaults: UserDefaults) -> NSHostingView<SettingsSheet> {
     let host = NSHostingView(
-        rootView: SettingsSheet(model: testModel(), defaults: defaults)
+        rootView: SettingsSheet(model: testModel(), discovery: inertDiscovery(), defaults: defaults)
     )
     host.frame = NSRect(origin: .zero, size: host.fittingSize)
     host.layoutSubtreeIfNeeded()

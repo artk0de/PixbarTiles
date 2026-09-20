@@ -10,6 +10,10 @@ import SwiftUI
 /// about the schedule, the poll or a run in flight knows they are open.
 struct SettingsSheet: View {
     @ObservedObject var model: AppModel
+    /// The merged discovery, observed for the same reason `MenuPanel` observes
+    /// it: a nested `ObservableObject` publishes nothing to whoever holds it,
+    /// and the Clocks section below is where its list is read.
+    @ObservedObject var discovery: ClockDiscovery
 
     /// Handed down rather than built in `LoginItemSettings`'s own default, so a
     /// test can prove the section is on THIS surface without touching the real
@@ -29,11 +33,13 @@ struct SettingsSheet: View {
 
     init(
         model: AppModel,
+        discovery: ClockDiscovery,
         loginItem: @autoclosure @escaping () -> LoginItemModel = LoginItemModel(),
         claudeCode: @autoclosure @escaping () -> ClaudeCodeLinkModel = ClaudeCodeLinkModel(),
         defaults: UserDefaults = .standard
     ) {
         _model = ObservedObject(wrappedValue: model)
+        _discovery = ObservedObject(wrappedValue: discovery)
         self.loginItem = loginItem
         self.claudeCode = claudeCode
         self.defaults = defaults
@@ -53,10 +59,10 @@ struct SettingsSheet: View {
                         status: DeviceStatusLine.title(for: model.deviceState(of: clock.id))
                     )
                 },
-                discovered: [],
+                discovered: discovery.found,
                 onRename: { model.renameClock($0, to: $1) },
                 onRemove: { model.removeClock($0) },
-                onAddDiscovered: { model.addClock(from: $0) },
+                onAddDiscovered: { _ = model.addClock(from: $0) },
                 onAddByAddress: { address in
                     Task { _ = await model.addClock(address: address) }
                 }

@@ -178,10 +178,12 @@ private func drawn(_ view: some View) -> Data? {
     defer { notConnected.remove() }
 
     let on = drawn(SettingsSheet(
-        model: testModel(), claudeCode: ClaudeCodeLinkModel(link: connected.link)
+        model: testModel(), discovery: inertDiscovery(),
+        claudeCode: ClaudeCodeLinkModel(link: connected.link)
     ))
     let off = drawn(SettingsSheet(
-        model: testModel(), claudeCode: ClaudeCodeLinkModel(link: notConnected.link)
+        model: testModel(), discovery: inertDiscovery(),
+        claudeCode: ClaudeCodeLinkModel(link: notConnected.link)
     ))
 
     #expect(on != nil)

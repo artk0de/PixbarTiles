@@ -508,9 +508,11 @@ under it:
 
 The anecdote tile's block carries the History button, which opens the existing
 `HistoryMenu`. The VPN tile's block carries the VPN, lamp, palette and
-`ColorPicker`, and the down behaviour. The Claude tile's block carries what the
-usage display itself needs; Connect / Disconnect stays in General settings —
-it edits a machine-level file, not a tile's.
+`ColorPicker`, and the down behaviour. The Claude tile's block carries the
+Claude settings — the whole of them, Connect / Disconnect included. The state
+they edit is machine-wide and shared by every Claude tile: editing it in any
+one tile's detail edits it for all of them. General settings carries no
+Claude section.
 
 ### General settings
 

@@ -304,6 +304,10 @@ final class AppModel: ObservableObject {
     private let relocate: RelocatingHost?
 
     @Published private(set) var tileLastResults: [TileKey: String] = [:]
+    /// What each tile's last run ended in, in the raw words the transport
+    /// produced, and nothing at all while the last run did not fail. Kept raw
+    /// so the row's sentence and every other reader translate it themselves.
+    @Published private(set) var tileLastFailures: [TileKey: String] = [:]
     /// What the last background pass had to complain about, per tile, and
     /// nothing at all when it went fine.
     @Published private(set) var tileLastMaintenanceFailure: [TileKey: String] = [:]
@@ -312,9 +316,10 @@ final class AppModel: ObservableObject {
     /// A by-tile map, seen the way the panel still reads it: the selected
     /// clock's single tiles, by connector.
     var nextRun: [String: NextRun] { projected(tileNextRun) }
-    /// The selected clock's run outcomes and maintenance failures, by connector,
-    /// for the same reason and until the same phase.
+    /// The selected clock's run outcomes, failures and maintenance failures,
+    /// by connector, for the same reason and until the same phase.
     var lastResults: [String: String] { projected(tileLastResults) }
+    var lastFailures: [String: String] { projected(tileLastFailures) }
     var lastMaintenanceFailure: [String: String] { projected(tileLastMaintenanceFailure) }
 
     private func session(for key: TileKey) -> (any ConnectorRunning)? { sessions[key.clockId] }
@@ -1144,7 +1149,9 @@ final class AppModel: ObservableObject {
             name: name,
             result: tileLastResults[key],
             hold: policy(of: key)?.hold(in: currentFocus, atHour: currentHour),
-            failing: tileLastMaintenanceFailure[key] != nil,
+            // The run's own complaint outranks the restock's: it is the newer
+            // evidence about the same feed.
+            failure: tileLastFailures[key] ?? tileLastMaintenanceFailure[key],
             // The lamp tile runs itself, off the delivery chain entirely.
             isAmbient: isLamp || (registry.connector(id: key.connectorId)?.isAmbient ?? false),
             removeQuestion: "Remove \(name) from \(clock(key.clockId)?.name ?? "this clock")?",
@@ -2514,11 +2521,20 @@ final class AppModel: ObservableObject {
         case .completed, .skipped: tileLastMaintenanceFailure[key] = nil
         case .cancelled: break
         case let .failed(message):
-            tileLastMaintenanceFailure[key] = "restock failed: \(message.prefix(60))"
+            // Raw, deliberately: `TileRowLine` is where the raw words a
+            // transport produced become a sentence, and this store only keeps
+            // what was complained about.
+            tileLastMaintenanceFailure[key] = message
         }
     }
 
     private func record(_ result: RunResult, for key: TileKey) {
+        switch result {
+        case .delivered, .skipped: tileLastFailures[key] = nil
+        // Not evidence: the same rule `note` gives its own cancellation.
+        case .cancelled: break
+        case let .failed(message): tileLastFailures[key] = message
+        }
         tileLastResults[key] = Self.words(for: result)
     }
 
@@ -2564,7 +2580,7 @@ final class AppModel: ObservableObject {
         case .delivered: "delivered"
         case .skipped: "off"
         case .cancelled: "cancelled"
-        case let .failed(message): "failed: \(message.prefix(60))"
+        case let .failed(message): "failed — \(TileRowLine.cause(from: message))"
         }
     }
 }

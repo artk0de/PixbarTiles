@@ -21,11 +21,11 @@ private func drawn(_ value: TileRowValue, confirming: Bool = false) -> Data? {
 
 private func value(
     name: String = "Weather", result: String? = "12°C", hold: TileHold? = nil,
-    failing: Bool = false, isAmbient: Bool = false,
+    failure: String? = nil, isAmbient: Bool = false,
     question: String = "Remove Weather from Desk?"
 ) -> TileRowValue {
     TileRowValue(
-        name: name, result: result, hold: hold, failing: failing,
+        name: name, result: result, hold: hold, failure: failure,
         isAmbient: isAmbient, removeQuestion: question,
         onRun: {}, onDetail: {}, onRemove: {}
     )
@@ -41,7 +41,7 @@ private func value(
         #expect(base != drawn(value(result: "13°C")))
         #expect(base != drawn(value(hold: .paused)))
         // A held tile's badge is its own, not the failing one.
-        #expect(drawn(value(hold: .paused)) != drawn(value(failing: true)))
+        #expect(drawn(value(hold: .paused)) != drawn(value(failure: "the feed is down")))
     }
 
     // Ambient tiles run themselves; the ▶ exists to run a tile by hand, and

@@ -427,6 +427,41 @@ private func inkedColumns(of rep: NSBitmapImageRep, rows: Range<Int>) -> Range<I
     #expect(drawn(complaining) != drawn(quiet))
 }
 
+/// A host whose run ends the way it is told to — the run path's
+/// `RestockReportingHost`.
+private struct RunReportingHost: ConnectorRunning {
+    let run: RunResult
+
+    func maintain(connectorId: String) async -> MaintenanceResult { .completed }
+    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
+    func runOnce(connectorId: String) async -> RunResult { run }
+    func deliver(_ output: AwtrixDelivery) async -> RunResult { run }
+    func restoreDeviceState(borrowedBy connectorId: String?) async {}
+    var indicators: IndicatorCustody? { nil }
+}
+
+// The row never shows the error's own dialect. A run that threw leaves the
+// row a sentence — "Stub  failing — timed out" — and the domain-and-code text
+// the transport produced stays behind in the model, as the raw cause.
+@Test @MainActor func aThrownErrorReachesTheRowAsWordsNotAsAnNSError() async throws {
+    let raw = "Error Domain=NSURLErrorDomain Code=-1001 \"The request timed out.\""
+    // Silent, because an audible tile's first run waits on the microphone
+    // gate and this test is about the row's words, not the room.
+    let model = testModel(
+        connectors: [StubConnector(isAudible: false)],
+        host: RunReportingHost(run: .failed(raw))
+    )
+    let key = TileKey(clockId: model.clocks[0].id, connectorId: "stub")
+
+    model.runNow("stub")
+    #expect(await waitUntil { model.lastResults["stub"] == "failed — timed out" })
+
+    let row = try #require(model.tileRows.first { $0.name == "Stub" })
+    #expect(row.line.text == "Stub  failing — timed out")
+    #expect(row.line.badge == .failing)
+    #expect(model.tileLastFailures[key] == raw)
+}
+
 // MARK: - History
 
 /// A model whose History is open and loaded.

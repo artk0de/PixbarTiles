@@ -10,8 +10,10 @@ struct TileRowValue {
     let result: String?
     /// Why the tile is not running, or nil while it is.
     let hold: TileHold?
-    /// Its last run did not finish — outranks everything else on the line.
-    let failing: Bool
+    /// What its last run or restock complained about, in the raw words the
+    /// transport produced — or nil while nothing did. The line turns it into
+    /// a sentence; the raw text stays behind here, off the row.
+    let failure: String?
     /// Runs itself (weather, clock faces) and so draws no run control.
     let isAmbient: Bool
     /// The whole question, clock named: "Remove Weather from Desk?"
@@ -22,7 +24,7 @@ struct TileRowValue {
 
     /// The line the row draws, from the plain type that composes it.
     var line: TileRowLine {
-        TileRowLine.drawn(name: name, result: result, hold: hold, failing: failing)
+        TileRowLine.drawn(name: name, result: result, hold: hold, failure: failure)
     }
 }
 

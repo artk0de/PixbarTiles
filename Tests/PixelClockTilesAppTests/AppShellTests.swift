@@ -406,15 +406,17 @@ private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
     #expect(AppModel.live(defaults: defaults, anecdoteStore: scratchStore()).deviceHost == "10.0.0.9")
 }
 
-@Test @MainActor func theDeviceHostFallsBackToTheOneOnTheDesk() throws {
+// A fresh install invents no clock (D6): no clock, and no host to point at —
+// the panel's "No clocks yet" is the answer, not an address nobody chose.
+@Test @MainActor func aFreshInstallHasNoClockAndNoHost() throws {
     let suite = "app-model-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
 
-    #expect(
-        AppModel.live(defaults: defaults, anecdoteStore: scratchStore()).deviceHost
-            == "192.168.1.72"
-    )
+    let subject = AppModel.live(defaults: defaults, anecdoteStore: scratchStore())
+
+    #expect(subject.hasNoClocks)
+    #expect(subject.deviceHost == "")
 }
 
 // MARK: - What the panel says about a device nobody has asked yet
@@ -831,13 +833,16 @@ private func launchedForBrowsing(
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
     // A launch first: the field exists only on a running app, and it is the
-    // launch that migrates. A field still writing the old key would pass on a
-    // domain nothing had launched on yet.
+    // launch that puts a record in the store. A field still writing the old
+    // key would pass on a domain nothing had launched on yet.
+    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+    try ClockStore(defaults: defaults).replaceAll([clock])
+    defaults.set(true, forKey: ClockMigration.markerKey)
     _ = AppModel.live(defaults: defaults, anecdoteStore: scratchStore())
     let clocks = ClockStore(defaults: defaults)
-    let clock = try #require(clocks.all().first)
+    let clockStored = try #require(clocks.all().first)
 
-    DeviceHostField.save("10.0.0.9", to: clocks, for: clock)
+    DeviceHostField.save("10.0.0.9", to: clocks, for: clockStored)
 
     // Read back the way the app reads it, not the way it was written: a field
     // writing some other key would save happily and change nothing.
@@ -892,6 +897,9 @@ private func launchedForBrowsing(
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    let stored = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+    try ClockStore(defaults: defaults).replaceAll([stored])
+    defaults.set(true, forKey: ClockMigration.markerKey)
     _ = AppModel.live(defaults: defaults, anecdoteStore: scratchStore())
     let clocks = ClockStore(defaults: defaults)
     let clock = try #require(clocks.all().first)
@@ -1052,6 +1060,9 @@ private func launchedForBrowsing(
     let suite = "app-model-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+    try ClockStore(defaults: defaults).replaceAll([clock])
+    defaults.set(true, forKey: ClockMigration.markerKey)
     let transport = SkyAndClockTransport()
     let subject = AppModel.live(
         defaults: defaults, transport: transport, anecdoteStore: scratchStore()

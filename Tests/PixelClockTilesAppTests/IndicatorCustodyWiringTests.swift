@@ -10,6 +10,10 @@ import Testing
     let suite = "lamps-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    try ClockStore(defaults: defaults).replaceAll([
+        ClockRecord(name: "Clock", model: .awtrix3, address: "192.0.2.9")
+    ])
+    defaults.set(true, forKey: ClockMigration.markerKey)
     let transport = StubTransport(body: onlineStats)
     let subject = AppModel.live(
         defaults: defaults,

@@ -51,16 +51,11 @@ public final class ClockStore: @unchecked Sendable {
         }
     }
 
-    /// The clock a launch drives: the first one stored, or an AWTRIX clock at
-    /// `address` when none is — stored before it is returned, so that what
-    /// the launch learns about it has a record to land on.
-    public func firstClock(orCreatingAt address: String) -> ClockRecord {
-        Self.lock.withLock {
-            if let first = stored().first { return first }
-            let created = ClockRecord(name: "Clock", model: .awtrix3, address: address)
-            write([created])
-            return created
-        }
+    /// The clock a launch drives: the first one stored, or nil when none is —
+    /// the state the user answers from the panel, and never a clock this store
+    /// invents at a guessed address.
+    public func firstClock() -> ClockRecord? {
+        Self.lock.withLock { stored().first }
     }
 
     private func stored() -> [ClockRecord] {

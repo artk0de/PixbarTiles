@@ -108,21 +108,15 @@ import Testing
     #expect(store.all().last?.address == "10.0.0.7")
 }
 
-// What a launch with nothing stored drives. Stored at once, so the identity
-// the first poll learns and the address a relocation finds land on a record
-// rather than on nothing.
-@Test func aLaunchWithNoClockStoredCreatesOneAtTheAddressItWasGiven() throws {
+// What a launch with nothing stored drives: nothing. The empty state is the
+// user's to answer — the store invents no clock at a guessed address (D6).
+@Test func aLaunchWithNoClockStoredHasNoneAndStoresNothing() throws {
     let suite = "clock-store-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
 
-    let created = ClockStore(defaults: defaults).firstClock(orCreatingAt: "192.168.1.72")
-
-    #expect(created.name == "Clock")
-    #expect(created.model == .awtrix3)
-    #expect(created.address == "192.168.1.72")
-    #expect(created.hardwareIdentity == nil)
-    #expect(ClockStore(defaults: defaults).all() == [created])
+    #expect(ClockStore(defaults: defaults).firstClock() == nil)
+    #expect(ClockStore(defaults: defaults).all().isEmpty)
 }
 
 @Test func theFirstClockStoredIsTheOneALaunchDrives() throws {
@@ -134,7 +128,7 @@ import Testing
     let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.6")
     try store.replaceAll([desk, kitchen])
 
-    #expect(store.firstClock(orCreatingAt: "192.168.1.72") == desk)
+    #expect(store.firstClock() == desk)
     #expect(store.all() == [desk, kitchen])
 }
 

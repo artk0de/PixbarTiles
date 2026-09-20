@@ -280,8 +280,16 @@ final class AppModel: ObservableObject {
     /// Every clock this app drives, as the settings list them.
     @Published private(set) var clocks: [ClockRecord]
     @Published var selectedClockId: UUID? {
-        didSet { defaults.set(selectedClockId?.uuidString, forKey: Self.selectedClockKey) }
+        didSet {
+            defaults.set(selectedClockId?.uuidString, forKey: Self.selectedClockKey)
+            // The glyph answers for the selected clock alone, and it answers
+            // when the selection moves — not at the next poll (D7).
+            isDeviceOnline = selectedClockId.flatMap { healths[$0]?.isOnline } ?? false
+        }
     }
+    /// Whether nothing is configured: the panel's "No clocks yet" state, which
+    /// a fresh install reaches and the Clocks section answers.
+    var hasNoClocks: Bool { clocks.isEmpty }
     /// One session per clock, each with its own delivery chain and custody —
     /// so a clock that stops answering holds up only its own tiles.
     private var sessions: [UUID: any ConnectorRunning] = [:]
@@ -683,11 +691,12 @@ final class AppModel: ObservableObject {
     ) -> AppModel {
         // Before anything reads a record. A step that fails leaves its marker
         // unwritten and runs again at the next launch; this launch drives
-        // whatever is stored, and the line below makes sure something is.
+        // whatever is stored — and a fresh install stores nothing, so the
+        // launch drives no clock and the panel answers for that (D6).
         try? ClockMigration(defaults: defaults, fallbackHost: defaultDeviceHost).run()
-        let first = ClockStore(defaults: defaults).firstClock(orCreatingAt: defaultDeviceHost)
         let clocks = ClockStore(defaults: defaults).all()
-        let device = AwtrixDevice(host: first.address, transport: transport)
+        let first = clocks.first
+        let device = AwtrixDevice(host: first?.address ?? defaultDeviceHost, transport: transport)
         // Built here rather than inside the model so that the one door to the
         // outside stays this function's `transport` parameter: the probe below
         // is an HTTP request, and it goes through the same door every other
@@ -714,7 +723,7 @@ final class AppModel: ObservableObject {
         // The panel's own registry still holds a weather connector — its rows
         // are drawn from here — but no clock produces through this instance:
         // each clock's session builds its own, closed over that clock's place.
-        let firstPlace = StoredLocation(defaults: defaults, clockId: first.id)
+        let firstPlace = StoredLocation(defaults: defaults, clockId: first?.id ?? UUID())
         registry.register(
             WeatherConnector(source: OpenMeteoSource(transport: transport), location: { firstPlace.current })
         )
@@ -730,12 +739,14 @@ final class AppModel: ObservableObject {
 
         // After every connector is registered: one the step does not hear
         // about gets no tile, and runs on its own default until its first
-        // saved choice gives it one.
-        try? TileMigration(
-            defaults: defaults,
-            clockId: first.id,
-            connectors: registry.all.map { (id: $0.id, defaultInterval: $0.defaultInterval) }
-        ).run()
+        // saved choice gives it one. No clock stored, no tile owed to one.
+        if let first {
+            try? TileMigration(
+                defaults: defaults,
+                clockId: first.id,
+                connectors: registry.all.map { (id: $0.id, defaultInterval: $0.defaultInterval) }
+            ).run()
+        }
         try? WeatherLocationMigration(defaults: defaults).run()
         BatteryHistoryMigration(defaults: defaults).run()
         BorrowedOverlayMigration(defaults: defaults).run()
@@ -820,7 +831,7 @@ final class AppModel: ObservableObject {
             device: AwtrixDevice, history: any BatteryHistoryStore
         ) = { clock in
             (
-                clock.id == first.id
+                clock.id == first?.id
                     ? device : AwtrixDevice(host: clock.address, transport: transport),
                 UserDefaultsBatteryHistoryStore(
                     defaults: defaults, hardwareIdentity: clock.hardwareIdentity

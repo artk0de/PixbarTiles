@@ -540,8 +540,12 @@ func testModel(
     probe: (@Sendable (String) async -> UlanziProbe.Detection)? = nil
 ) -> AppModel {
     var clocks = clocks
-    if clocks[0].address != deviceHost { clocks[0].address = deviceHost }
-    if let hardwareIdentity { clocks[0].hardwareIdentity = hardwareIdentity }
+    // Empty is a state now — the no-clocks install — and means no first clock
+    // to re-point at the device host.
+    if !clocks.isEmpty {
+        if clocks[0].address != deviceHost { clocks[0].address = deviceHost }
+        if let hardwareIdentity { clocks[0].hardwareIdentity = hardwareIdentity }
+    }
     let registry = ConnectorRegistry()
     for connector in connectors { registry.register(connector) }
     let device = AwtrixDevice(host: deviceHost, transport: transport)

@@ -20,18 +20,20 @@ import Testing
     #expect(clocks.first?.hardwareIdentity == "awtrix_a07f9c")
 }
 
-// An installation that never saved an address was talking to the default one,
-// so that is the clock it has.
-@Test @MainActor func anInstallationThatNeverSavedAnAddressGetsTheOneItWasUsing() throws {
+// A fresh install is left alone — the empty state is the user's to answer,
+// and the new pin lives with the rest of it in NoClocksTests. Here, the
+// install that DID save an address: the marker is the last write, so a run
+// the process did not survive starts again from the old keys.
+@Test @MainActor func theClockMigrationWritesItsMarkerLast() throws {
     let suite = "clock-migration-\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: suite))
+    let defaults = try #require(RecordingDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set("10.0.0.9", forKey: AppModel.deviceHostKey)
 
     try ClockMigration(defaults: defaults, fallbackHost: AppModel.defaultDeviceHost).run()
 
-    let clock = try #require(ClockStore(defaults: defaults).all().first)
-    #expect(clock.address == AppModel.defaultDeviceHost)
-    #expect(clock.hardwareIdentity == nil)
+    #expect(defaults.writes.contains(ClockStore.key))
+    #expect(defaults.writes.last == ClockMigration.markerKey)
 }
 
 @Test @MainActor func theClockMigrationLeavesTheOldKeysAsTheyWere() throws {
@@ -45,18 +47,6 @@ import Testing
 
     #expect(defaults.string(forKey: AppModel.deviceHostKey) == "10.0.0.9")
     #expect(defaults.string(forKey: AppModel.deviceUIDKey) == "awtrix_a07f9c")
-}
-
-// Last, so a run the process did not survive has no marker and runs again.
-@Test @MainActor func theClockMigrationWritesItsMarkerLast() throws {
-    let suite = "clock-migration-\(UUID().uuidString)"
-    let defaults = try #require(RecordingDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
-
-    try ClockMigration(defaults: defaults, fallbackHost: AppModel.defaultDeviceHost).run()
-
-    #expect(defaults.writes.contains(ClockStore.key))
-    #expect(defaults.writes.last == ClockMigration.markerKey)
 }
 
 // The old key changes between the runs, so a second run that migrated again

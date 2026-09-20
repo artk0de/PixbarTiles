@@ -1,6 +1,5 @@
 // Tests/PixelClockKitTests/UlanziDiscoveryTests.swift
 import Foundation
-import Network
 import Testing
 @testable import PixelClockKit
 
@@ -28,29 +27,25 @@ import Testing
 // enough to add a clock from.
 @Suite struct UlanziSightingTests {
     /// A datagram from the device on the desk renders as the bare address.
-    @Test func theDatagramsSourceAddressBecomesTheHost() throws {
-        let v4 = try #require(IPv4Address("192.168.1.72"))
-        let from = NWEndpoint.hostPort(host: .ipv4(v4), port: 41_952)
+    /// `s_addr` is network byte order: the octets go in wire order, highest
+    /// value shifted highest.
+    @Test func theDatagramsSourceAddressBecomesTheHost() {
+        var from = sockaddr_in()
+        from.sin_family = sa_family_t(AF_INET)
+        from.sin_addr.s_addr = in_addr_t(72 << 24 | 1 << 16 | 168 << 8 | 192)
+
         #expect(UlanziBroadcastListener.host(of: from) == "192.168.1.72")
     }
 
-    /// A name-carrying endpoint hands its name over unchanged — the app talks
-    /// to hosts it was given, and rewriting one here would be inventing data.
-    @Test func aNamedEndpointHandsItsNameOverUnchanged() {
-        let from = NWEndpoint.hostPort(
-            host: .name("ulanzi.local", nil), port: 41_952
-        )
-        #expect(UlanziBroadcastListener.host(of: from) == "ulanzi.local")
-    }
+    /// An address that cannot be rendered has nothing to add a clock from,
+    /// and a sighting without an address is dropped upstream of the list
+    /// rather than becoming a row "Add" cannot act on.
+    @Test func anUnrenderableAddressYieldsNoHost() {
+        var from = sockaddr_in()
+        from.sin_family = sa_family_t(AF_INET6)  // not the family the receiver reads
+        from.sin_addr = in_addr(s_addr: INADDR_ANY)
 
-    /// An endpoint without an address has nothing to add a clock from, and a
-    /// sighting without an address is dropped upstream of the list rather than
-    /// becoming a row "Add" cannot act on.
-    @Test func anEndpointWithoutAnAddressYieldsNoHost() {
-        let service = NWEndpoint.service(
-            name: "ulanzi", type: "_http._tcp", domain: "", interface: nil
-        )
-        #expect(UlanziBroadcastListener.host(of: service) == nil)
+        #expect(UlanziBroadcastListener.host(of: from) == nil)
     }
 }
 

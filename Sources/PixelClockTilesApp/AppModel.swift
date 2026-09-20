@@ -33,6 +33,10 @@ protocol ConnectorRunning: Sendable {
     /// - Parameter connectorId: only what this connector took, or nil for
     ///   everything outstanding, which is what a quit wants.
     func restoreDeviceState(borrowedBy connectorId: String?) async
+
+    /// The clock's lamp custody, or nil for a clock with no lamps. VPN tiles
+    /// write through it, off the delivery chain.
+    var indicators: IndicatorCustody? { get }
 }
 
 extension AwtrixClockSession: ConnectorRunning {}
@@ -62,6 +66,7 @@ struct NoClockHost: ConnectorRunning {
     func deliver(_ output: AwtrixDelivery) async -> RunResult { .skipped }
     func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
+    var indicators: IndicatorCustody? { nil }
 }
 
 /// The anecdotes the menu can look back over.
@@ -487,12 +492,15 @@ final class AppModel: ObservableObject {
     private var nextRunKey = 0
     /// Whether each VPN is carrying, read fresh on every trigger.
     private let vpnPresence: VPNPresence
+    /// How each watched VPN is read. Built over the presence reader, which is
+    /// the process table.
+    private let vpn: VPNConnector
     /// The two corners of the matrix, and what they are showing.
     ///
     /// Optional because most of the suite has no opinion about indicators and
     /// should not have to supply a clock to say so — nil is an app that leaves
     /// the corners alone entirely.
-    private let vpnLamps: VPNLampDisplay?
+
     /// Writes to those corners, still going. Keyed like `manualRuns` and for
     /// the same reason: triggers overlap, the display serialises them, and
     /// teardown has to be able to wait for whichever are in flight.
@@ -587,7 +595,7 @@ final class AppModel: ObservableObject {
         pasteboard: NSPasteboard = .general,
         alerts: any BatteryWarningPresenting,
         focusStatus: any FocusStatusReading,
-        vpnLamps: VPNLampDisplay? = nil,
+        vpn: VPNConnector = VPNConnector(isUp: { _ in false }),
         vpnPresence: VPNPresence = VPNPresence(),
         now: @escaping @Sendable () -> Date = Date.init,
         microphone: MicrophoneGate,
@@ -616,7 +624,7 @@ final class AppModel: ObservableObject {
         self.anecdotes = anecdotes
         self.alerts = alerts
         self.focusStatus = focusStatus
-        self.vpnLamps = vpnLamps
+        self.vpn = vpn
         self.vpnPresence = vpnPresence
         self.now = now
         self.microphone = microphone
@@ -725,6 +733,7 @@ final class AppModel: ObservableObject {
             defaults: defaults,
             audible: Set(registry.all.filter(\.isAudible).map(\.id))
         ).run()
+        try? VPNTileMigration(defaults: defaults).run()
 
         // One shared audio player and one shared weather source; everything
         // else below is per clock.
@@ -811,6 +820,8 @@ final class AppModel: ObservableObject {
             )
         }
 
+        let vpn = VPNConnector(isUp: VPNPresence().isUp)
+
         return AppModel(
             clocks: clocks,
             tiles: TileStore(defaults: defaults),
@@ -829,12 +840,7 @@ final class AppModel: ObservableObject {
             // The same reading of macOS the tiles' Focus rules are read from,
             // so the two cannot answer differently about the same moment.
             focusStatus: focusStatus,
-            // The first clock's own lamp custody, over the same device the
-            // connectors write through. Indicators do not go into the loop, so
-            // they contend with nothing that does.
-            vpnLamps: (sessionsByClock[first.id] as? AwtrixClockSession).map {
-                VPNLampDisplay(indicators: $0.indicators)
-            },
+            vpn: vpn,
             microphone: MicrophoneGate(inputs: SystemAudioInputs()),
             watching: WatchedMicrophone.stored(in: defaults)
         )
@@ -1322,7 +1328,7 @@ final class AppModel: ObservableObject {
     /// own minute.
     private func startWatchingTheWorld() {
         networkWatcher.start { [weak self] in
-            Task { @MainActor in self?.refreshVPNIndicators() }
+            Task { @MainActor in self?.refreshLamps() }
         }
         focusWatcher.start { [weak self] in
             Task { @MainActor in
@@ -1331,7 +1337,7 @@ final class AppModel: ObservableObject {
                 // tile's Focus rule is read against — which until now was
                 // answered only on the poll's minute.
                 self?.reconcileTiles()
-                self?.refreshVPNIndicators()
+                self?.refreshLamps()
             }
         }
     }
@@ -1344,18 +1350,34 @@ final class AppModel: ObservableObject {
     /// Internal rather than private for the reason `reactToAFocusChange` is:
     /// the suite drives it directly, because the alternative is waiting on a
     /// real network event.
-    func refreshVPNIndicators() {
-        guard let vpnLamps else { return }
-        let lamps = VPNIndicatorPolicy.lamps(
-            focus: focusStatus.activeMode,
-            pritunl: vpnPresence.isUp(.pritunl),
-            amnezia: vpnPresence.isUp(.amnezia)
-        )
-        let key = nextRunKey
-        nextRunKey += 1
-        vpnPushes[key] = Task { [weak self] in
-            await vpnLamps.show(lamps)
-            self?.vpnPushes[key] = nil
+    func refreshLamps() {
+        let focus = currentFocus
+        let hour = currentHour
+        let byClock = Dictionary(grouping: tiles.all().filter { $0.key.connectorId == VPNConnector.id }, by: \.key.clockId)
+        for (clockId, vpnTiles) in byClock {
+            guard let indicators = sessions[clockId]?.indicators else { continue }
+            let vpn = self.vpn
+            let key = nextRunKey
+            nextRunKey += 1
+            vpnPushes[key] = Task { [weak self] in
+                var claims: [LampClaim] = []
+                for record in vpnTiles {
+                    guard let lamp = record.config?.lamp,
+                        let reading = try? await vpn.read(config: lamp),
+                        let policy = self?.policy(of: record.key)
+                    else { continue }
+                    claims.append(LampClaim(
+                        key: record.key, slot: lamp.slot, policy: policy,
+                        signal: VPNConnector.signal(for: reading)
+                    ))
+                }
+                let covering = Set(vpnTiles.compactMap { $0.config?.lamp?.slot })
+                for (slot, signal) in LampBoard.lamps(claims, covering: covering, in: focus, atHour: hour)
+                    .sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+                    await indicators.show(signal, on: slot)
+                }
+                self?.vpnPushes[key] = nil
+            }
         }
     }
 
@@ -1477,7 +1499,16 @@ final class AppModel: ObservableObject {
         // process going away, so a quit while the work tunnel was down would
         // leave a red corner blinking on the desk with nothing left running
         // that could ever put it out.
-        await vpnLamps?.clear()
+        // And every lamp any VPN tile claims, lit or not, on every AWTRIX
+        // clock — which is what `VPNLampDisplay.clear()` did for its two
+        // corners.
+        let covered = Dictionary(grouping: tiles.all().filter { $0.key.connectorId == VPNConnector.id }, by: \.key.clockId)
+        for (clockId, vpnTiles) in covered {
+            guard let indicators = sessions[clockId]?.indicators else { continue }
+            for slot in Set(vpnTiles.compactMap { $0.config?.lamp?.slot }).sorted(by: { $0.rawValue < $1.rawValue }) {
+                await indicators.show(.off, on: slot)
+            }
+        }
     }
 
     private func startMonitoring() {
@@ -1569,7 +1600,7 @@ final class AppModel: ObservableObject {
         // and a path change is macOS's notion of one — so the minute hand
         // reconciles whatever they missed. Costs nothing when they missed
         // nothing: the display writes only what moved.
-        refreshVPNIndicators()
+        refreshLamps()
         // Awaited here rather than detached. The dialog does not block — it
         // schedules itself — and what is awaited is the authorization request,
         // which happens once. A detached task would be one more thing teardown

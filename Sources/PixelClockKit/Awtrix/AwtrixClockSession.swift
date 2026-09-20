@@ -23,7 +23,9 @@ public actor AwtrixClockSession {
     /// The lamps' custody, over the same device every delivery goes through.
     /// Nonisolated because it is an actor of its own: the app hands it to the
     /// VPN display when it composes itself, without a hop through this one.
-    public nonisolated let indicators: IndicatorCustody
+    /// Nil never, for an AWTRIX clock — typed optional because the schedule
+    /// protocol is shared with hosts that have no lamps.
+    public nonisolated let indicators: IndicatorCustody?
 
     /// Deliveries one at a time, and how the last runs went. Runs and replays
     /// both take their turn in it — see `runOnce(connectorId:)` for why they

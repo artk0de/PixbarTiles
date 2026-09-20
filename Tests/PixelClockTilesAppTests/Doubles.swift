@@ -155,6 +155,8 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
         lock.withLock { recorded.append("restore:\(connectorId ?? "all")") }
         await parkInRestore?.enter()
     }
+
+    var indicators: IndicatorCustody? { nil }
 }
 
 /// A one-shot gate: callers park in `enter()` until the test calls `open()`.
@@ -507,9 +509,6 @@ func testModel(
     // allowed to ask, and a default of `.notDetermined` would have every test
     // in this target pass or fail depending on the hour it was run at.
     focusStatus: any FocusStatusReading = StubFocusStatus(access: .authorized),
-    // Nil, so no test acquires an opinion about the clock's indicator lamps it
-    // did not ask for: a model built without one leaves both corners alone.
-    vpnLamps: VPNLampDisplay? = nil,
     // Nothing running, so no test in this target answers to whichever VPNs
     // happen to be up on the machine running it.
     vpnPresence: VPNPresence = VPNPresence(processes: FixedProcessList(paths: [])),
@@ -588,7 +587,7 @@ func testModel(
         pasteboard: pasteboard,
         alerts: alerts,
         focusStatus: focusStatus,
-        vpnLamps: vpnLamps,
+        vpn: VPNConnector(isUp: vpnPresence.isUp),
         vpnPresence: vpnPresence,
         now: now,
         microphone: microphone,
@@ -695,6 +694,8 @@ final class QueueingHost: ConnectorRunning, @unchecked Sendable {
     /// rather than defaulted on the protocol: a default would let the SHIPPED
     /// host stop restoring and still compile.
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
+
+    var indicators: IndicatorCustody? { nil }
 }
 
 /// Answers `.cancelled` when its run is cancelled, as `AwtrixClockSession` does.
@@ -722,6 +723,8 @@ final class CancellingHost: ConnectorRunning, @unchecked Sendable {
     func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
+
+    var indicators: IndicatorCustody? { nil }
 }
 
 // MARK: - A real host, with the two collaborators a background pass never uses
@@ -816,6 +819,8 @@ final class RestockReportingHost: ConnectorRunning, @unchecked Sendable {
     func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
+
+    var indicators: IndicatorCustody? { nil }
 }
 
 // MARK: - A clock that stops answering, and starts again
@@ -1301,4 +1306,20 @@ final class RecordingLamps: IndicatorLighting, @unchecked Sendable {
             recorded.append((slot, signal))
         }
     }
+}
+
+/// A session whose lamps are recorded, and that otherwise answers like a
+/// healthy clock that runs whatever it is asked to.
+final class LampSession: ConnectorRunning, @unchecked Sendable {
+    let indicators: IndicatorCustody?
+
+    init(lamps: RecordingLamps) {
+        indicators = IndicatorCustody(lamps: lamps)
+    }
+
+    func maintain(connectorId: String) async -> MaintenanceResult { .completed }
+    func runOnce(connectorId: String) async -> RunResult { .delivered }
+    func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
+    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
+    func restoreDeviceState(borrowedBy connectorId: String?) async {}
 }

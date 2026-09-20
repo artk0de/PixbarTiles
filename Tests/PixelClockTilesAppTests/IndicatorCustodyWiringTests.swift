@@ -18,7 +18,7 @@ import Testing
             .appendingPathComponent("lamps-\(UUID().uuidString).json")
     )
 
-    subject.refreshVPNIndicators()
+    subject.refreshLamps()
 
     // Both corners on the first showing, whatever this machine's tunnels and
     // Focus say: nothing is known yet about what the lamps show.

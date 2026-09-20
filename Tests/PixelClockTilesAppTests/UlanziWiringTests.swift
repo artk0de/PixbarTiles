@@ -77,7 +77,7 @@ private func openWiringDefaults() throws -> (UserDefaults, String) {
         #expect(subject.ulanzi == nil)
         // The phase-2 session is what the lamps go through — the same shape as
         // before this phase, and the proof that the AWTRIX route survived.
-        subject.refreshVPNIndicators()
+        subject.refreshLamps()
         #expect(await waitUntil {
             Set(
                 transport.requests.compactMap(\.url?.path)

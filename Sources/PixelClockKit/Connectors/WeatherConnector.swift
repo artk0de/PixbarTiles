@@ -88,6 +88,10 @@ public struct WeatherConnector: Connector {
         AwtrixFace { Self.output(for: $0) }
     }
 
+    public var ulanziFace: UlanziFace<WeatherReading>? {
+        UlanziFace { Self.ulanziOutput(for: $0) }
+    }
+
     /// What a reading looks like on the matrix.
     ///
     /// Separated from `read()` so the drawing can be tested against a reading
@@ -143,5 +147,42 @@ public struct WeatherConnector: Connector {
     /// scrolls anything that does not.
     static func degrees(_ celsius: Double) -> String {
         "\(Int(celsius.rounded()))°C"
+    }
+
+    /// What a reading looks like on the TC002's 52×16 panel.
+    ///
+    /// The device has no text rendering to hand the reading to, so the face
+    /// rasters it here — the 3×5 font at scale 2, the biggest the 16 rows
+    /// carry, centred, in the same felt-temperature colour the AWTRIX face
+    /// names in hex. No `C` after the degrees: the panel is 52 pixels wide and
+    /// the colour already says what the letter would.
+    static func ulanziOutput(for reading: WeatherReading) -> UlanziDelivery {
+        let felt = reading.apparentTemperature ?? reading.temperature
+        let ink = UlanziColour(hex: TemperatureColour(celsius: felt).hex)
+        return UlanziDelivery(
+            scene: UlanziScene(
+                frames: [
+                    UlanziFrame(
+                        duration: 5,
+                        draw: [Self.raster("\(Int(reading.temperature.rounded()))°", ink: ink)]
+                    )
+                ]
+            )
+        )
+    }
+
+    /// `text` centred on a fresh panel at `scale`, as one full-screen bitmap.
+    private static func raster(_ text: String, ink: UlanziColour, scale: Int = 2) -> UlanziDraw {
+        var canvas = PixelCanvas()
+        let width = text.unicodeScalars.count * 4 * scale - scale
+        canvas.drawText(
+            text,
+            at: PixelPoint(
+                x: (PixelCanvas.width - width) / 2, y: (PixelCanvas.height - 5 * scale) / 2
+            ),
+            ink: Pixel(colour: ink),
+            scale: scale
+        )
+        return canvas.drawCommands()
     }
 }

@@ -2,14 +2,12 @@ import Foundation
 
 /// Where a source of weekly-allowance readings comes from.
 ///
-/// A protocol rather than the HTTP call itself, because the awkward part of
-/// this connector is not drawing the number — it is that the credential belongs
-/// to another program. Keeping the fetch behind this line lets the drawing be
-/// tested without one, and lets the credential question be answered once, in
-/// the type that implements it.
+/// A protocol rather than the file read itself, so the drawing can be tested
+/// against a figure, and where the figure comes from is answered once, in the
+/// type that implements it — `StatusLineClaudeUsageReporter` in this kit.
 public protocol ClaudeUsageReporting: Sendable {
-    /// The current weekly reading, or nil when the service cannot be asked —
-    /// no credential, an expired one, or an answer that carried no weekly bar.
+    /// The current weekly reading, or nil when there is none to be had: no
+    /// status-line document yet, or a week that has reset since the last one.
     func read() async throws -> ClaudeUsageReading?
 }
 
@@ -67,6 +65,10 @@ public struct ClaudeUsageConnector: Connector {
         AwtrixFace { Self.output(for: $0) }
     }
 
+    public var ulanziFace: UlanziFace<ClaudeUsageReading>? {
+        UlanziFace { Self.ulanziOutput(for: $0) }
+    }
+
     public enum Failure: Error, Sendable, Equatable {
         /// Nothing to draw. Deliberately an error rather than an output saying
         /// "—": the app carries a `lifetime`, so a run that delivers nothing
@@ -113,4 +115,38 @@ public struct ClaudeUsageConnector: Connector {
     /// two, light enough that the bar's full width is still visible — an unlit
     /// track makes a half-full bar look like a short one.
     static let trackColour = "#303030"
+
+    /// The bundled star as the TC002 image layer, measured from the file it
+    /// ships as: 8×8 and 8 frames, inside every measured image limit (A4).
+    static let star = UlanziImage(
+        base64: (BundledIcon.data(named: "ClaudeStar") ?? Data()).base64EncodedString(),
+        isAnimated: true,
+        frameCount: 8,
+        pixelSize: (width: 8, height: 8)
+    )
+
+    /// What a reading looks like on the TC002's 52×16 panel: the percentage
+    /// rastered through the 3×5 font at scale 2 in the brand colour, the star
+    /// riding beside it as the image layer.
+    static func ulanziOutput(for reading: ClaudeUsageReading) -> UlanziDelivery {
+        var canvas = PixelCanvas()
+        let text = "\(reading.utilization)%"
+        let ink = UlanziColour(hex: ClaudeUsage.brandColour)
+        let width = text.unicodeScalars.count * 4 * 2 - 2
+        canvas.drawText(
+            text,
+            at: PixelPoint(
+                x: (PixelCanvas.width - width) / 2, y: (PixelCanvas.height - 10) / 2
+            ),
+            ink: Pixel(colour: ink),
+            scale: 2
+        )
+        return UlanziDelivery(
+            scene: UlanziScene(
+                frames: [
+                    UlanziFrame(duration: 5, draw: [canvas.drawCommands()], image: [star])
+                ]
+            )
+        )
+    }
 }

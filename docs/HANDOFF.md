@@ -757,8 +757,115 @@ removes the apps, restores the overlay and darkens both corners.
 
 Found while running the suite, and not changed by Phase 2:
 `nothingButTheAnecdotesEverPutsSoundInTheRoom` produces every connector
-`live()` registers, so it reads the real login keychain through
-`KeychainClaudeCredentials`. Once, with the machine under heavy load, it sat in
+`live()` registers, so it read the real login keychain through
+`KeychainClaudeCredentials` — a reader lane C has since deleted, so the test no
+longer touches the keychain. Once, with the machine under heavy load, it sat in
 `SecItemCopyMatching` for more than ten minutes and held a serial run with it;
 alone, later, it passed in five seconds. A serial run that stops printing is
 worth sampling for that frame before anything else is suspected.
+
+## Claude usage from Claude Code's status line — lane C
+
+The Claude figure no longer comes from `/api/oauth/usage` with a token taken
+from the keychain. Connect Claude Code (in the settings) sets Claude Code's
+`statusLine` to `/bin/sh '<Application Support>/PixelClockTiles/claude-statusline.sh'`,
+followed by the previous command as a quoted argument when there was one. After
+each reply the hook stores the document, if it carries `rate_limits`, as
+`claude-status.json` beside itself, then runs the previous command. The
+replaced value is kept in the defaults key `claudeStatusLine.previous`, and
+Disconnect puts it back, removes the hook and removes the document.
+`StatusLineClaudeUsageReporter` reads the document on every Claude refresh.
+
+Known limits, which are not defects:
+
+- A project's own `.claude/settings.json` with a `statusLine` overrides the
+  user's in that project, so sessions there never run the hook.
+- `CLAUDE_CONFIG_DIR` moves Claude Code's settings. The app edits
+  `~/.claude/settings.json` only.
+- Two sessions signed in to different accounts: the last one to reply wins.
+- A `refreshInterval` carried over from a previous status line runs the hook on
+  that timer too, and Claude Code re-runs it when a window resets. The
+  document's time can move without a reply.
+- Rewriting `settings.json` keeps every value, but not its formatting or key
+  order.
+- A bare `swift run` build cannot connect. Without a bundle id there is no
+  link, and that guard is what keeps `swift test` off the real settings.
+
+### What only a person at the hardware can settle — added by lane C
+
+C1. **Connect.** Copy `~/.claude/settings.json` aside, open the settings, press
+    Connect Claude Code…, read the confirmation, press Connect. Diff the file
+    against the copy: `statusLine` is the only key that changed.
+C2. **The figure arrives.** Run an interactive `claude` session and send one
+    message. `claude-status.json` appears beside the hook, the settings line
+    shows its time when the settings are reopened, and within one Claude
+    refresh (five minutes at most) the clock shows the same weekly percentage
+    that `/usage` reports.
+C3. **An empty status row.** With nothing chained, the hook prints nothing. The
+    documentation says an empty output blanks the row. Look at what Claude Code
+    actually draws there, and confirm that `esc to interrupt` is gone, as the
+    confirmation says.
+C4. **Disconnect.** `statusLine` is back to what the copy from C1 holds, or
+    absent if it was absent. The hook and the document are gone. The figure
+    leaves the clock within its lifetime (fifteen minutes).
+C5. **Launch refresh.** While connected, overwrite the hook with any text and
+    relaunch the app. The hook is back to the shipped script, with mode 0700.
+C6. **No keychain prompt.** From this build on, no dialog ever asks for the
+    "Claude Code-credentials" keychain item.
+
+## PixelClockTiles Phase 3b — TC002 wiring: what it leaves for the hardware
+
+The phase-3b lane wired the TC002 adapter into the delivery chain and the app.
+`UlanziTileBoard` holds what each tile's page shows (nothing ticks — the knob
+belongs to the user, D1). `UlanziClockSession` pushes on events only: a
+delivery, an idle mark, a removal, and one blunt recovery rule — after any
+failed device call, the first successful call re-pushes every registered page
+except the one whose push just ended the outage (D4). `live()` routes per
+`ClockRecord.model`: the AWTRIX branch is unchanged, a TC002 record builds the
+Ulanzi session over `UlanziCustody` and the durable `UserDefaultsAppRecord`
+(D9), and `UlanziConnectorRunning` is the app's view of it. A connector
+switched off on a TC002 marks its tile idle — paused, never deleted — and the
+TC002 panel row draws no battery line: the stock firmware reads no level over
+its API, the cell is there, the API does not answer it.
+
+Two stopgaps phase 4 replaces, named so nobody mistakes them for decisions:
+`NoClockHost` answers the AWTRIX-shaped app shell without wire traffic, and
+`start()` keeps the device loops off a TC002. What drives the Ulanzi session
+on a cadence — the sweep at startup and the per-tile deliveries — lands with
+phase 4's multi-clock work, not here.
+
+### Audit results at close
+
+- `switchDiyApp`: no matches in `Sources/` (D3).
+- `URLSession()` constructed in tests: no matches (D13). Every test drives an
+  injected `Transport`.
+- `Sources/PixelClockKit/Awtrix/`: byte-identical to the phase-3b base
+  (`eeb87fd`).
+- Test functions: 835 at the base, 879 at close. The full suite runs 795 tests
+  with the anecdote-sound test skipped (796 total in the tree, that one run
+  alone).
+- One new unstructured `Task` spawn, the disable-edge `markIdle` in
+  `AppModel.commit` — a one-shot push, not a tick.
+
+### What only a person at the hardware can settle
+
+1. **E9 — reboot persistence.** Power-cycle the TC002 and read
+   `/api/customList` after boot. Custom apps surviving or not, the session
+   behaves identically — the upsert re-creates them; the check only sharpens
+   the research record.
+2. **`pct-` name acceptance.** Push `pct-weather` by hand once (curl from the
+   research setup) and confirm it appears as a DIY page at index 100+.
+3. **E4 — deleted-page effect.** With the knob parked on a page, delete that
+   page's app and record what the panel shows — black, previous page, crash?
+   This is what `tileRemoved` and `shutdown` expose a user to.
+4. **Legibility.** The 3×5 font at scale 2 on the 52×16 panel from normal
+   viewing distance: confirm `-12°` and `87%` read cleanly; adjust ink colours
+   if the panel washes out.
+5. **Idle marker.** Confirm the single dim dot reads as "paused" from the
+   couch.
+6. **`customList` exact schema.** One `curl /api/customList` settles the decode
+   shape permanently if the Task 4 fixture paste left any doubt.
+7. **`image[]` element spelling.** The scene encoder emits a bare base64
+   payload per image element — the one wire detail no phase-3 capture pins.
+   Before any face ships a positioned or timed image, pin the element spelling
+   (durations, frame counts) against a real exchange.

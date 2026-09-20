@@ -80,6 +80,22 @@ import Testing
     }
 }
 
+@Suite struct TileRowIconTests {
+    // The mark a row opens with is the connector's own, and no two shipped
+    // connectors share one.
+    @Test func everyShippedConnectorHasItsOwnSymbol() {
+        let symbols = ["weather", "claude", "anecdotes", VPNConnector.id]
+            .map { TileRowIcon.symbol(forConnectorId: $0) }
+        #expect(Set(symbols).count == 4)
+    }
+
+    // A connector the icon table does not know still gets a mark — the row
+    // must not draw nothing.
+    @Test func anUnknownConnectorStillGetsAMark() {
+        #expect(TileRowIcon.symbol(forConnectorId: "slack") == "app.dashed")
+    }
+}
+
 @Suite struct AddTileMenuItemTests {
     // The menu renders reasons; it does not compute them. A reason composed
     // elsewhere must survive the item whole.

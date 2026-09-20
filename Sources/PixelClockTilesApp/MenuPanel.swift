@@ -94,7 +94,7 @@ struct MenuPanel: View {
                 statusBlock
                 discoverySection
                 Divider()
-                ForEach(Array(model.tileRows.enumerated()), id: \.offset) { _, row in
+                ForEach(model.tileRows, id: \.key) { row in
                     TileRow(value: row)
                 }
                 AddTileMenu(items: model.addTileMenuItems)

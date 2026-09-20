@@ -1,12 +1,22 @@
 /// 3×5 pixel font for the glyphs the TC002 faces actually draw (D12): digits
-/// 0–9, `-`, `%`, `°`, space — and nothing more. No speculative alphabet; a
-/// time face adds `:` when one exists.
+/// 0–9, `-`, `%`, `°`, space, and the letters the usage rows' labels draw —
+/// nothing more. No speculative alphabet; a time face adds `:` when one
+/// exists.
 ///
 /// Rows are top-first, one byte per row, low 3 bits = left-to-right (bit 0 is
 /// the leftmost column).
 public enum PixelFont {
     public static func glyph(for character: Character) -> [UInt8]? {
         glyphs[character]
+    }
+
+    /// The columns a line occupies at `scale`: a 3-column glyph plus the gap
+    /// after it, per character, the trailing gap not counted. This is the
+    /// width `PixelCanvas.drawText` advances, so a face placing text from the
+    /// right edge cannot disagree with where the glyphs land.
+    public static func width(of text: String, scale: Int) -> Int {
+        guard !text.isEmpty else { return 0 }
+        return text.unicodeScalars.count * 4 * scale - scale
     }
 
     private static let glyphs: [Character: [UInt8]] = [
@@ -24,5 +34,12 @@ public enum PixelFont {
         "%": [0b001, 0b100, 0b010, 0b001, 0b100],
         "°": [0b011, 0b011, 0b000, 0b000, 0b000],
         " ": [0b000, 0b000, 0b000, 0b000, 0b000],
+        "A": [0b010, 0b101, 0b111, 0b101, 0b101],
+        "D": [0b011, 0b101, 0b101, 0b101, 0b011],
+        "E": [0b111, 0b001, 0b111, 0b001, 0b111],
+        "K": [0b101, 0b011, 0b001, 0b011, 0b101],
+        "S": [0b011, 0b100, 0b010, 0b001, 0b110],
+        "W": [0b101, 0b101, 0b101, 0b101, 0b010],
+        "Y": [0b101, 0b101, 0b010, 0b010, 0b010],
     ]
 }

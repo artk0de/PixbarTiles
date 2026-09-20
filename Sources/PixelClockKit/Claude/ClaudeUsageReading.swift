@@ -14,21 +14,29 @@ public struct ClaudeUsageReading: Sendable, Equatable {
     /// The rolling five-hour window, when the source reported one. Carried, and
     /// drawn by no face yet.
     public let fiveHour: ClaudeUsageWindow?
+    /// How full the current session's context window is, in percent, when the
+    /// document said so. Read fresh from every document rather than carried
+    /// across reads: it is the figure OF the session that wrote the document,
+    /// and a previous session's context across a switch would show a session
+    /// that is gone.
+    public let contextWindow: Int?
     /// When the document this came from was written: its modification time.
     /// Nil for a reading that did not come from a document.
     public let observedAt: Date?
 
-    /// The two newer fields default to nil, so a reading built from a figure
+    /// The newer fields default to nil, so a reading built from a figure
     /// alone — every drawing test, every face — reads as it always did.
     public init(
         utilization: Int,
         resetsAt: Date?,
         fiveHour: ClaudeUsageWindow? = nil,
+        contextWindow: Int? = nil,
         observedAt: Date? = nil
     ) {
         self.utilization = utilization
         self.resetsAt = resetsAt
         self.fiveHour = fiveHour
+        self.contextWindow = contextWindow
         self.observedAt = observedAt
     }
 }

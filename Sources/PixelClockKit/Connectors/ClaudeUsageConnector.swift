@@ -24,7 +24,10 @@ public struct ClaudeUsageConnector: Connector {
     /// replaces the previous reading rather than growing a rotation.
     public static let appName = "claude"
 
-    public let id = "claude"
+    /// Named from the type the way `VPNConnector` is: the panel's saves and
+    /// the Add tile menu speak of the connector without an instance in hand.
+    public static let id = "claude"
+    public var id: String { Self.id }
     public let displayName = "Claude usage"
     /// Five minutes, and chosen against `lifetime` rather than on its own.
     ///
@@ -40,9 +43,18 @@ public struct ClaudeUsageConnector: Connector {
     public let isAmbient = true
 
     private let reporter: any ClaudeUsageReporting
+    /// Which figure the tile shows. Read at draw time rather than held, so a
+    /// metric picked in the tile detail takes effect at the next poll instead
+    /// of at the next launch — the reason `WeatherConnector` reads its place
+    /// the same way.
+    private let metric: @Sendable () -> ClaudeDisplayMetric
 
-    public init(reporter: any ClaudeUsageReporting) {
+    public init(
+        reporter: any ClaudeUsageReporting,
+        metric: @escaping @Sendable () -> ClaudeDisplayMetric = { .weekly }
+    ) {
         self.reporter = reporter
+        self.metric = metric
     }
 
     /// The reporter's reading, or the reason there is none. Whether the tile
@@ -53,7 +65,9 @@ public struct ClaudeUsageConnector: Connector {
     }
 
     public var awtrixFace: AwtrixFace<ClaudeUsageReading> {
-        AwtrixFace { Self.output(for: $0) }
+        AwtrixFace { reading in
+            Self.output(for: reading, metric: metric()) ?? Self.output(for: reading)
+        }
     }
 
     public var ulanziFace: UlanziFace<ClaudeUsageReading>? {
@@ -68,22 +82,58 @@ public struct ClaudeUsageConnector: Connector {
         case noReading
     }
 
-    /// What a reading looks like on the matrix.
+    /// The run the session drives, and where the metric's gate lives: a chosen
+    /// figure the reading does not carry is no delivery at all, so the tile
+    /// leaves the clock until its figure returns. Faces cannot say this — they
+    /// are total functions — so the run, the one place read and face meet,
+    /// says it for them.
+    public func produce() async throws -> AwtrixDelivery {
+        let reading = try await read()
+        guard let delivery = Self.output(for: reading, metric: metric()) else {
+            throw Failure.noReading
+        }
+        return delivery
+    }
+
+    /// What a reading looks like on the matrix, for the metric the tile shows.
+    ///
+    /// Three faces, one per metric. The weekly one is the face this connector
+    /// always drew; the other two draw the same bar around their own figure.
+    /// Nil when the metric's figure is missing from the reading — `produce()`
+    /// is the caller that turns that into no delivery, and the
+    /// `awtrixFace`'s fallback to the weekly figure exists only for the
+    /// protocol's total form, which a gated run never reaches.
+    public static func output(
+        for reading: ClaudeUsageReading, metric: ClaudeDisplayMetric
+    ) -> AwtrixDelivery? {
+        guard let figure = metric.percentage(in: reading) else { return nil }
+        return usageBar(figure)
+    }
+
+    /// What the weekly reading looks like on the matrix — the face as it was
+    /// before there was a choice, kept because the drawing tests and the
+    /// default tile both read it.
     ///
     /// Separated from `read()` so the drawing can be tested against a figure
     /// rather than against a network. Everything decided here is decided from
     /// the one number.
     public static func output(for reading: ClaudeUsageReading) -> AwtrixDelivery {
+        usageBar(reading.utilization)
+    }
+
+    /// One percentage as the tile draws it: the true figure — including one
+    /// past a hundred — beside the star, over the band's own bar.
+    private static func usageBar(_ percentage: Int) -> AwtrixDelivery {
         AwtrixDelivery(
             // The true figure, including one past a hundred. The bar clamps
             // because the firmware has nowhere to draw the rest; the text has
             // no such excuse, and hiding an overage from the reader is not the
             // same problem as fitting one on eight rows.
-            text: "\(reading.utilization)%",
+            text: "\(percentage)%",
             icon: .bundled("ClaudeStar"),
             progress: ProgressBar(
-                percent: reading.utilization,
-                fill: ClaudeUsageBand(utilization: reading.utilization).fillColour,
+                percent: percentage,
+                fill: ClaudeUsageBand(utilization: percentage).fillColour,
                 track: Self.trackColour
             ),
             color: ClaudeUsage.brandColour,
@@ -103,35 +153,38 @@ public struct ClaudeUsageConnector: Connector {
     /// track makes a half-full bar look like a short one.
     static let trackColour = "#303030"
 
-    /// The bundled star as the TC002 image layer, measured from the file it
-    /// ships as: 8×8 and 8 frames, inside every measured image limit (A4).
-    static let star = UlanziImage(
-        base64: (BundledIcon.data(named: "ClaudeStar") ?? Data()).base64EncodedString(),
-        isAnimated: true,
-        frameCount: 8,
-        pixelSize: (width: 8, height: 8)
-    )
+    /// The page's three rows, in the order the tile detail names them: the
+    /// daily limit, the weekly window, the current session. The metric answers
+    /// the AWTRIX page alone — the TC002 draws all three at once, and a window
+    /// the document did not carry is a dash, never a zero.
+    static func rows(for reading: ClaudeUsageReading) -> [UsageRows.Row] {
+        [
+            row("DAY", reading.fiveHour?.utilization),
+            row("WK", reading.utilization),
+            row("SES", reading.contextWindow),
+        ]
+    }
 
-    /// What a reading looks like on the TC002's 52×16 panel: the percentage
-    /// rastered through the 3×5 font at scale 2 in the brand colour, the star
-    /// riding beside it as the image layer.
-    static func ulanziOutput(for reading: ClaudeUsageReading) -> UlanziDelivery {
-        var canvas = PixelCanvas()
-        let text = "\(reading.utilization)%"
-        let ink = UlanziColour(hex: ClaudeUsage.brandColour)
-        let width = text.unicodeScalars.count * 4 * 2 - 2
-        canvas.drawText(
-            text,
-            at: PixelPoint(
-                x: (PixelCanvas.width - width) / 2, y: (PixelCanvas.height - 10) / 2
-            ),
-            ink: Pixel(colour: ink),
-            scale: 2
+    /// One band from a figure that may not be there: the percent as text,
+    /// inked in its own band's colour — the dash in the track's grey, which is
+    /// what an empty bar is drawn in anyway.
+    private static func row(_ label: String, _ percentage: Int?) -> UsageRows.Row {
+        UsageRows.Row(
+            label: label,
+            value: percentage.map { "\($0)%" } ?? "-",
+            colour: UlanziColour(
+                hex: percentage.map { ClaudeUsageBand(utilization: $0).fillColour } ?? trackColour
+            )
         )
-        return UlanziDelivery(
+    }
+
+    /// What a reading looks like on the TC002's 52×16 panel: the shared
+    /// three-row usage face fed all three windows, not Claude's own layout.
+    static func ulanziOutput(for reading: ClaudeUsageReading) -> UlanziDelivery {
+        UlanziDelivery(
             scene: UlanziScene(
                 frames: [
-                    UlanziFrame(duration: 5, draw: [canvas.drawCommands()], image: [star])
+                    UlanziFrame(duration: 5, draw: [UsageRows.drawCommands(rows(for: reading))])
                 ]
             )
         )

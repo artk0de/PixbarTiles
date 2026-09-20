@@ -208,10 +208,23 @@ struct MenuPanel: View {
         } else if connector is AnecdoteConnector {
             AnecdoteTileBlock(onHistory: { model.openHistory() })
         } else if connector is ClaudeUsageConnector {
-            // The whole Claude settings surface, machine-wide state and all:
-            // whatever tile's detail it is edited from edits it for every
-            // Claude tile, because the state is one file, not a tile's.
-            ClaudeCodeSettings(link: claudeCode())
+            VStack(alignment: .leading, spacing: 10) {
+                // The tile's own choice first: which figure this tile shows.
+                // Saved as the tile's config, with the policy carried through
+                // — the same save the weather block makes.
+                ClaudeTileBlock(
+                    metric: config?.claude ?? .weekly,
+                    onMetric: { metric in
+                        guard let stored = model.storedPolicy(of: key) else { return }
+                        _ = model.saveTile(key: key, policy: stored, config: .claude(metric))
+                    }
+                )
+                // Then the whole Claude settings surface, machine-wide state
+                // and all: whatever tile's detail it is edited from edits it
+                // for every Claude tile, because the state is one file, not a
+                // tile's.
+                ClaudeCodeSettings(link: claudeCode())
+            }
         } else if connector is ZaiUsageConnector {
             ZaiTileBlock(
                 hasKey: model.hasZaiKey(for: key),

@@ -188,4 +188,17 @@ private func detail(
             "#3DFFB0", "#FF6B1A", "#FFE600", "#FF1744",
         ])
     }
+
+    // The Claude block is the display selector: the stored metric is what the
+    // picker opens with, and another metric draws differently.
+    @Test func theClaudeBlockOpensWithTheStoredMetric() {
+        func block(_ metric: ClaudeDisplayMetric) -> ClaudeTileBlock {
+            ClaudeTileBlock(metric: metric, onMetric: { _ in })
+        }
+
+        let base = drawn(block(.weekly))
+        #expect(base != nil)
+        #expect(base != drawn(block(.daily)))
+        #expect(base != drawn(block(.session)))
+    }
 }

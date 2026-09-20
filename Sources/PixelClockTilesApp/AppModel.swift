@@ -792,9 +792,6 @@ final class AppModel: ObservableObject {
         // else below is per clock.
         let audio = SequentialAudioPlayer()
         let weather = OpenMeteoSource(transport: transport)
-        let claude = ClaudeUsageConnector(
-            reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document)
-        )
         let buildSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
             // The TC002 branch of the runtime route: the schedule's slot gets a
             // host that answers every call with a skip, so the AWTRIX cadence
@@ -807,7 +804,25 @@ final class AppModel: ObservableObject {
             registry.register(anecdotes.connector)
             let place = StoredLocation(defaults: defaults, clockId: clock.id)
             registry.register(WeatherConnector(source: weather, location: { place.current }))
-            registry.register(claude)
+            // The Claude tile's own metric, read from its config on every run —
+            // so a choice made in the detail takes effect at the next poll,
+            // exactly the way the weather's place does. A tile with no choice
+            // yet shows the week, which is what it drew before the choice
+            // existed.
+            let storedTiles = TileStore(defaults: defaults)
+            registry.register(
+                ClaudeUsageConnector(
+                    reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document),
+                    metric: {
+                        storedTiles.all()
+                            .first {
+                                $0.key.clockId == clock.id
+                                    && $0.key.connectorId == ClaudeUsageConnector.id
+                            }
+                            .flatMap(\.config)?.claude ?? .weekly
+                    }
+                )
+            )
             // The key is looked up at every read, never held: a key pasted
             // into the tile's detail is on its way to the service at the next
             // poll, and one removed from it is gone just as fast.

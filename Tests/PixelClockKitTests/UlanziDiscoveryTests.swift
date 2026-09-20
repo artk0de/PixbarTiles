@@ -49,6 +49,91 @@ import Testing
     }
 }
 
+// The read thread's handoff contract. The buffer a datagram lands in is the
+// loop's own and is reused for the next datagram the moment the loop turns —
+// so whatever the handoff produces must be a COPY the receiver owns, built at
+// read time, never a view of bytes the loop is about to overwrite. A race
+// here is not deterministically testable; the ownership contract is.
+
+@Suite struct UlanziHandoffTests {
+    /// One receive buffer, the shape the loop owns for its whole life.
+    private func filledBuffer(
+        _ payload: String, capacity: Int = 2048
+    ) -> UnsafeMutableRawBufferPointer {
+        let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: capacity, alignment: 1)
+        let bytes = Array(payload.utf8)
+        bytes.withUnsafeBytes { buffer.copyBytes(from: $0) }
+        return buffer
+    }
+
+    @Test func theHandoffCopiesTheBytesRatherThanViewingThem() {
+        let buffer = filledBuffer(
+            "Ulanzi TC002 9b9a:ccc4b2779b9a:B0D32I008U3671403:false"
+        )
+        defer { buffer.deallocate() }
+
+        let sighting = UlanziBroadcastListener.sighting(
+            from: UnsafeRawBufferPointer(buffer), count: 55, host: "192.168.1.72"
+        )
+        #expect(sighting?.announcement.mac == "ccc4b2779b9a")
+        #expect(sighting?.host == "192.168.1.72")
+
+        // The loop turns and the buffer is reused for the next datagram —
+        // every received byte of it overwritten. What was handed on is the
+        // receiver's own copy and cannot change with it.
+        let reuse = [UInt8](repeating: 0x2A, count: 2048)
+        reuse.withUnsafeBytes { buffer.copyBytes(from: $0) }
+        #expect(sighting?.announcement.mac == "ccc4b2779b9a")
+        #expect(sighting?.announcement.serial == "B0D32I008U3671403")
+        #expect(sighting?.announcement.model == "TC002")
+    }
+
+    // The count is the kernel's word about what it wrote; a count beyond the
+    // buffer it wrote into cannot be sliced, it is refused.
+    @Test func aCountBeyondTheBufferIsRefused() {
+        let buffer = filledBuffer("Ulanzi TC002 9b9a:ccc4b2779b9a:B0D32I008U3671403:false")
+        defer { buffer.deallocate() }
+
+        #expect(
+            UlanziBroadcastListener.sighting(
+                from: UnsafeRawBufferPointer(buffer), count: 2049, host: "192.168.1.72"
+            ) == nil
+        )
+        #expect(
+            UlanziBroadcastListener.sighting(
+                from: UnsafeRawBufferPointer(buffer), count: 0, host: "192.168.1.72"
+            ) == nil
+        )
+    }
+
+    // A datagram that does not decode is no sighting — same rule as parse.
+    @Test func undecodableBytesYieldNoSighting() {
+        let buffer = filledBuffer("<html>redirect</html>")
+        defer { buffer.deallocate() }
+
+        #expect(
+            UlanziBroadcastListener.sighting(
+                from: UnsafeRawBufferPointer(buffer), count: 20, host: "192.168.1.72"
+            ) == nil
+        )
+    }
+
+    // And a datagram with no renderable source address is dropped: a sighting
+    // without an address cannot become a record "Add" could act on.
+    @Test func aSightingWithoutAHostIsDropped() {
+        let buffer = filledBuffer(
+            "Ulanzi TC002 9b9a:ccc4b2779b9a:B0D32I008U3671403:false"
+        )
+        defer { buffer.deallocate() }
+
+        #expect(
+            UlanziBroadcastListener.sighting(
+                from: UnsafeRawBufferPointer(buffer), count: 55, host: nil
+            ) == nil
+        )
+    }
+}
+
 @Suite struct UlanziProbeTests {
     /// `/api/stats` answers a body the AWTRIX stats shape decodes — an AWTRIX
     /// clock, whatever status it answered the TC002 path with.

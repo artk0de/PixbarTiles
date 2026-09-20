@@ -259,6 +259,27 @@ struct AnecdoteTileBlock: View {
     }
 }
 
+/// The Claude tile's own block: which figure the tile shows — the daily
+/// limit, the weekly window, or the current session.
+///
+/// Values in, closures out, like every block here. On the TC001 the choice
+/// picks one of the connector's three faces; on the TC002 the face draws all
+/// three at once and the choice answers only the AWTRIX page.
+struct ClaudeTileBlock: View {
+    let metric: ClaudeDisplayMetric
+    let onMetric: (ClaudeDisplayMetric) -> Void
+
+    var body: some View {
+        Picker("Show", selection: Binding(
+            get: { metric }, set: { onMetric($0) }
+        )) {
+            ForEach(ClaudeDisplayMetric.allCases, id: \.self) { candidate in
+                Text(candidate.displayName).tag(candidate)
+            }
+        }
+    }
+}
+
 /// The VPN tile's block: which VPN to watch, which lamp to say it with, in
 /// which colour, and what "down" looks like.
 ///

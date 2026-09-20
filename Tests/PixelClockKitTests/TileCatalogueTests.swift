@@ -94,6 +94,36 @@ private func availability(
     #expect(TileCandidate(AWTRIXOnly()).models == [.awtrix3])
 }
 
+// The candidate's models come from the connector's own faces: a TC002 face
+// puts the TC002 on the list, and the connector is offered on that clock.
+@Test func aConnectorWithATC002FaceIsOfferedOnTheTC002() {
+    let candidate = TileCandidate(TC002Too())
+
+    #expect(candidate.models == [.awtrix3, .ulanziTC002])
+    #expect(availability(candidate, on: desk) == .available)
+}
+
+@Test func aConnectorWithNoTC002FaceStaysUnsupportedOnTheTC002() {
+    #expect(availability(TileCandidate(AWTRIXOnly()), on: desk) == .unavailable("not supported on TC002"))
+}
+
+// The shipped connectors read through their faces, as the spec's
+// "Connectors and faces" table draws it: weather and claude carry real TC002
+// faces and are offered on one; the vpn is a lamp with no face by design.
+@Test func theShippedFacesDecideTheShippedCandidates() {
+    let shippedWeather = TileCandidate(WeatherConnector(
+        source: OpenMeteoSource(transport: SilentTransport()),
+        location: { Coordinates(latitude: 55.7, longitude: 37.6) }
+    ))
+    let shippedClaude = TileCandidate(ClaudeUsageConnector(reporter: SilentReporter()))
+
+    #expect(shippedWeather.models == [.awtrix3, .ulanziTC002])
+    #expect(shippedClaude.models == [.awtrix3, .ulanziTC002])
+    #expect(availability(shippedWeather, on: desk) == .available)
+    #expect(availability(shippedClaude, on: desk) == .available)
+    #expect(availability(vpn, on: desk) == .unavailable("not supported on TC002"))
+}
+
 private struct AWTRIXOnly: Connector {
     let id = "awtrix-only"
     let displayName = "AWTRIX only"
@@ -101,6 +131,30 @@ private struct AWTRIXOnly: Connector {
     let isAudible = true
     func read() async throws -> Int { 0 }
     var awtrixFace: AwtrixFace<Int> { AwtrixFace { _ in AwtrixDelivery(text: "") } }
+}
+
+private struct TC002Too: Connector {
+    let id = "tc002-too"
+    let displayName = "TC002 too"
+    let defaultInterval: TimeInterval = 600
+    let isAudible = false
+    func read() async throws -> Int { 0 }
+    var awtrixFace: AwtrixFace<Int> { AwtrixFace { _ in AwtrixDelivery(text: "") } }
+    var ulanziFace: UlanziFace<Int>? {
+        UlanziFace { _ in UlanziDelivery(scene: UlanziScene(frames: [UlanziFrame(duration: 5)])) }
+    }
+}
+
+/// Never called: the catalogue reads the candidate, and the candidate never
+/// reaches the network.
+private struct SilentTransport: Transport {
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        fatalError("the catalogue never reaches the network")
+    }
+}
+
+private struct SilentReporter: ClaudeUsageReporting {
+    func read() async throws -> ClaudeUsageReading? { nil }
 }
 
 // Rule 3 is about ANOTHER clock. No shipped connector is audible and keyed at

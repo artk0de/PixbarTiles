@@ -11,10 +11,12 @@ import Foundation
 ///   {"weather":{"latitude":55.7558,"longitude":37.6173}}
 ///   {"vpn":{"slot":"top","upColour":"#90EE90","vpn":"pritunl",
 ///           "whenDown":{"colour":"#FF0000","kind":"blink"}}}
+///   {"claude":"daily"}
 public enum TileConfig: Equatable, Sendable {
     case weather(Coordinates)
     case vpn(VPNTileConfig)
     case zai(ZaiTileConfig)
+    case claude(ClaudeDisplayMetric)
 
     /// The weather tile's place, or nil for any other tile.
     public var location: Coordinates? {
@@ -34,11 +36,17 @@ public enum TileConfig: Equatable, Sendable {
         guard case let .zai(handle) = self else { return nil }
         return handle
     }
+
+    /// The Claude tile's display metric, or nil for any other tile.
+    public var claude: ClaudeDisplayMetric? {
+        guard case let .claude(metric) = self else { return nil }
+        return metric
+    }
 }
 
 extension TileConfig: Codable {
     private enum Key: String, CodingKey {
-        case weather, vpn, zai
+        case weather, vpn, zai, claude
     }
 
     public init(from decoder: any Decoder) throws {
@@ -58,6 +66,8 @@ extension TileConfig: Codable {
             self = .vpn(try container.decode(VPNTileConfig.self, forKey: .vpn))
         case .zai:
             self = .zai(try container.decode(ZaiTileConfig.self, forKey: .zai))
+        case .claude:
+            self = .claude(try container.decode(ClaudeDisplayMetric.self, forKey: .claude))
         }
     }
 
@@ -70,6 +80,8 @@ extension TileConfig: Codable {
             try container.encode(lamp, forKey: .vpn)
         case let .zai(handle):
             try container.encode(handle, forKey: .zai)
+        case let .claude(metric):
+            try container.encode(metric, forKey: .claude)
         }
     }
 }

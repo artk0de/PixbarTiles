@@ -45,9 +45,9 @@ public struct UlanziSighting: Sendable, Equatable {
 }
 
 /// Passive UDP 55555 listener yielding sightings. Untested by
-/// design (D13): the socket is the only untested surface, and the parser and
-/// the address mapping above it carry all of the logic — the mapping is pure
-/// and tested, the socket is not.
+/// design (D13): the socket is the only untested surface — the address
+/// mapping, the handoff's ownership contract, and the parser are pure and
+/// tested above and below it.
 ///
 /// A BSD datagram socket, deliberately not `NWListener`: it is call for call
 /// the shape that demonstrably receives the clock's broadcasts on this
@@ -57,6 +57,12 @@ public struct UlanziSighting: Sendable, Equatable {
 /// by the macOS application firewall, which silently drops inbound datagrams
 /// for binaries it has not been asked about; only the shipped app, allowed
 /// like any other, settles which shape the firewall was hiding.
+///
+/// The receive buffer is one raw allocation the loop owns for its life — not
+/// a Swift array. A crash in the field read an Array's object header as
+/// datagram payload bytes; with no array on the wire path there is no header
+/// for payload to land in, and the handoff copies the received bytes into an
+/// owned value before the loop reuses the buffer for the next datagram.
 public final class UlanziBroadcastListener: Sendable {
     /// How long one `recvfrom` waits before the loop checks whether the
     /// stream was cancelled. Short enough that stopping is prompt, long
@@ -88,6 +94,27 @@ public final class UlanziBroadcastListener: Sendable {
         return String(decoding: bytes, as: UTF8.self)
     }
 
+    /// The read thread's handoff, and the ownership contract of the whole
+    /// listener: the bytes on the wire become an owned, immutable sighting at
+    /// the moment of the COPY, here, on the read thread — nothing downstream
+    /// ever sees the buffer the loop is about to reuse for the next datagram.
+    ///
+    /// Nil for a count the kernel cannot have written (it is refused, not
+    /// sliced), for bytes that do not decode, and for a datagram with no
+    /// renderable source address.
+    static func sighting(
+        from wire: UnsafeRawBufferPointer, count: Int, host: String?
+    ) -> UlanziSighting? {
+        guard count > 0, count <= wire.count, let base = wire.baseAddress, let host else {
+            return nil
+        }
+        let bytes = Data(bytes: base, count: count)
+        guard let line = String(data: bytes, encoding: .utf8),
+            let announcement = UlanziAnnouncement.parse(line)
+        else { return nil }
+        return UlanziSighting(announcement: announcement, host: host)
+    }
+
     /// Binds the datagram socket, or nil when it cannot — the port taken by a
     /// second listener in the same process, most likely.
     private static func makeSocket(port: UInt16) -> Int32? {
@@ -115,6 +142,10 @@ public final class UlanziBroadcastListener: Sendable {
         return fd
     }
 
+    /// How many bytes one datagram can bring. The device's line is ~55 bytes;
+    /// this is headroom for a line that grows, not a limit anybody measured.
+    static let datagramLimit = 2048
+
     public func announcements() -> AsyncStream<UlanziSighting> {
         AsyncStream { continuation in
             guard let fd = Self.makeSocket(port: port) else {
@@ -130,31 +161,35 @@ public final class UlanziBroadcastListener: Sendable {
             }
 
             DispatchQueue.global(qos: .utility).async {
-                var buffer = [UInt8](repeating: 0, count: 2048)
-                let capacity = buffer.count
+                // One raw allocation for the loop's whole life, written by
+                // nothing but recvfrom and read by nothing but the handoff
+                // below — no Swift object shares this memory, so no optimiser
+                // decision about some Array's header can touch the wire path.
+                let wire = UnsafeMutableRawBufferPointer.allocate(
+                    byteCount: Self.datagramLimit, alignment: 1
+                )
+                defer { wire.deallocate() }
                 while !stopped.isStopped {
                     var source = sockaddr_in()
                     var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-                    let received = withUnsafeMutableBytes(of: &buffer) { bytes in
-                        withUnsafeMutablePointer(to: &source) { address in
-                            address.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
-                                recvfrom(
-                                    fd, bytes.baseAddress, capacity, 0,
-                                    address, &length
-                                )
-                            }
+                    let received = withUnsafeMutablePointer(to: &source) { address in
+                        address.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
+                            recvfrom(
+                                fd, wire.baseAddress, wire.count, 0,
+                                address, &length
+                            )
                         }
                     }
-                    guard received > 0,
-                        let line = String(
-                            bytes: buffer[0..<received], encoding: .utf8
-                        ),
-                        let announcement = UlanziAnnouncement.parse(line),
-                        let host = Self.host(of: source)
-                    else { continue }
-                    continuation.yield(
-                        UlanziSighting(announcement: announcement, host: host)
+                    guard received > 0 else { continue }
+                    // The copy happens inside the handoff, on this thread,
+                    // before the loop turns: whatever the next datagram does
+                    // to the buffer cannot reach what was handed on.
+                    let sighting = Self.sighting(
+                        from: UnsafeRawBufferPointer(wire), count: received,
+                        host: Self.host(of: source)
                     )
+                    guard let sighting else { continue }
+                    continuation.yield(sighting)
                 }
             }
         }

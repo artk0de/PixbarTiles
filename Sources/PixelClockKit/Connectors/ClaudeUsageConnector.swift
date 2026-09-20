@@ -153,35 +153,38 @@ public struct ClaudeUsageConnector: Connector {
     /// track makes a half-full bar look like a short one.
     static let trackColour = "#303030"
 
-    /// The bundled star as the TC002 image layer, measured from the file it
-    /// ships as: 8×8 and 8 frames, inside every measured image limit (A4).
-    static let star = UlanziImage(
-        base64: (BundledIcon.data(named: "ClaudeStar") ?? Data()).base64EncodedString(),
-        isAnimated: true,
-        frameCount: 8,
-        pixelSize: (width: 8, height: 8)
-    )
+    /// The page's three rows, in the order the tile detail names them: the
+    /// daily limit, the weekly window, the current session. The metric answers
+    /// the AWTRIX page alone — the TC002 draws all three at once, and a window
+    /// the document did not carry is a dash, never a zero.
+    static func rows(for reading: ClaudeUsageReading) -> [UsageRows.Row] {
+        [
+            row("DAY", reading.fiveHour?.utilization),
+            row("WK", reading.utilization),
+            row("SES", reading.contextWindow),
+        ]
+    }
 
-    /// What a reading looks like on the TC002's 52×16 panel: the percentage
-    /// rastered through the 3×5 font at scale 2 in the brand colour, the star
-    /// riding beside it as the image layer.
-    static func ulanziOutput(for reading: ClaudeUsageReading) -> UlanziDelivery {
-        var canvas = PixelCanvas()
-        let text = "\(reading.utilization)%"
-        let ink = UlanziColour(hex: ClaudeUsage.brandColour)
-        let width = text.unicodeScalars.count * 4 * 2 - 2
-        canvas.drawText(
-            text,
-            at: PixelPoint(
-                x: (PixelCanvas.width - width) / 2, y: (PixelCanvas.height - 10) / 2
-            ),
-            ink: Pixel(colour: ink),
-            scale: 2
+    /// One band from a figure that may not be there: the percent as text,
+    /// inked in its own band's colour — the dash in the track's grey, which is
+    /// what an empty bar is drawn in anyway.
+    private static func row(_ label: String, _ percentage: Int?) -> UsageRows.Row {
+        UsageRows.Row(
+            label: label,
+            value: percentage.map { "\($0)%" } ?? "-",
+            colour: UlanziColour(
+                hex: percentage.map { ClaudeUsageBand(utilization: $0).fillColour } ?? trackColour
+            )
         )
-        return UlanziDelivery(
+    }
+
+    /// What a reading looks like on the TC002's 52×16 panel: the shared
+    /// three-row usage face fed all three windows, not Claude's own layout.
+    static func ulanziOutput(for reading: ClaudeUsageReading) -> UlanziDelivery {
+        UlanziDelivery(
             scene: UlanziScene(
                 frames: [
-                    UlanziFrame(duration: 5, draw: [canvas.drawCommands()], image: [star])
+                    UlanziFrame(duration: 5, draw: [UsageRows.drawCommands(rows(for: reading))])
                 ]
             )
         )

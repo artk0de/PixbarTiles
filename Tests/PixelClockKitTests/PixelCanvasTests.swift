@@ -66,7 +66,7 @@ import Testing
 // MARK: - The font (D12: exactly what the two phase-3 faces enumerate)
 
 @Suite struct PixelFontTests {
-    let set: [Character] = Array("0123456789-%° ")
+    let set: [Character] = Array("0123456789-%° ADEKSWY")
 
     @Test func everyGlyphInTheSetIsFiveRows() {
         for character in set {
@@ -78,7 +78,8 @@ import Testing
 
     @Test func aCharacterOutsideTheSetIsNil() {
         #expect(PixelFont.glyph(for: ":") == nil)   // a time face adds it when one exists
-        #expect(PixelFont.glyph(for: "A") == nil)
+        #expect(PixelFont.glyph(for: "B") == nil)   // a letter no face draws — the usage
+                                                    // rows' seven arrived the same way
         #expect(PixelFont.glyph(for: "é") == nil)
     }
 
@@ -104,5 +105,43 @@ import Testing
 
     @Test func spaceIsAnEmptyGlyph() {
         #expect(PixelFont.glyph(for: " ") == [0, 0, 0, 0, 0])
+    }
+
+    // The usage face's labels: DAY, WK, SES. Seven letters, each pinned whole
+    // — the font carries only what a face draws, and these are what the rows
+    // draw.
+    @Test func aPinsItsFullBitmap() {
+        // .#. / #.# / ### / #.# / #.#
+        #expect(PixelFont.glyph(for: "A") == [0b010, 0b101, 0b111, 0b101, 0b101])
+    }
+
+    @Test func dPinsItsFullBitmap() {
+        // ##. / #.# / #.# / #.# / ##.
+        #expect(PixelFont.glyph(for: "D") == [0b011, 0b101, 0b101, 0b101, 0b011])
+    }
+
+    @Test func ePinsItsFullBitmap() {
+        // ### / #.. / ### / #.. / ### — the stem on bit 0, the left column
+        #expect(PixelFont.glyph(for: "E") == [0b111, 0b001, 0b111, 0b001, 0b111])
+    }
+
+    @Test func kPinsItsFullBitmap() {
+        // #.# / ##. / #.. / ##. / #.#
+        #expect(PixelFont.glyph(for: "K") == [0b101, 0b011, 0b001, 0b011, 0b101])
+    }
+
+    @Test func sPinsItsFullBitmap() {
+        // ##. / ..# / .#. / #.. / .##
+        #expect(PixelFont.glyph(for: "S") == [0b011, 0b100, 0b010, 0b001, 0b110])
+    }
+
+    @Test func wPinsItsFullBitmap() {
+        // #.# / #.# / #.# / #.# / .#.
+        #expect(PixelFont.glyph(for: "W") == [0b101, 0b101, 0b101, 0b101, 0b010])
+    }
+
+    @Test func yPinsItsFullBitmap() {
+        // #.# / #.# / .#. / .#. / .#.
+        #expect(PixelFont.glyph(for: "Y") == [0b101, 0b101, 0b010, 0b010, 0b010])
     }
 }

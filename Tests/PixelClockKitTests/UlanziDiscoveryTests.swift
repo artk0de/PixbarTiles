@@ -21,6 +21,34 @@ import Testing
     }
 }
 
+// A sighting is the announcement together with the address it arrived from —
+// the one thing the line itself does not carry and the one thing "Add" needs.
+// The datagram's source is the device's own, which is what makes the pair
+// enough to add a clock from.
+@Suite struct UlanziSightingTests {
+    /// A datagram from the device on the desk renders as the bare address.
+    /// `s_addr` is network byte order: the octets go in wire order, highest
+    /// value shifted highest.
+    @Test func theDatagramsSourceAddressBecomesTheHost() {
+        var from = sockaddr_in()
+        from.sin_family = sa_family_t(AF_INET)
+        from.sin_addr.s_addr = in_addr_t(72 << 24 | 1 << 16 | 168 << 8 | 192)
+
+        #expect(UlanziBroadcastListener.host(of: from) == "192.168.1.72")
+    }
+
+    /// An address that cannot be rendered has nothing to add a clock from,
+    /// and a sighting without an address is dropped upstream of the list
+    /// rather than becoming a row "Add" cannot act on.
+    @Test func anUnrenderableAddressYieldsNoHost() {
+        var from = sockaddr_in()
+        from.sin_family = sa_family_t(AF_INET6)  // not the family the receiver reads
+        from.sin_addr = in_addr(s_addr: INADDR_ANY)
+
+        #expect(UlanziBroadcastListener.host(of: from) == nil)
+    }
+}
+
 @Suite struct UlanziProbeTests {
     /// `/api/stats` answers a body the AWTRIX stats shape decodes — an AWTRIX
     /// clock, whatever status it answered the TC002 path with.

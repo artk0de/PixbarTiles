@@ -1,4 +1,5 @@
 import AppKit
+import PixelClockKit
 import SwiftUI
 import Testing
 @testable import PixelClockTilesApp

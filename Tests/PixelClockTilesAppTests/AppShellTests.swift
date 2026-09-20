@@ -495,6 +495,16 @@ private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
     #expect(DiscoveryStatusLine.text(for: .searching)?.contains("No AWTRIX") == false)
 }
 
+// Discovery no longer looks for one model: the browse sees AWTRIX and the
+// broadcasts see TC002s, so no line may claim only AWTRIX — "no AWTRIX is
+// advertising" read as a lie to everybody whose clock is a TC002.
+@Test func noLineNamesAModelAnyMore() {
+    #expect(DiscoveryStatusLine.text(for: .searching)?.contains("AWTRIX") == false)
+    let empty = DiscoveryStatusLine.text(for: .listed([]))
+    #expect(empty?.contains("No clock is advertising itself") == true)
+    #expect(empty?.contains("AWTRIX") == false)
+}
+
 // Discovery that was never started says nothing at all, rather than reporting
 // on a browse that has not happened.
 @Test func aDiscoveryNobodyStartedSaysNothing() {
@@ -556,7 +566,13 @@ private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
     _ = AppDelegate(
         model: testModel(),
         budget: QuitBudget(),
-        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+        discovery: ClockDiscovery(
+            browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
+            // A stream that yields nothing and ends: every browse a test arms
+            // must be able to start without a real UDP listener binding the
+            // port underneath it.
+            sightings: { AsyncStream { $0.finish() } }
+        )
     )
 
     #expect(browsing.liveBrowses == 0)
@@ -587,7 +603,10 @@ private func launchedForBrowsing(
             deviceHost: deviceHost
         ),
         budget: budget,
-        discovery: DeviceBrowser(browsing: { browsing }, sleep: settle),
+        discovery: ClockDiscovery(
+            browse: DeviceBrowser(browsing: { browsing }, sleep: settle),
+            sightings: { AsyncStream { $0.finish() } }
+        ),
         notifications: notifications
     )
     delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
@@ -761,6 +780,49 @@ private func launchedForBrowsing(
     await delegate.model.teardown()
 }
 
+// The Add-clock sheet is the other thing that makes looking worth doing: the
+// Clocks section is where a clock seen advertising itself becomes a
+// configured one, so a sheet open on an installation whose clock answers
+// perfectly well still needs the list fed. The outage arm is the tests above.
+// The sheet is drawn in the panel's window, so the panel is open first — how
+// the app itself reaches a settings sheet.
+@Test @MainActor func openingTheAddClockSheetLooksEvenWhenTheClockAnswers() async {
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(browsing)
+    #expect(await waitUntil { delegate.model.isDeviceOnline })
+    delegate.panelMoved(to: aWindow())
+    #expect(browsing.liveBrowses == 0)
+
+    delegate.model.openSettings()
+    #expect(await waitUntil { browsing.liveBrowses == 1 })
+
+    // And closing the sheet takes the browse back down: the clock answers,
+    // so the sheet was the only reason left to look.
+    delegate.model.closeSettings()
+    #expect(await waitUntil { browsing.liveBrowses == 0 })
+    await delegate.model.teardown()
+}
+
+// The sheet arm cannot outlive the panel either: the Clocks section is drawn
+// in the panel's window, so a panel that lost key while the sheet was open
+// has nowhere left to show what a browse found.
+@Test @MainActor func closingThePanelWithTheSheetOpenStopsTheBrowse() async {
+    let notifications = NotificationCenter()
+    let panel = aWindow()
+    let browsing = FakeBonjourBrowser()
+    let delegate = launchedForBrowsing(browsing, notifications: notifications)
+    #expect(await waitUntil { delegate.model.isDeviceOnline })
+
+    delegate.model.openSettings()
+    delegate.panelMoved(to: panel)
+    #expect(await waitUntil { browsing.liveBrowses == 1 })
+
+    loseFocus(panel, through: notifications)
+
+    #expect(await waitUntil { browsing.liveBrowses == 0 })
+    await delegate.model.teardown()
+}
+
 @Test @MainActor func quittingStopsTheBrowse() async {
     let browsing = FakeBonjourBrowser()
     let delegate = launchedForBrowsing(
@@ -815,7 +877,10 @@ private func launchedForBrowsing(
     let delegate = AppDelegate(
         model: testModel(host: host, sleep: schedule.sleep, pollSleep: Metronome().sleep),
         budget: QuitBudget(),
-        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+        discovery: ClockDiscovery(
+            browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
+            sightings: { AsyncStream { $0.finish() } }
+        )
     )
     delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
     #expect(await waitUntil { schedule.parked == 1 })
@@ -823,7 +888,7 @@ private func launchedForBrowsing(
 
     browsing.emit(.results(["awtrix_a07f9c"]))
 
-    #expect(delegate.discovery.found.map(\.instanceName) == ["awtrix_a07f9c"])
+    #expect(delegate.discovery.found.map(\.name) == ["awtrix_a07f9c"])
     // No delivery, rather than nothing at all: the launch's own restock is on
     // the list and is not something a discovery report caused.
     #expect(host.calls.contains { $0.hasPrefix("run:") } == false)
@@ -841,7 +906,10 @@ private func launchedForBrowsing(
     let delegate = AppDelegate(
         model: testModel(defaults: defaults, sleep: Metronome().sleep, pollSleep: Metronome().sleep),
         budget: QuitBudget(),
-        discovery: DeviceBrowser(browsing: { browsing }, sleep: { _ in })
+        discovery: ClockDiscovery(
+            browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
+            sightings: { AsyncStream { $0.finish() } }
+        )
     )
     delegate.applicationDidFinishLaunching(Notification(name: .init("launched")))
     // Started directly for the reason the test above starts one: what a report
@@ -850,7 +918,7 @@ private func launchedForBrowsing(
 
     browsing.emit(.results(["awtrix_a07f9c"]))
 
-    #expect(delegate.discovery.found.map(\.instanceName) == ["awtrix_a07f9c"])
+    #expect(delegate.discovery.found.map(\.name) == ["awtrix_a07f9c"])
     // The address is the user's to set, through the field, and finding a clock
     // is not the user saying anything. `awtrix_a07f9c` is not a hostname —
     // written here it would point the next launch at nothing that resolves.

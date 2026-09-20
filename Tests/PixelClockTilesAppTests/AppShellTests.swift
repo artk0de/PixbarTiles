@@ -184,17 +184,17 @@ private func scratchStore() -> URL {
     let connector = try #require(subject.registry.all.first)
     #expect(connector.id == "anecdotes")
     // First, and the order is the order the panel offers them in: the
-    // anecdotes are what this app is for, and the ambient pair is what it also
+    // anecdotes are what this app is for, and the ambient set is what it also
     // does while nobody is asking it anything.
-    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude"])
+    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude", "zai"])
     // Deliberately not asserting the interval here. `AnecdoteConnector`'s own
     // default IS thirty minutes, so every such assertion holds equally through
     // the store's fallback and proves nothing about debt 2. The
     // `StubConnector(5 * 60)` tests are what carry that rule.
 }
 
-// And of the three it registers, the order is registration order: the
-// anecdotes are what this app is for, and the ambient pair is what it also
+// And of the set it registers, the order is registration order: the
+// anecdotes are what this app is for, and the ambient set is what it also
 // does while nobody is asking it anything. Which of them get a row is no
 // longer the registry's question at all — the panel draws one row per tile
 // stored, and which tiles exist is the user's doing through the Add tile
@@ -208,7 +208,7 @@ private func scratchStore() -> URL {
         defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore()
     )
 
-    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude"])
+    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude", "zai"])
 }
 
 /// Whether an output would put sound in the room.

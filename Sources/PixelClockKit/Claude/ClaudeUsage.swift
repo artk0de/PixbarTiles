@@ -19,6 +19,6 @@ public enum ClaudeUsage {
     // hid it everywhere else. That is the wrong shape as well as the wrong
     // answer — the exception list belongs beside the one the anecdotes already
     // use, so that a Focus added to it starts hiding this app too without
-    // anybody remembering to. `ClaudeFocusAudience` owns it, in the target that
+    // anybody remembering to. The app target owns it, in the file that
     // knows what a Focus is.
 }

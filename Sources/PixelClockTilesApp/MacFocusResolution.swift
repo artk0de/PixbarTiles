@@ -16,7 +16,7 @@ extension MacFocus {
     /// An unauthorized centre is `.noFocus` rather than `.unknown` because its
     /// `isFocused` is false whatever is on, and a mode read without the grant
     /// is not evidence either — so every tile falls back to its hours alone,
-    /// which is what `QuietRule.quietHours` did for the whole app.
+    /// which is what the app-wide window did for the whole app.
     ///
     /// A mode read from the database wins over the boolean, which is the
     /// database's own summary read a moment apart.

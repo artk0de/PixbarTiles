@@ -4,7 +4,7 @@ import Testing
 @testable import PixelClockTilesApp
 
 // Every tile is held by its own policy now, and the words the panel shows are
-// the ones `FocusGate` used, so nothing the user reads changes with the move.
+// the ones the app-wide gate used, so nothing the user reads changes.
 
 private func tileOf(_ connector: String, _ policy: TilePolicy, on clock: ClockRecord) -> TileRecord {
     TileRecord(key: TileKey(clockId: clock.id, connectorId: connector), policy: TilePolicyRecord(policy))
@@ -94,6 +94,78 @@ private let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0
 
     #expect(await waitUntil { subject.nextRun["anecdotes"] == .held(AppModel.duringQuietHours) })
     await subject.teardown()
+}
+
+// MARK: - The modes, read the way the app-wide gate read them
+
+// The same five claims the gate's own suite made, now through
+// `MacFocus.resolved` and the anecdotes row — the row whose Focus rule is the
+// one the gate carried.
+
+private func anecdotesHolds(access: FocusAccess, mode: ActiveFocusMode, focused: Bool) -> Bool {
+    TileDefaults.anecdotes
+        .hold(in: MacFocus.resolved(access: access, activeMode: mode, isFocused: focused), atHour: 12) != nil
+}
+
+@Test func doNotDisturbAndSleepSilenceTheSchedule() {
+    #expect(anecdotesHolds(access: .authorized, mode: .mode("com.apple.donotdisturb.mode.default"), focused: true))
+    #expect(anecdotesHolds(access: .authorized, mode: .mode("com.apple.sleep.sleep-mode"), focused: true))
+}
+
+// The whole point of the task. macOS reports a Focus, the app is authorized to
+// believe it, and it speaks anyway — because the Focus is Work, and being at
+// work is not a reason to be quiet. Reading, which no list here can be asked
+// to enumerate, is the one that CHANGED on purpose: the row keeps its tile for
+// a Focus it cannot tell apart.
+@Test func everyOtherFocusIsSpokenThrough() {
+    #expect(anecdotesHolds(access: .authorized, mode: .mode("com.apple.focus.work"), focused: true) == false)
+    #expect(anecdotesHolds(access: .authorized, mode: .mode("com.apple.focus.personal"), focused: true) == false)
+    // A Focus the user made themselves, which is an identifier no list can
+    // enumerate. Holding it is the behaviour that CHANGED on purpose with the
+    // move: the app-wide gate spoke through every Focus it could not name.
+    #expect(anecdotesHolds(access: .authorized, mode: .mode("com.apple.focus.reading"), focused: true))
+}
+
+// The idle Mac, end to end: the real file that names Do Not Disturb five times
+// and has nothing asserted, through the parser, into the resolution. It speaks.
+@Test func anIdleMacSpeaks() {
+    let idle = MacFocus.resolved(
+        access: .authorized,
+        activeMode: DoNotDisturbDatabase.activeMode(
+            inAssertions: Data(CapturedFocusDatabase.noFocus.utf8)
+        ),
+        isFocused: false
+    )
+
+    #expect(TileDefaults.anecdotes.hold(in: idle, atHour: 12) == nil)
+}
+
+// The fallback, and the direction it leans is deliberate. Told nothing about
+// which Focus is on, the resolution goes back to the boolean and treats every
+// Focus as the Other one — being quiet when it could have spoken is a joke the
+// user misses, and the other way round is what wakes somebody at three in the
+// morning.
+@Test func aDatabaseThisAppCannotReadFallsBackToTheBoolean() {
+    #expect(anecdotesHolds(access: .authorized, mode: .cannotTell, focused: true))
+    // Not a mute: the boolean still decides both ways.
+    #expect(anecdotesHolds(access: .authorized, mode: .cannotTell, focused: false) == false)
+}
+
+// The mode is read on ONE of the two branches, exactly as `isFocused` is. A
+// centre this app may not believe is a centre whose database it has no business
+// acting on either — the user's own hours are what stand in, and a Work
+// assertion must not reopen the night.
+@Test func theModeIsNotConsultedWhileTheCenterIsUnauthorized() {
+    let row = TilePolicy(
+        refreshSeconds: TileDefaults.anecdotes.refreshSeconds,
+        focus: TileDefaults.anecdotes.focus,
+        window: .quiet(HourWindow(startHour: 23, endHour: 8))
+    )
+    let resolved = MacFocus.resolved(
+        access: .denied, activeMode: .mode("com.apple.focus.work"), isFocused: false
+    )
+
+    #expect(row.hold(in: resolved, atHour: 3) == .hours)
 }
 
 /// A stub whose default is the anecdote row, so the mapping has a row to read.

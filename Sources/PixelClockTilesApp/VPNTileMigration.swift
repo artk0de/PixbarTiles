@@ -5,7 +5,7 @@ import PixelClockKit
 /// Turns the two always-on VPN corners into two VPN tiles on the clock that
 /// showed them.
 ///
-/// Each tile carries what `VPNIndicatorPolicy` hard-coded, and its Focus rule
+/// Each tile carries what the always-on corners hard-coded, and their Focus rule
 /// written out: `hold` on a Focus that cannot be named, because today such a
 /// Focus leaves both corners dark. Written explicitly, so the tile never falls
 /// back to the VPN defaults row, which says `run`.

@@ -14,7 +14,7 @@ private struct NoReading: ClaudeUsageReporting {
 @MainActor private func shipped() -> [(connector: any Connector, row: TilePolicy)] {
     [
         (weatherConnector(over: StubTransport(body: Data())), TileDefaults.weather),
-        (ClaudeUsageConnector(reporter: NoReading(), showsNow: { true }), TileDefaults.claude),
+        (ClaudeUsageConnector(reporter: NoReading()), TileDefaults.claude),
         (
             AppModel.anecdoteWiring(
                 transport: StubTransport(body: Data()),
@@ -40,7 +40,7 @@ private struct NoReading: ClaudeUsageReporting {
 
 // A connector that names nothing keeps what the app-wide rules did to it:
 // held where they held an audible one, and nowhere if it cannot be heard.
-@Test func anAudibleConnectorThatNamesNoPolicyKeepsTheOldQuietRules() {
+@Test func anAudibleConnectorThatNamesNoPolicyKeepsTheOldQuietHoursRow() {
     let policy = StubConnector().defaultPolicy
 
     #expect(policy.refresh == StubConnector().defaultInterval)

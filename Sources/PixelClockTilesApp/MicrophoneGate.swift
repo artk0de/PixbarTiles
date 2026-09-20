@@ -99,7 +99,7 @@ struct MicrophoneChoice: Identifiable, Equatable, Sendable {
 /// default, and the default moves when headphones are plugged in.
 ///
 /// A value rather than an object, and the watch set is a parameter for the
-/// reason `FocusGate`'s window is: `AppModel` owns it, the settings bind to it
+/// reason the app-wide window was: `AppModel` owned it, the settings bound to it
 /// and the defaults keep it, and a second copy here would be a second thing to
 /// keep in step.
 struct MicrophoneGate: Sendable {

@@ -77,7 +77,7 @@ struct PanelWidth: Equatable, Sendable {
     ///
     /// The presence of the key is asked first, rather than reading
     /// `double(forKey:)` and trusting the answer, for the reason
-    /// `QuietWindow.stored(in:)` asks the same way: `double(forKey:)` answers 0
+    /// `StoredLocation` asks the same way: `double(forKey:)` answers 0
     /// for a key that was never written, and 0 is a width. It happens to clamp
     /// to the same 320 the default gives, but only because the floor and the
     /// default are currently the same number — move the floor down and "never

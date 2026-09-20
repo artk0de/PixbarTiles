@@ -31,7 +31,7 @@ private func vpnTiles(in defaults: UserDefaults) -> [TileRecord] {
 
 // What each corner followed, read back through the grid: Pritunl in Work only,
 // Amnezia in Work and Personal, and neither under a Focus that cannot be named
-// — which is what `VPNIndicatorPolicy` did.
+// — which is what the always-on corners did.
 @Test func eachTileWorksInTheFocusesItsCornerFollowed() throws {
     try withFreshDefaults { defaults in
         try storeAClock(in: defaults)

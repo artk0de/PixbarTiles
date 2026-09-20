@@ -852,7 +852,7 @@ import Testing
 
     #expect(await waitUntil { host.calls.contains("run:silent") })
     #expect(host.calls.contains("run:stub") == false)
-    #expect(subject.nextRun["stub"] == .held(FocusGate.duringFocus))
+    #expect(subject.nextRun["stub"] == .held(AppModel.duringFocus))
     #expect(isDue(subject.nextRun["silent"]))
     await subject.teardown()
 }
@@ -879,7 +879,7 @@ import Testing
     await subject.teardown()
 }
 
-@Test @MainActor func anUnreachableClockOutranksAQuietRuleOnThePanel() async {
+@Test @MainActor func anUnreachableClockOutranksTheTileRulesOnThePanel() async {
     let schedule = Metronome()
     let subject = testModel(
         transport: StubTransport(failure: URLError(.cannotConnectToHost)),
@@ -895,7 +895,7 @@ import Testing
 
 // And the quiet rules before the microphone, because they are about the room
 // rather than about a device the user can look at.
-@Test @MainActor func aQuietRuleOutranksAMicrophoneOnThePanel() async {
+@Test @MainActor func aFocusRuleOutranksAMicrophoneOnThePanel() async {
     let schedule = Metronome()
     let subject = testModel(
         sleep: schedule.sleep,
@@ -905,7 +905,7 @@ import Testing
 
     subject.start()
 
-    #expect(await waitUntil { subject.nextRun["stub"] == .held(FocusGate.duringFocus) })
+    #expect(await waitUntil { subject.nextRun["stub"] == .held(AppModel.duringFocus) })
     await subject.teardown()
 }
 

@@ -2,7 +2,7 @@ import Foundation
 
 /// A stretch of whole hours in the day, wrapping past midnight.
 ///
-/// `QuietWindow` without its direction. Whether the hours inside are the quiet
+/// The app-wide quiet window, without its direction. Whether the hours inside are the quiet
 /// ones or the working ones is the policy's to say (`TileWindow`); the window
 /// only knows which hours it covers.
 public struct HourWindow: Hashable, Sendable {

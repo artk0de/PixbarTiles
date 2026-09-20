@@ -3,7 +3,7 @@ import Testing
 @testable import PixelClockKit
 
 // The two lamps the migration makes out of today's always-on corners, asked
-// the questions `VPNIndicatorPolicyTests` asked of the policy they replace.
+// the questions the old indicator-policy tests asked of what they replace.
 // Same names, same answers — the rule moved from one function of the Focus into
 // each tile's own policy.
 

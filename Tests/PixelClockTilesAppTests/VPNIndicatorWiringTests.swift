@@ -6,8 +6,8 @@ import Testing
 // The seam between the migrated VPN tiles and the clock's lamps — the wiring
 // that a green suite has been silent about before on this project, when a
 // progress bar was added to the output type, tested at both ends, and never
-// copied across the one line in between. The tiles carry what
-// `VPNIndicatorPolicy` hard-coded; this file proves they reach the lamps.
+// copied across the one line in between. The tiles carry what the always-on
+// corners hard-coded; this file proves they reach the lamps.
 
 private func machine(_ paths: String...) -> VPNPresence {
     VPNPresence(processes: FixedProcessList(paths: paths))

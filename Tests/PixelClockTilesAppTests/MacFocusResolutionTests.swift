@@ -4,7 +4,7 @@ import PixelClockKit
 import Testing
 @testable import PixelClockTilesApp
 
-// How the Focus the Mac is in is read off macOS, keeping `FocusGate`'s rules:
+// How the Focus the Mac is in is read off macOS, keeping the app-wide gate's rules:
 // the grant first, then the database, and the boolean only when the database
 // cannot be read.
 

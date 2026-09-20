@@ -219,10 +219,9 @@ final class AppModel: ObservableObject {
     /// being told where to look.
     static let deviceUnreachable = "clock unreachable"
     /// What holds a tile whose Focus rule says this is not the time for it.
-    /// Moved from `FocusGate` unchanged, so nothing the user reads changes.
+    /// The words the app-wide gate used, so nothing the user reads changes.
     static let duringFocus = "Focus is on"
-    /// What holds a tile inside its own hours. Also from `FocusGate`, for the
-    /// same reason.
+    /// What holds a tile inside its own hours, in the same words as before.
     static let duringQuietHours = "quiet hours"
 
     /// The Focus the Mac is in, as every tile reads it.
@@ -711,10 +710,7 @@ final class AppModel: ObservableObject {
         let focusStatus = SystemFocusStatus()
         registry.register(
             ClaudeUsageConnector(
-                reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document),
-                // The tile's policy decides now; the connector never gates
-                // itself.
-                showsNow: { true }
+                reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document)
             )
         )
 
@@ -740,9 +736,7 @@ final class AppModel: ObservableObject {
         let audio = SequentialAudioPlayer()
         let weather = OpenMeteoSource(transport: transport)
         let claude = ClaudeUsageConnector(
-            reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document),
-            // The tile's policy decides now; the connector never gates itself.
-            showsNow: { true }
+            reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document)
         )
         let buildSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
             // The TC002 branch of the runtime route: the schedule's slot gets a
@@ -1222,7 +1216,7 @@ final class AppModel: ObservableObject {
         // `INFocusStatusCenter.requestAuthorization` never calls its handler
         // back — so nothing waits on this — and a prompt raised on every beat
         // is a prompt the user learns to dismiss. What reads the answer is
-        // `FocusGate.rule`, on every turn of every schedule.
+        // every tile's Focus rule, on every turn of every schedule.
         focusStatus.requestAccess()
         // Recorded before the loops are started, not after them: everything in
         // this method is synchronous and no task runs until it returns, but the
@@ -1581,7 +1575,7 @@ final class AppModel: ObservableObject {
         // leave a red corner blinking on the desk with nothing left running
         // that could ever put it out.
         // And every lamp any VPN tile claims, lit or not, on every AWTRIX
-        // clock — which is what `VPNLampDisplay.clear()` did for its two
+        // clock — which is what the corner display did for its two
         // corners.
         let covered = Dictionary(grouping: tiles.all().filter { $0.key.connectorId == VPNConnector.id }, by: \.key.clockId)
         for (clockId, vpnTiles) in covered {
@@ -2087,7 +2081,7 @@ final class AppModel: ObservableObject {
 
     /// Whether this tile's own hours are what holds it — the one hold the
     /// nightly refresh may not spend through.
-    private func duringTheQuietWindow(_ key: TileKey) -> Bool {
+    private func inItsOwnQuietHours(_ key: TileKey) -> Bool {
         policy(of: key)?.hold(in: currentFocus, atHour: currentHour) == .hours
     }
 
@@ -2175,7 +2169,7 @@ final class AppModel: ObservableObject {
         // machine; what this removes is the unattended one.
         guard scheduleHold(for: key) == nil else {
             if isAudible(key.connectorId), busyMicrophone != nil { heldRuns.insert(key) }
-            if duringTheQuietWindow(key) == false { await restock(key) }
+            if inItsOwnQuietHours(key) == false { await restock(key) }
             return
         }
         // Marked before the maintain, not between it and the run. `maintain` IS

@@ -129,86 +129,6 @@ import Testing
     #expect(url.path(percentEncoded: false).hasSuffix("/Library/DoNotDisturb/DB/Assertions.json"))
 }
 
-// MARK: - What the gate does with it
-
-// The two the user asked for, by identifier. The identifiers are Apple's own
-// and are what the file carries; the names beside them in
-// `ModeConfigurations.json` are localised — "Сон" on this machine — and a user
-// can rename a Focus, so matching on those would be a gate that breaks on a
-// rename or on somebody else's language.
-@Test func doNotDisturbAndSleepSilenceTheSchedule() {
-    let doNotDisturb = gate(inMode: "com.apple.donotdisturb.mode.default")
-    let sleep = gate(inMode: "com.apple.sleep.sleep-mode")
-
-    #expect(doNotDisturb.silence(quietHours: .default) == FocusGate.duringFocus)
-    #expect(sleep.silence(quietHours: .default) == FocusGate.duringFocus)
-}
-
-// The whole point of the task. macOS reports a Focus, the app is authorized to
-// believe it, and it speaks anyway — because the Focus is Work, and being at
-// work is not a reason to be quiet.
-@Test func everyOtherFocusIsSpokenThrough() {
-    #expect(gate(inMode: "com.apple.focus.work").silence(quietHours: .default) == nil)
-    #expect(gate(inMode: "com.apple.focus.personal-time").silence(quietHours: .default) == nil)
-    // A Focus the user made themselves, which is an identifier no list can
-    // enumerate. Silencing it would be the old behaviour surviving under a new
-    // name for everybody who does not use Apple's own four.
-    #expect(gate(inMode: "com.apple.focus.reading").silence(quietHours: .default) == nil)
-}
-
-// The idle Mac, end to end: the real file that names Do Not Disturb five times
-// and has nothing asserted, through the parser, into the gate. It speaks.
-@Test func anIdleMacSpeaks() {
-    let idle = FocusGate(
-        status: StubFocusStatus(
-            access: .authorized,
-            isFocused: false,
-            activeMode: DoNotDisturbDatabase.activeMode(
-                inAssertions: Data(CapturedFocusDatabase.noFocus.utf8)
-            )
-        ),
-        now: { atHour(12) }
-    )
-
-    #expect(idle.silence(quietHours: .default) == nil)
-}
-
-// The fallback, and the direction it leans is deliberate. Told nothing about
-// which Focus is on, the gate goes back to the boolean and treats every Focus
-// as silencing — being quiet when it could have spoken is a joke the user
-// misses, and the other way round is what wakes somebody at three in the
-// morning.
-@Test func aDatabaseThisAppCannotReadFallsBackToTheBoolean() {
-    let focused = FocusGate(
-        status: StubFocusStatus(access: .authorized, isFocused: true, activeMode: .cannotTell),
-        now: { atHour(12) }
-    )
-    let idle = FocusGate(
-        status: StubFocusStatus(access: .authorized, isFocused: false, activeMode: .cannotTell),
-        now: { atHour(12) }
-    )
-
-    #expect(focused.silence(quietHours: .default) == FocusGate.duringFocus)
-    // Not a mute: the boolean still decides both ways.
-    #expect(idle.silence(quietHours: .default) == nil)
-}
-
-// The mode is read on ONE of the two branches, exactly as `isFocused` is. A
-// centre this app may not believe is a centre whose database it has no business
-// acting on either — the user's own window is what stands in, and a Work
-// assertion must not reopen the night.
-@Test func theModeIsNotConsultedWhileTheCenterIsUnauthorized() {
-    let night = QuietWindow(startHour: 23, endHour: 8)
-    let atThree = FocusGate(
-        status: StubFocusStatus(
-            access: .denied, isFocused: false, activeMode: .mode("com.apple.focus.work")
-        ),
-        now: { atHour(3) }
-    )
-
-    #expect(atThree.silence(quietHours: night) == FocusGate.duringQuietHours)
-}
-
 // MARK: - What the settings say about it
 
 // Full Disk Access is not something a person grants by accident, and an app
@@ -235,28 +155,6 @@ import Testing
 
 // MARK: - Helpers
 
-/// A gate told that this mode is on, with everything else that still can saying
-/// "be quiet".
-///
-/// `isFocused` is true throughout, so each expectation below is a statement
-/// about the MODE alone: with the boolean already arguing for silence, anything
-/// that speaks can only be speaking because of the identifier.
-///
-/// The clock reads noon, and it read three in the morning until the quiet
-/// window started applying whatever the centre says. A hostile hour used to
-/// sharpen these tests — one more thing arguing for silence that the mode had
-/// to override — and now it simply decides them: every expectation here would
-/// pass at three with the identifier ignored entirely. Noon is the hour at
-/// which the mode is still the thing being measured.
-private func gate(inMode identifier: String) -> FocusGate {
-    FocusGate(
-        status: StubFocusStatus(
-            access: .authorized, isFocused: true, activeMode: .mode(identifier)
-        ),
-        now: { atHour(12) }
-    )
-}
-
 /// `~/Library/DoNotDisturb/DB/Assertions.json`, as this machine wrote it, in
 /// the two states that matter.
 ///
@@ -268,7 +166,7 @@ private func gate(inMode identifier: String) -> FocusGate {
 /// Text in the suite rather than bundled resources, because the app's test
 /// target declares no resources and adding some would mean editing
 /// `Package.swift` for two fixtures.
-private enum CapturedFocusDatabase {
+enum CapturedFocusDatabase {
     /// 5,265 bytes, Работа on. The live list holds one record; the history
     /// holds Do Not Disturb, Sleep and Личное from days earlier.
     static let workActive = #"""

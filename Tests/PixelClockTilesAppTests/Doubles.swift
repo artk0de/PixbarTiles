@@ -512,8 +512,8 @@ func testModel(
     // Nothing running, so no test in this target answers to whichever VPNs
     // happen to be up on the machine running it.
     vpnPresence: VPNPresence = VPNPresence(processes: FixedProcessList(paths: [])),
-    // Noon, so a test with no opinion about the hour stands where the old
-    // `focusGate(_:at:)` defaulted: outside every shipped window.
+    // Noon, so a test with no opinion about the hour stands outside every
+    // shipped window.
     now: @escaping @Sendable () -> Date = { atHour(12) },
     // Nothing capturing, so nothing in the suite is held by whatever is plugged
     // into the machine running it. A default reading the REAL inputs would have
@@ -1064,7 +1064,7 @@ final class StubFocusStatus: FocusStatusReading, @unchecked Sendable {
     /// Full Disk Access gives — so every test written before the mode could be
     /// read still poses exactly what it posed: the fallback branch, where the
     /// boolean above decides. Defaulted to `.noFocus` instead, it would have
-    /// made half of `FocusGateTests` unreachable without failing any of it.
+    /// made half of the gate's own suite unreachable without failing any of it.
     init(
         access: FocusAccess = .notDetermined,
         isFocused: Bool = false,
@@ -1106,23 +1106,16 @@ func atHour(_ hour: Int, calendar: Calendar = .current) -> Date {
     return calendar.date(from: components)!
 }
 
-/// A gate on a stopped clock, for every test whose subject is the CENTRE rather
-/// than the hour.
+/// A clock pinned to noon, for every test whose subject is neither the hour
+/// nor the Focus.
 ///
 /// The hour is not decoration and this default must never go back to
-/// `Date.init`. `FocusGate` applies the user's quiet window whatever the centre
-/// answers, and the window every model here gets by default is 23:00–08:00 — so
-/// a gate reading the wall clock gives one answer by day and the opposite one
-/// by night. A suite that is green until eleven in the evening is worse than a
-/// suite that is simply red, because the failure arrives on somebody else's
-/// machine at somebody else's hour with nothing in the diff to point at.
-///
-/// Noon is outside every window the suite sets. The tests whose subject IS the
-/// hour hand `FocusGate` their own clock instead, and read as the exceptions
-/// they are.
-func focusGate(_ status: any FocusStatusReading, at hour: Int = 12) -> FocusGate {
-    FocusGate(status: status, now: { atHour(hour) })
-}
+/// `Date.init`. Every tile's window is read against it, and the anecdotes row
+/// keeps 23:00–08:00 — so a policy reading the wall clock gives one answer by
+/// day and the opposite one by night. A suite that is green until eleven in
+/// the evening is worse than a suite that is simply red, because the failure
+/// arrives on somebody else's machine at somebody else's hour with nothing in
+/// the diff to point at.
 
 // MARK: - Microphones
 

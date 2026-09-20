@@ -101,7 +101,7 @@ public struct TilePolicy: Equatable, Sendable {
     /// Focus because the answer is a reason as well as a verdict: the nightly
     /// refresh reads `.hours` to decide whether it may spend, and a 3 a.m.
     /// Sleep answered as `.focus` would let it load a model and spin the fans
-    /// inside the hours somebody set aside for quiet. `FocusGate.silence`
+    /// inside the hours somebody set aside for quiet. the app-wide gate
     /// fixed that order, and it stays.
     public func hold(in current: MacFocus, atHour hour: Int) -> TileHold? {
         if isPaused { return .paused }

@@ -95,41 +95,6 @@ private struct FixedReport: ClaudeUsageReporting {
     func read() async throws -> ClaudeUsageReading? { reading }
 }
 
-// Out of hours the connector produces NOTHING, and nothing is what takes the
-// app off the clock: no delivery means no refresh, and the lifetime the last
-// delivery carried runs out. That is why the lifetime is short — it is doing
-// double duty as the way this app leaves the matrix, not only as insurance
-// against a crashed Mac.
-@Test func nothingIsProducedWhileTheFocusIsNotOneOfItsOwn() async {
-    let connector = ClaudeUsageConnector(
-        reporter: FixedReport(reading: ClaudeUsageReading(utilization: 78, resetsAt: nil)),
-        showsNow: { false }
-    )
-
-    await #expect(throws: ClaudeUsageConnector.Failure.outOfFocus) {
-        _ = try await connector.produce()
-    }
-}
-
-@Test func theGateIsAskedBeforeTheServiceIs() async throws {
-    // A reporter that would answer, behind a closed gate: the point is that the
-    // gate is checked FIRST, so a shut-out poll costs no request at all.
-    final class Counting: ClaudeUsageReporting, @unchecked Sendable {
-        var asked = 0
-        func read() async throws -> ClaudeUsageReading? {
-            asked += 1
-            return ClaudeUsageReading(utilization: 10, resetsAt: nil)
-        }
-    }
-    let reporter = Counting()
-
-    _ = try? await ClaudeUsageConnector(reporter: reporter, showsNow: { false }).produce()
-    #expect(reporter.asked == 0)
-
-    _ = try? await ClaudeUsageConnector(reporter: reporter, showsNow: { true }).produce()
-    #expect(reporter.asked == 1)
-}
-
 // The app has to leave the clock soon after the Focus does, and the only thing
 // that removes it is the lifetime expiring. So the two numbers are chosen
 // together: three polls fit inside one lifetime, which survives a couple of
@@ -144,7 +109,7 @@ private struct FixedReport: ClaudeUsageReporting {
     #expect(try! #require(lifetime) <= 900)
 }
 
-// Which Focus the app survives is asserted in `ClaudeFocusAudienceTests`, in
+// Which Focus the app survives is asserted against the claude policy row, in
 // the target that knows what a Focus is. What this kit knows is only that
 // something can shut the gate — see `nothingIsProducedWhileTheFocusIsNotOneOf
 // ItsOwn` above.

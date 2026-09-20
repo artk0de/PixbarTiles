@@ -66,17 +66,6 @@ private struct Reports: ClaudeUsageReporting {
     #expect(connector.awtrixFace.draw(reading) == ClaudeUsageConnector.output(for: reading))
 }
 
-@Test func aClosedGateStopsTheClaudeReadBeforeAnythingIsDrawn() async {
-    let connector = ClaudeUsageConnector(
-        reporter: Reports(reading: ClaudeUsageReading(utilization: 42, resetsAt: nil)),
-        showsNow: { false }
-    )
-
-    await #expect(throws: ClaudeUsageConnector.Failure.outOfFocus) {
-        _ = try await connector.read()
-    }
-}
-
 // MARK: - Anecdotes
 
 private let oneAnecdote = """

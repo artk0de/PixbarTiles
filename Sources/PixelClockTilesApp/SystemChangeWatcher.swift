@@ -12,7 +12,7 @@ import Network
 /// process table. That keeps this ignorant of VPNs, which matters because the
 /// path also changes when WiFi hiccups, when a cable is plugged in, and when
 /// the machine wakes — every one of which is a perfectly good moment to check.
-/// The cost of the extra firings is nothing: `VPNLampDisplay` writes only what
+/// The cost of the extra firings is nothing: the lamp custody writes only what
 /// moved.
 final class NetworkPathWatcher: @unchecked Sendable {
     private let monitor = NWPathMonitor()

@@ -40,23 +40,14 @@ public struct ClaudeUsageConnector: Connector {
     public let isAmbient = true
 
     private let reporter: any ClaudeUsageReporting
-    private let showsNow: @Sendable () -> Bool
 
-    /// `showsNow` is how the Focus reaches a type that must not know what a
-    /// Focus is. The default shows always, so a construction site with no
-    /// opinion behaves as though there were no gate at all.
-    public init(
-        reporter: any ClaudeUsageReporting,
-        showsNow: @escaping @Sendable () -> Bool = { true }
-    ) {
+    public init(reporter: any ClaudeUsageReporting) {
         self.reporter = reporter
-        self.showsNow = showsNow
     }
 
-    /// The reporter's reading, or the reason there is none.
+    /// The reporter's reading, or the reason there is none. Whether the tile
+    /// may run at all is its policy's answer, not this connector's.
     public func read() async throws -> ClaudeUsageReading {
-        // The gate first, so a poll outside working hours costs no request.
-        guard showsNow() else { throw Failure.outOfFocus }
         guard let reading = try await reporter.read() else { throw Failure.noReading }
         return reading
     }
@@ -75,10 +66,6 @@ public struct ClaudeUsageConnector: Connector {
         /// lets the clock drop the app by itself, which says the true thing
         /// — nothing here knows the figure any more — without inventing one.
         case noReading
-        /// This is not one of the hours this app belongs to. Same mechanism as
-        /// `noReading` and a different reason, kept apart so a panel or a log
-        /// can tell "cannot say" from "not now".
-        case outOfFocus
     }
 
     /// What a reading looks like on the matrix.

@@ -381,6 +381,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The panel is on screen: browse if there is anything to look for.
     private func panelDidOpen() {
         panelIsOpen = true
+        // One full repaint per open, because the window is shared by three
+        // surfaces of three different heights: the settings (615) leaves the
+        // panel (198) with most of the window it does not use, and AppKit's
+        // dirty-rect redraw only repaints what CHANGED — the band the last
+        // surface left is exactly what did not change. Flagging the whole
+        // content view is the cheap way to start every open from clean glass.
+        panelWindow?.contentView?.needsDisplay = true
         reconsiderBrowsing(clockIsAnswering: model.isDeviceOnline)
     }
 
@@ -411,6 +418,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `reconsiderBrowsing` compares against what it has already asked for.
     func panelMoved(to window: NSWindow?) {
         guard let window else { return }
+        // Composite the panel through one layer, and re-render that layer
+        // when the window's frame changes, rather than letting AppKit scale
+        // or keep the old buffer. The window's fitting size is re-imposed by
+        // SwiftUI on every layout pass (see `MenuPanel`'s width note), and a
+        // frame change on a view that is not layer-backed redraws only the
+        // dirty rects — which is how a resize or a surface switch leaves the
+        // previous frame's pixels standing next to the new ones.
+        window.contentView?.wantsLayer = true
+        window.contentView?.layerContentsRedrawPolicy = .duringViewResize
         panelWindow = window
         panelDidOpen()
     }

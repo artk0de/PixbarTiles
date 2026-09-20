@@ -82,7 +82,6 @@ private let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5
     // running tile makes. Removal presupposes that state.
     let ulanzi = try #require(subject.ulanzi)
     _ = await ulanzi.deliver(UlanziDelivery(scene: plainScene()), toTile: "weather")
-    let claim = transport.requests.count
 
     subject.removeTile(key)
 

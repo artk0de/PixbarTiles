@@ -432,6 +432,9 @@ final class AppModel: ObservableObject {
     /// once per launch; the schedule itself holds a `NoClockHost` for such a
     /// clock, and this is the real session beside it.
     private(set) var ulanzi: (any UlanziConnectorRunning)?
+    /// The dual probe behind Add by address: whichever body decodes names the
+    /// model. Nil where no caller adds by address.
+    private let probe: (@Sendable (String) async -> UlanziProbe.Detection)?
     private let installer: CatalogueIconInstaller
     /// The connector whose history the menu can browse, or nil when none was
     /// wired. Optional because the panel is generic over connectors and only
@@ -594,6 +597,10 @@ final class AppModel: ObservableObject {
         // Nil whenever no clock is a TC002 one — the default every existing
         // caller keeps, and what `live()` passes when the settings name one.
         ulanzi: (any UlanziConnectorRunning)? = nil,
+        // The dual probe an Add by address asks. Nil only in callers that
+        // never add by address — `live()` wires the real one, over the same
+        // transport every other request takes.
+        probe: (@Sendable (String) async -> UlanziProbe.Detection)? = nil,
         installer: CatalogueIconInstaller,
         anecdotes: (any AnecdoteReplaying)? = nil,
         defaults: UserDefaults = .standard,
@@ -625,6 +632,7 @@ final class AppModel: ObservableObject {
         self.pasteboard = pasteboard
         self.registry = registry
         self.ulanzi = ulanzi
+        self.probe = probe
         self.installer = installer
         self.anecdotes = anecdotes
         self.alerts = alerts
@@ -831,6 +839,7 @@ final class AppModel: ObservableObject {
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
             ulanzi: ulanziSession,
+            probe: { host in await UlanziProbe.detect(host: host, transport: transport) },
             installer: installer,
             anecdotes: anecdotes.connector,
             defaults: defaults,
@@ -1152,6 +1161,85 @@ final class AppModel: ObservableObject {
                 )
             }
         }
+    }
+
+    // MARK: - Clock actions
+
+    enum ClockSaveOutcome: Equatable {
+        case added
+        /// Not added, with the sentence to show beside the control that asked.
+        case refused(String)
+    }
+
+    /// Adds the clock the dual probe finds at the address. Status codes are
+    /// not trusted — this firmware answers the AWTRIX stats path with a
+    /// redirect — so the model is whichever body DECODES.
+    func addClock(address raw: String) async -> ClockSaveOutcome {
+        guard let host = DeviceAddress.host(from: raw) else {
+            return .refused("not an address: \(raw)")
+        }
+        if clockStore.all().contains(where: { $0.address == host }) {
+            return .refused("already configured at \(host)")
+        }
+        guard let probe else { return .refused("no probe wired for \(host)") }
+        switch await probe(host) {
+        case .undetermined:
+            return .refused("nothing answered at \(host)")
+        case .ulanzi:
+            return store(ClockRecord(name: "Clock", model: .ulanziTC002, address: host))
+        case .otherDevice:
+            return store(ClockRecord(name: "Clock", model: .awtrix3, address: host))
+        }
+    }
+
+    /// Adds a clock discovery has seen. The list already carried what the
+    /// browse and the broadcasts agreed on, so the record is what it said.
+    func addClock(from discovered: DiscoveredClock) -> ClockSaveOutcome {
+        let name = discovered.model.lowercased()
+        let model: ClockModel = name.contains("tc002") || name.contains("ulanzi")
+            ? .ulanziTC002 : .awtrix3
+        if clockStore.all().contains(where: { $0.address == discovered.address }) {
+            return .refused("already configured at \(discovered.address)")
+        }
+        return store(ClockRecord(name: discovered.name, model: model, address: discovered.address))
+    }
+
+    /// A rename writes through the store and touches nothing else.
+    func renameClock(_ id: UUID, to name: String) {
+        guard let record = clock(id) else { return }
+        clockStore.update(record) { $0.name = name }
+        reloadClocks()
+    }
+
+    /// Removes the clock: every tile off it first, then the record, then the
+    /// spine takes the session down — its lendings given back, its timers
+    /// cancelled, and the selection moved off it if it was the one selected.
+    ///
+    /// The view's inline confirmation is what stands in front of this; the
+    /// model does it the moment it is asked.
+    func removeClock(_ id: UUID) {
+        guard let victim = clock(id) else { return }
+        // The TC002's pages are the app's own doing: the session's teardown
+        // releases every owned name — the empty-body delete per page.
+        if victim.model == .ulanziTC002 {
+            Task { await ulanzi?.shutdown() }
+        }
+        try? tiles.replaceAll(tiles.all().filter { $0.key.clockId != id })
+        try? clockStore.replaceAll(clockStore.all().filter { $0.id != id })
+        reloadClocks()
+    }
+
+    /// Stores a new clock and brings the sessions in line with it.
+    private func store(_ record: ClockRecord) -> ClockSaveOutcome {
+        var clocks = clockStore.all()
+        clocks.append(record)
+        do {
+            try clockStore.replaceAll(clocks)
+        } catch {
+            return .refused("the clock could not be stored")
+        }
+        reloadClocks()
+        return .added
     }
 
     // MARK: - Settings

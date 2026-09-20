@@ -533,7 +533,11 @@ func testModel(
     // default policy — the installation the migration leaves.
     tiles: [TileRecord]? = nil,
     // Nil: `host` for the first clock and a fresh `SpyHost` for any other.
-    sessions: [UUID: any ConnectorRunning]? = nil
+    sessions: [UUID: any ConnectorRunning]? = nil,
+    // Nil: the model answers Add by address with a refusal, which is what a
+    // test that never adds a clock wants. A test that does says what the dual
+    // probe found.
+    probe: (@Sendable (String) async -> UlanziProbe.Detection)? = nil
 ) -> AppModel {
     var clocks = clocks
     if clocks[0].address != deviceHost { clocks[0].address = deviceHost }
@@ -579,6 +583,7 @@ func testModel(
         device: device,
         relocate: relocate,
         registry: registry,
+        probe: probe,
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: uploads
         ),

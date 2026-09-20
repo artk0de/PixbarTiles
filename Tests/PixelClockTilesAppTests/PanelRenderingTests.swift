@@ -206,8 +206,8 @@ private func renderedGlyph(for model: AppModel) -> Data? {
 /// rendering mode to add — and hosting that expression in the same frame
 /// renders the same bytes.
 @MainActor
-private func renderedGlyph(lit: Bool) -> Data? {
-    renderedInTheBar(Image(nsImage: AppGlyph.menuBar(lit: lit)))
+private func renderedGlyph(_ state: AppGlyph.State) -> Data? {
+    renderedInTheBar(Image(nsImage: AppGlyph.menuBar(for: state)))
 }
 
 @MainActor
@@ -269,9 +269,9 @@ private func polled(reachable: Bool) async -> AppModel {
     let offline = renderedGlyph(for: await polled(reachable: false))
 
     // Or two nils would satisfy both comparisons with nothing drawn at all.
-    #expect(renderedGlyph(lit: true) != nil)
-    #expect(online == renderedGlyph(lit: true))
-    #expect(offline == renderedGlyph(lit: false))
+    #expect(renderedGlyph(.online) != nil)
+    #expect(online == renderedGlyph(.online))
+    #expect(offline == renderedGlyph(.offline))
 }
 
 // MARK: - Behind the gear

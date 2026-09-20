@@ -23,11 +23,13 @@ private func goldenASCII(of raster: UserClock.Raster) -> [String] {
     #expect(UserClock.raster(palette: UserClock.lightOnline, scale: 3).height == 54)
 }
 
-// The transcription itself, against the map the user approved. Every non-empty
-// art pixel is ink whatever its colour, so the silhouette is what survives —
-// and a row gained, lost or shifted by one in the port shows up here as a
-// visible hole or bar rather than as a wrong colour somewhere.
-@Test func theUserClockTranscriptionMatchesTheApprovedMap() {
+// The transcription itself, against the bold reading of the map the user
+// approved. Every non-empty art pixel is ink whatever its colour, so the
+// silhouette is what survives — and a row gained, lost or shifted by one in
+// the port shows up here as a visible hole or bar rather than as a wrong
+// colour somewhere. The bold body is one row taller at the bottom (the second
+// wall row) and the feet hang one row lower for it; the canvas absorbs both.
+@Test func theUserClockTranscriptionMatchesTheApprovedMapBold() {
     let ascii = goldenASCII(of: UserClock.raster(palette: UserClock.darkOnline, scale: 1))
 
     #expect(ascii == [
@@ -46,8 +48,8 @@ private func goldenASCII(of raster: UserClock.Raster) -> [String] {
         ".###################.",
         ".###################.",
         "..#################..",
+        "..#################..",
         "....##.........##....",
-        ".....................",
         ".....................",
     ])
 }
@@ -67,6 +69,54 @@ private func goldenASCII(of raster: UserClock.Raster) -> [String] {
     #expect(raster.pixel(x: 14, y: 7) == 0xBE55F9)  // p purple slider
     #expect(raster.pixel(x: 16, y: 0) == 0x66D0FA)  // * sparkle
     #expect(raster.pixel(x: 0, y: 0) == 0)          // off the body: empty
+}
+
+// The bold treatment: every stroke that carried one art pixel carries two.
+// The slider stems are the thinnest ink on the clock and the first thing the
+// bar washes out — each stem is two columns wide now, its knob where it was.
+@Test func theBoldTranscriptionDoublesTheSliderStems() {
+    let raster = UserClock.raster(palette: UserClock.darkOnline, scale: 1)
+
+    // Both columns of each stem, on a stem row away from the knobs.
+    #expect(raster.pixel(x: 6, y: 8) == 0x4FBAF6)
+    #expect(raster.pixel(x: 7, y: 8) == 0x4FBAF6)
+    #expect(raster.pixel(x: 10, y: 8) == 0xEDEEF2)
+    #expect(raster.pixel(x: 11, y: 8) == 0xEDEEF2)
+    #expect(raster.pixel(x: 14, y: 8) == 0xBE55F9)
+    #expect(raster.pixel(x: 15, y: 8) == 0xBE55F9)
+    // The knobs keep their places: blue's on the fourth LED row, as drawn.
+    #expect(raster.pixel(x: 6, y: 10) == 0x4FBAF6)
+    #expect(raster.pixel(x: 10, y: 10) == 0xEDEEF2)
+    #expect(raster.pixel(x: 14, y: 9) == 0xBE55F9)
+}
+
+// The bottom wall carries the same two-pixel weight the top bar and the side
+// walls have always had, and the feet hang one row lower for it.
+@Test func theBoldBodyClosesTheBottomWallAtFullWeight() {
+    let raster = UserClock.raster(palette: UserClock.darkOnline, scale: 1)
+
+    #expect(raster.pixel(x: 10, y: 14) == 0xD0D2DC)  // wall row one
+    #expect(raster.pixel(x: 10, y: 15) == 0xD0D2DC)  // wall row two — the +1
+    #expect(raster.pixel(x: 4, y: 16) == 0xB3B6C3)   // foot, one row lower
+    #expect(raster.pixel(x: 10, y: 16) == 0)         // between the feet: out
+}
+
+// The no-clock treatment: the clock keeps its frame, bevel and feet, and its
+// screen draws NOTHING — no sliders, no sparkles. The figure the bar shows
+// when no clock has ever been configured is a clock with an empty screen.
+@Test func theEmptyStateLeavesTheScreenBlankAndTheBodyWhole() {
+    let raster = UserClock.raster(
+        palette: UserClock.empty(UserClock.darkOnline), scale: 1
+    )
+
+    // The screen's glass is still there; nothing is drawn on it.
+    #expect(raster.pixel(x: 3, y: 7) == 0x0C0D10)
+    #expect(raster.pixel(x: 10, y: 8) == 0)   // blue slider column: gone
+    #expect(raster.pixel(x: 10, y: 7) == 0)   // white slider column: gone
+    #expect(raster.pixel(x: 14, y: 8) == 0)   // purple slider column: gone
+    #expect(raster.pixel(x: 16, y: 0) == 0)   // sparkle: gone
+    #expect(raster.pixel(x: 10, y: 4) == 0xD0D2DC)  // frame, whole
+    #expect(raster.pixel(x: 4, y: 16) == 0xB3B6C3)  // feet, whole
 }
 
 // Offline keeps the clock and puts its screen out: the three sliders go grey

@@ -370,6 +370,16 @@ detail and stored in the login keychain, keyed by the tile; the tile record
 itself holds no secret. Its face is the shared three-row usage layout, the
 same component the Claude TC002 face uses.
 
+The usage endpoints are the dashboard's own routes: `GET
+https://api.z.ai/api/monitor/usage/model-usage`, per-model consumption over a
+time range, is the tile's reading source; `GET
+api.z.ai/api/monitor/usage/quota/limit` carries the limits beside it (Zhipu
+plans: host `open.bigmodel.cn`). `Authorization: <key>` without `Bearer`.
+z.ai documents no usage API — these are the dashboard routes the community
+trackers use, and they carry no stability contract. The decoder tolerates
+missing and extra fields and pins only what a live response shows; when a
+route dies, the connector reports failing and nothing else breaks.
+
 Carried-over rules:
 
 - The existing drawing tests (`ClaudeUsageConnector.output(for:)`, the weather

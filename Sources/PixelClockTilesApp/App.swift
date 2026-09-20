@@ -100,7 +100,10 @@ struct MenuBarGlyph: View {
         // No rendering mode on purpose. The old glyph was a template because
         // it was drawn shapeless; this one is the user's own clock in the four
         // approved palettes, and a template is macOS discarding exactly that.
-        Image(nsImage: AppGlyph.menuBar(lit: model.isDeviceOnline))
+        Image(nsImage: AppGlyph.menuBar(for: AppGlyph.state(
+            hasNoClocks: model.hasNoClocks,
+            isDeviceOnline: model.isDeviceOnline
+        )))
     }
 }
 
@@ -173,14 +176,43 @@ enum AppGlyph {
         symbol: "square.grid.3x2"
     )
 
-    /// Which drawing a reachability answer selects.
+    /// The clock with a blank screen: no clock has ever been configured, so
+    /// there is nothing on it to show — no sliders, no sparkles, the frame
+    /// and feet whole.
+    static let emptyDrawing = Drawing(
+        darkResource: "userclock-dark-empty",
+        lightResource: "userclock-light-empty",
+        symbol: "rectangle"
+    )
+
+    /// Which of the three drawings the bar is showing.
+    enum State: Equatable {
+        case online, offline, empty
+    }
+
+    /// The state a glyph draws, from the two facts the model holds, decided
+    /// once rather than at each caller. With no clocks configured the
+    /// reachability question has nothing to be about — there is no clock to
+    /// be answering or not — so the empty screen wins over both answers.
+    static func state(hasNoClocks: Bool, isDeviceOnline: Bool) -> State {
+        if hasNoClocks { return .empty }
+        return isDeviceOnline ? .online : .offline
+    }
+
+    /// Which drawing a state selects.
     ///
-    /// A function of its own, and the ONLY place the two are told apart.
-    /// Inverting this line is the one edit that inverts the menu bar, so it is
-    /// the one thing a test has to be able to read — which is what it could not
-    /// do while the choice lived inside conditionals in the middle of an image
-    /// lookup.
-    static func drawing(lit: Bool) -> Drawing { lit ? litDrawing : unlitDrawing }
+    /// A function of its own, and the ONLY place the three are told apart.
+    /// Inverting this table is the one edit that inverts the menu bar, so it
+    /// is the one thing a test has to be able to read — which is what it could
+    /// not do while the choice lived inside conditionals in the middle of an
+    /// image lookup.
+    static func drawing(for state: State) -> Drawing {
+        switch state {
+        case .online: litDrawing
+        case .offline: unlitDrawing
+        case .empty: emptyDrawing
+        }
+    }
 
     /// The menu bar mark: an image whose drawing handler picks the variant for
     /// whichever bar is drawing it, so the dark menu bar gets the source as
@@ -198,8 +230,8 @@ enum AppGlyph {
     /// there is no bundle and this returns nil. The SF Symbol fallback is what
     /// keeps the unbundled binary usable rather than showing an empty slot, and
     /// it is what the tests exercise: they run outside a bundle too.
-    static func menuBar(lit: Bool) -> NSImage {
-        let chosen = drawing(lit: lit)
+    static func menuBar(for state: State) -> NSImage {
+        let chosen = drawing(for: state)
         let image = NSImage(size: menuBarSize, flipped: false) { rect in
             let appearance = BarAppearance.of(NSAppearance.currentDrawing())
             // Force-unwrapped deliberately. The symbol ships with macOS 14, so
@@ -444,15 +476,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `reconsiderBrowsing` compares against what it has already asked for.
     func panelMoved(to window: NSWindow?) {
         guard let window else { return }
-        // Composite the panel through one layer, and re-render that layer
-        // when the window's frame changes, rather than letting AppKit scale
-        // or keep the old buffer. The window's fitting size is re-imposed by
-        // SwiftUI on every layout pass (see `MenuPanel`'s width note), and a
-        // frame change on a view that is not layer-backed redraws only the
-        // dirty rects — which is how a resize or a surface switch leaves the
-        // previous frame's pixels standing next to the new ones.
-        window.contentView?.wantsLayer = true
-        window.contentView?.layerContentsRedrawPolicy = .duringViewResize
+        // Deliberately no touch of the window's layer setup here. A runtime
+        // `wantsLayer` on the panel's contentView took the whole window's
+        // buttons dead — Quit, the gear, every row control — because the
+        // SwiftUI host owns its layer and event routing through it, and an
+        // AppKit-forced layer under a `MenuBarExtra` window desynchronizes
+        // the two. The ghost defenses live in `panelDidOpen` instead: a full
+        // repaint per open, which changes no view structure at all.
         panelWindow = window
         panelDidOpen()
     }

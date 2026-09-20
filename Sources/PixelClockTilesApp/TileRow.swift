@@ -97,11 +97,14 @@ struct TileRow: View {
             }
         } else {
             row
-                // The drag carries the tile's key as text, and the drop lands
-                // on whichever row it was released over: the panel is a short
-                // list, and row-for-row is as fine as a reorder of it needs
-                // to be.
-                .draggable(value.key.dragPayload)
+                // A drop destination only, never a drag source here. The drop
+                // is passive — it is consulted during somebody else's drag
+                // and adds nothing to the mouse-down path, so the row's
+                // buttons stay first in line for clicks. The drag side lives
+                // on the row's leading views, for the same reason: a
+                // whole-row `.draggable` made the host treat every
+                // mouse-down as the start of a potential drag, and the row's
+                // own buttons stopped answering.
                 .dropDestination(for: String.self) { payload, _ in
                     guard let source = payload.first,
                         let key = TileKey(dragPayload: source)
@@ -117,6 +120,10 @@ struct TileRow: View {
             Image(systemName: value.iconName)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(value.name)
+                // The drag affordance, on the row's reading parts: carry
+                // this to move the tile. The buttons around it are left
+                // outside the gesture on purpose.
+                .draggable(value.key.dragPayload)
             if !value.isAmbient {
                 Button { value.onRun() } label: {
                     Text("▶")
@@ -127,6 +134,7 @@ struct TileRow: View {
             Text(value.line.text)
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
+                .draggable(value.key.dragPayload)
             if let badge = value.line.badge {
                 Text(Self.glyph(for: badge))
                     .font(.caption)

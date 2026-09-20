@@ -12,14 +12,21 @@ import Testing
 // macOS DISCARDING the colour, and the four approved palettes are what the
 // glyph is.
 @Test @MainActor func theMenuBarGlyphIsAtItsPointsPerArtPixelSizeAndKeepsItsColours() {
-    let glyph = AppGlyph.menuBar(lit: true)
+    let glyph = AppGlyph.menuBar(for: .online)
 
     #expect(glyph.size == NSSize(width: 21, height: 18))
     #expect(glyph.isTemplate == false)
 }
 
 @Test @MainActor func theOfflineGlyphIsDrawnToTheSameSize() {
-    let glyph = AppGlyph.menuBar(lit: false)
+    let glyph = AppGlyph.menuBar(for: .offline)
+
+    #expect(glyph.size == AppGlyph.menuBarSize)
+    #expect(glyph.isTemplate == false)
+}
+
+@Test @MainActor func theEmptyGlyphIsDrawnToTheSameSize() {
+    let glyph = AppGlyph.menuBar(for: .empty)
 
     #expect(glyph.size == AppGlyph.menuBarSize)
     #expect(glyph.isTemplate == false)
@@ -33,22 +40,36 @@ import Testing
 // nuance: `lit != unlit` is satisfied by an inverted mapping exactly as well as
 // by a correct one. The mapping test below is the direction.
 @Test @MainActor func onlineAndOfflineAreTwoDifferentGlyphs() {
-    let lit = AppGlyph.menuBar(lit: true).tiffRepresentation
-    let unlit = AppGlyph.menuBar(lit: false).tiffRepresentation
+    let lit = AppGlyph.menuBar(for: .online).tiffRepresentation
+    let unlit = AppGlyph.menuBar(for: .offline).tiffRepresentation
 
     #expect(lit != nil)
     #expect(lit != unlit)
 }
 
+// The empty screen is its own drawing, distinct from both powered states:
+// offline has grey sliders where empty has none, and the pixels show it.
+@Test @MainActor func theEmptyGlyphIsItsOwnDrawingNotTheOfflineOne() {
+    let empty = AppGlyph.menuBar(for: .empty).tiffRepresentation
+    let offline = AppGlyph.menuBar(for: .offline).tiffRepresentation
+    let online = AppGlyph.menuBar(for: .online).tiffRepresentation
+
+    #expect(empty != nil)
+    #expect(empty != offline)
+    #expect(empty != online)
+}
+
 // A reachable clock selects the online drawing, an unreachable one the offline
-// drawing — and each drawing carries BOTH appearances, because the shipped
-// PNGs are four, not two. Inverting any one cell of this table puts, say, the
-// dark bar's offline art on an online light bar, which no comparison of two
-// whole images would catch. The names are written here and nowhere else in the
-// app, which is what makes the table assertable at all.
+// drawing, and an installation with no clocks at all the empty one — a clock
+// with a blank screen, because there is nothing to show on it. Each drawing
+// carries BOTH appearances, because the shipped PNGs come in dark and light.
+// Inverting any one cell of this table puts, say, the dark bar's offline art
+// on an online light bar, which no comparison of two whole images would
+// catch. The names are written here and nowhere else in the app, which is
+// what makes the table assertable at all.
 @Test func aReachableClockSelectsTheOnlineDrawingAndAnUnreachableOneTheOfflineOne() {
     #expect(
-        AppGlyph.drawing(lit: true)
+        AppGlyph.drawing(for: .online)
             == AppGlyph.Drawing(
                 darkResource: "userclock-dark-online",
                 lightResource: "userclock-light-online",
@@ -56,13 +77,31 @@ import Testing
             )
     )
     #expect(
-        AppGlyph.drawing(lit: false)
+        AppGlyph.drawing(for: .offline)
             == AppGlyph.Drawing(
                 darkResource: "userclock-dark-offline",
                 lightResource: "userclock-light-offline",
                 symbol: "square.grid.3x2"
             )
     )
+    #expect(
+        AppGlyph.drawing(for: .empty)
+            == AppGlyph.Drawing(
+                darkResource: "userclock-dark-empty",
+                lightResource: "userclock-light-empty",
+                symbol: "rectangle"
+            )
+    )
+}
+
+// The state a glyph draws is decided once, from the two facts the model
+// holds: with no clocks configured there is nothing the online/offline
+// question could be about, so the empty screen wins over both.
+@Test func theGlyphsStateIsDecidedOnceFromTheModelsTwoFacts() {
+    #expect(AppGlyph.state(hasNoClocks: true, isDeviceOnline: true) == .empty)
+    #expect(AppGlyph.state(hasNoClocks: true, isDeviceOnline: false) == .empty)
+    #expect(AppGlyph.state(hasNoClocks: false, isDeviceOnline: true) == .online)
+    #expect(AppGlyph.state(hasNoClocks: false, isDeviceOnline: false) == .offline)
 }
 
 // And a drawing hands the handler the variant drawn FOR the bar being drawn —
@@ -89,7 +128,7 @@ import Testing
 // nothing stands between the redraw and it; a cached bitmap would keep the
 // previous bar's variant on screen until relaunch.
 @Test @MainActor func theGlyphIsNeverCachedSoALiveAppearanceChangeRedrawsIt() {
-    #expect(AppGlyph.menuBar(lit: true).cacheMode == .never)
+    #expect(AppGlyph.menuBar(for: .online).cacheMode == .never)
 }
 
 // MARK: - Where this app writes

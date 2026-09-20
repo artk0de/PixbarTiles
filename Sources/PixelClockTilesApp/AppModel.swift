@@ -952,6 +952,87 @@ final class AppModel: ObservableObject {
     /// writes to the device. Keyed by nothing meaningful — switching a
     /// connector off twice is two restores, and the second finds nothing left
     /// to give back.
+    enum TileSaveOutcome: Equatable {
+        case saved
+        /// Not saved, with the sentence to show beside the control that asked.
+        case refused(String)
+    }
+
+    /// What the Add tile menu shows for a connector on a clock.
+    func availability(of connectorId: String, on clockId: UUID) -> TileAvailability {
+        guard let clock = clocks.first(where: { $0.id == clockId }),
+            let candidate = candidate(connectorId)
+        else { return .notListed }
+        return TileCatalogue.availability(of: candidate, on: clock, tiles: tiles.all(), clocks: clocks)
+    }
+
+    func addTile(
+        _ connectorId: String, to clockId: UUID, instance: String = "", config: TileConfig? = nil
+    ) -> TileSaveOutcome {
+        let key = TileKey(clockId: clockId, connectorId: connectorId, instance: instance)
+        switch availability(of: connectorId, on: clockId) {
+        case let .unavailable(reason):
+            return .refused(reason)
+        case .notListed:
+            return .refused("already on \(clocks.first { $0.id == clockId }?.name ?? "this clock")")
+        case .available:
+            break
+        }
+        if tiles.all().contains(where: { $0.key == key }) {
+            return .refused("already on \(clocks.first { $0.id == clockId }?.name ?? "this clock")")
+        }
+        let starting = connectorId == VPNConnector.id
+            ? TileDefaults.vpn
+            : registry.connector(id: connectorId)?.defaultPolicy ?? TileDefaults.weather
+        return saveTile(key: key, policy: starting, config: config)
+    }
+
+    /// Stores what the tile detail says, unless a VPN lamp is claimed by
+    /// another tile at the same moment. A pause takes the tile's app off its
+    /// clock at once; the schedule is rebuilt either way.
+    func saveTile(key: TileKey, policy: TilePolicy, config: TileConfig?) -> TileSaveOutcome {
+
+        if let lamp = config?.lamp,
+            let conflict = LampConflict.check(
+                LampTile(key: key, name: WatchedVPN.preset(id: lamp.vpn)?.displayName ?? lamp.vpn, slot: lamp.slot, policy: policy),
+                against: lampTiles(on: key.clockId)
+            ) {
+            return .refused(conflict.message)
+        }
+        let wasRunning = storedPolicy(of: key).map { !$0.isPaused } ?? false
+        tiles.update(TileRecord(key: key, policy: TilePolicyRecord(policy))) {
+            $0.policy = TilePolicyRecord(policy)
+            $0.config = config
+        }
+
+        if wasRunning && policy.isPaused { retract(key) }
+        if key.connectorId == VPNConnector.id { refreshLamps() } else { reschedule(key) }
+        reconcileTiles()
+        return .saved
+    }
+
+    func removeTile(_ key: TileKey) {
+        timers.removeValue(forKey: key)?.cancel()
+        try? tiles.replaceAll(tiles.all().filter { $0.key != key })
+        if key.connectorId == VPNConnector.id { refreshLamps() } else { retract(key) }
+    }
+
+    func storedPolicy(of key: TileKey) -> TilePolicy? { policy(of: key) }
+
+    private func candidate(_ connectorId: String) -> TileCandidate? {
+        if connectorId == VPNConnector.id { return TileCandidate(vpn) }
+        return registry.connector(id: connectorId).map { TileCandidate($0) }
+    }
+
+    private func lampTiles(on clockId: UUID) -> [LampTile] {
+        tiles.all().compactMap { record in
+            guard record.key.clockId == clockId, let lamp = record.config?.lamp,
+                let policy = policy(of: record.key)
+            else { return nil }
+            return LampTile(key: record.key, name: WatchedVPN.preset(id: lamp.vpn)?.displayName ?? lamp.vpn, slot: lamp.slot, policy: policy)
+        }
+    }
+
     private func giveBackDeviceState(_ key: TileKey) {
         let restoreKey = nextRestoreKey
         nextRestoreKey += 1

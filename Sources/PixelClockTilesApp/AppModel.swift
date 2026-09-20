@@ -915,22 +915,29 @@ final class AppModel: ObservableObject {
     }
 
     func setEnabled(_ enabled: Bool, for connector: any Connector) {
-        guard let key = selectedKey(connector.id), let record = storedTile(key) else { return }
-        let wasEnabled = !record.policy.isPaused
-        tiles.update(record) { $0.policy.isPaused = !enabled }
+        guard let key = selectedKey(connector.id), storedTile(key) != nil else { return }
+        setPaused(!enabled, tile: key)
+    }
+
+    /// Pauses or resumes one tile, named by key and not by connector — the
+    /// same connector sits on several clocks, and this names one tile of it.
+    func setPaused(_ paused: Bool, tile key: TileKey) {
+        guard let record = storedTile(key) else { return }
+        let wasRunning = !record.policy.isPaused
+        tiles.update(record) { $0.policy.isPaused = paused }
         reschedule(key)
-        // Only on the way OFF, and only on the edge. A connector switched off
+        // Only on the way OFF, and only on the edge. A tile switched off
         // stops running, so nothing else will ever put back what it borrowed —
         // where switching one ON borrows nothing until its first delivery, and
         // a restore there would write a value that is already on the device.
         // Dragging the interval slider is neither, and must not touch the clock
         // at all.
-        if wasEnabled && !enabled {
+        if wasRunning && paused {
             giveBackDeviceState(key)
-            // On the TC002 branch a switched-off connector's page stays in the
-            // knob cycle on the idle frame — paused, never deleted (D4).
-            if let ulanzi {
-                Task { await ulanzi.markIdle(tileId: key.connectorId) }
+            // On the TC002 branch a paused tile's page stays in the knob cycle
+            // on the idle frame — paused, never deleted (D4).
+            if clock(key.clockId)?.model == .ulanziTC002 {
+                Task { await ulanzi?.markIdle(tileId: key.connectorId) }
             }
         }
     }
@@ -1014,7 +1021,17 @@ final class AppModel: ObservableObject {
     func removeTile(_ key: TileKey) {
         timers.removeValue(forKey: key)?.cancel()
         try? tiles.replaceAll(tiles.all().filter { $0.key != key })
-        if key.connectorId == VPNConnector.id { refreshLamps() } else { retract(key) }
+        if key.connectorId == VPNConnector.id {
+            refreshLamps()
+        } else {
+            retract(key)
+            // The TC002's page is the app's own doing, so removal takes it
+            // back through the session's custody — the empty-body delete that
+            // is the measured contract (phase-3 A9).
+            if clock(key.clockId)?.model == .ulanziTC002 {
+                Task { await ulanzi?.tileRemoved(key.connectorId) }
+            }
+        }
     }
 
     func storedPolicy(of key: TileKey) -> TilePolicy? { policy(of: key) }

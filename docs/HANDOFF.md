@@ -851,12 +851,15 @@ phase 4's multi-clock work, not here.
 
 ### What only a person at the hardware can settle
 
-1. **E9 — reboot persistence.** Power-cycle the TC002 and read
-   `/api/customList` after boot. Custom apps surviving or not, the session
-   behaves identically — the upsert re-creates them; the check only sharpens
-   the research record.
-2. **`pct-` name acceptance.** Push `pct-weather` by hand once (curl from the
-   research setup) and confirm it appears as a DIY page at index 100+.
+1. **E9 — reboot persistence — MEASURED 2026-09-20: custom apps die with
+   power.** The TC002 was power-cycled; `getBase` answered with the same
+   device identity and `/api/customList` returned `{"apps":[],"count":0}` —
+   the `pct-e9` marker is gone. Custom apps live in RAM, so the session's
+   re-push-all on offline→online is mandatory; implemented in
+   `UlanziClockSession`.
+2. **`pct-` name acceptance — PASSED 2026-09-20.** `pct-` names were pushed by
+   hand and appeared as DIY pages at index 100+; delete = POST with an EMPTY
+   body re-confirmed live (`{}` does not delete).
 3. **E4 — deleted-page effect.** With the knob parked on a page, delete that
    page's app and record what the panel shows — black, previous page, crash?
    This is what `tileRemoved` and `shutdown` expose a user to.
@@ -865,8 +868,9 @@ phase 4's multi-clock work, not here.
    if the panel washes out.
 5. **Idle marker.** Confirm the single dim dot reads as "paused" from the
    couch.
-6. **`customList` exact schema.** One `curl /api/customList` settles the decode
-   shape permanently if the Task 4 fixture paste left any doubt.
+6. **`customList` exact schema — SETTLED 2026-09-20.** Live reads show
+   `{"apps":[],"count":0}` when empty and the pushed app inside `apps` once
+   pushed; the Task 4 decode shape matches the device.
 7. **`image[]` element spelling.** The scene encoder emits a bare base64
    payload per image element — the one wire detail no phase-3 capture pins.
    Before any face ships a positioned or timed image, pin the element spelling

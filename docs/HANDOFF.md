@@ -164,8 +164,10 @@ zero bytes — and 404s every other asset path. Both were checked, not assumed.
 
 So the mark is drawn: `Scripts/MakeIcon.swift` renders a dark slab with a 32x8
 LED panel, generated at bundle time into git-ignored `build/`, which keeps binary
-art out of the repository and makes the design reviewable as code. Run it alone
-with `swift Scripts/MakeIcon.swift` and look at `build/icon/preview-*.png`.
+art out of the repository and makes the design reviewable as code. Run it with
+`swiftc Sources/PixelClockTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift
+-o build/icon-maker && build/icon-maker` — the menu bar glyph's map is compiled
+from the app target — and look at `build/icon/preview-*.png`.
 
 Three rules inside it, each of which was arrived at by rendering and looking:
 

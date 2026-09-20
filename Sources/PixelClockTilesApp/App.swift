@@ -97,64 +97,101 @@ struct MenuBarGlyph: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
+        // No rendering mode on purpose. The old glyph was a template because
+        // it was drawn shapeless; this one is the user's own clock in the four
+        // approved palettes, and a template is macOS discarding exactly that.
         Image(nsImage: AppGlyph.menuBar(lit: model.isDeviceOnline))
-            // Belt and braces over `NSImage.isTemplate`. The flag is what
-            // AppKit reads and it is set and tested; this is the SwiftUI-side
-            // gate on the same question, and the failure it guards against —
-            // black art painted on a dark menu bar — is invisible rather than
-            // wrong-looking.
-            .renderingMode(.template)
     }
 }
 
 enum AppGlyph {
-    /// 30x18, not square: the menu bar caps an item's HEIGHT at the bar's, but
-    /// not its width, and the glyph is a wide device. `Scripts/MakeIcon.swift`
-    /// emits it at exactly this aspect — its device style widens the canvas to
-    /// 30/18 of the height — so a size set here that disagrees is macOS
-    /// stretching the art.
-    static let menuBarSize = NSSize(width: 30, height: 18)
+    /// 21x18, not square: one art pixel of the user's clock is one point, and
+    /// that is the canvas `Scripts/MakeIcon.swift` emits at every scale — the
+    /// menu bar caps an item's HEIGHT at the bar's, not its width. A size set
+    /// here that disagrees is macOS stretching the art.
+    static let menuBarSize = NSSize(width: 21, height: 18)
 
-    /// One drawing of the mark: where the bundle keeps it, and what to draw
-    /// when there is no bundle.
+    /// Which of the two palettes the bar is asking for.
+    enum BarAppearance {
+        case dark
+        case light
+
+        /// Read from the appearance AppKit is drawing WITH, not the app's or
+        /// the system's: a status item follows the menu bar, which on recent
+        /// macOS can follow the wallpaper and differ from both. `bestMatch`
+        /// against the two concrete names IS the resolution — a light bar
+        /// answers aqua, a dark one darkAqua — and inside a drawing handler
+        /// `currentDrawing()` is the drawing view's own effective appearance.
+        static func of(_ appearance: NSAppearance) -> BarAppearance {
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+        }
+    }
+
+    /// One drawing of the mark: where the bundle keeps each appearance's
+    /// variant, and what to draw when there is no bundle.
     ///
-    /// A value holding both names rather than two ternaries inside
+    /// A value holding all three names rather than conditionals inside
     /// `menuBar(lit:)`, and the reason is the defect this type shipped with.
     /// With the names picked separately, the mapping from state to drawing had
     /// no single site and nothing could read it back: swapping either pair
-    /// inverted the menu bar and left all 653 tests green, because every
+    /// inverted the menu bar and left the whole suite green, because every
     /// assertion in the suite said only that the two drawings DIFFER, which an
     /// inverted mapping satisfies exactly as well as a correct one. One value
     /// per state gives the direction somewhere to be asserted.
     struct Drawing: Equatable, Sendable {
-        /// The PNG in `Contents/Resources`, once `Scripts/bundle.sh` has
-        /// assembled the .app.
-        let resource: String
+        /// The PNG for a dark menu bar, in `Contents/Resources`, once
+        /// `Scripts/bundle.sh` has assembled the .app.
+        let darkResource: String
+        /// The PNG for a light menu bar.
+        let lightResource: String
         /// What an unbundled binary draws instead — which is every test, and a
-        /// bare `swift run`.
+        /// bare `swift run`. Symbols have no appearance variants; the shape is
+        /// what the fallback is for.
         let symbol: String
+
+        /// The variant drawn FOR the bar being drawn — the one place
+        /// appearance and state meet.
+        func resource(for appearance: BarAppearance) -> String {
+            appearance == .dark ? darkResource : lightResource
+        }
     }
 
-    /// The panel with its pixels lit: the clock is answering.
-    static let litDrawing = Drawing(resource: "MenuBarIcon", symbol: "square.grid.3x2.fill")
+    /// The clock with its sliders lit: the clock is answering.
+    static let litDrawing = Drawing(
+        darkResource: "userclock-dark-online",
+        lightResource: "userclock-light-online",
+        symbol: "square.grid.3x2.fill"
+    )
 
-    /// The same panel with nothing on it: the clock is not answering. Two
+    /// The same clock with its screen out: the clock is not answering. Two
     /// drawings rather than one plus a badge, because a badge does not survive
-    /// being 18pt tall — and an empty panel is also what an unreachable clock
-    /// actually looks like across the room.
-    static let unlitDrawing = Drawing(resource: "MenuBarIconOffline", symbol: "square.grid.3x2")
+    /// being 18pt tall — and a grey-screened clock is also what an unreachable
+    /// one actually looks like.
+    static let unlitDrawing = Drawing(
+        darkResource: "userclock-dark-offline",
+        lightResource: "userclock-light-offline",
+        symbol: "square.grid.3x2"
+    )
 
     /// Which drawing a reachability answer selects.
     ///
     /// A function of its own, and the ONLY place the two are told apart.
     /// Inverting this line is the one edit that inverts the menu bar, so it is
     /// the one thing a test has to be able to read — which is what it could not
-    /// do while the choice lived inside two ternaries in the middle of an image
+    /// do while the choice lived inside conditionals in the middle of an image
     /// lookup.
     static func drawing(lit: Bool) -> Drawing { lit ? litDrawing : unlitDrawing }
 
-    /// The menu bar mark, as a template image so macOS recolours it for light,
-    /// dark and the highlighted state.
+    /// The menu bar mark: an image whose drawing handler picks the variant for
+    /// whichever bar is drawing it, so the dark menu bar gets the source as
+    /// drawn and the light one the open-screen treatment.
+    ///
+    /// A drawing handler rather than a resolved `NSImage`, and that is about
+    /// time, not size: the bar's appearance is only known when AppKit draws,
+    /// and it can change while the app runs. `cacheMode = .never` is what
+    /// keeps nothing standing between AppKit's redraw and the handler, so a
+    /// theme or wallpaper flip re-asks and the status item keeps up without
+    /// any hook of ours.
     ///
     /// `NSImage(named:)` reads `Contents/Resources`, which only exists once
     /// `Scripts/bundle.sh` has assembled the .app — under a bare `swift run`
@@ -163,29 +200,24 @@ enum AppGlyph {
     /// it is what the tests exercise: they run outside a bundle too.
     static func menuBar(lit: Bool) -> NSImage {
         let chosen = drawing(lit: lit)
-        // Force-unwrapped deliberately. Both symbols ship with macOS 14, so a
-        // nil here is a typo rather than a runtime condition — and the
-        // alternative to failing loudly is a menu bar item with nothing in it,
-        // which looks exactly like an app that did not launch.
-        return prepare(
-            NSImage(named: chosen.resource)
+        let image = NSImage(size: menuBarSize, flipped: false) { rect in
+            let appearance = BarAppearance.of(NSAppearance.currentDrawing())
+            // Force-unwrapped deliberately. The symbol ships with macOS 14, so
+            // a nil here is a typo rather than a runtime condition — and the
+            // alternative to failing loudly is a menu bar item with nothing in
+            // it, which looks exactly like an app that did not launch.
+            (NSImage(named: chosen.resource(for: appearance))
                 ?? NSImage(
                     systemSymbolName: chosen.symbol, accessibilityDescription: "PixelClockTiles"
-                )!
-        )
-    }
-
-    /// Whatever was found, turned into what the menu bar expects.
-    ///
-    /// Its own function because the two sources arrive differently: a loose PNG
-    /// out of `Contents/Resources` is not a template until it is said to be,
-    /// while an SF Symbol already is. Written inline, the assignment would be
-    /// invisible to anything running outside a bundle — which is every test, and
-    /// which is exactly the case where forgetting it ships a black glyph onto a
-    /// dark menu bar.
-    static func prepare(_ image: NSImage) -> NSImage {
-        image.isTemplate = true
-        image.size = menuBarSize
+                )!)
+                .draw(in: rect)
+            return true
+        }
+        // The default for a built image, said out loud because the old glyph's
+        // whole preparation was the opposite: a template would discard the
+        // palettes this glyph exists to carry.
+        image.isTemplate = false
+        image.cacheMode = .never
         return image
     }
 }

@@ -1821,7 +1821,7 @@ private func historyAfterReaping(
 
     wiring.model.runNow("stub")
 
-    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed:") == true })
+    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed") == true })
     #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 1)
     await wiring.model.teardown()
 }
@@ -1841,7 +1841,7 @@ private func historyAfterReaping(
     #expect(await waitUntil { wiring.model.isDeviceOnline })
     // Earned against a clock that IS answering, so the failure is the feed's.
     wiring.model.runNow("stub")
-    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed:") == true })
+    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed") == true })
     #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 1)
 
     clock.nowFails()
@@ -1905,7 +1905,7 @@ private func historyAfterReaping(
 
     wiring.model.runNow("stub")
 
-    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed:") == true })
+    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed") == true })
     await wiring.model.teardown()
 }
 
@@ -2072,12 +2072,12 @@ func isDue(_ next: NextRun?) -> Bool {
 
     wiring.model.replay(here)
 
-    #expect(await waitUntil { wiring.model.replayResult?.hasPrefix("failed:") == true })
+    #expect(await waitUntil { wiring.model.replayResult?.hasPrefix("failed") == true })
     #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 0)
 
     wiring.model.runNow("stub")
 
-    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed:") == true })
+    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed") == true })
     #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 1)
     await wiring.model.teardown()
 }

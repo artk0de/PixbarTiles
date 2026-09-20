@@ -304,17 +304,26 @@ final class AppModel: ObservableObject {
     private let relocate: RelocatingHost?
 
     @Published private(set) var tileLastResults: [TileKey: String] = [:]
+    /// What each tile's last run ended in, in the raw words the transport
+    /// produced, and nothing at all while the last run did not fail. Kept raw
+    /// so the row's sentence and every other reader translate it themselves.
+    @Published private(set) var tileLastFailures: [TileKey: String] = [:]
     /// What the last background pass had to complain about, per tile, and
     /// nothing at all when it went fine.
     @Published private(set) var tileLastMaintenanceFailure: [TileKey: String] = [:]
     /// When each tile is next due, or what is holding it.
     @Published private(set) var tileNextRun: [TileKey: NextRun] = [:]
+    /// Bumped when the tiles record's ORDER changes, because the store it
+    /// lives in publishes nothing: the panel's rows are drawn from the
+    /// record, and a reorder has no other way to be seen.
+    @Published private(set) var tileOrderRevision = 0
     /// A by-tile map, seen the way the panel still reads it: the selected
     /// clock's single tiles, by connector.
     var nextRun: [String: NextRun] { projected(tileNextRun) }
-    /// The selected clock's run outcomes and maintenance failures, by connector,
-    /// for the same reason and until the same phase.
+    /// The selected clock's run outcomes, failures and maintenance failures,
+    /// by connector, for the same reason and until the same phase.
     var lastResults: [String: String] { projected(tileLastResults) }
+    var lastFailures: [String: String] { projected(tileLastFailures) }
     var lastMaintenanceFailure: [String: String] { projected(tileLastMaintenanceFailure) }
 
     private func session(for key: TileKey) -> (any ConnectorRunning)? { sessions[key.clockId] }
@@ -1141,17 +1150,48 @@ final class AppModel: ObservableObject {
         let isLamp = key.connectorId == VPNConnector.id
         let name = tileName(of: record)
         return TileRowValue(
+            key: key,
             name: name,
             result: tileLastResults[key],
             hold: policy(of: key)?.hold(in: currentFocus, atHour: currentHour),
-            failing: tileLastMaintenanceFailure[key] != nil,
+            // The run's own complaint outranks the restock's: it is the newer
+            // evidence about the same feed.
+            failure: tileLastFailures[key] ?? tileLastMaintenanceFailure[key],
             // The lamp tile runs itself, off the delivery chain entirely.
             isAmbient: isLamp || (registry.connector(id: key.connectorId)?.isAmbient ?? false),
+            iconName: TileRowIcon.symbol(forConnectorId: key.connectorId),
             removeQuestion: "Remove \(name) from \(clock(key.clockId)?.name ?? "this clock")?",
             onRun: { self.runNow(key) },
             onDetail: { self.openDetail(for: key) },
-            onRemove: { self.removeTile(key) }
+            onRemove: { self.removeTile(key) },
+            onReorderTo: { self.moveTile($0, to: key) }
         )
+    }
+
+    /// Drag-reorder, as the panel's rows carry it: `source` is the row the
+    /// drag picked up and `destination` the row it landed on. The order IS
+    /// the tiles record's order — the one record every clock reads its rows
+    /// from — so only the source clock's slice moves and every other clock's
+    /// tiles keep their places in it.
+    ///
+    /// A move that changes nothing is not one: the same row under the drag,
+    /// a destination on another clock (a payload is readable anywhere, and
+    /// only the selected clock's rows are on this panel), a source that is
+    /// gone — each arrives here as a plain refusal.
+    func moveTile(_ source: TileKey, to destination: TileKey) {
+        guard source.clockId == destination.clockId, source != destination else { return }
+        var all = tiles.all()
+        guard let fromIndex = all.firstIndex(where: { $0.key == source }),
+            let destinationRow = all.firstIndex(where: { $0.key == destination })
+        else { return }
+        let moved = all.remove(at: fromIndex)
+        // The destination's ORIGINAL index is where the dragged row lands,
+        // whatever direction the drag ran: ahead of it, the removal has
+        // already pulled every row between up by one; behind it, the insert
+        // pushes them back down.
+        all.insert(moved, at: min(destinationRow, all.count))
+        try? tiles.replaceAll(all)
+        tileOrderRevision += 1
     }
 
     /// A tile's display name: the lamp's VPN for a lamp tile, the connector's
@@ -1181,28 +1221,39 @@ final class AppModel: ObservableObject {
         healths[clockId]?.monitor.state ?? .unknown
     }
 
-    /// One menu entry per connector the registry holds, minus the ones a
-    /// single tile already covers on the selected clock — `notListed` means
-    /// not listed.
+    /// One menu entry per connector the registry holds, plus the lamp's —
+    /// it has no face and no session of its own, so it never joined the
+    /// registry, and this is where it is offered — minus the ones a single
+    /// tile already covers on the selected clock, `notListed` meaning not
+    /// listed. The lamp is LAST because it is the connector a full clock can
+    /// still take: the exhausted-clock menu offers it and nothing else.
     var addTileMenuItems: [AddTileMenuItem] {
         guard let selection = selectedClockId else { return [] }
-        return registry.all.compactMap { connector in
-            switch availability(of: connector.id, on: selection) {
-            case .notListed:
-                return nil
-            case let .unavailable(reason):
-                return AddTileMenuItem(
-                    title: connector.displayName,
-                    availability: .unavailable(reason: reason),
-                    onAdd: { _ = self.addTile(connector.id, to: selection) }
-                )
-            case .available:
-                return AddTileMenuItem(
-                    title: connector.displayName,
-                    availability: .available,
-                    onAdd: { _ = self.addTile(connector.id, to: selection) }
-                )
-            }
+        let offered = registry.all.compactMap { connector in
+            menuEntry(connector.id, named: connector.displayName, on: selection)
+        }
+        return offered + [menuEntry(VPNConnector.id, named: vpn.displayName, on: selection)].compactMap { $0 }
+    }
+
+    /// One menu entry, or nil for a connector the selected clock may not list.
+    private func menuEntry(
+        _ connectorId: String, named title: String, on clockId: UUID
+    ) -> AddTileMenuItem? {
+        switch availability(of: connectorId, on: clockId) {
+        case .notListed:
+            nil
+        case let .unavailable(reason):
+            AddTileMenuItem(
+                title: title,
+                availability: .unavailable(reason: reason),
+                onAdd: { _ = self.addTile(connectorId, to: clockId) }
+            )
+        case .available:
+            AddTileMenuItem(
+                title: title,
+                availability: .available,
+                onAdd: { _ = self.addTile(connectorId, to: clockId) }
+            )
         }
     }
 
@@ -2514,11 +2565,20 @@ final class AppModel: ObservableObject {
         case .completed, .skipped: tileLastMaintenanceFailure[key] = nil
         case .cancelled: break
         case let .failed(message):
-            tileLastMaintenanceFailure[key] = "restock failed: \(message.prefix(60))"
+            // Raw, deliberately: `TileRowLine` is where the raw words a
+            // transport produced become a sentence, and this store only keeps
+            // what was complained about.
+            tileLastMaintenanceFailure[key] = message
         }
     }
 
     private func record(_ result: RunResult, for key: TileKey) {
+        switch result {
+        case .delivered, .skipped: tileLastFailures[key] = nil
+        // Not evidence: the same rule `note` gives its own cancellation.
+        case .cancelled: break
+        case let .failed(message): tileLastFailures[key] = message
+        }
         tileLastResults[key] = Self.words(for: result)
     }
 
@@ -2564,7 +2624,7 @@ final class AppModel: ObservableObject {
         case .delivered: "delivered"
         case .skipped: "off"
         case .cancelled: "cancelled"
-        case let .failed(message): "failed: \(message.prefix(60))"
+        case let .failed(message): "failed — \(TileRowLine.cause(from: message))"
         }
     }
 }

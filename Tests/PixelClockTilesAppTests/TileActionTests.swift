@@ -128,3 +128,91 @@ private func plainScene() -> UlanziScene {
     canvas.fill(.white)
     return UlanziScene(frames: [UlanziFrame(duration: 5, draw: [canvas.drawCommands()])])
 }
+
+// MARK: - Reorder
+
+// Dragging a row to a new place is the one action whose effect is only the
+// store's order: the order IS the tiles record's order, and it is the same
+// on every clock, so a reorder of one clock's rows must not disturb any
+// other clock's place in the record.
+
+@Test @MainActor func draggingARowReordersTheSelectedClocksTiles() {
+    let loft = ClockRecord(name: "Loft", model: .awtrix3, address: "10.0.0.6")
+    let subject = testModel(
+        connectors: [
+            StubConnector(id: "weather"),
+            StubConnector(id: "claude"),
+            StubConnector(id: "anecdotes"),
+        ],
+        clocks: [desk, loft],
+        tiles: [
+            assembledRecord("weather", on: desk),
+            assembledRecord("claude", on: desk),
+            assembledRecord("anecdotes", on: desk),
+            assembledRecord("weather", on: loft),
+            assembledRecord("claude", on: loft),
+        ]
+    )
+
+    // The second row dragged onto where the first stands: it takes that
+    // place, and everything else keeps its relative order.
+    subject.moveTile(assembledKey("claude", on: desk), to: assembledKey("weather", on: desk))
+
+    let order = subject.tileRows.map { $0.key.connectorId }
+    #expect(order == ["claude", "weather", "anecdotes"])
+    // And the other clock's order is untouched, inside the same record.
+    subject.selectedClockId = loft.id
+    #expect(subject.tileRows.map { $0.key.connectorId } == ["weather", "claude"])
+}
+
+@Test @MainActor func aRowDroppedOnAnotherClocksRowIsNotAMove() {
+    let loft = ClockRecord(name: "Loft", model: .awtrix3, address: "10.0.0.6")
+    let subject = testModel(
+        connectors: [StubConnector(id: "weather"), StubConnector(id: "claude")],
+        clocks: [desk, loft],
+        tiles: [
+            assembledRecord("weather", on: desk),
+            assembledRecord("claude", on: desk),
+            assembledRecord("weather", on: loft),
+        ]
+    )
+
+    subject.moveTile(assembledKey("weather", on: desk), to: assembledKey("weather", on: loft))
+
+    #expect(subject.tileRows.map { $0.key.connectorId } == ["weather", "claude"])
+}
+
+@Test @MainActor func aRowDroppedOntoItselfIsNotAMove() {
+    let subject = testModel(
+        connectors: [StubConnector(id: "weather"), StubConnector(id: "claude")],
+        clocks: [desk],
+        tiles: [
+            assembledRecord("weather", on: desk),
+            assembledRecord("claude", on: desk),
+        ]
+    )
+
+    subject.moveTile(assembledKey("weather", on: desk), to: assembledKey("weather", on: desk))
+
+    #expect(subject.tileRows.map { $0.key.connectorId } == ["weather", "claude"])
+}
+
+@Test @MainActor func aDragPayloadRoundTripsThroughTheKeyItNames() {
+    let key = TileKey(clockId: desk.id, connectorId: "claude", instance: "pritunl")
+    #expect(TileKey(dragPayload: key.dragPayload) == key)
+}
+
+private func assembledRecord(
+    _ connector: String, on clock: ClockRecord
+) -> TileRecord {
+    TileRecord(
+        key: TileKey(clockId: clock.id, connectorId: connector),
+        policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600)
+    )
+}
+
+private func assembledKey(
+    _ connector: String, on clock: ClockRecord
+) -> TileKey {
+    TileKey(clockId: clock.id, connectorId: connector)
+}

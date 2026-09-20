@@ -21,13 +21,14 @@ private func drawn(_ value: TileRowValue, confirming: Bool = false) -> Data? {
 
 private func value(
     name: String = "Weather", result: String? = "12°C", hold: TileHold? = nil,
-    failing: Bool = false, isAmbient: Bool = false,
+    failure: String? = nil, isAmbient: Bool = false, iconName: String = "cloud.sun",
     question: String = "Remove Weather from Desk?"
 ) -> TileRowValue {
     TileRowValue(
-        name: name, result: result, hold: hold, failing: failing,
-        isAmbient: isAmbient, removeQuestion: question,
-        onRun: {}, onDetail: {}, onRemove: {}
+        key: TileKey(clockId: UUID(), connectorId: "test"),
+        name: name, result: result, hold: hold, failure: failure,
+        isAmbient: isAmbient, iconName: iconName, removeQuestion: question,
+        onRun: {}, onDetail: {}, onRemove: {}, onReorderTo: { _ in }
     )
 }
 
@@ -41,7 +42,13 @@ private func value(
         #expect(base != drawn(value(result: "13°C")))
         #expect(base != drawn(value(hold: .paused)))
         // A held tile's badge is its own, not the failing one.
-        #expect(drawn(value(hold: .paused)) != drawn(value(failing: true)))
+        #expect(drawn(value(hold: .paused)) != drawn(value(failure: "the feed is down")))
+    }
+
+    // The row opens with the connector's own mark, and another connector's
+    // mark is a different row.
+    @Test func aRowDrawsItsConnectorIcon() {
+        #expect(drawn(value()) != drawn(value(iconName: "terminal")))
     }
 
     // Ambient tiles run themselves; the ▶ exists to run a tile by hand, and

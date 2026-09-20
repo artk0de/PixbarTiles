@@ -1,4 +1,5 @@
 import AppKit
+import PixelClockKit
 import SwiftUI
 import Testing
 @testable import PixelClockTilesApp
@@ -74,4 +75,37 @@ private func item(
             item("VPN", availability: .available),
         ]))
     }
+
+    // The menu is NAMED. A bare cluster of connector names reads as a row of
+    // static text; the heading is what says this is where a tile comes from.
+    // It is drawn even when nothing is offered — an exhausted clock still
+    // says where tiles would have come from.
+    @Test func theMenuCarriesItsHeadingEvenWithNothingToOffer() {
+        #expect(drawn([]) != nil)
+        #expect(drawn([]) != drawn([item("VPN", availability: .available)]))
+    }
+}
+
+// The menu on the model: what it offers when every scene tile of the clock
+// is already placed. The three scene connectors are single and all sit on
+// the clock the migration left, so the offered list is the lamp's — the one
+// connector a full clock can still take.
+@Test @MainActor func aFullClockIsStillOfferedTheLamp() {
+    let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
+    let subject = testModel(
+        connectors: [
+            StubConnector(id: "weather", isAudible: false),
+            StubConnector(id: "claude", isAudible: false),
+            StubConnector(id: "anecdotes"),
+        ],
+        clocks: [desk],
+        tiles: ["weather", "claude", "anecdotes"].map { connector in
+            TileRecord(
+                key: TileKey(clockId: desk.id, connectorId: connector),
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600)
+            )
+        }
+    )
+
+    #expect(subject.addTileMenuItems.map(\.title) == ["VPN"])
 }

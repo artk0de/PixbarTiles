@@ -167,27 +167,87 @@ private func drawn(_ view: some View) -> Data? {
     return target.representation(using: .png, properties: [:])
 }
 
-// The section is ON the settings surface, which every model test above would
-// pass without. Two answers compared rather than a count of controls: Connect
-// and Disconnect are one push button each, so only the pixels tell them apart.
-@Test @MainActor func theSectionIsOnTheSettingsSurface() throws {
+// The section is ON the Claude tile's detail surface, which every model test
+// above would pass without. Two answers compared rather than a count of
+// controls: Connect and Disconnect are one push button each, so only the
+// pixels tell them apart.
+@Test @MainActor func theClaudeSettingsDrawConnectedAndDisconnectedApart() throws {
     let connected = ClaudeSettingsFixture()
     defer { connected.remove() }
     try connected.link.connect()
     let notConnected = ClaudeSettingsFixture()
     defer { notConnected.remove() }
 
-    let on = drawn(SettingsSheet(
-        model: testModel(), discovery: inertDiscovery(),
-        claudeCode: ClaudeCodeLinkModel(link: connected.link)
-    ))
-    let off = drawn(SettingsSheet(
-        model: testModel(), discovery: inertDiscovery(),
-        claudeCode: ClaudeCodeLinkModel(link: notConnected.link)
-    ))
+    let on = drawn(ClaudeCodeSettings(link: ClaudeCodeLinkModel(link: connected.link)))
+    let off = drawn(ClaudeCodeSettings(link: ClaudeCodeLinkModel(link: notConnected.link)))
 
     #expect(on != nil)
     #expect(on != off)
+}
+
+// And they are on the CLAUDE tile's detail, not somewhere generic: the same
+// open detail over two different tiles differs only when the tile's own block
+// is actually drawn.
+@Test @MainActor func theClaudeTilesDetailCarriesTheClaudeSettings() throws {
+    let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
+    let document = FileManager.default.temporaryDirectory
+        .appendingPathComponent("claude-detail-\(UUID().uuidString).json")
+    let connector = ClaudeUsageConnector(
+        reporter: StatusLineClaudeUsageReporter(document: document)
+    )
+    let model = testModel(
+        connectors: [connector, StubConnector(id: "weather", isAmbient: true)],
+        clocks: [desk],
+        tiles: [
+            TileRecord(
+                key: TileKey(clockId: desk.id, connectorId: "claude"),
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600)
+            ),
+            TileRecord(
+                key: TileKey(clockId: desk.id, connectorId: "weather"),
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600)
+            ),
+        ]
+    )
+    func drawnDetail(_ connectorId: String) -> Data? {
+        model.openDetail(for: TileKey(clockId: desk.id, connectorId: connectorId))
+        let panel = MenuPanel(
+            model: model, monitor: model.monitor, discovery: inertDiscovery(),
+            claudeCode: ClaudeCodeLinkModel(link: nil)
+        )
+        let host = NSHostingView(rootView: panel)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
+        host.layoutSubtreeIfNeeded()
+        guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            return nil
+        }
+        host.cacheDisplay(in: host.bounds, to: target)
+        return target.representation(using: .png, properties: [:])
+    }
+
+    let claude = drawnDetail("claude")
+    let weather = drawnDetail("weather")
+
+    #expect(claude != nil)
+    #expect(claude != weather)
+}
+
+// General settings carries no Claude section: the settings are a machine-level
+// link, and they are edited where the tile that shows the figure lives. The
+// sheet drawn over a connected link and one drawn over a disconnected one are
+// the same picture, because the sheet no longer reads the link at all.
+@Test @MainActor func theSettingsSurfaceCarriesNoClaudeSection() throws {
+    let fixture = ClaudeSettingsFixture()
+    defer { fixture.remove() }
+    try fixture.link.connect()
+
+    let sheet = drawn(SettingsSheet(model: testModel(), discovery: inertDiscovery()))
+
+    #expect(sheet != nil)
+    // The surface that no longer holds the section is also the surface that
+    // no longer takes a link model: what the section said is said on the
+    // tile's detail instead (pinned just above).
+    #expect(sheet == drawn(SettingsSheet(model: testModel(), discovery: inertDiscovery())))
 }
 
 // The reason reaches the screen too. Deleting the note from the section's body

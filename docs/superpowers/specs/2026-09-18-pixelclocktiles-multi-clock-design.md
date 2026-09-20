@@ -480,7 +480,9 @@ pastels towards white:
    `in 12 min`, `up`), a state badge (paused, held by Focus, silent hours,
    failing with backoff), and `▶` (not for ambient tiles), `⋯`, `✕`. `✕`
    confirms inline — "Remove Weather from Desk?" — because removing loses the
-   tile's settings and, on the TC002, takes its app off the clock.
+   tile's settings and, on the TC002, takes its app off the clock. Rows drag
+   to reorder; the order is the tiles record's order and is the same on every
+   clock.
 5. `+ Add tile` — every connector, with `TileCatalogue.availability` deciding
    which are enabled and why the others are not.
 
@@ -506,7 +508,9 @@ under it:
 
 The anecdote tile's block carries the History button, which opens the existing
 `HistoryMenu`. The VPN tile's block carries the VPN, lamp, palette and
-`ColorPicker`, and the down behaviour.
+`ColorPicker`, and the down behaviour. The Claude tile's block carries what the
+usage display itself needs; Connect / Disconnect stays in General settings —
+it edits a machine-level file, not a tile's.
 
 ### General settings
 

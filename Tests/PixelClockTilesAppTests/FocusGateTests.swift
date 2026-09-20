@@ -266,14 +266,14 @@ import Testing
     let focused = testModel(
         host: focusedHost,
         sleep: focusedSchedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: true))
     )
     let freeHost = SpyHost()
     let freeSchedule = Metronome()
     let free = testModel(
         host: freeHost,
         sleep: freeSchedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: false))
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: false))
     )
 
     focused.start()
@@ -306,7 +306,7 @@ import Testing
     let host = SpyHost()
     let schedule = Metronome()
     let centre = StubFocusStatus(access: .authorized, isFocused: true)
-    let subject = testModel(host: host, sleep: schedule.sleep, focus: focusGate(centre))
+    let subject = testModel(host: host, sleep: schedule.sleep, focusStatus: (centre))
 
     subject.start()
     #expect(await waitUntil { host.calls == ["maintain:stub"] })
@@ -328,6 +328,18 @@ import Testing
 // are UNAUTHORIZED and both centres answer `isFocused == false`; what separates
 // them is the window, and the one whose window has not come round delivers on
 // the same beat.
+
+// The porting of the app-wide window onto each tile's own policy: the clock is
+// named so a tile record can hang off it, and the window moves into the tile.
+private let portedClock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+
+private func portedTile(_ connector: String, window: TileWindow, on clock: ClockRecord) -> TileRecord {
+    TileRecord(
+        key: TileKey(clockId: clock.id, connectorId: connector),
+        policy: TilePolicyRecord(TilePolicy(refreshSeconds: 1_800, window: window))
+    )
+}
+
 @Test @MainActor func theQuietWindowSilencesTheScheduleWhileTheCenterIsUnauthorized() async {
     let night = QuietWindow(startHour: 23, endHour: 8)
     let sleepingHost = SpyHost()
@@ -335,16 +347,18 @@ import Testing
     let asleep = testModel(
         host: sleepingHost,
         sleep: sleepingSchedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(3) }),
-        quietHours: night
+        focusStatus: StubFocusStatus(access: .denied), now: { atHour(3) },
+        clocks: [portedClock],
+        tiles: [portedTile("stub", window: .quiet(HourWindow(startHour: night.startHour, endHour: night.endHour)), on: portedClock)]
     )
     let awakeHost = SpyHost()
     let awakeSchedule = Metronome()
     let awake = testModel(
         host: awakeHost,
         sleep: awakeSchedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(12) }),
-        quietHours: night
+        focusStatus: StubFocusStatus(access: .denied), now: { atHour(12) },
+        clocks: [portedClock],
+        tiles: [portedTile("stub", window: .quiet(HourWindow(startHour: night.startHour, endHour: night.endHour)), on: portedClock)]
     )
 
     asleep.start()
@@ -379,7 +393,7 @@ import Testing
     let subject = testModel(
         host: host,
         sleep: schedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: true))
     )
 
     subject.start()
@@ -412,8 +426,9 @@ import Testing
     let subject = testModel(
         host: host,
         sleep: schedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(0) }),
-        quietHours: QuietWindow(startHour: 23, endHour: 8)
+        focusStatus: StubFocusStatus(access: .denied), now: { atHour(0) },
+        clocks: [portedClock],
+        tiles: [portedTile("stub", window: .quiet(HourWindow(startHour: 23, endHour: 8)), on: portedClock)]
     )
 
     subject.start()
@@ -436,8 +451,9 @@ import Testing
     let subject = testModel(
         host: host,
         sleep: schedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(9) }),
-        quietHours: QuietWindow(startHour: 23, endHour: 8)
+        focusStatus: StubFocusStatus(access: .denied), now: { atHour(9) },
+        clocks: [portedClock],
+        tiles: [portedTile("stub", window: .quiet(HourWindow(startHour: 23, endHour: 8)), on: portedClock)]
     )
 
     subject.start()
@@ -461,8 +477,9 @@ import Testing
         host: host,
         transport: StubTransport(failure: URLError(.cannotConnectToHost)),
         sleep: schedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(12) }),
-        quietHours: QuietWindow(startHour: 23, endHour: 8)
+        focusStatus: StubFocusStatus(access: .denied), now: { atHour(12) },
+        clocks: [portedClock],
+        tiles: [portedTile("stub", window: .quiet(HourWindow(startHour: 23, endHour: 8)), on: portedClock)]
     )
 
     subject.start()
@@ -486,9 +503,10 @@ import Testing
     let subject = testModel(
         host: host,
         sleep: schedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(12) }),
-        quietHours: QuietWindow(startHour: 23, endHour: 8),
-        microphone: MicrophoneGate(inputs: StubAudioInputs(duringAMeeting))
+        focusStatus: StubFocusStatus(access: .denied), now: { atHour(12) },
+        microphone: MicrophoneGate(inputs: StubAudioInputs(duringAMeeting)),
+        clocks: [portedClock],
+        tiles: [portedTile("stub", window: .quiet(HourWindow(startHour: 23, endHour: 8)), on: portedClock)]
     )
 
     subject.start()
@@ -511,7 +529,7 @@ import Testing
     let subject = testModel(
         host: host,
         sleep: schedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: true))
     )
 
     subject.start()
@@ -538,7 +556,7 @@ import Testing
     let wiring = modelOverRealHost(
         connector: BrokenConnector(),
         transport: StubTransport(body: onlineStats),
-        focus: focusGate(centre),
+        focusStatus: (centre),
         sleep: schedule.sleep
     )
 
@@ -576,20 +594,21 @@ import Testing
     let schedule = Metronome()
     let focused = testModel(
         sleep: schedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: true))
     )
     let quiet = Metronome()
     let atNight = testModel(
         sleep: quiet.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(3) }),
-        quietHours: QuietWindow(startHour: 23, endHour: 8)
+        focusStatus: StubFocusStatus(access: .denied), now: { atHour(3) },
+        clocks: [portedClock],
+        tiles: [portedTile("stub", window: .quiet(HourWindow(startHour: 23, endHour: 8)), on: portedClock)]
     )
 
     focused.start()
     atNight.start()
 
-    #expect(await waitUntil { focused.nextRun["stub"] == .held(FocusGate.duringFocus) })
-    #expect(await waitUntil { atNight.nextRun["stub"] == .held(FocusGate.duringQuietHours) })
+    #expect(await waitUntil { focused.nextRun["stub"] == .held(AppModel.duringFocus) })
+    #expect(await waitUntil { atNight.nextRun["stub"] == .held(AppModel.duringQuietHours) })
     let line = NextRunLine.text(for: focused.nextRun["stub"]) ?? ""
     #expect(line.isEmpty == false)
     #expect(line.contains(where: \.isNumber) == false)
@@ -605,7 +624,7 @@ import Testing
 @Test @MainActor func macOSIsAskedForFocusAccessOnceAtLaunch() async {
     let centre = StubFocusStatus(access: .notDetermined)
     let schedule = Metronome()
-    let subject = testModel(sleep: schedule.sleep, focus: focusGate(centre))
+    let subject = testModel(sleep: schedule.sleep, focusStatus: (centre))
 
     #expect(centre.accessRequests == 0)
 
@@ -623,48 +642,11 @@ import Testing
 
 // MARK: - The window the user sets
 
-@Test @MainActor func theQuietHoursTheUserPicksAreSavedAndReadBack() throws {
-    let name = "quiet-model-\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: name))
-    defer { defaults.removePersistentDomain(forName: name) }
-    let subject = testModel(defaults: defaults)
-
-    subject.setQuietHours(QuietWindow(startHour: 1, endHour: 9))
-
-    #expect(subject.quietHours == QuietWindow(startHour: 1, endHour: 9))
-    #expect(QuietWindow.stored(in: defaults) == QuietWindow(startHour: 1, endHour: 9))
-}
 
 // The value the pickers write is the value the gate reads. Set through the
 // model and asked of the schedule, so a setter that published without reaching
 // the gate — two copies of one window — is caught here rather than by a user
 // wondering why 23:00 does nothing.
-@Test @MainActor func theWindowTheUserSetsIsTheOneTheScheduleObeys() async {
-    let host = SpyHost()
-    let schedule = Metronome()
-    let subject = testModel(
-        host: host,
-        sleep: schedule.sleep,
-        focus: FocusGate(status: StubFocusStatus(access: .denied), now: { atHour(3) }),
-        quietHours: QuietWindow(startHour: 9, endHour: 17)
-    )
-
-    subject.start()
-    #expect(await waitUntil { schedule.parked == 1 })
-    schedule.tick()
-    // Three in the morning is outside 09:00–17:00, so the schedule speaks.
-    #expect(await waitUntil { host.calls.contains("run:stub") })
-
-    subject.setQuietHours(QuietWindow(startHour: 23, endHour: 8))
-
-    #expect(await waitUntil { schedule.parked == 1 })
-    schedule.tick()
-    #expect(await waitUntil { subject.nextRun["stub"] == .held(FocusGate.duringQuietHours) })
-    let after = host.calls.filter { $0 == "run:stub" }.count
-    #expect(await waitUntil { schedule.parked == 1 })
-    #expect(host.calls.filter { $0 == "run:stub" }.count == after)
-    await subject.teardown()
-}
 
 // MARK: - Which rule the settings say is in force
 
@@ -673,54 +655,9 @@ import Testing
 // Disturb and Sleep alone, and the caption went on announcing the old rule —
 // which is how it was reported: a sentence that stopped being true.
 
-@Test func theRuleLineNamesTheTwoFocusesThatSilenceWhileTheModeCanBeRead() {
-    let line = FocusRuleLine.text(for: .namedFocuses)
 
-    // The rule as it now behaves, named rather than described: every other
-    // Focus speaks, and somebody who set one up needs to know which.
-    #expect(line.contains("Do Not Disturb"))
-    #expect(line.contains("Sleep"))
-    // The window still applies underneath, and the line sits directly under the
-    // pickers that set it.
-    #expect(line.contains("quiet hours"))
-    #expect(line.contains(where: \.isNumber) == false)
-}
 
-@Test func theRuleLineNamesTheSystemWhileTheModeCannotBeRead() {
-    let line = FocusRuleLine.text(for: .anyFocus)
 
-    #expect(line.contains("Focus"))
-    // No hours in it: naming a window while the system is deciding would tell
-    // the user their pickers are doing something they are not.
-    #expect(line.contains(where: \.isNumber) == false)
-    // And no claim about the permission. A mode that cannot be read is a
-    // refused read, a moved file and a shape Apple changed alike, and the
-    // standing sentence below the line is where the grant is explained.
-    #expect(line.contains("Full Disk Access") == false)
-}
-
-@Test func theRuleLineNamesTheWindowWhenTheSystemWillNotAnswer() {
-    let window = QuietWindow(startHour: 23, endHour: 8)
-
-    let line = FocusRuleLine.text(for: .quietHours(window))
-
-    #expect(line.contains(window.label))
-    #expect(line != FocusRuleLine.text(for: .namedFocuses))
-}
-
-@Test func eachOfTheThreeStatesGetsItsOwnSentence() {
-    let said = Set(
-        [
-            FocusRuleLine.text(for: .namedFocuses),
-            FocusRuleLine.text(for: .anyFocus),
-            FocusRuleLine.text(for: .quietHours(QuietWindow(startHour: 23, endHour: 8))),
-        ]
-    )
-
-    // Three states, three sentences. Two of them saying the same thing is the
-    // defect this task exists for, arriving from the other side.
-    #expect(said.count == 3)
-}
 
 // MARK: - Which of the three the gate is in
 

@@ -1360,7 +1360,7 @@ private func modelWithARealAnecdoteConnector(
         ),
         defaults: defaults,
         alerts: SpyAlerts(),
-        focus: focusGate(StubFocusStatus(access: .authorized)),
+        focusStatus: StubFocusStatus(access: .authorized),
         microphone: MicrophoneGate(inputs: StubAudioInputs()),
         sleep: schedule.sleep,
         pollSleep: parked

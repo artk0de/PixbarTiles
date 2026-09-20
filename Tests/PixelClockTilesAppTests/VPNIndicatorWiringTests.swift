@@ -22,7 +22,7 @@ private func working(_ mode: String) -> StubFocusStatus {
 @Test @MainActor func workWithoutItsTunnelReachesTheClockAsABlinkingCorner() async {
     let clock = RecordingLamps()
     let subject = testModel(
-        focus: focusGate(working(VPNIndicatorPolicy.workFocus)),
+        focusStatus: (working(VPNIndicatorPolicy.workFocus)),
         vpnLamps: VPNLampDisplay(indicators: IndicatorCustody(lamps: clock)),
         // The personal tunnel is up and the work one is not, which is also the
         // case that catches a policy wired to the wrong boolean.
@@ -47,7 +47,7 @@ private func working(_ mode: String) -> StubFocusStatus {
 @Test @MainActor func bothTunnelsUnderWorkLightBothCornersSteadily() async {
     let clock = RecordingLamps()
     let subject = testModel(
-        focus: focusGate(working(VPNIndicatorPolicy.workFocus)),
+        focusStatus: (working(VPNIndicatorPolicy.workFocus)),
         vpnLamps: VPNLampDisplay(indicators: IndicatorCustody(lamps: clock)),
         vpnPresence: machine(workTunnel, personalTunnel)
     )
@@ -65,7 +65,7 @@ private func working(_ mode: String) -> StubFocusStatus {
 @Test @MainActor func sleepLeavesBothCornersDark() async {
     let clock = RecordingLamps()
     let subject = testModel(
-        focus: focusGate(working("com.apple.sleep.sleep-mode")),
+        focusStatus: (working("com.apple.sleep.sleep-mode")),
         vpnLamps: VPNLampDisplay(indicators: IndicatorCustody(lamps: clock)),
         vpnPresence: machine(personalTunnel)
     )
@@ -79,7 +79,7 @@ private func working(_ mode: String) -> StubFocusStatus {
 @Test @MainActor func quittingPutsTheCornersOut() async {
     let clock = RecordingLamps()
     let subject = testModel(
-        focus: focusGate(working(VPNIndicatorPolicy.workFocus)),
+        focusStatus: (working(VPNIndicatorPolicy.workFocus)),
         vpnLamps: VPNLampDisplay(indicators: IndicatorCustody(lamps: clock)),
         vpnPresence: machine(personalTunnel)
     )

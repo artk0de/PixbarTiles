@@ -325,9 +325,9 @@ enum FocusRuleLine {
     /// is worse than a sentence naming the right one.
     static let whichFocusesSilenceDependsOnFullDiskAccess =
         "macOS tells apps only that some Focus is on, never which one. Without "
-            + "Full Disk Access every Focus silences this app; grant it in System "
-            + "Settings › Privacy & Security › Full Disk Access and only Do Not "
-            + "Disturb and Sleep do."
+            + "Full Disk Access every Focus reads as Other Focus to your tiles; "
+            + "grant it in System Settings › Privacy & Security › Full Disk "
+            + "Access and Work, Personal, Do Not Disturb and Sleep are told apart."
 
     /// Which rule is in force, said under the pickers that set the window.
     ///

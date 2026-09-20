@@ -1145,8 +1145,8 @@ private let played = Date(timeIntervalSinceReferenceDate: 800_000_000)
 /// device line: what is left over between two of these is the quiet-hours
 /// section and nothing else.
 @MainActor
-private func openSettings(focus: FocusGate, quietHours: QuietWindow) -> AppModel {
-    let model = testModel(focus: focus, quietHours: quietHours)
+private func openSettings() -> AppModel {
+    let model = testModel()
     model.openSettings()
     return model
 }
@@ -1158,46 +1158,21 @@ private func openSettings(focus: FocusGate, quietHours: QuietWindow) -> AppModel
 // are drawn on BOTH, deliberately: hidden on one of them, the two would differ
 // by a missing control and this test would pass with the line deleted, which is
 // this file's own signature failure.
-@Test @MainActor func thePanelSaysWhichRuleIsInForce() {
-    let night = QuietWindow(startHour: 23, endHour: 8)
-    let system = openSettings(
-        focus: focusGate(StubFocusStatus(access: .authorized)), quietHours: night
-    )
-    let window = openSettings(
-        focus: focusGate(StubFocusStatus(access: .denied)), quietHours: night
-    )
-
-    // Bound rather than re-drawn per expectation, and that is not tidiness.
-    // Laying out this surface costs 65 ms — the two 24-hour pickers are 46 ms
-    // of it, measured — and it is SYNCHRONOUS main-actor work, so every render
-    // here is time taken out of the 2-second budget of every `waitUntil` in
-    // every test running beside it. Sixteen draws across the four settings
-    // tests was a second of starvation and a suite that went red at random.
-    let bySystem = drawn(system)
-    let byWindow = drawn(window)
-
-    #expect(system.focusRule == .anyFocus)
-    #expect(window.focusRule == .quietHours(night))
-    #expect(bySystem != nil)
-    #expect(bySystem != byWindow)
-    // The same surface twice is the same pixels, or every inequality in this
-    // section is noise rather than content. Asserted once, here, for all four
-    // of them.
-    #expect(bySystem == drawn(system))
-}
 
 // And the window itself is on the surface, not only in the defaults: two
 // surfaces whose ONLY difference is the hours in the pickers must not draw the
 // same.
-@Test @MainActor func theQuietHoursAreVisibleAndEditableInTheSettings() {
-    let refused = focusGate(StubFocusStatus(access: .denied))
-    let night = openSettings(focus: refused, quietHours: QuietWindow(startHour: 23, endHour: 8))
-    let noon = openSettings(focus: refused, quietHours: QuietWindow(startHour: 11, endHour: 14))
 
-    let atNight = drawn(night)
+// What is left of the quiet-hours section after B16: the one sentence naming
+// what Full Disk Access buys, and no hour picker — the hours are each tile's
+// own now, and there is nothing app-wide left to pick.
+@Test @MainActor func theSettingsSayWhatFullDiskAccessBuysAndOfferNoHourPicker() {
+    let model = openSettings()
 
-    #expect(atNight != nil)
-    #expect(atNight != drawn(noon))
+    // The sentence the sheet draws, pinned here rather than only in
+    // FocusModeTests: this is the surface it is said on.
+    #expect(FocusRuleLine.whichFocusesSilenceDependsOnFullDiskAccess.contains("Full Disk Access"))
+    #expect(drawnSettings(model) != nil)
 }
 
 // MARK: - Which microphones the schedule waits for

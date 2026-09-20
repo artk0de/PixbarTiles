@@ -526,7 +526,7 @@ import Testing
     let subject = testModel(
         host: host,
         sleep: schedule.sleep,
-        focus: focusGate(centre),
+        focusStatus: (centre),
         microphone: MicrophoneGate(inputs: system),
         micSleep: mic.sleep
     )
@@ -603,7 +603,7 @@ import Testing
     let mic = Metronome()
     let centre = StubFocusStatus(access: .authorized, isFocused: true)
     let subject = testModel(
-        host: host, sleep: schedule.sleep, focus: focusGate(centre), micSleep: mic.sleep
+        host: host, sleep: schedule.sleep, focusStatus: (centre), micSleep: mic.sleep
     )
 
     subject.start()
@@ -719,7 +719,7 @@ import Testing
         connectors: [silentConnector],
         host: host,
         sleep: schedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: true))
     )
 
     subject.start()
@@ -755,7 +755,7 @@ import Testing
     let subject = testModel(
         connectors: [silentConnector],
         sleep: schedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true)),
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: true)),
         microphone: MicrophoneGate(inputs: StubAudioInputs(duringAMeeting))
     )
 
@@ -843,7 +843,7 @@ import Testing
         connectors: [StubConnector(), silentConnector],
         host: host,
         sleep: schedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: true))
     )
 
     subject.start()
@@ -884,7 +884,7 @@ import Testing
     let subject = testModel(
         transport: StubTransport(failure: URLError(.cannotConnectToHost)),
         sleep: schedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true))
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: true))
     )
 
     subject.start()
@@ -899,7 +899,7 @@ import Testing
     let schedule = Metronome()
     let subject = testModel(
         sleep: schedule.sleep,
-        focus: focusGate(StubFocusStatus(access: .authorized, isFocused: true)),
+        focusStatus: (StubFocusStatus(access: .authorized, isFocused: true)),
         microphone: MicrophoneGate(inputs: StubAudioInputs(duringAMeeting))
     )
 

@@ -213,6 +213,31 @@ final class AppModel: ObservableObject {
     /// cannot happen is the delivery. Somebody reading this on the panel is
     /// being told where to look.
     static let deviceUnreachable = "clock unreachable"
+    /// What holds a tile whose Focus rule says this is not the time for it.
+    /// Moved from `FocusGate` unchanged, so nothing the user reads changes.
+    static let duringFocus = "Focus is on"
+    /// What holds a tile inside its own hours. Also from `FocusGate`, for the
+    /// same reason.
+    static let duringQuietHours = "quiet hours"
+
+    /// The Focus the Mac is in, as every tile reads it.
+    private var currentFocus: MacFocus { MacFocus(reading: focusStatus) }
+    /// The hour every tile's window is read against, off the injected clock so
+    /// a test can stand at three in the morning.
+    private var currentHour: Int { Calendar.current.component(.hour, from: now()) }
+
+    /// A tile's policy as stored, with anything a record from before Phase 4
+    /// does not say taken from its connector's row.
+    private func policy(of key: TileKey) -> TilePolicy? {
+        guard let record = tiles.all().first(where: { $0.key == key }) else { return nil }
+        // The VPN is not in the registry (it is not a scene connector), so its
+        // row is named here.
+        let row = key.connectorId == VPNConnector.id
+            ? TileDefaults.vpn
+            : registry.connector(id: key.connectorId)?.defaultPolicy
+                ?? TilePolicy(refreshSeconds: record.policy.refreshSeconds)
+        return TilePolicy(record.policy, defaults: row)
+    }
 
     /// Where this app is talking to the clock right now.
     ///
@@ -387,13 +412,9 @@ final class AppModel: ObservableObject {
     /// below is what learns the answer and a view that wants only the glyph
     /// should not have to observe a second object to get it.
     @Published private(set) var isDeviceOnline = false
-    /// The hours the schedule stays quiet when macOS will not say whether a
-    /// Focus is on. Published because the pickers bind to it; the defaults
-    /// behind it are persistence, not state.
-    @Published private(set) var quietHours: QuietWindow
-    /// The microphones the schedule waits for. Published for the same reason
-    /// `quietHours` is: the settings' tick boxes bind to it, and the defaults
-    /// behind it are persistence rather than state.
+    /// The microphones the schedule waits for. Published because the settings'
+    /// tick boxes bind to them: the defaults behind it are persistence rather
+    /// than state.
     @Published private(set) var watchedMicrophones: [WatchedMicrophone]
 
     /// The TC002 branch of the runtime route, or nil when no clock the app
@@ -435,7 +456,9 @@ final class AppModel: ObservableObject {
     /// put both in front of whoever is running `swift test`.
     private let alerts: any BatteryWarningPresenting
     /// Whether macOS says the user is busy, and what to call it when it does.
-    private let focus: FocusGate
+    private let focusStatus: any FocusStatusReading
+    /// The clock every tile's window is read against.
+    private let now: @Sendable () -> Date
     /// Connectors whose place in the clock's loop depends on which Focus is on,
     /// and how to ask about each.
     ///
@@ -575,11 +598,11 @@ final class AppModel: ObservableObject {
         defaults: UserDefaults = .standard,
         pasteboard: NSPasteboard = .general,
         alerts: any BatteryWarningPresenting,
-        focus: FocusGate,
+        focusStatus: any FocusStatusReading,
         focusGated: [FocusGatedConnector] = [],
         vpnLamps: VPNLampDisplay? = nil,
         vpnPresence: VPNPresence = VPNPresence(),
-        quietHours: QuietWindow = .default,
+        now: @escaping @Sendable () -> Date = Date.init,
         microphone: MicrophoneGate,
         watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
         sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
@@ -605,11 +628,11 @@ final class AppModel: ObservableObject {
         self.installer = installer
         self.anecdotes = anecdotes
         self.alerts = alerts
-        self.focus = focus
+        self.focusStatus = focusStatus
         self.focusGated = focusGated
         self.vpnLamps = vpnLamps
         self.vpnPresence = vpnPresence
-        self.quietHours = quietHours
+        self.now = now
         self.microphone = microphone
         self.watchedMicrophones = watching
         self.scheduleSleep = sleep
@@ -710,6 +733,10 @@ final class AppModel: ObservableObject {
         try? WeatherLocationMigration(defaults: defaults).run()
         BatteryHistoryMigration(defaults: defaults).run()
         BorrowedOverlayMigration(defaults: defaults).run()
+        try? QuietHoursMigration(
+            defaults: defaults,
+            audible: Set(registry.all.filter(\.isAudible).map(\.id))
+        ).run()
 
         // One shared audio player and one shared weather source; everything
         // else below is per clock.
@@ -810,9 +837,9 @@ final class AppModel: ObservableObject {
             alerts: BatteryAlert(
                 dialog: ModalBatteryDialog(), notifications: SystemBatteryNotifier()
             ),
-            // The same reading of macOS the connector's own gate is built on,
+            // The same reading of macOS the tiles' Focus rules are read from,
             // so the two cannot answer differently about the same moment.
-            focus: FocusGate(status: focusStatus),
+            focusStatus: focusStatus,
             focusGated: [
                 FocusGatedConnector(id: ClaudeUsageConnector.appName) {
                     ClaudeFocusAudience.shows(focusStatus)
@@ -824,7 +851,6 @@ final class AppModel: ObservableObject {
             vpnLamps: (sessionsByClock[first.id] as? AwtrixClockSession).map {
                 VPNLampDisplay(indicators: $0.indicators)
             },
-            quietHours: QuietWindow.stored(in: defaults),
             microphone: MicrophoneGate(inputs: SystemAudioInputs()),
             watching: WatchedMicrophone.stored(in: defaults)
         )
@@ -943,27 +969,6 @@ final class AppModel: ObservableObject {
             await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.connectorId)
             self?.restores[restoreKey] = nil
         }
-    }
-
-    /// Which rule decides whether the schedule may speak, right now.
-    ///
-    /// Asked rather than stored, because the answer changes underneath the app:
-    /// a permission granted in System Settings while this is running moves it
-    /// from the window to the system without anything here being told.
-    var focusRule: QuietRule { focus.rule(quietHours: quietHours) }
-
-    /// Sets the hours the schedule stays quiet while macOS will not say
-    /// whether a Focus is on.
-    ///
-    /// Saved on every change rather than on submit, for the reason `typedHost`
-    /// is: there is nothing to confirm, and a picker that looks saved and is
-    /// not is worse than one that never looked saved. Unlike the address, this
-    /// takes effect on the next beat rather than the next launch — the gate
-    /// reads the window from here every time it is asked, so there is no second
-    /// copy to keep in step.
-    func setQuietHours(_ window: QuietWindow) {
-        quietHours = window
-        window.save(to: defaults)
     }
 
     /// Every input the system reports, with the watched ones marked.
@@ -1147,7 +1152,7 @@ final class AppModel: ObservableObject {
         // back — so nothing waits on this — and a prompt raised on every beat
         // is a prompt the user learns to dismiss. What reads the answer is
         // `FocusGate.rule`, on every turn of every schedule.
-        focus.requestAccess()
+        focusStatus.requestAccess()
         // Recorded before the loops are started, not after them: everything in
         // this method is synchronous and no task runs until it returns, but the
         // poll is what SPENDS this debt and reading it half-written is one
@@ -1307,7 +1312,7 @@ final class AppModel: ObservableObject {
     /// Internal rather than private so the suite can pose a switch directly.
     /// The single caller is `poll()`, which is where the minute hand is.
     func reactToAFocusChange() {
-        let current = focus.status.activeMode
+        let current = focusStatus.activeMode
         defer { lastSeenFocus = current }
         guard let before = lastSeenFocus, before != current else { return }
 
@@ -1359,7 +1364,7 @@ final class AppModel: ObservableObject {
     func refreshVPNIndicators() {
         guard let vpnLamps else { return }
         let lamps = VPNIndicatorPolicy.lamps(
-            focus: focus.status.activeMode,
+            focus: focusStatus.activeMode,
             pritunl: vpnPresence.isUp(.pritunl),
             amnezia: vpnPresence.isUp(.amnezia)
         )
@@ -1975,9 +1980,20 @@ final class AppModel: ObservableObject {
     /// microphone.
     private func scheduleHold(for key: TileKey) -> String? {
         if clockIsUnreachable(key.clockId) { return Self.deviceUnreachable }
+        switch policy(of: key)?.hold(in: currentFocus, atHour: currentHour) {
+        case .paused?: return Self.switchedOff
+        case .hours?: return Self.duringQuietHours
+        case .focus?: return Self.duringFocus
+        case nil: break
+        }
         guard isAudible(key.connectorId) else { return nil }
-        if let quiet = focus.silence(quietHours: quietHours) { return quiet }
         return busyMicrophone.map { MicrophoneGate.inUse($0.name) }
+    }
+
+    /// Whether this tile's own hours are what holds it — the one hold the
+    /// nightly refresh may not spend through.
+    private func duringTheQuietWindow(_ key: TileKey) -> Bool {
+        policy(of: key)?.hold(in: currentFocus, atHour: currentHour) == .hours
     }
 
     /// Whether this connector can be heard.
@@ -1987,17 +2003,6 @@ final class AppModel: ObservableObject {
     /// staying quiet.
     private func isAudible(_ connectorId: String) -> Bool {
         registry.connector(id: connectorId)?.isAudible ?? true
-    }
-
-    /// Whether the user's own quiet hours are what is silencing the app right
-    /// now.
-    ///
-    /// Asked apart from `scheduleHold(for:)` because it decides a different
-    /// question: not whether to deliver, but whether to SPEND. Read through the
-    /// gate rather than off the wall clock, so it uses the same instant every
-    /// other quiet decision does.
-    private var duringTheQuietWindow: Bool {
-        focus.silence(quietHours: quietHours) == FocusGate.duringQuietHours
     }
 
     /// The watched microphone that is capturing right now, or nil.
@@ -2075,7 +2080,7 @@ final class AppModel: ObservableObject {
         // machine; what this removes is the unattended one.
         guard scheduleHold(for: key) == nil else {
             if isAudible(key.connectorId), busyMicrophone != nil { heldRuns.insert(key) }
-            if duringTheQuietWindow == false { await restock(key) }
+            if duringTheQuietWindow(key) == false { await restock(key) }
             return
         }
         // Marked before the maintain, not between it and the run. `maintain` IS

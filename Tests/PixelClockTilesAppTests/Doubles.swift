@@ -506,7 +506,7 @@ func testModel(
     // wall clock: the quiet window is only consulted while this app is NOT
     // allowed to ask, and a default of `.notDetermined` would have every test
     // in this target pass or fail depending on the hour it was run at.
-    focus: FocusGate = focusGate(StubFocusStatus(access: .authorized)),
+    focusStatus: any FocusStatusReading = StubFocusStatus(access: .authorized),
     // Empty, so no test acquires a reaction to a Focus change it did not ask
     // for: the pairing is the app's wiring rather than a property of a model.
     focusGated: [FocusGatedConnector] = [],
@@ -516,7 +516,9 @@ func testModel(
     // Nothing running, so no test in this target answers to whichever VPNs
     // happen to be up on the machine running it.
     vpnPresence: VPNPresence = VPNPresence(processes: FixedProcessList(paths: [])),
-    quietHours: QuietWindow = .default,
+    // Noon, so a test with no opinion about the hour stands where the old
+    // `focusGate(_:at:)` defaulted: outside every shipped window.
+    now: @escaping @Sendable () -> Date = { atHour(12) },
     // Nothing capturing, so nothing in the suite is held by whatever is plugged
     // into the machine running it. A default reading the REAL inputs would have
     // every schedule test in this target answer to the always-on Thunderbolt
@@ -588,11 +590,11 @@ func testModel(
         defaults: defaults,
         pasteboard: pasteboard,
         alerts: alerts,
-        focus: focus,
+        focusStatus: focusStatus,
         focusGated: focusGated,
         vpnLamps: vpnLamps,
         vpnPresence: vpnPresence,
-        quietHours: quietHours,
+        now: now,
         microphone: microphone,
         watching: watching,
         sleep: sleep,
@@ -881,8 +883,8 @@ func modelOverRealHost(
     connector: any Connector = StubConnector(),
     transport: any Transport,
     anecdotes: (any AnecdoteReplaying)? = nil,
-    focus: FocusGate = focusGate(StubFocusStatus(access: .authorized)),
-    quietHours: QuietWindow = .default,
+    focusStatus: any FocusStatusReading = StubFocusStatus(access: .authorized),
+    now: @escaping @Sendable () -> Date = { atHour(12) },
     microphone: MicrophoneGate = MicrophoneGate(inputs: StubAudioInputs()),
     watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
     sleep: @escaping AppModel.Sleeping = parked,
@@ -923,8 +925,8 @@ func modelOverRealHost(
         defaults: defaults,
         pasteboard: NSPasteboard(name: NSPasteboard.Name("realHost-\(UUID().uuidString)")),
         alerts: SpyAlerts(),
-        focus: focus,
-        quietHours: quietHours,
+        focusStatus: focusStatus,
+        now: now,
         microphone: microphone,
         watching: watching,
         sleep: sleep,

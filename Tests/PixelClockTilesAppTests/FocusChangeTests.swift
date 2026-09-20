@@ -24,7 +24,7 @@ private func gated(_ status: StubFocusStatus) -> [FocusGatedConnector] {
         access: .authorized, activeMode: .mode("com.apple.sleep.sleep-mode")
     )
     let host = SpyHost()
-    let subject = testModel(host: host, focus: focusGate(status), focusGated: gated(status))
+    let subject = testModel(host: host, focusStatus: (status), focusGated: gated(status))
 
     // One turn to learn where the Focus started, so the next has something to
     // notice a change against.
@@ -39,7 +39,7 @@ private func gated(_ status: StubFocusStatus) -> [FocusGatedConnector] {
 @Test @MainActor func switchingIntoAFocusThatHidesItTakesItOffTheClockAtOnce() async {
     let status = StubFocusStatus(access: .authorized, activeMode: .mode("com.apple.focus.work"))
     let host = SpyHost()
-    let subject = testModel(host: host, focus: focusGate(status), focusGated: gated(status))
+    let subject = testModel(host: host, focusStatus: (status), focusGated: gated(status))
 
     subject.reactToAFocusChange()
     status.nowIn(.mode("com.apple.sleep.sleep-mode"))
@@ -61,7 +61,7 @@ private func gated(_ status: StubFocusStatus) -> [FocusGatedConnector] {
 @Test @MainActor func aFocusThatStaysTheSameIsLeftAlone() async {
     let status = StubFocusStatus(access: .authorized, activeMode: .mode("com.apple.focus.work"))
     let host = SpyHost()
-    let subject = testModel(host: host, focus: focusGate(status), focusGated: gated(status))
+    let subject = testModel(host: host, focusStatus: (status), focusGated: gated(status))
 
     for _ in 0..<4 { subject.reactToAFocusChange() }
 
@@ -80,7 +80,7 @@ private func gated(_ status: StubFocusStatus) -> [FocusGatedConnector] {
         access: .authorized, activeMode: .mode("com.apple.sleep.sleep-mode")
     )
     let host = SpyHost()
-    let subject = testModel(host: host, focus: focusGate(asleep), focusGated: gated(asleep))
+    let subject = testModel(host: host, focusStatus: (asleep), focusGated: gated(asleep))
 
     subject.reactToAFocusChange()
 

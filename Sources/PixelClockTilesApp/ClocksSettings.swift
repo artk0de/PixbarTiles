@@ -32,7 +32,7 @@ struct ClocksSettings: View {
     let onAddByAddress: (String) -> Void
 
     /// The whole question, clock named.
-    static func removalQuestion(for clockName: String) -> String {
+    nonisolated static func removalQuestion(for clockName: String) -> String {
         "Remove \(clockName)? Every tile on it goes with it."
     }
 

@@ -95,6 +95,7 @@ private func drawn(_ view: some View, width: CGFloat = 320, height: CGFloat = 42
     return target.representation(using: .png, properties: [:])
 }
 
+@MainActor
 private func detail(
     tile: String = "Weather", clock: String = "Desk",
     policy: TilePolicy = TilePolicy(refreshSeconds: 300)

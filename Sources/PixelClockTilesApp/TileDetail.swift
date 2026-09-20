@@ -30,7 +30,7 @@ struct TileDetail: View {
             .accessibilityLabel("Back")
             TilePolicyEditor(policy: Binding(
                 get: { policy },
-                set: onPolicy
+                set: { onPolicy($0) }
             ))
             connector
             Spacer()
@@ -51,18 +51,18 @@ struct TilePolicyEditor: View {
     @Binding var policy: TilePolicy
 
     /// The Focuses the "works in" boxes run over: every case but `.unknown`.
-    static let worksInBoxes: [MacFocus] = MacFocus.allCases.filter { $0 != .unknown }
+    nonisolated static let worksInBoxes: [MacFocus] = MacFocus.allCases.filter { $0 != .unknown }
 
     /// The box's state: ticked means the tile WORKS there, so the answer is
     /// read against `silencedIn`.
-    static func isChecked(_ focus: MacFocus, in policy: TilePolicy) -> Bool {
+    nonisolated static func isChecked(_ focus: MacFocus, in policy: TilePolicy) -> Bool {
         !policy.focus.silencedIn.contains(focus)
     }
 
     /// Writes a box's state. Unticking ADDS the Focus to `silencedIn` — the
     /// polarity the round-trip tests pin, and the one that makes "works in"
     /// read the way it says.
-    static func set(focus: MacFocus, checked: Bool, in policy: inout TilePolicy) {
+    nonisolated static func set(focus: MacFocus, checked: Bool, in policy: inout TilePolicy) {
         if checked {
             policy.focus.silencedIn.remove(focus)
         } else {
@@ -72,7 +72,7 @@ struct TilePolicyEditor: View {
 
     /// Switching the hours keeps the window: `.quiet` over `.active` is the
     /// same stretch of day read the other way round, not a new one.
-    static func setHours(_ kind: HoursKind, in policy: inout TilePolicy) {
+    nonisolated static func setHours(_ kind: HoursKind, in policy: inout TilePolicy) {
         switch kind {
         case .always:
             policy.window = .always
@@ -84,19 +84,19 @@ struct TilePolicyEditor: View {
     }
 
     /// The slider's position for stored seconds: the step the value reads as.
-    static func position(forSeconds seconds: TimeInterval) -> Double {
+    nonisolated static func position(forSeconds seconds: TimeInterval) -> Double {
         Double(RefreshScale.steps.firstIndex(of: RefreshScale.snapped(seconds)) ?? 0)
     }
 
     /// The seconds a slider position stands for.
-    static func seconds(atPosition position: Double) -> TimeInterval {
+    nonisolated static func seconds(atPosition position: Double) -> TimeInterval {
         let index = min(Int(position), RefreshScale.steps.count - 1)
         return RefreshScale.steps[max(index, 0)]
     }
 
     /// Writes the seconds a slider move landed on. This — and nothing in the
     /// reading path — is where the stored value changes.
-    static func set(secondsAtPosition position: Double, in policy: inout TilePolicy) {
+    nonisolated static func set(secondsAtPosition position: Double, in policy: inout TilePolicy) {
         policy.refreshSeconds = Int(seconds(atPosition: position))
     }
 
@@ -195,7 +195,7 @@ struct TilePolicyEditor: View {
     /// `.always` carries no window, so the editor starts from a whole-day
     /// quiet stretch rather than an empty one — an empty window restricts
     /// nothing, and would read as the picker doing nothing.
-    private static func existingWindow(of policy: TilePolicy) -> HourWindow {
+    nonisolated private static func existingWindow(of policy: TilePolicy) -> HourWindow {
         switch policy.window {
         case let .quiet(window), let .active(window): window
         case .always: HourWindow(startHour: 23, endHour: 8)
@@ -305,12 +305,12 @@ struct VPNTileBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Picker("Preset", selection: Binding(
-                get: { preset }, set: onPreset
+                get: { preset }, set: { onPreset($0) }
             )) {
                 ForEach(presets, id: \.self) { Text($0).tag($0) }
             }
             Picker("Lamp", selection: Binding(
-                get: { slot }, set: onSlot
+                get: { slot }, set: { onSlot($0) }
             )) {
                 ForEach(slots, id: \.self) { Text($0).tag($0) }
             }
@@ -327,13 +327,13 @@ struct VPNTileBlock: View {
                         .accessibilityLabel(entry.name)
                     }
                     ColorPicker("Custom", selection: Binding(
-                        get: { colour }, set: onColour
+                        get: { colour }, set: { onColour($0) }
                     ))
                     .labelsHidden()
                 }
             }
             Picker("When down", selection: Binding(
-                get: { downBehaviour }, set: onDownBehaviour
+                get: { downBehaviour }, set: { onDownBehaviour($0) }
             )) {
                 Text("Off").tag(DownBehaviour.off)
                 Text("Blink").tag(DownBehaviour.blink)

@@ -15,10 +15,6 @@ struct SettingsSheet: View {
     /// test can prove the section is on THIS surface without touching the real
     /// login-item database.
     private let loginItem: () -> LoginItemModel
-    /// Handed down for the reason `loginItem` is: a test can put a link over a
-    /// fixture file in, and the shipped default reads Claude Code's real
-    /// settings only inside an app bundle.
-    private let claudeCode: () -> ClaudeCodeLinkModel
 
     /// Where the width the three surfaces share is read.
     ///
@@ -30,12 +26,10 @@ struct SettingsSheet: View {
     init(
         model: AppModel,
         loginItem: @autoclosure @escaping () -> LoginItemModel = LoginItemModel(),
-        claudeCode: @autoclosure @escaping () -> ClaudeCodeLinkModel = ClaudeCodeLinkModel(),
         defaults: UserDefaults = .standard
     ) {
         _model = ObservedObject(wrappedValue: model)
         self.loginItem = loginItem
-        self.claudeCode = claudeCode
         self.defaults = defaults
     }
 
@@ -56,7 +50,7 @@ struct SettingsSheet: View {
                 discovered: [],
                 onRename: { model.renameClock($0, to: $1) },
                 onRemove: { model.removeClock($0) },
-                onAddDiscovered: { model.addClock(from: $0) },
+                onAddDiscovered: { _ = model.addClock(from: $0) },
                 onAddByAddress: { address in
                     Task { _ = await model.addClock(address: address) }
                 }
@@ -65,8 +59,6 @@ struct SettingsSheet: View {
             focusSection
             Divider()
             microphonesSection
-            Divider()
-            ClaudeCodeSettings(link: claudeCode())
             Divider()
             iconSection
             Divider()

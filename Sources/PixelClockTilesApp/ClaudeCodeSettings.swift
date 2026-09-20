@@ -121,8 +121,9 @@ final class ClaudeCodeLinkModel: ObservableObject {
 ///
 /// A view of its own, for the reason `LoginItemSettings` is one: the whole
 /// settings surface costs 57 ms to lay out, and a test about this section has
-/// no business spending it. It lives on the current settings surface until
-/// phase 5 moves it; the view moves as it is.
+/// no business spending it. It lives on the Claude tile's detail — the state
+/// it edits is machine-wide, so whichever tile's surface it is edited from
+/// edits it for every Claude tile.
 ///
 /// Confirmation is inline rather than an alert. The menu bar window dismisses
 /// when it loses focus, and takes any sheet or alert over it with it.

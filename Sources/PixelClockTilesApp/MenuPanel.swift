@@ -35,6 +35,12 @@ struct MenuPanel: View {
     /// reaches the layout — testable only by writing into the preferences of
     /// whoever is running the suite.
     private let defaults: UserDefaults
+    /// The Claude settings' link model, for the Claude tile's detail block.
+    ///
+    /// An autoclosure like the settings surface used to take it, so the
+    /// shipped model — which reads Claude Code's settings file — is not built
+    /// on every redraw, and a test can put a fixture over the real file.
+    private let claudeCode: () -> ClaudeCodeLinkModel
 
     /// Written out rather than left to the memberwise one, only so `defaults`
     /// can be private and still be handed in.
@@ -42,12 +48,14 @@ struct MenuPanel: View {
         model: AppModel,
         monitor: DeviceMonitor,
         discovery: DeviceBrowser,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        claudeCode: @autoclosure @escaping () -> ClaudeCodeLinkModel = ClaudeCodeLinkModel()
     ) {
         self.model = model
         self.monitor = monitor
         self.discovery = discovery
         self.defaults = defaults
+        self.claudeCode = claudeCode
     }
 
     /// Which surface is on screen — and the same defaults down every branch,
@@ -188,7 +196,7 @@ struct MenuPanel: View {
                 clockName: model.clocks.first { $0.id == key.clockId }?.name ?? "",
                 policy: stored,
                 connector: AnyView(connectorBlock(for: key, config: value.config)),
-                onPolicy: { model.saveTile(key: key, policy: $0, config: value.config) },
+                onPolicy: { _ = model.saveTile(key: key, policy: $0, config: value.config) },
                 onBack: { model.closeDetail() }
             )
         } else {
@@ -209,11 +217,16 @@ struct MenuPanel: View {
                     guard let place = LocationField.parse(typed),
                         let stored = model.storedPolicy(of: key)
                     else { return }
-                    model.saveTile(key: key, policy: stored, config: .weather(place))
+                    _ = model.saveTile(key: key, policy: stored, config: .weather(place))
                 }
             )
         } else if connector is AnecdoteConnector {
             AnecdoteTileBlock(onHistory: { model.openHistory() })
+        } else if connector is ClaudeUsageConnector {
+            // The whole Claude settings surface, machine-wide state and all:
+            // whatever tile's detail it is edited from edits it for every
+            // Claude tile, because the state is one file, not a tile's.
+            ClaudeCodeSettings(link: claudeCode())
         } else {
             EmptyView()
         }

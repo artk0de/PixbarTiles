@@ -4,92 +4,20 @@
 //
 //     Scripts/bundle.sh            # compiles and runs this as part of bundling
 //
-// The app icon exists because AWTRIX 3 ships no square logo — only a wide
-// AI-rendered cover banner whose wordmark is illegible below about 64pt, and
-// which is CC BY-NC-SA. So the mark is drawn rather than borrowed: it is the
-// thing AWTRIX actually is, a Ulanzi slab with a 32x8 LED matrix across its
-// face.
+// Both marks are the user's own pixel-art clock, rasterized from the approved
+// map in `Sources/PixelClockTilesApp/MenuBarUserclock.swift` — that file is
+// compiled into this tool AND into the app target, so the art the bundle ships
+// and the art the tests pin cannot drift apart. The app icon sets the clock on
+// the dark circular badge its source art sits on (the badge was dropped only
+// for the tiny bar); the menu bar glyph is the bare clock. Top-level
+// statements live in `MakeIcon.main` because a multi-file compile only reads
+// them from `main.swift`.
 //
-// The menu bar glyph is the user's own pixel-art clock, transcribed and
-// approved out of icons-candidates/menubar as the userclock variants. Its map
-// lives in `Sources/PixelClockTilesApp/MenuBarUserclock.swift` — the file is
-// compiled into this tool AND into the app target, so the PNGs the bundle
-// ships are rasterized from the very map the tests pin, and the two cannot
-// drift apart. Top-level statements live in `MakeIcon.main` because a
-// multi-file compile only reads them from `main.swift`.
-//
-// Deterministic by construction: two runs produce byte-identical art, and a
-// diff means someone changed the design.
+// Deterministic by construction: the map and the palettes are data and every
+// drawing is a pure function of them, so two runs produce byte-identical art,
+// and a diff means someone changed the design.
 
 import AppKit
-
-let COLS = 32
-let ROWS = 8
-
-/// The cover art's palette, sampled by eye: saturated LED primaries on black.
-let PALETTE: [NSColor] = [
-    NSColor(srgbRed: 1.00, green: 0.16, blue: 0.18, alpha: 1),  // red
-    NSColor(srgbRed: 1.00, green: 0.52, blue: 0.06, alpha: 1),  // amber
-    NSColor(srgbRed: 1.00, green: 0.84, blue: 0.10, alpha: 1),  // yellow
-    NSColor(srgbRed: 0.22, green: 0.92, blue: 0.35, alpha: 1),  // green
-    NSColor(srgbRed: 0.15, green: 0.85, blue: 0.95, alpha: 1),  // cyan
-    NSColor(srgbRed: 0.28, green: 0.48, blue: 1.00, alpha: 1),  // blue
-    NSColor(srgbRed: 0.85, green: 0.35, blue: 1.00, alpha: 1),  // magenta
-]
-
-/// Integer hash — deterministic stand-in for randomness, since the icon must
-/// render identically on every machine and in every future run.
-func noise(_ x: Int, _ y: Int, _ salt: Int) -> Int {
-    var h = x &* 374_761_393 &+ y &* 668_265_263 &+ salt &* 2_246_822_519
-    h = (h ^ (h >> 13)) &* 1_274_126_177
-    return abs(h ^ (h >> 16))
-}
-
-/// A 7-row pixel font, six glyphs — exactly the six the mark needs. Widths vary
-/// because the diagonals decide them: W and X need five columns to read as
-/// themselves rather than as a blob and an hourglass, while I is better at
-/// three, where its stem lands dead centre. 4+5+4+4+3+5 glyph columns plus five
-/// single-column gaps is 30, leaving one column of margin at each end of the
-/// 32-column panel. Change any width and the wordmark stops fitting the real
-/// hardware's geometry.
-let GLYPHS: [[String]] = [
-    [".##.", "#..#", "#..#", "####", "#..#", "#..#", "#..#"],          // A
-    ["#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"],   // W
-    ["####", ".#..", ".#..", ".#..", ".#..", ".#..", ".#.."],          // T
-    ["###.", "#..#", "#..#", "###.", "#.#.", "#..#", "#..#"],          // R
-    ["###", ".#.", ".#.", ".#.", ".#.", ".#.", "###"],                 // I
-    ["#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"],   // X
-]
-
-/// Which palette colour lights each letter. Distinct hues are decoration only
-/// here — the single-column gaps are what actually separates the letters.
-let LETTER_COLOUR = [0, 2, 3, 4, 5, 6]
-
-/// Left edge of each glyph, laid out once: one column of margin, then each
-/// glyph followed by a single-column gap.
-let LETTER_ORIGIN: [Int] = {
-    var origins: [Int] = []
-    var x = 1
-    for glyph in GLYPHS {
-        origins.append(x)
-        x += glyph[0].count + 1
-    }
-    return origins
-}()
-
-/// Lit cell -> its colour, or nil when the cell stays dark. Row 0 is the top of
-/// the panel; the wordmark occupies rows 0...6 of 8, so the spare row sits at
-/// the bottom where it reads as clearance rather than a crop.
-func wordmarkColour(col: Int, row: Int) -> NSColor? {
-    guard row >= 0, row < 7 else { return nil }
-    for (index, glyph) in GLYPHS.enumerated() {
-        let x = col - LETTER_ORIGIN[index]
-        guard x >= 0, x < glyph[0].count else { continue }
-        guard Array(glyph[row])[x] == "#" else { return nil }
-        return PALETTE[LETTER_COLOUR[index]]
-    }
-    return nil
-}
 
 func makeContext(_ size: Int) -> CGContext { makeContext(size, size) }
 
@@ -201,73 +129,96 @@ func drawUserClockZoom() -> CGContext {
 
 // MARK: - The app icon
 
-/// The app icon: the device seen head-on. Body fills the Big Sur content square
-/// (824/1024 of the canvas), the matrix band sits across its middle.
+/// The app icon: the user's clock on the dark circular badge its source art
+/// sits on — the badge was dropped only for the tiny menu bar, and at
+/// app-icon size it is what makes the mark read as an object rather than a
+/// sticker. The badge fills the Big Sur content square (824/1024 of the
+/// canvas); the clock rides on it at an integer art-pixel scale, every art
+/// pixel a hard-edged square, so the badge and its halo are the only smooth
+/// things in the drawing.
 func drawAppIcon(size: Int) -> CGContext {
     let ctx = makeContext(size)
     let s = CGFloat(size)
     let inset = s * 0.098                      // Big Sur content inset
-    let body = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let radius = body.width * 0.2237           // squircle-ish corner
+    let badge = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
+    let radius = badge.width / 2
+    let centre = CGPoint(x: badge.midX, y: badge.midY)
 
-    // Slab: a near-black body with a faint top-down sheen, so the icon reads as
-    // an object rather than a flat tile.
-    ctx.saveGState()
-    ctx.addPath(CGPath(roundedRect: body, cornerWidth: radius, cornerHeight: radius, transform: nil))
-    ctx.clip()
-    let gradient = CGGradient(
-        colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
-        colors: [
-            NSColor(srgbRed: 0.13, green: 0.13, blue: 0.16, alpha: 1).cgColor,
-            NSColor(srgbRed: 0.03, green: 0.03, blue: 0.04, alpha: 1).cgColor,
-        ] as CFArray,
-        locations: [0, 1]
-    )!
-    ctx.drawLinearGradient(
-        gradient, start: CGPoint(x: 0, y: body.maxY), end: CGPoint(x: 0, y: body.minY), options: []
+    // The halo first, so the badge overlaps its inner half: the source art's
+    // glow, translated to something that reads on a light Finder window as
+    // well as in a dark Dock — a faint shadow ring around the rim, with the
+    // two faintest of the source's concentric ripples standing in it.
+    let halo = radius * 0.21
+    ctx.drawRadialGradient(
+        CGGradient(
+            colorsSpace: SRGB,
+            colors: [
+                NSColor(white: 0, alpha: 0).cgColor,
+                NSColor(white: 0, alpha: 0).cgColor,
+                NSColor(white: 0, alpha: 0.16).cgColor,
+                NSColor(white: 0, alpha: 0).cgColor,
+            ] as CFArray,
+            locations: [0, 0.80, 0.84, 1]
+        )!,
+        startCenter: centre, startRadius: 0, endCenter: centre,
+        endRadius: radius + halo, options: []
     )
+    for (offset, alpha) in [(1.055, CGFloat(0.05)), (1.105, CGFloat(0.03))] {
+        let ring = radius * offset
+        ctx.setStrokeColor(NSColor(white: 0.55, alpha: alpha).cgColor)
+        ctx.setLineWidth(radius * 0.004)
+        ctx.strokeEllipse(in: CGRect(
+            x: centre.x - ring, y: centre.y - ring, width: ring * 2, height: ring * 2
+        ))
+    }
+
+    // The badge: near-black with the sheen the source art carries — a lighter
+    // crown a third of the radius above centre, falling to the rim — and a
+    // hairline edge light, so the rim reads against the black page the art
+    // came from as well as against a white one.
+    ctx.saveGState()
+    ctx.addPath(CGPath(ellipseIn: badge, transform: nil))
+    ctx.clip()
+    ctx.drawRadialGradient(
+        CGGradient(
+            colorsSpace: SRGB,
+            colors: [
+                NSColor(srgbRed: 0.16, green: 0.16, blue: 0.19, alpha: 1).cgColor,
+                NSColor(srgbRed: 0.04, green: 0.04, blue: 0.06, alpha: 1).cgColor,
+            ] as CFArray,
+            locations: [0, 1]
+        )!,
+        startCenter: CGPoint(x: centre.x, y: centre.y + radius * 0.35),
+        startRadius: 0, endCenter: centre, endRadius: radius, options: []
+    )
+    let rim = radius * 0.012
+    ctx.setLineWidth(rim)
+    ctx.setStrokeColor(NSColor(white: 1, alpha: 0.08).cgColor)
+    ctx.strokeEllipse(in: badge.insetBy(dx: rim / 2, dy: rim / 2))
     ctx.restoreGState()
 
-    // Matrix band — 4:1, the real panel's aspect.
-    let bandWidth = body.width * 0.84
-    let cell = bandWidth / CGFloat(COLS)
-    let bandHeight = cell * CGFloat(ROWS)
-    let band = CGRect(
-        x: body.midX - bandWidth / 2, y: body.midY - bandHeight / 2,
-        width: bandWidth, height: bandHeight
+    // The clock: the map at the largest whole art-pixel scale that keeps it
+    // within 58% of the badge — the proportion the source art holds — centred
+    // on whole device pixels, so no art pixel is ever resampled. Dark is the
+    // palette the source draws; Finder and the Dock put it on light ground,
+    // where the light frame carries the silhouette.
+    let scale = max(1, Int(badge.width * 0.58 / CGFloat(UserClock.width)))
+    let art = renderClock(UserClock.darkOnline, scale: scale)
+    let origin = CGPoint(
+        x: CGFloat(Int(badge.minX) + (Int(badge.width) - art.width) / 2),
+        y: CGFloat(Int(badge.minY) + (Int(badge.height) - art.height) / 2)
     )
 
-    let glass = band.insetBy(dx: -cell * 0.6, dy: -cell * 0.6)
-    ctx.setFillColor(NSColor(srgbRed: 0.01, green: 0.01, blue: 0.02, alpha: 1).cgColor)
-    ctx.addPath(CGPath(roundedRect: glass, cornerWidth: cell * 0.7, cornerHeight: cell * 0.7, transform: nil))
-    ctx.fillPath()
-
-    // Every cell is drawn: unlit ones as a dim dot, so the panel keeps its grid
-    // texture instead of looking like scattered confetti on black.
-    let dot = cell * 0.34
-    for col in 0..<COLS {
-        for row in 0..<ROWS {
-            let cx = band.minX + (CGFloat(col) + 0.5) * cell
-            let cy = band.minY + (CGFloat(row) + 0.5) * cell
-            let rect = CGRect(x: cx - dot, y: cy - dot, width: dot * 2, height: dot * 2)
-
-            // The panel shows what the device itself would show: the AWTRIX
-            // wordmark. Everything else stays an unlit dot so the grid reads as
-            // a matrix rather than as floating confetti.
-            guard let base = wordmarkColour(col: col, row: ROWS - 1 - row) else {
-                ctx.setFillColor(NSColor(white: 0.10, alpha: 1).cgColor)
-                ctx.fillEllipse(in: rect)
-                continue
-            }
-            let brightness = 0.55 + CGFloat(noise(col, row, 11) % 25) / 100
-
-            ctx.saveGState()
-            ctx.setShadow(offset: .zero, blur: cell * 0.9, color: base.withAlphaComponent(0.9).cgColor)
-            ctx.setFillColor(base.highlight(withLevel: brightness * 0.35)!.cgColor)
-            ctx.fillEllipse(in: rect)
-            ctx.restoreGState()
-        }
-    }
+    // A quiet drop shadow, so it sits ON the badge rather than in it.
+    ctx.saveGState()
+    ctx.setShadow(
+        offset: CGSize(width: 0, height: -radius * 0.02), blur: radius * 0.06,
+        color: NSColor(white: 0, alpha: 0.45).cgColor
+    )
+    ctx.draw(art, in: CGRect(
+        x: origin.x, y: origin.y, width: CGFloat(art.width), height: CGFloat(art.height)
+    ))
+    ctx.restoreGState()
     return ctx
 }
 
@@ -307,7 +258,7 @@ struct MakeIcon {
 
         // Drawn once at full size and resampled down, rather than redrawn per size.
         // Resampling was measured against per-size drawing and wins outright: the
-        // wordmark survives legibly to 32px, where art drawn directly at that size
+        // clock survives legibly to 32px, where art drawn directly at that size
         // aliases into noise.
         let master = drawAppIcon(size: 1024).makeImage()!
         for (points, scale) in [(16, 1), (16, 2), (32, 1), (32, 2), (128, 1), (128, 2),
@@ -335,9 +286,13 @@ struct MakeIcon {
         }
 
         // Previews, purely so a human can eyeball the result without opening ten
-        // files: the detailed app icon, the menu bar variants on the bars
-        // themselves and magnified with interpolation off.
-        write(drawAppIcon(size: 512).makeImage()!, to: "\(out)/preview-detailed.png")
+        // files: the app icon at full size and at a Dock-ish 256, the menu bar
+        // variants on the bars themselves and magnified with interpolation off.
+        write(master, to: "\(out)/preview-appicon-1024.png")
+        let quarter = makeContext(256)
+        quarter.interpolationQuality = .high
+        quarter.draw(master, in: CGRect(x: 0, y: 0, width: 256, height: 256))
+        write(quarter, to: "\(out)/preview-appicon-256.png")
         write(drawUserClockContext(), to: "\(out)/preview-menubar-context.png")
         write(drawUserClockZoom(), to: "\(out)/preview-menubar-zoom.png")
         write(drawSmallComparison(), to: "\(out)/preview-small-comparison.png")

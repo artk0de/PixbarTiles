@@ -455,11 +455,11 @@ private struct PassThroughIcons: IconInstalling {
     defer { defaults.removePersistentDomain(forName: suite) }
     let borrowed = BorrowedOverlay(before: "aurora", applied: "rain", borrower: "weather")
 
-    UserDefaultsBorrowedOverlayStore(defaults: defaults).record(borrowed)
+    UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).record(borrowed)
 
-    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults).borrowedOverlay() == borrowed)
-    UserDefaultsBorrowedOverlayStore(defaults: defaults).forget()
-    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults).borrowedOverlay() == nil)
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).borrowedOverlay() == borrowed)
+    UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).forget()
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).borrowedOverlay() == nil)
 }
 
 // A half-written record is no record. Reading a `before` with nothing beside it
@@ -472,7 +472,7 @@ private struct PassThroughIcons: IconInstalling {
 
     defaults.set(["before": "snow"], forKey: "borrowedOverlay")
 
-    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults).borrowedOverlay() == nil)
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).borrowedOverlay() == nil)
 }
 
 @Test func restoringSomethingThatWasNeverTakenWritesNothing() async throws {

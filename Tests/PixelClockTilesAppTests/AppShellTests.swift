@@ -364,8 +364,12 @@ private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
     // Written by a previous launch that never got to give it back, through the
-    // store `live()` is meant to use.
-    UserDefaultsBorrowedOverlayStore(defaults: defaults).record(
+    // store `live()` is meant to use — under the id of the clock `live()` will
+    // drive. The clock is stored first and the clock migration told not to run,
+    // or the migration would replace it, and the id with it.
+    defaults.set(true, forKey: ClockMigration.markerKey)
+    let clock = try storeAClock(in: defaults)
+    UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: clock.id).record(
         BorrowedOverlay(before: "aurora", applied: "rain", borrower: "weather")
     )
     let transport = StubTransport(body: onlineStats)
@@ -389,7 +393,7 @@ private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
     #expect(written == ["aurora"])
     // And the loan is discharged, so the launch after this one does not write
     // it a second time over whatever the user has set since.
-    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults).borrowedOverlay() == nil)
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: clock.id).borrowedOverlay() == nil)
 }
 
 @Test @MainActor func theDeviceHostIsTakenFromDefaultsWhenOneIsSaved() throws {

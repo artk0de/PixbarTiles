@@ -73,11 +73,17 @@ public final class InMemoryBorrowedOverlayStore: BorrowedOverlayStore, @unchecke
 }
 
 public final class UserDefaultsBorrowedOverlayStore: BorrowedOverlayStore, @unchecked Sendable {
+    /// One loan per clock. Two AWTRIX clocks each lend their own overlay, and
+    /// a loan given back on one says nothing about the other.
+    public static func key(forClock clockId: UUID) -> String {
+        "borrowedOverlay.\(clockId.uuidString)"
+    }
+
     /// One key for the whole record, because the three fields are only ever
     /// read together and a half-written borrow is worse than none: a `before`
     /// without the `applied` beside it cannot answer the question the record
     /// exists for.
-    private static let key = "borrowedOverlay"
+    private let key: String
 
     /// No lock, where `UserDefaultsUploadedIconStore` has one and the asymmetry
     /// is the point. That store's mutators read, modify and write a list, so
@@ -85,13 +91,14 @@ public final class UserDefaultsBorrowedOverlayStore: BorrowedOverlayStore, @unch
     /// value or remove it, and `UserDefaults` is safe for that on its own.
     private let defaults: UserDefaults
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard, clockId: UUID) {
+        self.key = Self.key(forClock: clockId)
         self.defaults = defaults
     }
 
     public func borrowedOverlay() -> BorrowedOverlay? {
         guard
-            let stored = defaults.dictionary(forKey: Self.key),
+            let stored = defaults.dictionary(forKey: key),
             let before = stored["before"] as? String,
             let applied = stored["applied"] as? String,
             let borrower = stored["borrower"] as? String
@@ -102,11 +109,11 @@ public final class UserDefaultsBorrowedOverlayStore: BorrowedOverlayStore, @unch
     public func record(_ borrowed: BorrowedOverlay) {
         defaults.set(
             ["before": borrowed.before, "applied": borrowed.applied, "borrower": borrowed.borrower],
-            forKey: Self.key
+            forKey: key
         )
     }
 
     public func forget() {
-        defaults.removeObject(forKey: Self.key)
+        defaults.removeObject(forKey: key)
     }
 }

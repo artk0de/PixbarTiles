@@ -709,6 +709,7 @@ final class AppModel: ObservableObject {
         ).run()
         try? WeatherLocationMigration(defaults: defaults).run()
         BatteryHistoryMigration(defaults: defaults).run()
+        BorrowedOverlayMigration(defaults: defaults).run()
 
         // One shared audio player and one shared weather source; everything
         // else below is per clock.
@@ -749,9 +750,10 @@ final class AppModel: ObservableObject {
                 // this app did to the device is not knowable by looking at the
                 // device afterwards. One exit without a teardown and an
                 // in-memory record turns this app's own weather overlay into
-                // the value it restores for ever. Still the one shared key
-                // here; it becomes per clock in B15.
-                borrowedOverlays: UserDefaultsBorrowedOverlayStore(defaults: defaults)
+                // the value it restores for ever.
+                borrowedOverlays: UserDefaultsBorrowedOverlayStore(
+                    defaults: defaults, clockId: clock.id
+                )
             )
         }
         // The TC002 clock's real session, when the settings name such a clock:

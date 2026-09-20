@@ -162,30 +162,40 @@ cover banner (1792x1024) whose wordmark is illegible below roughly 64pt, under
 CC BY-NC-SA; the firmware itself serves an **empty** `/favicon.ico` — HTTP 200,
 zero bytes — and 404s every other asset path. Both were checked, not assumed.
 
-So the mark is drawn: `Scripts/MakeIcon.swift` renders a dark slab with a 32x8
-LED panel, generated at bundle time into git-ignored `build/`, which keeps binary
-art out of the repository and makes the design reviewable as code. Run it alone
-with `swift Scripts/MakeIcon.swift` and look at `build/icon/preview-*.png`.
+So the mark is the user's own pixel-art clock: `Scripts/MakeIcon.swift` sets the
+approved `UserClock` map — the menu bar glyph's single home, compiled into the
+app target AND into the generator, so the shipped art and the tested map cannot
+drift apart — on the dark circular badge its source art sits on, the badge
+having been dropped only for the tiny bar. Everything is generated at bundle
+time into git-ignored `build/`, which keeps binary art out of the repository
+and makes the design reviewable as code. Run it with
+`swiftc Sources/PixelClockTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift
+-o build/icon-maker && build/icon-maker` and look at
+`build/icon/preview-appicon-*.png`.
 
-Three rules inside it, each of which was arrived at by rendering and looking:
+Rules inside it, each of which was arrived at by rendering and looking:
 
-- Lit pixels come from a hash of their coordinates, never a random source, so two
-  runs are byte-identical and a diff in the art means a design change.
 - One master at 1024, resampled down for every other size. Drawing simplified
-  art per size was tried first and lost: the resampled wordmark still reads at
-  32px, the directly-drawn one aliases into noise. The comparison sheet stays in
-  the generator's previews as the record.
-- The menu bar glyph is a separate, far coarser drawing, and a template image —
-  macOS throws away its colour, so it must work as a silhouette. It is the body
-  with a display cut out of it and lit pixels inside, on a **30x18** canvas:
-  the bar caps an item's height at its own (~18pt, so ~36 physical pixels on a
-  Retina display, and that is the whole detail budget) but does not cap its
-  width, so the width is where the room is. `@2x` and `@3x` are emitted and
-  macOS picks by display scale; a larger file does not buy a larger glyph.
-- Online and offline are two glyphs — a screen with pixels, a dark screen — not
-  one glyph plus a badge. The other three candidate styles stay in the generator
-  behind `SHIPPED_STYLE`, because the comparison sheet is what settled the
-  choice and re-deciding should mean rendering them again, not arguing.
+  art per size was tried first and lost: the resampled clock still reads at
+  32px, the directly-drawn one aliases into noise. The comparison sheet stays
+  in the generator's previews as the record.
+- Clock pixels stay pixels: the map rides on the badge at a whole art-pixel
+  scale, centred on whole device pixels, so the icon itself never resamples
+  the art — only the badge, its sheen and its halo are smooth. The dark
+  palette is the source of truth; Finder and the Dock put the icon on light
+  ground, where the light frame carries the silhouette.
+- The menu bar glyph is the bare clock in colour, NOT a template — a template
+  is macOS DISCARDING the colour, and the four approved palettes are what the
+  glyph is. One art pixel is one point on a 21x18 canvas (the bar caps an
+  item's height, not its width); `@2x` and `@3x` are emitted and macOS picks
+  by display scale, so a larger file does not buy a larger glyph.
+- Online and offline are two palettes, not one drawing plus a badge: offline
+  dims the sliders to grey and takes the sparkles out.
+
+The alternative treatments of the candidates stay in
+`icons-candidates/menubar/MakeMenuBarCandidates.swift`, because the comparison
+sheet is what settled the choice and re-deciding should mean rendering them
+again, not arguing.
 
 ## Voices
 
@@ -849,12 +859,15 @@ phase 4's multi-clock work, not here.
 
 ### What only a person at the hardware can settle
 
-1. **E9 — reboot persistence.** Power-cycle the TC002 and read
-   `/api/customList` after boot. Custom apps surviving or not, the session
-   behaves identically — the upsert re-creates them; the check only sharpens
-   the research record.
-2. **`pct-` name acceptance.** Push `pct-weather` by hand once (curl from the
-   research setup) and confirm it appears as a DIY page at index 100+.
+1. **E9 — reboot persistence — MEASURED 2026-09-20: custom apps die with
+   power.** The TC002 was power-cycled; `getBase` answered with the same
+   device identity and `/api/customList` returned `{"apps":[],"count":0}` —
+   the `pct-e9` marker is gone. Custom apps live in RAM, so the session's
+   re-push-all on offline→online is mandatory; implemented in
+   `UlanziClockSession`.
+2. **`pct-` name acceptance — PASSED 2026-09-20.** `pct-` names were pushed by
+   hand and appeared as DIY pages at index 100+; delete = POST with an EMPTY
+   body re-confirmed live (`{}` does not delete).
 3. **E4 — deleted-page effect.** With the knob parked on a page, delete that
    page's app and record what the panel shows — black, previous page, crash?
    This is what `tileRemoved` and `shutdown` expose a user to.
@@ -863,8 +876,9 @@ phase 4's multi-clock work, not here.
    if the panel washes out.
 5. **Idle marker.** Confirm the single dim dot reads as "paused" from the
    couch.
-6. **`customList` exact schema.** One `curl /api/customList` settles the decode
-   shape permanently if the Task 4 fixture paste left any doubt.
+6. **`customList` exact schema — SETTLED 2026-09-20.** Live reads show
+   `{"apps":[],"count":0}` when empty and the pushed app inside `apps` once
+   pushed; the Task 4 decode shape matches the device.
 7. **`image[]` element spelling.** The scene encoder emits a bare base64
    payload per image element — the one wire detail no phase-3 capture pins.
    Before any face ships a positioned or timed image, pin the element spelling

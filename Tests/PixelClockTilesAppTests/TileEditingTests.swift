@@ -4,6 +4,7 @@ import Testing
 @testable import PixelClockTilesApp
 
 private let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
+private let loft = ClockRecord(name: "Loft", model: .awtrix3, address: "10.0.0.7")
 private let tc002 = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.6")
 
 @Test @MainActor func aNewTileStartsFromItsConnectorsDefaults() {
@@ -25,6 +26,33 @@ private let tc002 = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "
     _ = subject.addTile("claude", to: desk.id)
 
     #expect(subject.addTile("claude", to: desk.id) == .refused("already on Desk"))
+}
+
+// Uniqueness is per clock: a `.single` connector already on one clock is
+// still offered, and saves, on another. Only an audible connector — the one
+// speaking through this Mac — may not (design "Adding a tile", rules 2–3).
+@Test @MainActor func aSingleConnectorSavesOnEachOfTwoClocks() {
+    let subject = testModel(
+        connectors: [StubConnector(id: "claude", isAudible: false)], clocks: [desk, loft], tiles: []
+    )
+    _ = subject.addTile("claude", to: desk.id)
+
+    #expect(subject.addTile("claude", to: loft.id) == .saved)
+}
+
+// The VPN presets are the `.multi` connectors: a second VPN joins the same
+// clock while the lamps differ. The one refusal is the lamp-overlap rule, and
+// that one is pinned above.
+@Test @MainActor func aSecondVPNTileJoinsOneClockOnAFreeLamp() {
+    let seeded = VPNTileMigration.tiles(on: desk.id).filter { $0.config?.lamp?.vpn == WatchedVPN.pritunl.id }
+    let subject = testModel(clocks: [desk], tiles: seeded)
+
+    #expect(
+        subject.addTile(
+            "vpn", to: desk.id, instance: WatchedVPN.amnezia.id,
+            config: .vpn(VPNTileConfig(vpn: WatchedVPN.amnezia.id, slot: .middleRight, upColour: "#00F0FF", whenDown: .off))
+        ) == .saved
+    )
 }
 
 @Test @MainActor func aVPNTileClaimingAHeldLampIsRefusedInTheDesignsWords() {

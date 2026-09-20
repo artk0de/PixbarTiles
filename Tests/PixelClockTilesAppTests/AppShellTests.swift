@@ -154,16 +154,13 @@ private func scratchStore() -> URL {
     // `StubConnector(5 * 60)` tests are what carry that rule.
 }
 
-// And of the three it registers, only the anecdotes are offered a row. The rule
-// is `PanelRows`, applied here to the connectors the app ACTUALLY ships rather
-// than to a pair made up for the test: `thePanelDrawsNoRowForAConnectorThat
-// IsAmbient` proves the rule reaches the screen, and this proves both shipped
-// ambient connectors are on the wrong side of it while the shipped anecdotes
-// stay on the right one.
-//
-// Both halves are asserted, because "no rows at all" satisfies the first on its
-// own — which is the whole panel gone and the test still green.
-@Test @MainActor func onlyTheAnecdotesAreOfferedARowOnThePanel() throws {
+// And of the three it registers, the order is registration order: the
+// anecdotes are what this app is for, and the ambient pair is what it also
+// does while nobody is asking it anything. Which of them get a row is no
+// longer the registry's question at all — the panel draws one row per tile
+// stored, and which tiles exist is the user's doing through the Add tile
+// menu.
+@Test @MainActor func theConnectorsAreRegisteredInOfferOrder() throws {
     let suite = "app-model-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -173,7 +170,6 @@ private func scratchStore() -> URL {
     )
 
     #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude"])
-    #expect(PanelRows.drawn(from: subject.registry.all).map(\.id) == ["anecdotes"])
 }
 
 /// Whether an output would put sound in the room.
@@ -825,45 +821,40 @@ private func launchedForBrowsing(
 
 // MARK: - The address the next launch will use
 
-// The write half of the brief's step 5. The panel's discovery line names a
-// clock; this is how the user acts on that name without opening a terminal, and
-// it goes through the same defaults key `AppModel.live()` reads at launch.
+// The write half of the brief's step 5, driven the only way it is reachable
+// now that no field draws it: through the model property the relocation also
+// writes. The rule is unchanged — normalise, refuse a blank, store on the
+// record for the next launch.
 @Test @MainActor func theAddressTypedIntoThePanelIsWhatTheNextLaunchUses() throws {
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
-    // A launch first: the field exists only on a running app, and it is the
-    // launch that puts a record in the store. A field still writing the old
-    // key would pass on a domain nothing had launched on yet.
-    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
-    try ClockStore(defaults: defaults).replaceAll([clock])
+    try ClockStore(defaults: defaults).replaceAll([
+        ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+    ])
     defaults.set(true, forKey: ClockMigration.markerKey)
-    _ = AppModel.live(defaults: defaults, anecdoteStore: scratchStore())
-    let clocks = ClockStore(defaults: defaults)
-    let clockStored = try #require(clocks.all().first)
+    let subject = AppModel.live(defaults: defaults, anecdoteStore: scratchStore())
 
-    DeviceHostField.save("10.0.0.9", to: clocks, for: clockStored)
+    subject.typedHost = "10.0.0.9"
 
-    // Read back the way the app reads it, not the way it was written: a field
-    // writing some other key would save happily and change nothing.
+    // Read back the way the app reads it, not the way it was written: a write
+    // landing on some other key would change nothing the launch reads.
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.9")
     #expect(AppModel.live(defaults: defaults, anecdoteStore: scratchStore()).deviceHost == "10.0.0.9")
 }
 
-// Nothing else in the app writes this key, so a blank entry saved would come up
-// at the next launch pointed at an empty host — and the panel that could fix it
-// sits behind a device that no longer answers.
+// Nothing else in the app writes the record's address, so a blank saved would
+// come up at the next launch pointed at an empty host.
 @Test @MainActor func aBlankAddressIsRefusedRatherThanSaved() throws {
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
-    let clocks = ClockStore(defaults: defaults)
-    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.9")
-    try clocks.replaceAll([clock])
+    let subject = testModel(defaults: defaults, deviceHost: "10.0.0.9", tiles: [])
 
-    #expect(DeviceHostField.save("   \n ", to: clocks, for: clock) == nil)
+    subject.typedHost = "   \n "
 
     // And the address that was there is still there.
-    #expect(clocks.all().first?.address == "10.0.0.9")
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.9")
 }
 
 // A pasted address arrives with whatever was around it. `AwtrixDevice` builds
@@ -873,15 +864,11 @@ private func launchedForBrowsing(
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
+    let subject = testModel(defaults: defaults, deviceHost: "10.0.0.5", tiles: [])
 
-    let clocks = ClockStore(defaults: defaults)
+    subject.typedHost = "  192.168.1.72\n"
 
-    DeviceHostField.save(
-        "  192.168.1.72\n", to: clocks,
-        for: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
-    )
-
-    #expect(clocks.all().first?.address == "192.168.1.72")
+    #expect(ClockStore(defaults: defaults).all().first?.address == "192.168.1.72")
 }
 
 // Pasting `http://10.0.0.5` out of the clock's own web interface is the single
@@ -891,61 +878,35 @@ private func launchedForBrowsing(
 // DNS error in the offline reason and nothing suggesting the address is
 // malformed.
 //
-// Read back the way the app reads it, so a field that normalised for display
+// Read back the way the app reads it, so a write that normalised for display
 // and stored the paste would still be caught.
 @Test @MainActor func aPastedAddressIsStoredWithoutItsScheme() throws {
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
-    let stored = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
-    try ClockStore(defaults: defaults).replaceAll([stored])
-    defaults.set(true, forKey: ClockMigration.markerKey)
-    _ = AppModel.live(defaults: defaults, anecdoteStore: scratchStore())
-    let clocks = ClockStore(defaults: defaults)
-    let clock = try #require(clocks.all().first)
+    let subject = testModel(defaults: defaults, deviceHost: "10.0.0.5", tiles: [])
 
-    let note = DeviceHostField.save("http://10.0.0.5/", to: clocks, for: clock)
+    subject.typedHost = "http://10.0.0.5/"
 
-    #expect(note == DeviceHostField.takesEffectNextLaunch)
-    #expect(clocks.all().first?.address == "10.0.0.5")
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.5")
     #expect(
         AppModel.live(defaults: defaults, anecdoteStore: scratchStore()).deviceHost == "10.0.0.5"
     )
 }
 
-// And an entry nothing can be made of is complained about on the field rather
-// than accepted and left to fail as a poll a quarter of an hour later, on a
-// different surface, with nothing connecting the two.
+// And an entry nothing can be made of is refused rather than accepted and left
+// to fail as a poll a quarter of an hour later, on a different surface, with
+// nothing connecting the two.
 @Test @MainActor func anAddressThatCannotBeAHostIsRefusedOnTheField() throws {
     let suite = "host-field-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
-    let clocks = ClockStore(defaults: defaults)
-    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.9")
-    try clocks.replaceAll([clock])
+    let subject = testModel(defaults: defaults, deviceHost: "10.0.0.9", tiles: [])
 
-    #expect(DeviceHostField.save("a b", to: clocks, for: clock) == DeviceHostField.unusable)
-    #expect(DeviceHostField.save("http://", to: clocks, for: clock) == DeviceHostField.unusable)
-
-    // And the address that was there is still there.
-    #expect(clocks.all().first?.address == "10.0.0.9")
-}
-
-// What the panel says after a save. The address is read once at launch and
-// handed to the device, the monitor and the host; a confirmation that implied
-// the app had already moved would be wrong until the next launch.
-@Test @MainActor func savingSaysItTakesEffectAtTheNextLaunchRatherThanNow() throws {
-    let suite = "host-field-\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
-
-    let note = DeviceHostField.save(
-        "10.0.0.9", to: ClockStore(defaults: defaults),
-        for: ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
-    )
-
-    #expect(note == DeviceHostField.takesEffectNextLaunch)
-    #expect(note?.lowercased().contains("next launch") == true)
+    subject.typedHost = "a b"
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.9")
+    subject.typedHost = "http://"
+    #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.9")
 }
 
 // MARK: - A network the app cannot browse

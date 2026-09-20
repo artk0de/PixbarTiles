@@ -117,26 +117,6 @@ private func panelFields(deviceHost: String) -> [String] {
 // Read off the control rather than off the pixels, and that is not fussiness.
 // Comparing renders of two differently-addressed surfaces passed with the field
 // removed entirely and with its seed emptied: the status line named the same
-// address, so it accounted for the whole difference. The test claimed the field
-// and was measuring the line above it.
-// And what is in it is what WILL be saved, not what is in use. The two are the
-// same on a launch nobody has typed into, so a field bound to `deviceHost`
-// instead of `typedHost` passes every test above — this is the one that tells
-// them apart.
-@Test @MainActor func theFieldShowsWhatTheNextLaunchWillUseRatherThanThisOne() {
-    let model = testModel(deviceHost: "192.168.1.72")
-
-    model.typedHost = "10.0.0.9"
-
-    #expect(fields(in: hosted(SettingsSheet(model: model))) == ["10.0.0.9", seededLocation])
-    #expect(model.deviceHost == "192.168.1.72")
-}
-
-@Test @MainActor func theAddressThisLaunchUsesIsInTheFieldInTheSettings() {
-    #expect(settingsFields(deviceHost: "192.168.1.72") == ["192.168.1.72", seededLocation])
-    #expect(settingsFields(deviceHost: "10.0.0.9") == ["10.0.0.9", seededLocation])
-}
-
 // A browse that cannot run has to look different from a network with nothing
 // on it, on the panel and not only in the function that words it — this is the
 // state the review found folded into "no devices" one layer down.
@@ -319,8 +299,10 @@ private func panelControls(_ model: AppModel) -> [String] {
     #expect(drawn(quiet) == drawn(reported))
 }
 
-@Test @MainActor func theSettingsHoldTheAddressFieldAndTheIconAction() async {
-    #expect(settingsFields(deviceHost: "10.0.0.5") == ["10.0.0.5", seededLocation])
+@Test @MainActor func theSettingsHoldTheClocksSectionAndTheIconAction() async {
+    // The Clocks section is where the address field used to be: one editable
+    // box — add-by-address — and no location box anywhere on the sheet.
+    #expect(settingsFields(deviceHost: "10.0.0.5") == [""])
 
     let quiet = testModel(deviceHost: "10.0.0.5")
     let reported = testModel(deviceHost: "10.0.0.5")
@@ -359,7 +341,8 @@ private func panelControls(_ model: AppModel) -> [String] {
 
     model.openSettings()
 
-    #expect(panelControls(model) == ["10.0.0.5", seededLocation])
+    // The sheet's one editable box: add-by-address in the Clocks section.
+    #expect(panelControls(model) == [""])
 
     model.closeSettings()
 
@@ -420,43 +403,6 @@ private func inkedColumns(of rep: NSBitmapImageRep, rows: Range<Int>) -> Range<I
     #expect(lastRow.upperBound > rep.pixelsWide * 2 / 3)
 }
 
-// MARK: - When the next one is due
-
-/// A model that has been started, whose schedule is due in `delay` seconds and
-/// whose reachability poll has already answered.
-///
-/// Both halves matter. An unstarted model has an `.unknown` device state where a
-/// started one has `.offline`, and the status line says different words for the
-/// two — which is enough on its own to make two panels differ, and is how the
-/// first version of the test below passed with the due label deleted.
-@MainActor
-private func scheduledModel(dueIn delay: TimeInterval) async -> AppModel {
-    let schedule = Metronome()
-    let model = testModel(host: SpyHost(delay: delay), sleep: schedule.sleep)
-    model.start()
-    #expect(await waitUntil { model.nextRun["stub"] != nil })
-    #expect(await waitUntil { model.monitor.state != .unknown })
-    return model
-}
-
-// The label beside "Run now", drawn on the panel rather than only worded by
-// `NextRunLine`.
-//
-// Two panels alike in everything — same connector, same transport, both polled,
-// both scheduled — except the hour they name. Deleting the label makes them
-// identical; anything else that differed between them would make this pass
-// while the label was gone, which is exactly what happened when the comparison
-// was against an unstarted model.
-@Test @MainActor func thePanelSaysWhenTheNextAnecdoteIsDue() async {
-    let soon = await scheduledModel(dueIn: 30)
-    let later = await scheduledModel(dueIn: 2 * 60 * 60)
-
-    #expect(drawn(soon) != nil)
-    #expect(drawn(soon) != drawn(later))
-    await soon.teardown()
-    await later.teardown()
-}
-
 // MARK: - What a failed restock looks like
 
 // The complaint reaches the panel rather than only the model. Two panels alike
@@ -500,63 +446,30 @@ private func drawnEntry(
     drawn(await showingHistory([PlayedAnecdote(anecdote: anecdote, playedAt: playedAt)]))
 }
 
-// The button the user asked for: in the Anecdotes row, not behind the gear and
-// not on a row of its own. Two panels alike in everything — same connector,
-// same address, neither started — except that one of them has a history to
-// browse, so a panel that grew the button anywhere accounts for the difference,
-// and one that grew a ROW for it is taller. Both halves are needed: the height
-// alone is equal while the button does not exist at all.
-@Test @MainActor func theAnecdotesRowCarriesAHistoryButtonWithoutTakingARowOfItsOwn() throws {
-    let without = hostedPanel(testModel())
-    let carrying = hostedPanel(testModel(anecdotes: StubAnecdotes(id: "stub")))
-
-    let plain = try #require(bitmap(without)?.representation(using: .png, properties: [:]))
-    let withHistory = try #require(bitmap(carrying)?.representation(using: .png, properties: [:]))
-
-    #expect(plain != withHistory)
-    #expect(without.fittingSize.height == carrying.fittingSize.height)
-}
-
-// A connector with no history to browse has no button to browse it with. The
-// panel draws every connector the registry holds, and only the anecdotes have a
-// history — a button on every row would promise one that does not exist.
-@Test @MainActor func aConnectorWithNoHistoryHasNoHistoryButton() {
-    let anecdotes = testModel(anecdotes: StubAnecdotes(id: "stub"))
-    let somethingElse = testModel(anecdotes: StubAnecdotes(id: "weather"))
-
-    #expect(drawn(somethingElse) != nil)
-    #expect(drawn(somethingElse) == drawn(testModel()))
-    #expect(drawn(anecdotes) != drawn(somethingElse))
-}
-
 // MARK: - Which connectors get a row
 
-// The panel answers "is the clock alive, and run something now". An ambient
-// connector answers neither: it keeps a value fresh in the device's own loop,
-// so "Run now" repaints what is on screen already, and its switch is a setting
-// rather than something to reach for in a hurry.
-//
-// Three models rather than two, and the third is what makes the first
-// comparison mean anything: without it, a panel that had stopped drawing
-// connector rows AT ALL would satisfy the equality. The two added connectors
-// are alike in everything the row draws — same displayed name, same interval,
-// so the same slider position and the same label — and differ only in whether
-// they declare themselves ambient.
-@Test @MainActor func thePanelDrawsNoRowForAConnectorThatIsAmbient() {
-    let alone = testModel(connectors: [StubConnector()])
-    let andAnAmbientOne = testModel(connectors: [StubConnector(), ambientConnector])
-    let andANonAmbientOne = testModel(
-        connectors: [
-            StubConnector(),
-            StubConnector(id: "second", displayName: "Ambient", defaultInterval: 900),
+// The panel draws one row per tile STORED, and nothing for a connector with
+// no tile on the clock. Which connectors get a row is no longer the panel's
+// question at all: it is the user's, answered through the Add tile menu, and
+// the row's run control is the tile's own business (an ambient tile runs
+// itself — pinned on the row in `TileRowTests`).
+@Test @MainActor func aRowIsDrawnForEachTileStoredAndForNothingElse() {
+    let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
+    let empty = testModel(clocks: [desk], tiles: [])
+    let one = testModel(
+        clocks: [desk], tiles: [assembledTile("stub", on: desk)]
+    )
+    let two = testModel(
+        clocks: [desk],
+        tiles: [
+            assembledTile("stub", on: desk),
+            assembledTile("second", on: desk),
         ]
     )
 
-    let oneRow = drawn(alone)
-
-    #expect(oneRow != nil)
-    #expect(drawn(andAnAmbientOne) == oneRow)
-    #expect(drawn(andANonAmbientOne) != oneRow)
+    #expect(drawn(empty) != nil)
+    #expect(drawn(one) != drawn(empty))
+    #expect(drawn(two) != drawn(one))
 }
 
 // And being silent, on its own, costs a connector nothing. The three connectors
@@ -1173,7 +1086,7 @@ private func openSettings() -> AppModel {
     // The sentence the sheet draws, pinned here rather than only in
     // FocusModeTests: this is the surface it is said on.
     #expect(FocusRuleLine.whichFocusesSilenceDependsOnFullDiskAccess.contains("Full Disk Access"))
-    #expect(drawnSettings(model) != nil)
+    #expect(drawn(model) != nil)
 }
 
 // MARK: - Which microphones the schedule waits for
@@ -1233,127 +1146,6 @@ private func openSettings(
     #expect(everything != drawn(onlyWatched))
 }
 
-// MARK: - Where the weather is read from
-
-/// The weather section alone, as pixels.
-///
-/// The SECTION rather than the whole settings surface, and the reason is
-/// measured: laying the surface out costs 57 ms of synchronous main-actor work,
-/// mostly the two 24-hour pickers, and this file already spends that budget
-/// seventeen times over. Drawing what the test is about costs 5 ms and says the
-/// same thing. That the section is ON the settings surface is a separate claim,
-/// proved by reading the location box off the control tree above.
-@MainActor
-private func drawnSettings(_ model: AppModel) -> Data? {
-    bitmap(hosted(WeatherSettings(model: model)))?.representation(using: .png, properties: [:])
-}
-
-// The field is read off the control by `theSettingsHoldTheAddressFieldAndThe
-// IconAction`, which names both boxes. What that cannot say is that the ANSWER
-// to what was typed is drawn: a note computed and never rendered leaves
-// somebody typing nonsense into a box that accepts it silently.
-@Test @MainActor func whatTheLocationFieldSaysAboutWhatWasTypedIsDrawn() {
-    let quiet = testModel(deviceHost: "10.0.0.5")
-    let answered = testModel(deviceHost: "10.0.0.5")
-
-    answered.typedLocation = "52.52, 13.405"
-
-    // Bound rather than re-rendered per expectation: laying this surface out
-    // costs 57 ms of synchronous main-actor work, measured, and every
-    // millisecond of it is taken out of the budget of whatever poll is waiting
-    // beside it.
-    let before = drawnSettings(quiet)
-    let after = drawnSettings(answered)
-
-    #expect(quiet.locationNote == nil)
-    #expect(answered.locationNote == LocationField.takesEffectAtTheNextPoll)
-    #expect(before != nil)
-    #expect(before != after)
-}
-
-// And a refusal has to look different from a save, or the box accepts nonsense
-// with the same reassuring line under it.
-@Test @MainActor func aRefusedLocationLooksDifferentFromASavedOne() {
-    let saved = testModel(deviceHost: "10.0.0.5")
-    let refused = testModel(deviceHost: "10.0.0.5")
-
-    saved.typedLocation = "52.52, 13.405"
-    refused.typedLocation = "somewhere warm"
-
-    let accepted = drawnSettings(saved)
-    let rejected = drawnSettings(refused)
-
-    #expect(refused.locationNote == LocationField.unreadable)
-    #expect(accepted != nil)
-    #expect(accepted != rejected)
-}
-
-// `OVERLAY` is one device-wide setting rather than something scoped to an app,
-// so a user who sets one by hand while the weather connector is on will see it
-// replaced. That is a documented consequence when the settings say so, and a
-// bug in the firmware when they do not.
-//
-// The words are checked here; that the standing sentence is DRAWN is on the
-// list only a person can check, as "the gear opens the settings" is. SwiftUI
-// backs a `Text` with no control and builds no accessibility tree outside a
-// window — measured — so the only instrument left is a pixel comparison, and
-// a sentence that is always on the surface cannot differ from itself.
-@Test @MainActor func theSettingsSayThatTheOverlayIsSharedWithTheWholeDevice() {
-    let said = WeatherSettings.overlayIsSharedWithTheDevice
-
-    #expect(said.contains("overlay"))
-    #expect(said.contains("device-wide"))
-    #expect(said.contains("by hand"))
-    #expect(said.contains("replaced"))
-    // And that it comes back, which is the half a user cannot see for
-    // themselves until they quit.
-    #expect(said.contains("put back"))
-}
-
-// The connector ships switched ON, so the first launch takes the device-wide
-// overlay without anybody asking for it. That is the design; discovering it
-// from the clock is not.
-@Test @MainActor func theSettingsSayTheWeatherIsOnFromTheFirstLaunch() {
-    let said = WeatherSettings.weatherStartsSwitchedOn
-
-    #expect(said.contains("first launch"))
-    // And where to go to stop it, or the warning is one a reader cannot act on.
-    #expect(said.contains("Switch it off"))
-    // Not the panel, which no longer draws a weather row at all. A sentence
-    // naming a surface the switch is not on is worse than one that names none:
-    // it sends the reader somewhere to look for a control that was moved, and
-    // this one said "on the main panel" for as long as the row was there.
-    #expect(said.contains("panel") == false)
-}
-
-// The switch the panel row used to carry, on the surface it moved to. Two
-// weather sections over the SAME connector — same location, same notes, same
-// everything the section draws — differing only in whether that connector is
-// switched on.
-//
-// Pixels are the only instrument available: a SwiftUI `Toggle` is not an
-// `NSButton` in the view tree and cannot be read off it, exactly as the panel's
-// own toggles cannot. So what this says is that the section DRAWS the
-// connector's state; that pressing the switch writes it back is on the list
-// only a person can check, alongside "the gear opens the settings".
-@Test @MainActor func theWeatherIsSwitchedOffInTheSettingsRatherThanOnThePanel() {
-    let weather = weatherConnector(over: SkyAndClockTransport())
-    let on = testModel(connectors: [StubConnector(), weather])
-    let off = testModel(connectors: [StubConnector(), weather])
-
-    off.setEnabled(false, for: weather)
-
-    let switchedOn = drawnSettings(on)
-
-    #expect(on.settings(for: weather).isEnabled)
-    #expect(off.settings(for: weather).isEnabled == false)
-    #expect(switchedOn != nil)
-    #expect(switchedOn != drawnSettings(off))
-    // The same surface twice is the same pixels, or the inequality above is
-    // noise rather than content.
-    #expect(switchedOn == drawnSettings(on))
-}
-
 // MARK: - What opening the panel asks for
 
 // The reachability poll is a minute apart, so whatever the panel draws about
@@ -1377,4 +1169,130 @@ private func drawnSettings(_ model: AppModel) -> Data? {
     // torn-down one has nothing to appear.
     withExtendedLifetime(panel) {}
     await model.teardown()
+}
+
+// MARK: - The assembled panel (Phase 5, Task 12)
+
+private let assembledDesk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
+private let assembledKitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.6")
+private let assembledLoft = ClockRecord(name: "Loft", model: .awtrix3, address: "10.0.0.7")
+
+private func assembledTile(
+    _ connector: String, on clock: ClockRecord, paused: Bool = false
+) -> TileRecord {
+    TileRecord(
+        key: TileKey(clockId: clock.id, connectorId: connector),
+        policy: TilePolicyRecord(isPaused: paused, refreshSeconds: 600)
+    )
+}
+
+/// The switcher's one tell: segmented controls, which a SwiftUI `Picker` in
+/// `.segmented` style backs with a real `NSSegmentedControl` in the tree.
+@MainActor
+private func segments(in view: NSView) -> [NSSegmentedControl] {
+    var found: [NSSegmentedControl] = []
+    if let segment = view as? NSSegmentedControl { found.append(segment) }
+    for sub in view.subviews { found += segments(in: sub) }
+    return found
+}
+
+@Test @MainActor func theSwitcherHidesItselfForOneClockAndShowsForTwo() {
+    let alone = hostedPanel(testModel(clocks: [assembledDesk], tiles: []))
+    let pair = hostedPanel(
+        testModel(clocks: [assembledDesk, assembledKitchen], tiles: [])
+    )
+
+    #expect(segments(in: alone).isEmpty)
+    #expect(segments(in: pair).count == 1)
+    #expect(segments(in: pair).first?.segmentCount == 2)
+}
+
+// The row the panel draws is the row the value describes: a held tile draws
+// its badge, and the row itself is the difference between a panel with a tile
+// and one without.
+@Test @MainActor func aTilesRowAndItsBadgeDrawOnThePanel() {
+    let empty = testModel(clocks: [assembledDesk], tiles: [])
+    let running = testModel(
+        clocks: [assembledDesk], tiles: [assembledTile("stub", on: assembledDesk)]
+    )
+    let held = testModel(
+        clocks: [assembledDesk], tiles: [assembledTile("stub", on: assembledDesk, paused: true)]
+    )
+
+    #expect(drawn(running) != nil)
+    #expect(drawn(running) != drawn(empty))
+    // The badge is drawn, not merely carried: pausing the tile changes what
+    // the row looks like on the panel.
+    #expect(drawn(held) != drawn(running))
+}
+
+// The Add tile menu renders the availability whole (D9): the reason beside the
+// refused entry is ON the panel, and a different reason is a different
+// drawing. The three models are the same two clocks and the same one tile —
+// only the selected clock, and so the menu row, moves.
+@Test @MainActor func theAddTileMenuCarriesItsReasonOntoThePanel() {
+    let notListed = testModel(
+        clocks: [assembledDesk, assembledKitchen],
+        tiles: [assembledTile("stub", on: assembledDesk)]
+    )
+    let refused = testModel(
+        clocks: [assembledDesk, assembledKitchen],
+        tiles: [assembledTile("stub", on: assembledDesk)]
+    )
+    refused.selectedClockId = assembledKitchen.id
+    let refusedElsewhere = testModel(
+        clocks: [assembledDesk, assembledLoft],
+        tiles: [assembledTile("stub", on: assembledDesk)]
+    )
+    refusedElsewhere.selectedClockId = assembledLoft.id
+
+    #expect(drawn(refused) != drawn(notListed))
+    // The reason is the entry's own: "not supported on TC002" draws differently
+    // from "already speaking through Desk".
+    #expect(drawn(refused) != drawn(refusedElsewhere))
+}
+
+// D4 in the switch: the detail is the panel's third surface, carrying the key
+// it was opened for, and closing it gives the panel back.
+@Test @MainActor func openingADetailReplacesThePanelWithItAndClosingGivesItBack() {
+    let model = testModel(
+        clocks: [assembledDesk], tiles: [assembledTile("stub", on: assembledDesk)]
+    )
+    let panel = drawn(model)
+
+    model.openDetail(for: TileKey(clockId: assembledDesk.id, connectorId: "stub"))
+    let detail = drawn(model)
+    #expect(detail != nil)
+    #expect(detail != panel)
+
+    model.closeDetail()
+    #expect(drawn(model) == panel)
+}
+
+// The Clocks section replaced the address field: one editable box on the
+// sheet — add-by-address — where the address and location boxes used to be,
+// and the list of clocks actually drawn.
+@Test @MainActor func theSettingsCarryTheClocksSectionWhereTheAddressFieldWas() {
+    let model = testModel(deviceHost: "10.0.0.5")
+
+    let sheet = fields(in: hosted(SettingsSheet(model: model)))
+
+    // The add-by-address box, and nothing else: no address field, no location
+    // field — both left with the sections that carried them.
+    #expect(sheet == [""])
+
+    let desk = testModel(
+        deviceHost: "10.0.0.5", clocks: [assembledDesk], tiles: []
+    )
+    let loft = testModel(
+        deviceHost: "10.0.0.5", clocks: [assembledLoft], tiles: []
+    )
+    let deskSheet = bitmap(hosted(SettingsSheet(model: desk)))?
+        .representation(using: .png, properties: [:])
+    let loftSheet = bitmap(hosted(SettingsSheet(model: loft)))?
+        .representation(using: .png, properties: [:])
+    // The Clocks section lists the clocks by name: renaming one changes the
+    // drawing, so the list is drawn and not just the add-by-address row.
+    #expect(deskSheet != nil)
+    #expect(deskSheet != loftSheet)
 }

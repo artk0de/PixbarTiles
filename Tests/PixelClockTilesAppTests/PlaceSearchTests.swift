@@ -123,32 +123,7 @@ private func searching(_ body: Data, status: Int = 200) -> PlaceSearchModel {
     #expect(said.contains("40 km"))
 }
 
-/// The weather section alone, drawn at the width the settings ship at.
-///
-/// Its own renderer rather than the panel suite's, because that one is private
-/// to a file this change does not touch. Drawing the section rather than the
-/// whole sheet is what `WeatherSettings` was split out for: the two 24-hour
-/// pickers cost 57 ms of synchronous main-actor work per render.
-@MainActor
-private func drawn(_ places: PlaceSearchModel) -> Data? {
-    let host = NSHostingView(rootView: WeatherSettings(model: testModel(), places: places))
-    host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
-    host.layoutSubtreeIfNeeded()
-    guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
-    host.cacheDisplay(in: host.bounds, to: target)
-    return target.representation(using: .png, properties: [:])
-}
-
-// The candidates reach the SCREEN, not only the model. Deleting the list from
-// `body` leaves every test above green, so this is the one that catches it: the
-// same section over two candidates and over none cannot look the same.
-@Test @MainActor func theCandidatesReachTheSettingsSurfaceRatherThanOnlyTheModel() async {
-    let found = searching(twoMoscows)
-    await found.search(for: "Moscow")
-    let empty = searching(placedNowhere)
-
-    let listed = drawn(found)
-
-    #expect(listed != nil)
-    #expect(listed != drawn(empty))
-}
+// The candidates-reaching-the-screen test drew `WeatherSettings`, which the
+// switch-over took off the general settings (D8): the place search's surface
+// is OWED a new home beside the weather tile's own block, and the model tests
+// above are what stays pinned until it lands.

@@ -1098,7 +1098,6 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
     subject.typedHost = "10.0.0.9"
 
     #expect(ClockStore(defaults: defaults).all().first?.address == "10.0.0.9")
-    #expect(subject.hostNote == DeviceHostField.takesEffectNextLaunch)
 }
 
 // Every keystroke, not just the last one: a field that saved only what it was

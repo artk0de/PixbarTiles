@@ -366,7 +366,14 @@ final class AppModel: ObservableObject {
     @Published var typedHost: String {
         didSet {
             guard let clock = self.clock else { return }
-            hostNote = DeviceHostField.save(typedHost, to: clockStore, for: clock)
+            // The save rule the typed field carried, now written here because
+            // the relocation path is this property's last writer: normalise,
+            // refuse a blank, store on the record for the next launch.
+            let trimmed = typedHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.isEmpty == false,
+                let host = DeviceAddress.host(from: trimmed)
+            else { return }
+            clockStore.update(clock) { $0.address = host }
         }
     }
     @Published private(set) var hostNote: String?
@@ -1132,9 +1139,7 @@ final class AppModel: ObservableObject {
     private func row(for record: TileRecord) -> TileRowValue {
         let key = record.key
         let isLamp = key.connectorId == VPNConnector.id
-        let name = isLamp
-            ? record.config?.lamp.map { WatchedVPN.preset(id: $0.vpn)?.displayName ?? $0.vpn } ?? "VPN"
-            : registry.connector(id: key.connectorId)?.displayName ?? key.connectorId
+        let name = tileName(of: record)
         return TileRowValue(
             name: name,
             result: tileLastResults[key],
@@ -1147,6 +1152,33 @@ final class AppModel: ObservableObject {
             onDetail: { self.openDetail(for: key) },
             onRemove: { self.removeTile(key) }
         )
+    }
+
+    /// A tile's display name: the lamp's VPN for a lamp tile, the connector's
+    /// own name for every other.
+    private func tileName(of record: TileRecord) -> String {
+        let key = record.key
+        if key.connectorId == VPNConnector.id {
+            return record.config?.lamp.map { WatchedVPN.preset(id: $0.vpn)?.displayName ?? $0.vpn }
+                ?? "VPN"
+        }
+        return registry.connector(id: key.connectorId)?.displayName ?? key.connectorId
+    }
+
+    /// The detail surface's inputs for one tile, beyond the policy it edits:
+    /// its display name and the config a save must carry through. Nil for a
+    /// tile that is gone — there is nothing left for the surface to be open
+    /// for.
+    func detailValue(for key: TileKey) -> (name: String, config: TileConfig?)? {
+        guard let record = storedTile(key) else { return nil }
+        return (tileName(of: record), record.config)
+    }
+
+    /// A clock's reachability, as the status surfaces draw it. A clock with
+    /// no health — the TC002 today — answers `.unknown`: nothing known, not
+    /// nothing there.
+    func deviceState(of clockId: UUID) -> DeviceState {
+        healths[clockId]?.monitor.state ?? .unknown
     }
 
     /// One menu entry per connector the registry holds, minus the ones a

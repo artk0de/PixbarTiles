@@ -13,9 +13,7 @@ struct SettingsSheet: View {
 
     /// Handed down rather than built in `LoginItemSettings`'s own default, so a
     /// test can prove the section is on THIS surface without touching the real
-    /// login-item database. An autoclosure for the reason `WeatherSettings`
-    /// takes one: it must not be evaluated on every redraw of a sheet whose
-    /// other fields save as they are typed.
+    /// login-item database.
     private let loginItem: () -> LoginItemModel
     /// Handed down for the reason `loginItem` is: a test can put a link over a
     /// fixture file in, and the shipped default reads Claude Code's real
@@ -45,9 +43,24 @@ struct SettingsSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             Divider()
-            deviceHostSection
-            Divider()
-            WeatherSettings(model: model)
+            ClocksSettings(
+                entries: model.clocks.map { clock in
+                    ClockListEntry(
+                        id: clock.id,
+                        name: clock.name,
+                        model: modelName(clock.model),
+                        address: clock.address,
+                        status: DeviceStatusLine.title(for: model.deviceState(of: clock.id))
+                    )
+                },
+                discovered: [],
+                onRename: { model.renameClock($0, to: $1) },
+                onRemove: { model.removeClock($0) },
+                onAddDiscovered: { model.addClock(from: $0) },
+                onAddByAddress: { address in
+                    Task { _ = await model.addClock(address: address) }
+                }
+            )
             Divider()
             focusSection
             Divider()
@@ -86,27 +99,12 @@ struct SettingsSheet: View {
         }
     }
 
-    /// The address the next launch will use.
-    ///
-    /// Saves as it is typed — `AppModel.typedHost` writes on every change — so
-    /// there is no Save button and no submit to remember. What it writes is the
-    /// address on the clock record `AppModel.live()` reads at launch, and it
-    /// says as much: a typed address rebuilds nothing and waits for the next
-    /// launch.
-    ///
-    /// A relocation writes the same two places without waiting, and the field
-    /// follows it — so what is shown here can change without anybody typing.
-    /// That is the one case with no note beside it, because there is no save to
-    /// report and nothing for the reader to do.
-    private var deviceHostSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Device address").font(.caption).foregroundStyle(.secondary)
-            TextField("Device address", text: $model.typedHost)
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-            if let note = model.hostNote {
-                Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
+    /// The clock a list entry names, as the models are called when a person
+    /// says them.
+    private func modelName(_ model: ClockModel) -> String {
+        switch model {
+        case .awtrix3: "AWTRIX 3"
+        case .ulanziTC002: "TC002"
         }
     }
 
@@ -177,11 +175,6 @@ struct SettingsSheet: View {
 /// model cannot do: putting the failure on screen. A registration that is
 /// refused has to be visible, or a box that would not stay ticked is
 /// indistinguishable from a click that never landed.
-///
-/// A view of its own rather than a section inside `SettingsSheet`, for the
-/// reason `WeatherSettings` is one: the settings surface costs 57 ms of
-/// synchronous main-actor work to lay out, mostly the two 24-hour pickers, and
-/// a test about this checkbox has no business spending it.
 struct LoginItemSettings: View {
     /// `@StateObject` rather than `@ObservedObject`, because what it holds must
     /// survive the redraws every keystroke in the address and location boxes
@@ -213,171 +206,6 @@ struct LoginItemSettings: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-}
-
-/// Where the weather is read from, and what showing it costs on a clock this
-/// app does not own alone.
-///
-/// One field holding both numbers rather than two holding halves of one place,
-/// and typed rather than asked for: CoreLocation cannot be authorized by an
-/// unsigned binary on this machine — probed, and `requestLocation` comes back
-/// `kCLErrorDenied` — and a desk clock does not travel anyway.
-///
-/// The line under it is the part that is not decoration. `OVERLAY` is a GLOBAL
-/// device setting, the same one the clock's own web interface writes, so an
-/// overlay set by hand is replaced the next time the weather changes. Said
-/// here, that is a documented consequence; unsaid, it is somebody chasing a bug
-/// in the firmware.
-///
-/// A view of its own rather than a section inside `SettingsSheet`, and the
-/// reason is measurable: laying the whole settings surface out costs 57 ms of
-/// SYNCHRONOUS main-actor work — the two 24-hour pickers are most of it — and
-/// every rendering test spends that out of the budget of whatever poll is
-/// running beside it. A test about this section can now draw this section. What
-/// keeps that honest is that the section being ON the settings surface is
-/// proved separately, by reading the location box off the control tree.
-struct WeatherSettings: View {
-    @ObservedObject var model: AppModel
-
-    /// The place search's own state — what is in its box, what came back, and
-    /// what is wrong with it.
-    ///
-    /// `@StateObject` rather than `@ObservedObject`, because it must survive
-    /// the redraws that every keystroke in the OTHER field on this surface
-    /// causes: observed, a half-typed search and its results would be thrown
-    /// away each time the location box changed.
-    @StateObject private var places: PlaceSearchModel
-
-    /// An autoclosure so the shipped default is not BUILT on every redraw. A
-    /// plain default argument is evaluated at each call of this initializer,
-    /// and `StateObject` would then discard a freshly made `URLSessionTransport`
-    /// on every one of them; deferred, it is built once, when the state is.
-    init(model: AppModel, places: @autoclosure @escaping () -> PlaceSearchModel = PlaceSearchModel()) {
-        _model = ObservedObject(wrappedValue: model)
-        _places = StateObject(wrappedValue: places())
-    }
-
-    /// What the weather costs on a device this app shares.
-    ///
-    /// Held as a constant so a test can name the rule it is checking rather
-    /// than the sentence, and so the sentence can be reworded without hunting
-    /// for whoever asserted it.
-    static let overlayIsSharedWithTheDevice =
-        "The clock's weather overlay is set from here. It is one device-wide "
-            + "setting, so an overlay you set by hand is replaced when the weather "
-            + "next changes, and put back as you left it when this connector is "
-            + "switched off."
-
-    /// Said because the connector ships switched ON.
-    ///
-    /// The first launch puts weather on the clock and takes the device-wide
-    /// overlay without anybody having asked for either. That is the design —
-    /// an app that showed nothing until it was configured would be a menu bar
-    /// item with nothing behind it — but it is not something a user should
-    /// discover from the clock.
-    static let weatherStartsSwitchedOn =
-        "Weather is on from the first launch. Switch it off here to stop it and "
-            + "hand the overlay back."
-
-    /// The connector this section is about, or none when nothing weather-shaped
-    /// is registered.
-    ///
-    /// Found by TYPE rather than by the id "weather". A string here is a lookup
-    /// that can silently stop matching — rename the connector's id and the
-    /// switch quietly disappears from a surface that still carries the sentence
-    /// telling you to use it — where a type is checked by the compiler. Read off
-    /// the registry rather than handed in, because that is where the panel reads
-    /// its own connectors from and a second route would be a second answer.
-    ///
-    /// Optional, and drawn only when it is there: no weather connector means no
-    /// weather switch, which is honest. The section's location field is not
-    /// conditional on it, because a location is a stored setting that outlives
-    /// whatever is reading it.
-    private var connector: (any Connector)? {
-        model.registry.all.first { $0 is WeatherConnector }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Where the panel's weather row used to be. The panel is opened
-            // dozens of times a day to answer "is the clock alive, and run
-            // something now", and this connector answers neither — but it is
-            // still something that can be switched off, and a connector with
-            // nowhere to switch it off is one the user cannot stop.
-            //
-            // Labelled with the connector's own name, which is the label the
-            // row carried: the control moved surfaces and was not renamed on
-            // the way.
-            if let connector {
-                Toggle(connector.displayName, isOn: Binding(
-                    get: { model.settings(for: connector).isEnabled },
-                    set: { model.setEnabled($0, for: connector) }
-                ))
-                .controlSize(.small)
-            }
-            Text("Weather location").font(.caption).foregroundStyle(.secondary)
-            TextField("Latitude, longitude", text: $model.typedLocation)
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-            if let note = model.locationNote {
-                Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
-            placeSearch
-            Text(Self.overlayIsSharedWithTheDevice)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(Self.weatherStartsSwitchedOn)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    /// Finding the pair by name, for whoever does not know it as two numbers.
-    ///
-    /// It reads the LOCATION BOX rather than a search box of its own, so that
-    /// one field takes either form: a pair saves as it always has, and a name
-    /// is what this hands to the geocoder. A second text field would hold a
-    /// copy of the same text, and the surface behind the gear is dense enough
-    /// already. Nothing here is stored, and nothing is chosen automatically —
-    /// see `PlaceSearchModel` for why a "locate me" button is not what this is.
-    private var placeSearch: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button("Find by name") {
-                Task { await places.search(for: model.typedLocation) }
-            }
-            .controlSize(.small)
-            .disabled(places.isSearching)
-            ForEach(places.candidates) { candidate in
-                Button { places.choose(candidate, into: $model.typedLocation) } label: {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(candidate.name)
-                        // The region, the country AND the coordinates. The first
-                        // two are what separate "Москва, Россия" from "Айдахо,
-                        // США"; the third is what separates the four Митино that
-                        // are all in Вологодская Область and are otherwise
-                        // character-for-character identical.
-                        Text("\(candidate.label) · \(LocationField.text(for: candidate.coordinates))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-            }
-            if let note = places.note {
-                Text(note)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text(PlaceSearchModel.findsSettlementsNotAddresses)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

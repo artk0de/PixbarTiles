@@ -65,10 +65,12 @@ live check:
 - `draw` primitives: `dp` pixel, `dl` line, `dr` rectangle outline, `df` filled
   rectangle, `db` bitmap, plus `dc`, `dfc` and `dt` — at most 32 commands per
   app. Colours are `#RRGGBB` strings.
-- `image` elements carry base64 — the exact spelling on the wire (bare base64
-  or a data URI) is unverified and sits on the hardware checklist. GIFs up to
-  256×256 and 50 frames are accepted and clipped to 52×16; stills go up to
-  512×512; base64 up to 60 KB; at most 6 images per app.
+- `image` elements are objects on the wire — `{data: "data:image/gif;base64,…",
+  position: [x, y]}` — measured live 2026-09-21 (a bare base64 payload, string
+  or data URI, renders nothing); `text[]` entries are objects too
+  (`content`, `fontHeight`, `x`, `y`, `color`), and a string entry renders a
+  black page. GIFs up to 256×256 and 50 frames are accepted and clipped to
+  52×16; stills go up to 512×512; base64 up to 60 KB; at most 6 images per app.
 - There is no `lifetime`: an app persists after its sender goes away.
 - No notification, indicator, overlay, battery-reading, or audio endpoint
   exists on the stock firmware. Audio is reachable only from software running
@@ -319,7 +321,8 @@ sound plays.
   action — a "Show on clock" panel action, if one comes — may ever call it;
   never a schedule, a launch, or any automatic path.
 - Images: `UlanziImage.bundled(name)`, 16 px art shipped as resources and sent
-  inline as bare base64 per element. There is no flash to install into and no
+  per element as a `{data, position}` object with a GIF data URL — the
+  spelling measured live 2026-09-21. There is no flash to install into and no
   catalogue.
 - Custody: `UlanziCustody` keeps a **durable** record of the app names this
   app pushed to each clock, one per tile, because apps outlive the sender
@@ -668,9 +671,10 @@ What only a person at the hardware can settle, added to HANDOFF's list:
    tile depends on them.
 4. Removing a TC002 tile takes its app off the clock, and a relaunch after a
    force quit removes an app whose tile is gone.
-5. The `image[]` element spelling on the wire: the encoder emits bare base64
-   per element; whether the device also accepts a data URI prefix is
-   unverified.
+5. The `image[]` element spelling on the wire — SETTLED 2026-09-21: the
+   element is an object, `{data: "data:image/gif;base64,…", position: [x, y]}`;
+   bare base64 (string or data URI) renders nothing, and `text[]` entries are
+   objects too.
 
 ## Phases
 

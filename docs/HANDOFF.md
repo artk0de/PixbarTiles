@@ -879,10 +879,12 @@ phase 4's multi-clock work, not here.
 6. **`customList` exact schema — SETTLED 2026-09-20.** Live reads show
    `{"apps":[],"count":0}` when empty and the pushed app inside `apps` once
    pushed; the Task 4 decode shape matches the device.
-7. **`image[]` element spelling.** The scene encoder emits a bare base64
-   payload per image element — the one wire detail no phase-3 capture pins.
-   Before any face ships a positioned or timed image, pin the element spelling
-   (durations, frame counts) against a real exchange.
+7. **`image[]` element spelling — MEASURED 2026-09-21.** The element is an
+   object: `{"data": "data:image/gif;base64,…", "position": [x, y]}` — a bare
+   base64 payload, string or data URL, renders nothing on appVer 1.1.1.
+   `text[]` entries turned out to be objects too (`content`, `fontHeight`,
+   `x`, `y`, `color`); a string entry renders a black page. The encoder emits
+   the measured spelling; see the phase-6 section at the end.
 
 ## Added by PixelClockTiles phase 4
 
@@ -991,3 +993,28 @@ What later tasks owe:
   status VALUES read the selected clock through the model. If battery
   staleness on a selection switch matters, the app shell owes the observed
   monitor swapping with the selection.
+
+## PixelClockTiles Phase 6f — what the live clock answered, 2026-09-21
+
+The envelope probe on the TC002 (appVer 1.1.1) settled the wire spellings the
+phase-3b checklist carried open:
+
+- `text[]` entries are objects — `{"content", "fontHeight", "x", "y", "color"}`
+  (+ optional `align`, `valign`, `rect`, `charSpacing`). A plain string entry
+  renders nothing: the page goes black. The encoder's defaults are the doc's:
+  `fontHeight: 10`, `color: "#FFFFFF"`, `x`/`y` at −1000 so `align`/`valign`
+  place the text.
+- `image[]` entries are objects — `{"data": "data:image/gif;base64,…",
+  "position": [x, y]}`. Bare base64 (string or data URL) renders nothing.
+  Phase-3b checklist item 7 is closed by this.
+- A GIF carries its own timing: two frames with a `DelayTime` of 5.0 each
+  alternate on the panel by themselves (#27, verified live). That is the
+  sanctioned time-multiplexing for one page — no Mac-side rotation — and a
+  scrolling marquee is the same trick with a pre-rendered scrolling GIF, not a
+  re-push loop.
+
+What later tasks owe:
+
+- The bundled weather art in `Sources/PixelClockKit/Resources` is 8×8
+  AWTRIX-era GIFs; the TC002 weather face wants 16×16 art. The new art is owed
+  before that face ships — drawn by a person, not generated in passing.

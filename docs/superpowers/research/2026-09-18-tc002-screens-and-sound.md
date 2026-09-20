@@ -231,13 +231,14 @@ and the PR #18 samples. The community figures were observed on this same firmwar
 | Glyph width | a 10 px glyph is about 6 px wide | documented (atomicstack, PixDeck's estimate) |
 | Placement | `x`/`y` are relative to `rect`; `align`/`valign` apply **only when `x`/`y` ≤ −999**; `charSpacing` 0–10 | documented (official) |
 | Aligned text | only the **first** `text[]` element that uses `align`+`rect` is drawn; a second one is dropped without an error | documented ([#23](https://github.com/UlanziTechnology/Ulanzi-U-Clock-TC002/issues/23)) |
-| Scroll | none; long strings are clipped. A marquee means re-pushing every 0.4–0.5 s | documented (official FAQ; [#21](https://github.com/UlanziTechnology/Ulanzi-U-Clock-TC002/issues/21)) |
+| Scroll | none; long strings are clipped. A marquee means re-pushing every 0.4–0.5 s — or a pre-rendered scrolling GIF, which the panel plays by itself | documented (official FAQ; [#21](https://github.com/UlanziTechnology/Ulanzi-U-Clock-TC002/issues/21)); GIF route **measured** 2026-09-21 |
 | Font | the official demo ships the AWTRIX-modified TomThumb 3×5 ([#17](https://github.com/UlanziTechnology/Ulanzi-U-Clock-TC002/issues/17)); that the stock renderer uses it for the small tier is **inferred** | documented / inferred |
 | `draw[]` ops | `dp` pixel, `dl` line, `dr` / `df` rectangle, `dc` / `dfc` circle, `dt` text (fixed 10 px), `db` bitmap (`w*h` ints `0x00RRGGBB`) | documented (official) |
 | `draw[]` count | **at most 32 commands per app** | documented (official README) |
 | Colours | `#RRGGBB`, no alpha | documented (official) |
 | `image[]` | PNG or GIF data URL; still images up to 512×512, GIF up to 256×256 and ≤ 50 frames, base64 ≤ 60 KB; **clipped from the top-left, never scaled**; PNG alpha blended onto black; at most 6 images per app (≤ 3 GIF + ≤ 3 PNG) | documented (official) |
-| Animated GIF | plays and loops, per-frame delays honoured | documented ([#27](https://github.com/UlanziTechnology/Ulanzi-U-Clock-TC002/issues/27)) |
+| Animated GIF | plays and loops, per-frame delays honoured; two frames with `DelayTime` 5.0 alternate on the panel by themselves — the sanctioned time-multiplexing for one page, no Mac-side rotation | documented ([#27](https://github.com/UlanziTechnology/Ulanzi-U-Clock-TC002/issues/27)), **measured** live 2026-09-21 |
+| Envelope element spellings | `text[]` entries are objects — `{content, fontHeight, x, y, color}` (+ optional `align`/`valign`/`rect`/`charSpacing`); `image[]` entries are objects — `{data: "data:image/gif;base64,…", position: [x, y]}`. A plain string in `text[]` and a bare base64 payload in `image[]` — string or data URL — each render nothing: the page stays black | **measured** (live TC002, appVer 1.1.1, 2026-09-21) |
 | Update rate | full-screen `db` frames at about 8 per second over HTTP work | documented (atomicstack CUSTOM-APP, from PixDeck) |
 | Transitions | switching between apps is an instant cut, with no effects | documented ([#30](https://github.com/UlanziTechnology/Ulanzi-U-Clock-TC002/issues/30)) |
 
@@ -295,10 +296,16 @@ resampling. — **inferred** from the documented no-scaling rule.
    50 % brightness. E7 finds the lowest grey that still shows. — **inferred**
 3. **Give it motion.** A small animated GIF, such as a twinkling `ClaudeStar` on
    ≤ 3 GIF layers, or a re-push every minute, makes the page read as live rather
-   than as a picture. — **inferred**
-4. **Scroll on the Mac.** The anecdote banner needs a marquee: re-push every
-   0.4–0.5 s with the raster shifted (the PixDeck method). A GIF marquee cannot
-   carry long text within 50 frames. — **documented** method, **inferred** fit.
+   than as a picture. — **inferred**. A GIF built with ImageIO must nest each
+   frame's `DelayTime` inside `kCGImagePropertyGIFDictionary`; at the top level
+   ImageIO drops it silently and the panel flips frames at full rate. —
+   **measured** 2026-09-21
+4. **Scroll on the Mac.** The anecdote banner needs a marquee: pre-render the
+   scrolling raster into a GIF and let the panel play it by itself — the
+   device-side route that the 2026-09-21 session proved. The re-push every
+   0.4–0.5 s with the raster shifted (the PixDeck method) is the fallback; a
+   GIF marquee cannot carry long text within 50 frames. — **documented**
+   method, GIF route **measured** 2026-09-21
 
 E6 is a ready-made side-by-side check of this approach against the built-in
 screens.

@@ -114,14 +114,90 @@ import Testing
         }
     }
 
+    // -- the measured envelope (live TC002, 2026-09-21) -----------------------
+
+    // A string in text[] renders nothing on appVer 1.1.1 — the page goes
+    // black. The element is an object, with the doc's defaults: 10 px, white,
+    // placed by align/valign until x/y say otherwise.
+    @Test func textElementsAreObjectsWithTheDocDefaults() throws {
+        let json = try UlanziScene(
+            frames: [UlanziFrame(duration: 5, text: [UlanziText(content: "hi")])]
+        ).jsonObject()
+        let text = json["text"] as? [[String: Any]]
+        #expect(text?.count == 1)
+        #expect(text?[0]["content"] as? String == "hi")
+        #expect(text?[0]["fontHeight"] as? Int == 10)
+        #expect(text?[0]["x"] as? Int == UlanziText.autoPosition)
+        #expect(text?[0]["y"] as? Int == UlanziText.autoPosition)
+        #expect(text?[0]["color"] as? String == "#FFFFFF")
+    }
+
+    @Test func textPlacementSizeAndColourCarryThrough() throws {
+        let text = UlanziText(
+            content: "42%", fontHeight: .small, x: 0, y: 1, color: UlanziColour(value: 0xD97757)
+        )
+        let json = try UlanziScene(frames: [UlanziFrame(duration: 5, text: [text])]).jsonObject()
+        let element = (json["text"] as? [[String: Any]])?[0]
+        #expect(element?["fontHeight"] as? Int == 5)
+        #expect(element?["x"] as? Int == 0)
+        #expect(element?["y"] as? Int == 1)
+        #expect(element?["color"] as? String == "#D97757")
+    }
+
+    // The image element is an object too: the payload rides a GIF data URL
+    // and carries its own top-left corner. Bare base64 — string or data URL —
+    // rendered nothing on the same firmware.
+    @Test func imageElementsAreDataUrlObjectsAtTheOrigin() throws {
+        let json = try UlanziScene(
+            frames: [UlanziFrame(duration: 5, image: [still])]
+        ).jsonObject()
+        let images = json["image"] as? [[String: Any]]
+        #expect(images?.count == 1)
+        #expect(images?[0]["data"] as? String == "data:image/gif;base64,a")
+        #expect(images?[0]["position"] as? [Int] == [0, 0])
+    }
+
+    @Test func anImageElementCarriesItsOwnCorner() throws {
+        let icon = UlanziImage(
+            base64: "a", isAnimated: false, frameCount: 1,
+            pixelSize: (16, 16), position: (12, 4)
+        )
+        let json = try UlanziScene(frames: [UlanziFrame(duration: 5, image: [icon])]).jsonObject()
+        let images = json["image"] as? [[String: Any]]
+        #expect(images?[0]["position"] as? [Int] == [12, 4])
+    }
+
+    // A face may hand over a GIF that already carries its own timing — two
+    // frames with a DelayTime each, alternating on the panel by itself. The
+    // kit does not parse the bytes: it validates the declared counts and
+    // ships the payload through to the wire untouched.
+    @Test func aPreTimedGifShipsThroughToTheWireUnchanged() throws {
+        let timedGif = UlanziImage(
+            base64: "R0lGODlh", isAnimated: true, frameCount: 2, pixelSize: (52, 16)
+        )
+        let json = try UlanziScene(
+            frames: [UlanziFrame(duration: 5, image: [timedGif])]
+        ).jsonObject()
+        let images = json["image"] as? [[String: Any]]
+        #expect(images?[0]["data"] as? String == "data:image/gif;base64,R0lGODlh")
+        #expect(images?[0]["position"] as? [Int] == [0, 0])
+    }
+
     // -- text sanitization ---------------------------------------------------
 
     @Test func nonAsciiTextIsSanitizedToPrintableAscii() throws {
         let frame = UlanziFrame(duration: 5, text: [UlanziText(content: "héllo")])
         let json = try UlanziScene(frames: [frame]).jsonObject()
-        // 'é' falls outside 0x20–0x7E; the encoder replaces it — assert the shape
-        let text = json["text"] as? [String]
-        #expect(text?[0].allSatisfy { $0.asciiValue != nil && (0x20...0x7E).contains($0.asciiValue!) } == true)
+        // 'é' falls outside 0x20–0x7E; the content inside the element is what
+        // is cleaned — the element's own shape stays.
+        let text = json["text"] as? [[String: Any]]
+        let content = text?[0]["content"] as? String
+        #expect(
+            content?.allSatisfy { character in
+                character.asciiValue.map { (0x20...0x7E).contains($0) } == true
+            } == true
+        )
+        #expect(text?[0]["fontHeight"] as? Int == 10)  // one element, still an object
     }
 
     // -- idle scene (D4) ------------------------------------------------------

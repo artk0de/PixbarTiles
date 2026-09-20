@@ -18,6 +18,13 @@ public struct UlanziColour: Sendable, Equatable, Hashable {
         let digits = hex.dropFirst(hex.hasPrefix("#") ? 1 : 0)
         self.value = UInt32(digits, radix: 16) ?? 0
     }
+
+    /// The `#RRGGBB` string a `text[]` element carries. The wire keeps two
+    /// spellings of this one vocabulary — `draw[]` commands carry the same
+    /// value packed — so each element names the form it was measured with.
+    var hex: String {
+        String(format: "#%06X", value & 0xFF_FF_FF)
+    }
 }
 
 extension Pixel {
@@ -81,23 +88,30 @@ public enum UlanziDraw: Sendable, Equatable {
 }
 
 /// One `image[]` entry. Declared metadata — the encoder validates against the
-/// measured limits (D7); the device enforces reality.
+/// measured limits (D7); the device enforces reality. The payload rides a GIF
+/// data URL, so a face can hand over a GIF that already carries its own
+/// timing (its frames' `DelayTime`s) and the panel plays it by itself.
 public struct UlanziImage: Sendable, Equatable {
     public let base64: String
     public let isAnimated: Bool
     public let frameCount: Int
     public let pixelSize: (width: Int, height: Int)
+    /// The element's top-left corner on the 52×16 panel; a full-screen page
+    /// sits at the origin.
+    public let position: (x: Int, y: Int)
 
     public init(
-        base64: String, isAnimated: Bool, frameCount: Int, pixelSize: (width: Int, height: Int)
+        base64: String, isAnimated: Bool, frameCount: Int,
+        pixelSize: (width: Int, height: Int), position: (x: Int, y: Int) = (0, 0)
     ) {
         self.base64 = base64
         self.isAnimated = isAnimated
         self.frameCount = frameCount
         self.pixelSize = pixelSize
+        self.position = position
     }
 
-    /// Hand-written: the tuple stored property keeps Equatable from being
+    /// Hand-written: the tuple stored properties keep Equatable from being
     /// synthesized for the struct.
     public static func == (lhs: UlanziImage, rhs: UlanziImage) -> Bool {
         lhs.base64 == rhs.base64
@@ -105,22 +119,54 @@ public struct UlanziImage: Sendable, Equatable {
             && lhs.frameCount == rhs.frameCount
             && lhs.pixelSize.width == rhs.pixelSize.width
             && lhs.pixelSize.height == rhs.pixelSize.height
+            && lhs.position.x == rhs.position.x
+            && lhs.position.y == rhs.position.y
     }
 
-    var jsonObject: Any {
-        // The bare base64 payload — the one part the device cannot do without.
-        // The element spelling around it (durations, frame counts) is the one
-        // wire detail no phase-3 capture pins; a face shipping a positioned or
-        // timed image pins it against a real exchange first.
-        base64
+    /// The measured element spelling (live TC002, appVer 1.1.1, 2026-09-21):
+    /// a bare base64 payload — string or data URL — renders nothing; the
+    /// object with `data` and `position` renders.
+    var jsonObject: [String: Any] {
+        [
+            "data": "data:image/gif;base64,\(base64)",
+            "position": [position.x, position.y],
+        ]
     }
 }
 
 public struct UlanziText: Sendable, Equatable {
-    public var content: String
+    /// At or below this, `x`/`y` hand placement to `align`/`valign`
+    /// (research §2.2).
+    public static let autoPosition = -1000
 
-    public init(content: String) {
+    public var content: String
+    public var fontHeight: UlanziFontHeight
+    public var x: Int
+    public var y: Int
+    public var color: UlanziColour
+
+    public init(
+        content: String,
+        fontHeight: UlanziFontHeight = .large,
+        x: Int = UlanziText.autoPosition,
+        y: Int = UlanziText.autoPosition,
+        color: UlanziColour = .white
+    ) {
         self.content = content
+        self.fontHeight = fontHeight
+        self.x = x
+        self.y = y
+        self.color = color
+    }
+
+    var jsonObject: [String: Any] {
+        [
+            "content": content,
+            "fontHeight": fontHeight.rawValue,
+            "x": x,
+            "y": y,
+            "color": color.hex,
+        ]
     }
 }
 
@@ -143,7 +189,7 @@ public struct UlanziFrame: Sendable, Equatable {
         var object: [String: Any] = ["duration": duration]
         if !draw.isEmpty { object["draw"] = draw.map(\.jsonObject) }
         if !image.isEmpty { object["image"] = image.map(\.jsonObject) }
-        if !text.isEmpty { object["text"] = text.map(\.content) }
+        if !text.isEmpty { object["text"] = text.map(\.jsonObject) }
         return object
     }
 }
@@ -228,8 +274,14 @@ public struct UlanziScene: Sendable, Equatable {
             }
         }
         var object = frame.jsonObject
-        if let text = object["text"] as? [String] {
-            object["text"] = text.map(Self.printableASCII)
+        if let text = object["text"] as? [[String: Any]] {
+            object["text"] = text.map { element in
+                var element = element
+                if let content = element["content"] as? String {
+                    element["content"] = Self.printableASCII(content)
+                }
+                return element
+            }
         }
         return object
     }

@@ -507,9 +507,6 @@ func testModel(
     // allowed to ask, and a default of `.notDetermined` would have every test
     // in this target pass or fail depending on the hour it was run at.
     focusStatus: any FocusStatusReading = StubFocusStatus(access: .authorized),
-    // Empty, so no test acquires a reaction to a Focus change it did not ask
-    // for: the pairing is the app's wiring rather than a property of a model.
-    focusGated: [FocusGatedConnector] = [],
     // Nil, so no test acquires an opinion about the clock's indicator lamps it
     // did not ask for: a model built without one leaves both corners alone.
     vpnLamps: VPNLampDisplay? = nil,
@@ -591,7 +588,6 @@ func testModel(
         pasteboard: pasteboard,
         alerts: alerts,
         focusStatus: focusStatus,
-        focusGated: focusGated,
         vpnLamps: vpnLamps,
         vpnPresence: vpnPresence,
         now: now,

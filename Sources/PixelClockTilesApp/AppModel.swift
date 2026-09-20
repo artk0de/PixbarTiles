@@ -459,21 +459,9 @@ final class AppModel: ObservableObject {
     private let focusStatus: any FocusStatusReading
     /// The clock every tile's window is read against.
     private let now: @Sendable () -> Date
-    /// Connectors whose place in the clock's loop depends on which Focus is on,
-    /// and how to ask about each.
-    ///
-    /// Injected rather than discovered from the registry, because `Connector`
-    /// says nothing about a Focus and should not: `PixelClockKit` does not know
-    /// what one is, and the whole point of the gate being a closure is that it
-    /// stays that way.
-    private let focusGated: [FocusGatedConnector]
-    /// The Focus the last poll saw, so this one can tell that it changed.
-    ///
-    /// Nil until the first poll, which is what stops a launch from counting as
-    /// a change — the launch already delivers what it owes through
-    /// `deliverWhatTheLaunchOwes`, and a second delivery on the same turn would
-    /// be a duplicate push for nothing.
-    private var lastSeenFocus: ActiveFocusMode?
+    /// What every tile's policy said the last time it was asked, so only a
+    /// change is acted on.
+    private var verdicts = TileVerdicts()
     /// Whether a microphone the user cares about is capturing.
     private let microphone: MicrophoneGate
     private var timers: [TileKey: Task<Void, Never>] = [:]
@@ -599,7 +587,6 @@ final class AppModel: ObservableObject {
         pasteboard: NSPasteboard = .general,
         alerts: any BatteryWarningPresenting,
         focusStatus: any FocusStatusReading,
-        focusGated: [FocusGatedConnector] = [],
         vpnLamps: VPNLampDisplay? = nil,
         vpnPresence: VPNPresence = VPNPresence(),
         now: @escaping @Sendable () -> Date = Date.init,
@@ -629,7 +616,6 @@ final class AppModel: ObservableObject {
         self.anecdotes = anecdotes
         self.alerts = alerts
         self.focusStatus = focusStatus
-        self.focusGated = focusGated
         self.vpnLamps = vpnLamps
         self.vpnPresence = vpnPresence
         self.now = now
@@ -718,7 +704,9 @@ final class AppModel: ObservableObject {
         registry.register(
             ClaudeUsageConnector(
                 reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document),
-                showsNow: { ClaudeFocusAudience.shows(focusStatus) }
+                // The tile's policy decides now; the connector never gates
+                // itself.
+                showsNow: { true }
             )
         )
 
@@ -744,7 +732,8 @@ final class AppModel: ObservableObject {
         let weather = OpenMeteoSource(transport: transport)
         let claude = ClaudeUsageConnector(
             reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document),
-            showsNow: { ClaudeFocusAudience.shows(focusStatus) }
+            // The tile's policy decides now; the connector never gates itself.
+            showsNow: { true }
         )
         let buildSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
             // The TC002 branch of the runtime route: the schedule's slot gets a
@@ -840,11 +829,6 @@ final class AppModel: ObservableObject {
             // The same reading of macOS the tiles' Focus rules are read from,
             // so the two cannot answer differently about the same moment.
             focusStatus: focusStatus,
-            focusGated: [
-                FocusGatedConnector(id: ClaudeUsageConnector.appName) {
-                    ClaudeFocusAudience.shows(focusStatus)
-                },
-            ],
             // The first clock's own lamp custody, over the same device the
             // connectors write through. Indicators do not go into the loop, so
             // they contend with nothing that does.
@@ -1307,22 +1291,21 @@ final class AppModel: ObservableObject {
     /// being un-refreshed until its lifetime runs out, so a Sleep that started
     /// at midnight would leave the number lit until a quarter past.
     ///
-    /// Only on a CHANGE. Asking every minute would re-push an unchanged app
-    /// sixty times an hour, and re-retract one that is already gone.
-    /// Internal rather than private so the suite can pose a switch directly.
-    /// The single caller is `poll()`, which is where the minute hand is.
-    func reactToAFocusChange() {
-        let current = focusStatus.activeMode
-        defer { lastSeenFocus = current }
-        guard let before = lastSeenFocus, before != current else { return }
-
-        for gated in focusGated {
-            if gated.shows() {
-                if let key = selectedKey(gated.id) { runNow(key) }
-            } else if let key = selectedKey(gated.id) {
-                retract(key)
-            }
+    /// Only a CHANGE is acted on, so the minute hand costs nothing when
+    /// nothing moved. Internal rather than private so the suite can pose a
+    /// switch directly; the callers are the Focus watcher, `poll()` — which is
+    /// also the hour hand — and, from B19, a tile save.
+    func reconcileTiles() {
+        let focus = currentFocus
+        let hour = currentHour
+        var now: [TileKey: Bool] = [:]
+        for record in tiles.all() where record.key.connectorId != VPNConnector.id {
+            guard let policy = policy(of: record.key), !policy.isPaused else { continue }
+            now[record.key] = policy.runs(in: focus, atHour: hour)
         }
+        let change = verdicts.update(now)
+        for key in change.left { retract(key) }
+        for key in change.arrived where !isAudible(key.connectorId) { runNow(key) }
     }
 
     /// Starts the two watchers that make the corners follow the machine
@@ -1344,10 +1327,10 @@ final class AppModel: ObservableObject {
         focusWatcher.start { [weak self] in
             Task { @MainActor in
                 // Both, and in this order. The Focus decides which corners are
-                // allowed to say anything at all, and it is also what decides
-                // whether the Claude app belongs in the loop — which until now
-                // was answered only on the poll's minute.
-                self?.reactToAFocusChange()
+                // allowed to say anything at all, and it is also what every
+                // tile's Focus rule is read against — which until now was
+                // answered only on the poll's minute.
+                self?.reconcileTiles()
                 self?.refreshVPNIndicators()
             }
         }
@@ -1579,7 +1562,7 @@ final class AppModel: ObservableObject {
         // is waiting out a connector's own cadence — up to five minutes to
         // appear when work starts, and a whole lifetime to leave when Sleep
         // does.
-        reactToAFocusChange()
+        reconcileTiles()
         // The safety net under the two watchers rather than the way the corners
         // normally move. Both of those are event-driven and neither is
         // guaranteed — a Focus watch needs Full Disk Access it may not have,

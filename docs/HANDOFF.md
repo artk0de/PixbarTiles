@@ -925,3 +925,69 @@ What later tasks owe:
   loan. No phase owns it yet.
 - `ClaudeUsageConnector.showsNow` and `Failure.outOfFocus` were removed in
   phase 4 (lane C had already landed), so nothing is owed there.
+
+## PixelClockTiles Phase 5 — the UI: what it leaves for the hardware
+
+The panel learned about clocks. `MenuPanel` is assembled from its parts now —
+the `ClockSwitcher` (hidden while one clock is configured), a
+`ClockStatusBlock` over the SELECTED clock, one `TileRow` per tile stored on
+it, the `AddTileMenu` rendering the reasons `TileCatalogue.availability`
+answers with, and the last row — and the surface switch gained the detail
+branch, which carries the `TileKey` it was opened for: the shared
+`TilePolicyEditor` beside the tile's own block. `selectedClockId` is a stored
+defaults key, remembered across launches, and the glyph's mirror re-reads the
+selection the moment the selection moves, so the mark answers for the selected
+clock alone (D7). The launch fallback is retired: `ClockStore.firstClock()`
+keeps the first clock and invents none, the migration writes nothing on a
+fresh install, and a launch with nothing stored shows "No clocks yet" with
+"Add clock…" opening the Clocks section (D6). The settings sheet gained the
+Clocks section where the address field was — add by address over the dual
+probe, add from discovery, rename, remove — and lost the weather section,
+whose place and switch live on the weather tile (D8). Tile actions are named
+by tile now: pausing a TC002 tile marks its page idle and never deletes it
+(D4), removing one posts the empty-body delete the knob answers to (phase-3
+A9), and removal of a whole clock releases its TC002 pages through the
+session's teardown.
+
+Audit results at close: `switchDiyApp` — no matches (D3 still holds). The only
+wire deletes are the two empty-body posts (`AwtrixDevice`, `UlanziDevice`);
+no `{}` JSON body anywhere. Full suite green with the phase's tests counted,
+zero warnings, and no commit in this phase touched `MenuPanel.swift` or
+`SettingsSheet.swift` before the switch-over's own.
+
+What only a person at the hardware can settle:
+
+1. **Both clocks on the desk.** The switcher moves between them, each clock's
+   rows are its own, and the battery line appears on the AWTRIX and never on
+   the TC002 — whose status says Checking… because no `ClockHealth` exists for
+   it yet.
+2. **Removing a TC002 tile with the knob parked on its page.** The deleted-
+   page effect (E4) is now reachable from the panel: the row's confirmation is
+   the last thing in front of the empty-body POST.
+3. **The policy editor against the real Focus modes.** With Full Disk Access
+   on a signed build, entering and leaving Work flips the row's held-by-Focus
+   badge on the tiles whose rule keeps them out of Work.
+4. **The empty state and the upgrade.** A fresh defaults domain boots to "No
+   clocks yet" and stores nothing; an install upgraded across the phase — the
+   old `deviceHost` key present — still migrates into its one clock, marker
+   written last.
+
+What later tasks owe:
+
+- The Clocks section's "Found on the network" list is wired but unfed: the
+  model does not yet publish the merged Bonjour browse + UDP broadcast list
+  the plan's architecture names. `addClock(from:)` and the
+  `UlanziBroadcastListener` are ready; the publisher is the missing piece.
+- The place search lost its surface with `WeatherSettings` (D8). Its home is
+  beside the weather tile's own block in the detail; until it lands, the
+  place is typed as a pair.
+- The VPN tile's detail draws the shared policy editor but no `VPNTileBlock`:
+  which VPN, which lamp, which colour have no UI surface yet. The block and
+  the palette are built and tested; the wiring is what is owed.
+- The due-time label left the panel with the connector row: a row carries its
+  result and its hold badge, and "when" has no surface. Say so if it is
+  missed.
+- The panel observes ONE monitor and one browser, injected at launch; the
+  status VALUES read the selected clock through the model. If battery
+  staleness on a selection switch matters, the app shell owes the observed
+  monitor swapping with the selection.

@@ -162,32 +162,40 @@ cover banner (1792x1024) whose wordmark is illegible below roughly 64pt, under
 CC BY-NC-SA; the firmware itself serves an **empty** `/favicon.ico` — HTTP 200,
 zero bytes — and 404s every other asset path. Both were checked, not assumed.
 
-So the mark is drawn: `Scripts/MakeIcon.swift` renders a dark slab with a 32x8
-LED panel, generated at bundle time into git-ignored `build/`, which keeps binary
-art out of the repository and makes the design reviewable as code. Run it with
+So the mark is the user's own pixel-art clock: `Scripts/MakeIcon.swift` sets the
+approved `UserClock` map — the menu bar glyph's single home, compiled into the
+app target AND into the generator, so the shipped art and the tested map cannot
+drift apart — on the dark circular badge its source art sits on, the badge
+having been dropped only for the tiny bar. Everything is generated at bundle
+time into git-ignored `build/`, which keeps binary art out of the repository
+and makes the design reviewable as code. Run it with
 `swiftc Sources/PixelClockTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift
--o build/icon-maker && build/icon-maker` — the menu bar glyph's map is compiled
-from the app target — and look at `build/icon/preview-*.png`.
+-o build/icon-maker && build/icon-maker` and look at
+`build/icon/preview-appicon-*.png`.
 
-Three rules inside it, each of which was arrived at by rendering and looking:
+Rules inside it, each of which was arrived at by rendering and looking:
 
-- Lit pixels come from a hash of their coordinates, never a random source, so two
-  runs are byte-identical and a diff in the art means a design change.
 - One master at 1024, resampled down for every other size. Drawing simplified
-  art per size was tried first and lost: the resampled wordmark still reads at
-  32px, the directly-drawn one aliases into noise. The comparison sheet stays in
-  the generator's previews as the record.
-- The menu bar glyph is a separate, far coarser drawing, and a template image —
-  macOS throws away its colour, so it must work as a silhouette. It is the body
-  with a display cut out of it and lit pixels inside, on a **30x18** canvas:
-  the bar caps an item's height at its own (~18pt, so ~36 physical pixels on a
-  Retina display, and that is the whole detail budget) but does not cap its
-  width, so the width is where the room is. `@2x` and `@3x` are emitted and
-  macOS picks by display scale; a larger file does not buy a larger glyph.
-- Online and offline are two glyphs — a screen with pixels, a dark screen — not
-  one glyph plus a badge. The other three candidate styles stay in the generator
-  behind `SHIPPED_STYLE`, because the comparison sheet is what settled the
-  choice and re-deciding should mean rendering them again, not arguing.
+  art per size was tried first and lost: the resampled clock still reads at
+  32px, the directly-drawn one aliases into noise. The comparison sheet stays
+  in the generator's previews as the record.
+- Clock pixels stay pixels: the map rides on the badge at a whole art-pixel
+  scale, centred on whole device pixels, so the icon itself never resamples
+  the art — only the badge, its sheen and its halo are smooth. The dark
+  palette is the source of truth; Finder and the Dock put the icon on light
+  ground, where the light frame carries the silhouette.
+- The menu bar glyph is the bare clock in colour, NOT a template — a template
+  is macOS DISCARDING the colour, and the four approved palettes are what the
+  glyph is. One art pixel is one point on a 21x18 canvas (the bar caps an
+  item's height, not its width); `@2x` and `@3x` are emitted and macOS picks
+  by display scale, so a larger file does not buy a larger glyph.
+- Online and offline are two palettes, not one drawing plus a badge: offline
+  dims the sliders to grey and takes the sparkles out.
+
+The alternative treatments of the candidates stay in
+`icons-candidates/menubar/MakeMenuBarCandidates.swift`, because the comparison
+sheet is what settled the choice and re-deciding should mean rendering them
+again, not arguing.
 
 ## Voices
 

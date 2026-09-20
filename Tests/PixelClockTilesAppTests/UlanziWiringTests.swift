@@ -6,12 +6,6 @@ import Testing
 
 private let okEnvelope = Data(#"{"code":200,"message":"ok"}"#.utf8)
 
-private func drawnScene(colour: Pixel) -> UlanziScene {
-    var canvas = PixelCanvas()
-    canvas.fill(colour)
-    return UlanziScene(frames: [UlanziFrame(duration: 5, draw: [canvas.drawCommands()])])
-}
-
 /// Writes one clock record where `live()` will find it, in an installation
 /// whose migration has already run — the shape a manual TC002 record arrives
 /// in: the AWTRIX legacy keys are old history, the record is the present.
@@ -27,13 +21,16 @@ private func openWiringDefaults() throws -> (UserDefaults, String) {
 }
 
 @Suite struct UlanziWiringTests {
-    @Test @MainActor func liveRoutesTC002ClockRecordsToAUlanziSession() async throws {
+    // The TC002 record's slot in the schedule is the Ulanzi session, and the
+    // pause event reaches the wire through it: the idle-frame upsert that
+    // keeps the page in the knob cycle (D4). Under the stopgap this POST
+    // never happened — the slot answered every call with a skip, so a
+    // configured TC002 was never probed and never pushed anything.
+    @Test @MainActor func theTC002RecordDrivesTheUlanziSessionThroughItsScheduleSlot() async throws {
         let (defaults, suite) = try openWiringDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
-        try persist(
-            ClockRecord(name: "desk", model: .ulanziTC002, address: "192.0.2.9"),
-            in: defaults
-        )
+        let tc002 = ClockRecord(name: "desk", model: .ulanziTC002, address: "192.0.2.9")
+        try persist(tc002, in: defaults)
         let transport = StubTransport(body: okEnvelope)
 
         let subject = AppModel.live(
@@ -43,17 +40,25 @@ private func openWiringDefaults() throws -> (UserDefaults, String) {
                 .appendingPathComponent("ulanzi-\(UUID().uuidString).json")
         )
 
-        let ulanzi = try #require(subject.ulanzi)
-        let result = await ulanzi.deliver(
-            UlanziDelivery(scene: drawnScene(colour: .white)), toTile: "weather"
-        )
+        subject.setPaused(true, tile: TileKey(clockId: tc002.id, connectorId: "weather"))
 
-        #expect(result == .delivered)
-        let posts = transport.requests.filter {
-            $0.httpMethod == "POST" && $0.url?.path == "/api/custom"
+        #expect(await waitUntil {
+            transport.requests.contains { request in
+                request.httpMethod == "POST"
+                    && request.url?.query == "name=pct-weather"
+                    && (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())
+                        as? [String: Any])?["draw"] != nil
+            }
+        })
+        // The idle frame is the single dim dot: one filled circle.
+        let idle = transport.requests.last {
+            $0.httpMethod == "POST" && $0.url?.query == "name=pct-weather"
         }
-        #expect(posts.count == 1)
-        #expect(posts.first?.url?.query == "name=pct-weather")
+        let body = try #require(idle?.httpBody)
+        let json = try #require(
+            try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        #expect((json["draw"] as? [[String: Any]])?.first?["dfc"] != nil)
     }
 
     @Test @MainActor func liveKeepsAwtrixRoutingUntouched() async throws {
@@ -74,7 +79,6 @@ private func openWiringDefaults() throws -> (UserDefaults, String) {
                 .appendingPathComponent("ulanzi-\(UUID().uuidString).json")
         )
 
-        #expect(subject.ulanzi == nil)
         // The phase-2 session is what the lamps go through — the same shape as
         // before this phase, and the proof that the AWTRIX route survived.
         subject.refreshLamps()
@@ -84,40 +88,5 @@ private func openWiringDefaults() throws -> (UserDefaults, String) {
                     .filter { $0.hasPrefix("/api/indicator") }
             ) == ["/api/indicator1", "/api/indicator3"]
         })
-    }
-
-    @Test @MainActor func disabledConnectorKeepsItsPageAliveWithTheIdleFrame() async throws {
-        let (defaults, suite) = try openWiringDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-        try persist(
-            ClockRecord(name: "desk", model: .ulanziTC002, address: "192.0.2.9"),
-            in: defaults
-        )
-        let transport = StubTransport(body: okEnvelope)
-        let subject = AppModel.live(
-            defaults: defaults,
-            transport: transport,
-            anecdoteStore: FileManager.default.temporaryDirectory
-                .appendingPathComponent("ulanzi-\(UUID().uuidString).json")
-        )
-
-        subject.setEnabled(false, for: StubConnector(id: "weather"))
-
-        // D4: paused, never deleted — the page answers with the idle frame and
-        // keeps its place in the knob cycle.
-        #expect(await waitUntil {
-            transport.requests.contains {
-                $0.httpMethod == "POST" && $0.url?.query == "name=pct-weather"
-            }
-        })
-        let idle = transport.requests.first {
-            $0.httpMethod == "POST" && $0.url?.query == "name=pct-weather"
-        }
-        let body = try #require(idle?.httpBody)
-        let json = try #require(
-            try JSONSerialization.jsonObject(with: body) as? [String: Any]
-        )
-        // The idle frame is the single dim dot: one filled circle.
-        #expect((json["draw"] as? [[String: Any]])?.first?["dfc"] != nil)
     }
 }

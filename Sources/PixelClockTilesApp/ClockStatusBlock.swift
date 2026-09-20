@@ -70,6 +70,17 @@ enum DeviceStatusLine {
         }
     }
 
+    /// The same three answers for a health that probes with /getBase: it has
+    /// no stats to carry in a `.online` DeviceState, so its answering state
+    /// is said here, in the words every other clock's row uses.
+    static func title(for answering: UlanziClockHealth.Answering) -> String {
+        switch answering {
+        case .notAsked: "Checking…"
+        case .answering: "Connected"
+        case .unreachable: "Disconnected"
+        }
+    }
+
     static func colour(for state: DeviceState) -> Color {
         switch state {
         case .unknown: .secondary

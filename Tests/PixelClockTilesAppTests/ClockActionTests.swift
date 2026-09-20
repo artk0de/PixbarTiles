@@ -157,15 +157,17 @@ private let emptyIdentity = UlanziIdentity(
         anecdoteStore: FileManager.default.temporaryDirectory
             .appendingPathComponent("clock-action-\(UUID().uuidString).json")
     )
-    let ulanzi = try #require(subject.ulanzi)
-    var canvas = PixelCanvas()
-    canvas.fill(.white)
-    _ = await ulanzi.deliver(
-        UlanziDelivery(scene: UlanziScene(frames: [
-            UlanziFrame(duration: 5, draw: [canvas.drawCommands()])
-        ])),
-        toTile: "weather"
-    )
+    // A page is on the clock: the pause path's idle-frame push claimed its
+    // name. Removal presupposes that state.
+    subject.setPaused(true, tile: TileKey(clockId: tc002.id, connectorId: "weather"))
+    #expect(await waitUntil {
+        transport.requests.contains { request in
+            request.httpMethod == "POST"
+                && request.url?.query == "name=pct-weather"
+                && (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())
+                    as? [String: Any])?["draw"] != nil
+        }
+    })
 
     subject.removeClock(tc002.id)
 

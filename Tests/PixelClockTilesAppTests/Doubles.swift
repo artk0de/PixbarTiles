@@ -586,7 +586,32 @@ func testModel(
         clocks: clocks,
         tiles: TileStore(defaults: defaults),
         makeSession: { clock in
-            sessions?[clock.id] ?? (clock.id == clocks.first?.id ? host : SpyHost())
+            if let injected = sessions?[clock.id] { return injected }
+            // A TC002 record gets the real slot over the fixture transport —
+            // the same wiring `live()` builds, so a test with a TC002 clock
+            // poses the schedule the app ships, not a spy's idea of it.
+            if clock.model == .ulanziTC002 {
+                let ulanziDevice = UlanziDevice(host: clock.address, transport: transport)
+                let slotTiles = TileStore(defaults: defaults)
+                return UlanziClockHost(
+                    session: UlanziClockSession(
+                        device: ulanziDevice,
+                        custody: UlanziCustody(
+                            device: ulanziDevice,
+                            record: UserDefaultsAppRecord(defaults: defaults),
+                            clockId: clock.id.uuidString
+                        )
+                    ),
+                    registry: registry,
+                    store: TileSettingsStore(defaults: defaults, clockId: clock.id),
+                    liveTiles: { [slotTiles, clockId = clock.id] in
+                        slotTiles.all()
+                            .filter { $0.key.clockId == clockId }
+                            .map(\.key.connectorId)
+                    }
+                )
+            }
+            return clock.id == clocks.first?.id ? host : SpyHost()
         },
         makeDeviceAndHistory: { clock in
             (
@@ -600,6 +625,11 @@ func testModel(
         device: device,
         relocate: relocate,
         registry: registry,
+        // The fixture health probes the same transport the slot pushes
+        // through, exactly as the shipped wiring does.
+        makeUlanziDevice: { clock in
+            UlanziDevice(host: clock.address, transport: transport)
+        },
         probe: probe,
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: uploads
@@ -942,6 +972,7 @@ func modelOverRealHost(
         makeDeviceAndHistory: { _ in (device, InMemoryBatteryHistoryStore()) },
         device: device,
         registry: registry,
+        makeUlanziDevice: { _ in nil },
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: InMemoryUploadedIconStore()
         ),

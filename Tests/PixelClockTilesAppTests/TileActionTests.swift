@@ -78,10 +78,17 @@ private let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5
 // nothing visible and leave it turning.
 @Test @MainActor func removingATileOnTheTC002PostsTheEmptyBodyDelete() async throws {
     let (transport, subject, key) = try liveTC002()
-    // The page is on the clock: its name was claimed by the one delivery a
-    // running tile makes. Removal presupposes that state.
-    let ulanzi = try #require(subject.ulanzi)
-    _ = await ulanzi.deliver(UlanziDelivery(scene: plainScene()), toTile: "weather")
+    // The page is on the clock: its name was claimed by the pause path's
+    // idle-frame push. Removal presupposes that state.
+    subject.setPaused(true, tile: key)
+    #expect(await waitUntil {
+        transport.requests.contains { request in
+            request.httpMethod == "POST"
+                && request.url?.query == "name=pct-weather"
+                && (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())
+                    as? [String: Any])?["draw"] != nil
+        }
+    })
 
     subject.removeTile(key)
 
@@ -121,12 +128,6 @@ private func liveTC002() throws -> (StubTransport, AppModel, TileKey) {
         key: key, policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600)
     )])
     return (transport, subject, key)
-}
-
-private func plainScene() -> UlanziScene {
-    var canvas = PixelCanvas()
-    canvas.fill(.white)
-    return UlanziScene(frames: [UlanziFrame(duration: 5, draw: [canvas.drawCommands()])])
 }
 
 // MARK: - Reorder

@@ -1354,6 +1354,7 @@ private func modelWithARealAnecdoteConnector(
         makeDeviceAndHistory: { _ in (device, InMemoryBatteryHistoryStore()) },
         device: device,
         registry: registry,
+        makeUlanziDevice: { _ in nil },
         installer: CatalogueIconInstaller(
             device: device, transport: StubTransport(), uploads: InMemoryUploadedIconStore()
         ),

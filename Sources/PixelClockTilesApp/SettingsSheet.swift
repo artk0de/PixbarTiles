@@ -50,7 +50,7 @@ struct SettingsSheet: View {
                         name: clock.name,
                         model: modelName(clock.model),
                         address: clock.address,
-                        status: DeviceStatusLine.title(for: model.deviceState(of: clock.id))
+                        status: model.statusLine(of: clock)
                     )
                 },
                 discovered: discovery.found,

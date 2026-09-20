@@ -42,31 +42,15 @@ protocol ConnectorRunning: Sendable {
 extension AwtrixClockSession: ConnectorRunning {}
 
 /// The app's view of a TC002 clock — what the panel and the settings may ask
-/// of one. The caller-side shape of `ConnectorRunning`, typed on the Ulanzi
-/// scene: pages go out per tile, and there is no borrow-and-restore, because
-/// a TC002 owns nothing device-wide.
+/// of one. The event half of `UlanziClockHost`, which conforms to it where
+/// the type is declared: pages go out per tile, and there is no
+/// borrow-and-restore, because a TC002 owns nothing device-wide. The schedule
+/// half lives on `ConnectorRunning`, which the same slot also answers.
 protocol UlanziConnectorRunning: Sendable {
     func deliver(_ output: UlanziDelivery, toTile tileId: String) async -> RunResult
     func markIdle(tileId: String) async -> RunResult
-    /// Startup: stale page names deleted first, live tiles registered.
-    func sweep(liveTiles: [String]) async
     func tileRemoved(_ tileId: String) async
     func shutdown() async
-}
-
-extension UlanziClockSession: UlanziConnectorRunning {}
-
-/// The `ConnectorRunning` the shell holds when the clock is not an AWTRIX
-/// one. Every answer is a skip and nothing reaches the wire: the schedule
-/// that drives this protocol does not exist for a TC002, and the multi-clock
-/// shell that replaces this stopgap is phase 4's work.
-struct NoClockHost: ConnectorRunning {
-    func maintain(connectorId: String) async -> MaintenanceResult { .skipped }
-    func runOnce(connectorId: String) async -> RunResult { .skipped }
-    func deliver(_ output: AwtrixDelivery) async -> RunResult { .skipped }
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
-    func restoreDeviceState(borrowedBy connectorId: String?) async {}
-    var indicators: IndicatorCustody? { nil }
 }
 
 /// The anecdotes the menu can look back over.
@@ -284,7 +268,7 @@ final class AppModel: ObservableObject {
             defaults.set(selectedClockId?.uuidString, forKey: Self.selectedClockKey)
             // The glyph answers for the selected clock alone, and it answers
             // when the selection moves — not at the next poll (D7).
-            isDeviceOnline = selectedClockId.flatMap { healths[$0]?.isOnline } ?? false
+            isDeviceOnline = answerForSelectedClock()
         }
     }
     /// Whether nothing is configured: the panel's "No clocks yet" state, which
@@ -451,11 +435,21 @@ final class AppModel: ObservableObject {
     /// than state.
     @Published private(set) var watchedMicrophones: [WatchedMicrophone]
 
-    /// The TC002 branch of the runtime route, or nil when no clock the app
-    /// drives is a TC002 one. Which clocks it is was `live()`'s decision, made
-    /// once per launch; the schedule itself holds a `NoClockHost` for such a
-    /// clock, and this is the real session beside it.
-    private(set) var ulanzi: (any UlanziConnectorRunning)?
+    /// One TC002 health per clock: its own `/getBase` probe, its own answer.
+    /// The AWTRIX clocks keep theirs in `healths` — a different object, for a
+    /// firmware with nothing to say beyond whether it is there.
+    private var ulanziHealths: [UUID: UlanziClockHealth] = [:]
+    /// Builds the device a TC002 clock's health probes. The device is the
+    /// same one the clock's own slot pushes through, so a health answer and a
+    /// page push cannot disagree about whether the clock is there.
+    private let makeUlanziDevice: @MainActor (ClockRecord) -> UlanziDevice?
+
+    /// The TC002 clock's slot for the named clock, or nil when that clock's
+    /// slot is an AWTRIX session — the cast is the model check, kept honest by
+    /// the factory that only ever builds a Ulanzi slot for a TC002 record.
+    private func ulanziSession(for clockId: UUID) -> (any UlanziConnectorRunning)? {
+        sessions[clockId] as? any UlanziConnectorRunning
+    }
     /// The dual probe behind Add by address: whichever body decodes names the
     /// model. Nil where no caller adds by address.
     private let probe: (@Sendable (String) async -> UlanziProbe.Detection)?
@@ -621,9 +615,10 @@ final class AppModel: ObservableObject {
         // clock is away.
         relocate: RelocatingHost? = nil,
         registry: ConnectorRegistry,
-        // Nil whenever no clock is a TC002 one — the default every existing
-        // caller keeps, and what `live()` passes when the settings name one.
-        ulanzi: (any UlanziConnectorRunning)? = nil,
+        // The device a TC002 clock's health probes — the same one its own
+        // slot pushes through. Nil for a caller that drives no TC002 clock,
+        // which is what every AWTRIX-only wiring answers.
+        makeUlanziDevice: @MainActor @escaping (ClockRecord) -> UlanziDevice?,
         // The dual probe an Add by address asks. Nil only in callers that
         // never add by address — `live()` wires the real one, over the same
         // transport every other request takes.
@@ -661,7 +656,7 @@ final class AppModel: ObservableObject {
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.registry = registry
-        self.ulanzi = ulanzi
+        self.makeUlanziDevice = makeUlanziDevice
         self.probe = probe
         self.installer = installer
         self.anecdotes = anecdotes
@@ -678,9 +673,16 @@ final class AppModel: ObservableObject {
         self.micSleep = micSleep
         for clock in self.clocks {
             sessions[clock.id] = makeSession(clock)
-            // A TC002 clock gets no health yet: its reachability is Phase 3's
-            // one-clock health object, whose initialiser here is still owed.
-            guard clock.model == .awtrix3 else { continue }
+            // A TC002 clock's health is its own: /getBase answering, and
+            // nothing else — no battery, no relocation, no stats to carry.
+            guard clock.model == .awtrix3 else {
+                if let device = makeUlanziDevice(clock) {
+                    ulanziHealths[clock.id] = UlanziClockHealth(
+                        clockId: clock.id, name: clock.name, device: device
+                    )
+                }
+                continue
+            }
             let wired = makeDeviceAndHistory(clock)
             healths[clock.id] = ClockHealth(
                 clock: clock,
@@ -792,14 +794,11 @@ final class AppModel: ObservableObject {
         // else below is per clock.
         let audio = SequentialAudioPlayer()
         let weather = OpenMeteoSource(transport: transport)
-        let buildSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
-            // The TC002 branch of the runtime route: the schedule's slot gets a
-            // host that answers every call with a skip, so the AWTRIX cadence
-            // never puts traffic on a clock whose firmware never asked for it.
-            // The real session is the Ulanzi one below, pushed by events.
-            if clock.model == .ulanziTC002 { return NoClockHost() }
-            // A registry per clock, so each clock's weather reads its own tile's
-            // place through the one shared source — which caches per place.
+        // A registry per clock, so each clock's weather reads its own tile's
+        // place through the one shared source — which caches per place. The
+        // same registry for both models: the connectors are the app's, the
+        // faces are the clock's.
+        let makeRegistry: @MainActor (ClockRecord) -> ConnectorRegistry = { clock in
             let registry = ConnectorRegistry()
             registry.register(anecdotes.connector)
             let place = StoredLocation(defaults: defaults, clockId: clock.id)
@@ -838,11 +837,47 @@ final class AppModel: ObservableObject {
                     )
                 )
             )
+            return registry
+        }
+        let buildSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
+            // The TC002 branch of the runtime route: the schedule's slot IS
+            // the Ulanzi session — the upsert per tile, the re-push-all
+            // recovery, the custody's start-up sweep — behind the one protocol
+            // the cadence drives. The cadence runs its pages like any other
+            // clock's; the firmware differences live inside the slot.
+            if clock.model == .ulanziTC002 {
+                let device = UlanziDevice(host: clock.address, transport: transport)
+                // Held by the closure rather than re-read: the tile list the
+                // start-up sweep sees is read at sweep time, and the store is
+                // the Sendable one the rest of the model already shares.
+                let slotTiles = TileStore(defaults: defaults)
+                return UlanziClockHost(
+                    session: UlanziClockSession(
+                        device: device,
+                        custody: UlanziCustody(
+                            device: device,
+                            // Durable, for the reason DeviceCustody's borrowed
+                            // overlays are durable: TC002 pages outlive this
+                            // process (D9), and a record that died with it
+                            // would leave the app guessing at what it owns.
+                            record: UserDefaultsAppRecord(defaults: defaults),
+                            clockId: clock.id.uuidString
+                        )
+                    ),
+                    registry: makeRegistry(clock),
+                    store: TileSettingsStore(defaults: defaults, clockId: clock.id),
+                    liveTiles: { [slotTiles, clockId = clock.id] in
+                        slotTiles.all()
+                            .filter { $0.key.clockId == clockId }
+                            .map(\.key.connectorId)
+                    }
+                )
+            }
             let store = TileSettingsStore(defaults: defaults, clockId: clock.id)
             let device = AwtrixDevice(host: clock.address, transport: transport)
             return AwtrixClockSession(
                 device: device,
-                registry: registry,
+                registry: makeRegistry(clock),
                 store: store,
                 audio: audio,
                 iconInstaller: CatalogueIconInstaller(
@@ -861,24 +896,6 @@ final class AppModel: ObservableObject {
                     defaults: defaults, clockId: clock.id
                 )
             )
-        }
-        // The TC002 clock's real session, when the settings name such a clock:
-        // one Ulanzi device, custody, and the registry whose connectors render
-        // the tile pages (weather, Claude usage — D6 leaves the anecdote face
-        // to a later phase). Pushed by events, never by the schedule.
-        var ulanziSession: (any UlanziConnectorRunning)?
-        if let tc002 = clocks.first(where: { $0.model == .ulanziTC002 }) {
-            let ulanziDevice = UlanziDevice(host: tc002.address, transport: transport)
-            let custody = UlanziCustody(
-                device: ulanziDevice,
-                // Durable, for the reason DeviceCustody's borrowed overlays are
-                // durable: TC002 pages outlive this process (D9), and a record
-                // that died with it would leave the app guessing at what it
-                // owns.
-                record: UserDefaultsAppRecord(defaults: defaults),
-                clockId: tc002.id.uuidString
-            )
-            ulanziSession = UlanziClockSession(device: ulanziDevice, custody: custody)
         }
         // One session per clock, built once here — the model's own
         // `makeSession` hands these back, and init builds no others.
@@ -911,7 +928,9 @@ final class AppModel: ObservableObject {
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
-            ulanzi: ulanziSession,
+            makeUlanziDevice: { clock in
+                UlanziDevice(host: clock.address, transport: transport)
+            },
             probe: { host in await UlanziProbe.detect(host: host, transport: transport) },
             installer: installer,
             anecdotes: anecdotes.connector,
@@ -1017,10 +1036,11 @@ final class AppModel: ObservableObject {
         if wasRunning && paused {
             giveBackDeviceState(key)
             // On the TC002 branch a paused tile's page stays in the knob cycle
-            // on the idle frame — paused, never deleted (D4).
-            if clock(key.clockId)?.model == .ulanziTC002 {
-                Task { await ulanzi?.markIdle(tileId: key.connectorId) }
-            }
+            // on the idle frame — paused, never deleted (D4). The slot names
+            // the branch: an AWTRIX session fails the cast, and there the
+            // restore above is what answers the pause.
+            let tc002 = ulanziSession(for: key.clockId)
+            Task { await tc002?.markIdle(tileId: key.connectorId) }
         }
     }
 
@@ -1162,11 +1182,11 @@ final class AppModel: ObservableObject {
         } else {
             retract(key)
             // The TC002's page is the app's own doing, so removal takes it
-            // back through the session's custody — the empty-body delete that
-            // is the measured contract (phase-3 A9).
-            if clock(key.clockId)?.model == .ulanziTC002 {
-                Task { await ulanzi?.tileRemoved(key.connectorId) }
-            }
+            // back through the slot's custody — the empty-body delete that
+            // is the measured contract (phase-3 A9). The cast is the model
+            // check; an AWTRIX slot has nothing to take back here.
+            let tc002 = ulanziSession(for: key.clockId)
+            Task { await tc002?.tileRemoved(key.connectorId) }
         }
     }
 
@@ -1314,11 +1334,18 @@ final class AppModel: ObservableObject {
         return (tileName(of: record), record.config)
     }
 
-    /// A clock's reachability, as the status surfaces draw it. A clock with
-    /// no health — the TC002 today — answers `.unknown`: nothing known, not
-    /// nothing there.
-    func deviceState(of clockId: UUID) -> DeviceState {
-        healths[clockId]?.monitor.state ?? .unknown
+    /// A clock's reachability, as the Clocks section's row says it. Each
+    /// clock through its own health: a TC002 by `/getBase` answering, an
+    /// AWTRIX one by the monitor's stats poll — the same three words for
+    /// both, and `.unknown`'s "Checking…" for a health that has not been
+    /// asked yet.
+    func statusLine(of clock: ClockRecord) -> String {
+        switch clock.model {
+        case .ulanziTC002:
+            DeviceStatusLine.title(for: ulanziHealths[clock.id]?.answering ?? .notAsked)
+        case .awtrix3:
+            DeviceStatusLine.title(for: healths[clock.id]?.monitor.state ?? .unknown)
+        }
     }
 
     /// One menu entry per connector the registry holds, plus the lamp's —
@@ -1413,11 +1440,11 @@ final class AppModel: ObservableObject {
     /// model does it the moment it is asked.
     func removeClock(_ id: UUID) {
         guard let victim = clock(id) else { return }
-        // The TC002's pages are the app's own doing: the session's teardown
-        // releases every owned name — the empty-body delete per page.
-        if victim.model == .ulanziTC002 {
-            Task { await ulanzi?.shutdown() }
-        }
+        // The TC002's pages are the app's own doing: the slot's teardown
+        // releases every owned name — the empty-body delete per page. The
+        // slot is resolved before the reload below drops it.
+        let tc002 = ulanziSession(for: id)
+        Task { await tc002?.shutdown() }
         try? tiles.replaceAll(tiles.all().filter { $0.key.clockId != id })
         try? clockStore.replaceAll(clockStore.all().filter { $0.id != id })
         reloadClocks()
@@ -1602,16 +1629,12 @@ final class AppModel: ObservableObject {
         // The one caller that resumes. A cadence describes the gap BETWEEN
         // deliveries, and every OTHER caller of `reschedule` is a settings
         // change, where the gap the user just chose starts now. One schedule
-        // per stored tile whose clock has a session; a tile whose connector
-        // the registry does not know gets no timer inside `reschedule`, and
-        // the VPN tiles get their own path in B18.
-        //
-        // A TC002 clock has no health — its pages are pushed by the Ulanzi
-        // session, never by this cadence — so its tiles get no timer and the
-        // AWTRIX loop is never pointed at a clock whose firmware did not ask
-        // for it.
-        for record in tiles.all()
-        where sessions[record.key.clockId] != nil && healths[record.key.clockId] != nil {
+        // per stored tile whose clock has a session — whichever model the
+        // record names: the slot decides what a run means, an AWTRIX scene on
+        // one clock, an Ulanzi upsert on another. A tile whose connector the
+        // registry does not know gets no timer inside `reschedule`, and the
+        // VPN tiles get their own path in B18.
+        for record in tiles.all() where sessions[record.key.clockId] != nil {
             reschedule(record.key, resuming: true)
         }
         restockAtLaunch()
@@ -1936,10 +1959,17 @@ final class AppModel: ObservableObject {
         // one of them.
         //
         // Every clock at once, inside the budget one clock had: a second clock
-        // does not double what a quit may take.
+        // does not double what a quit may take. The TC002 slots take their
+        // pages back instead of restoring anything — a TC002 owns no global
+        // setting, and its pages are the app's own doing (D4: a quit leaves
+        // the knob cycle empty of them).
         await withTaskGroup(of: Void.self) { group in
             for session in sessions.values {
-                group.addTask { await session.restoreDeviceState(borrowedBy: nil) }
+                if let tc002 = session as? any UlanziConnectorRunning {
+                    group.addTask { await tc002.shutdown() }
+                } else {
+                    group.addTask { await session.restoreDeviceState(borrowedBy: nil) }
+                }
             }
         }
         // And the corners, for the same reason and in the same breath.
@@ -2009,19 +2039,26 @@ final class AppModel: ObservableObject {
         // not hold up the others' readings. Each health's poll carries its own
         // follow-up — the identity write and, when one is due, the move. One
         // task per health rather than a task group, whose isolation checker
-        // this pattern otherwise trips a compiler bug in.
-        let polls = Array(healths.values).map { health -> Task<Crossing, Never> in
-            Task { @MainActor in
-                let warning = await health.poll(at: now)
-                return Crossing(clock: health.name, warning: warning)
+        // this pattern otherwise trips a compiler bug in. Both health kinds
+        // poll in the same fan-out: an AWTRIX one returns a battery warning
+        // with its reading, a TC002 one always nil — nothing to cross.
+        var polls: [Task<(String, BatteryWarning?), Never>] = []
+        polls.append(
+            contentsOf: healths.values.map { health in
+                Task { @MainActor in (health.name, await health.poll(at: now)) }
             }
-        }
+        )
+        polls.append(
+            contentsOf: ulanziHealths.values.map { health in
+                Task { @MainActor in (health.name, await health.poll(at: now)) }
+            }
+        )
         var crossings: [Crossing] = []
         for task in polls {
-            let crossing = await task.value
-            if crossing.warning != nil { crossings.append(crossing) }
+            let (name, warning) = await task.value
+            if warning != nil { crossings.append(Crossing(clock: name, warning: warning)) }
         }
-        isDeviceOnline = selectedClockId.flatMap { healths[$0]?.isOnline } ?? false
+        isDeviceOnline = answerForSelectedClock()
         // The clock going down or coming back changes what is holding every
         // schedule, and this is what learns it. Without the refresh the panel
         // kept naming an hour right through an outage until the next beat — up
@@ -2180,6 +2217,21 @@ final class AppModel: ObservableObject {
                 self?.restores[restoreKey] = nil
             }
             sessions[id] = nil
+        }
+        // The healths follow the same list: a clock gone from the store has
+        // no answer left to give, and a TC002 new to it probes from the next
+        // poll on. (An AWTRIX clock added live still gets no health — its
+        // monitor needs the battery history wiring init does, and that debt
+        // is 5b's, not this one's.)
+        for id in healths.keys where !kept.contains(id) { healths[id] = nil }
+        for id in ulanziHealths.keys where !kept.contains(id) { ulanziHealths[id] = nil }
+        for clock in stored
+        where clock.model == .ulanziTC002 && ulanziHealths[clock.id] == nil {
+            if let device = makeUlanziDevice(clock) {
+                ulanziHealths[clock.id] = UlanziClockHealth(
+                    clockId: clock.id, name: clock.name, device: device
+                )
+            }
         }
         for clock in stored where sessions[clock.id] == nil {
             sessions[clock.id] = makeSession(clock)
@@ -2413,7 +2465,19 @@ final class AppModel: ObservableObject {
     /// all between launch and the first poll landing — and "not asked yet" is
     /// not "not there", which is the conflation `DeviceState` exists to
     /// prevent. Each clock answers for its own tiles only.
+    /// Whether the SELECTED clock is answering, across both health kinds —
+    /// the glyph reads one answer, whichever model the selection names.
+    private func answerForSelectedClock() -> Bool {
+        guard let id = selectedClockId else { return false }
+        if let ulanzi = ulanziHealths[id] { return ulanzi.isOnline }
+        return healths[id]?.isOnline ?? false
+    }
+
     private func clockIsUnreachable(_ clockId: UUID) -> Bool {
+        if let ulanzi = ulanziHealths[clockId] {
+            if case .unreachable = ulanzi.answering { return true }
+            return false
+        }
         guard let health = healths[clockId] else { return false }
         if case .offline = health.monitor.state { return true }
         return false

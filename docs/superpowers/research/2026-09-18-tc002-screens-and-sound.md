@@ -117,6 +117,13 @@ The API numbers the same groups. `/switchApp` takes `type` =
 - The switch is queued, "the switch happens on the next UI tick"
   ([atomicstack HTTP-API](https://github.com/atomicstack/tc002-customisation/blob/HEAD/HTTP-API.md#apiswitchdiyappnameapp--jump-to-a-custom-app)).
   — **documented**
+- The endpoint answers **POST only**: `GET /api/switchDiyApp?name=pct-duo`
+  returns `Error 404: Not Found`, the same query sent as POST returns the 200
+  with the index. — **measured** 2026-09-21
+- The sibling routes: upsert is `POST /api/custom?name=<name>` with the render
+  envelope as the body (`{"code":200,"message":"ok"}`); the list read is
+  `GET /api/customList` (§ 0). `GET /api/custom` — no such route — answers
+  404. — **measured** 2026-09-21
 
 So the user was inside an opened tool at L3 (the enabled tools on this clock are
 clock, weather, BUSY, tomato and soundlight, per the measured `getToolsConfig`),
@@ -238,6 +245,7 @@ and the PR #18 samples. The community figures were observed on this same firmwar
 | Colours | `#RRGGBB`, no alpha | documented (official) |
 | `image[]` | PNG or GIF data URL; still images up to 512×512, GIF up to 256×256 and ≤ 50 frames, base64 ≤ 60 KB; **clipped from the top-left, never scaled**; PNG alpha blended onto black; at most 6 images per app (≤ 3 GIF + ≤ 3 PNG) | documented (official) |
 | Animated GIF | plays and loops, per-frame delays honoured; two frames with `DelayTime` 5.0 alternate on the panel by themselves — the sanctioned time-multiplexing for one page, no Mac-side rotation | documented ([#27](https://github.com/UlanziTechnology/Ulanzi-U-Clock-TC002/issues/27)), **measured** live 2026-09-21 |
+| GIF frame structure | every frame must be a **full 52×16 image at (0,0)** under one global palette, no per-frame crops, no local tables. ImageIO crops frames to the changed region (`rect=(1,0,51,15)`, `(0,4,52,11)`, …) and relies on the decoder holding the previous frame; the stock decoder paints those sub-rects over the accumulated picture instead, and the page smears within seconds. A hand-assembled full-frame GIF renders pixel-stable | **measured** 2026-09-21 |
 | Envelope element spellings | `text[]` entries are objects — `{content, fontHeight, x, y, color}` (+ optional `align`/`valign`/`rect`/`charSpacing`); `image[]` entries are objects — `{data: "data:image/gif;base64,…", position: [x, y]}`. A plain string in `text[]` and a bare base64 payload in `image[]` — string or data URL — each render nothing: the page stays black | **measured** (live TC002, appVer 1.1.1, 2026-09-21) |
 | Update rate | full-screen `db` frames at about 8 per second over HTTP work | documented (atomicstack CUSTOM-APP, from PixDeck) |
 | Transitions | switching between apps is an instant cut, with no effects | documented ([#30](https://github.com/UlanziTechnology/Ulanzi-U-Clock-TC002/issues/30)) |
@@ -306,6 +314,28 @@ resampling. — **inferred** from the documented no-scaling rule.
    0.4–0.5 s with the raster shifted (the PixDeck method) is the fallback; a
    GIF marquee cannot carry long text within 50 frames. — **documented**
    method, GIF route **measured** 2026-09-21
+5. **Ship full-frame GIFs assembled by hand.** The smearing from § 2.2's
+   frame-structure row is not something to wait out: `Scripts/MakeTimedGif.py`
+   builds the GIF89a byte by byte — full 52×16 frames at (0,0), one global
+   palette, no local tables, `disposal=1` — with its own LZW encoder and a
+   pure-stdlib decoder for the animated icon, and is validated pixel-exact
+   against ImageIO as an independent decoder (44/44 frames of the live demo).
+   This is the reference path for every TC002 face the kit renders. —
+   **measured** 2026-09-21
+6. **Use a real pixel font, not rasterized vector text.** A vector font
+   rendered at 8× and thresholded onto the LED grid stayed unreadable on the
+   panel (the user's verdicts: «нельзя разобрать», «всратый — выдумывай не
+   свой»), and the firmware's own text route is ASCII-only (§ 2.2). The
+   working face is the X11 Fixed 5×7 (Sony, ISO10646-1, full Cyrillic),
+   trimmed to ASCII + U+0410–044F and vendored at
+   `Scripts/font5x7-cyrillic.bdf` (18 KB, 159 glyphs). Its Cyrillic «Т» ships
+   with a 3 px top bar shifted one pixel right (`0x70`) — patched in the
+   vendored file to the symmetric 5 px bar (`0xF8`). Layout numbers the panel
+   confirmed: a 5×7 glyph plus a 1 px space is a 6 px advance, so seven
+   characters fill the 42 px right of an 8 px icon column; two bands at rows
+   0–6 and 9–15 tile all 16 rows; a marquee row is clipped at x ≥ 8 so it
+   never covers the icon; some glyphs (`/`) descend below the baseline
+   (BBX 5 9 −2) and need canvas clipping. — **measured** 2026-09-21
 
 E6 is a ready-made side-by-side check of this approach against the built-in
 screens.

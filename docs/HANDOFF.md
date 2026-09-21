@@ -1012,9 +1012,30 @@ phase-3b checklist carried open:
   sanctioned time-multiplexing for one page — no Mac-side rotation — and a
   scrolling marquee is the same trick with a pre-rendered scrolling GIF, not a
   re-push loop.
+- The GIF the panel plays must carry **full frames**. ImageIO's writer crops
+  each frame to the changed region and relies on the decoder holding the
+  previous frame; the stock decoder paints those sub-rects over the
+  accumulated picture instead, and crossing marquees smear within seconds.
+  A hand-assembled full-frame GIF89a (one global palette, no local tables)
+  renders pixel-stable. The demo kit that proved it lives in `Scripts/`:
+  `MakeTimedGif.py` — byte-level GIF89a writer, own LZW, stdlib-only, ALSO
+  decodes the animated icon; validated pixel-exact against ImageIO (44/44
+  frames) — plus `font5x7-cyrillic.bdf`, the X11 Fixed 5×7 (Sony,
+  ISO10646-1) trimmed to ASCII + Cyrillic, its «Т» patched symmetric. The
+  panel-confirmed layout: 5×7 glyphs at a 6 px advance, two text bands
+  (rows 0–6 and 9–15), an 8 px icon column, marquee rows clipped at x ≥ 8.
+  Vector-font-to-grid rasterization is dead — the user rejected it twice.
+- `switchDiyApp` answers POST only; GET is 404. Upsert is
+  `POST /api/custom?name=<name>` with the envelope as the body; the list read
+  is `GET /api/customList`. — **measured** 2026-09-21
 
 What later tasks owe:
 
 - The bundled weather art in `Sources/PixelClockKit/Resources` is 8×8
   AWTRIX-era GIFs; the TC002 weather face wants 16×16 art. The new art is owed
   before that face ships — drawn by a person, not generated in passing.
+- The TC002 banner face (anecdotes, z.ai rows) builds on the full-frame
+  writer and the vendored 5×7 font from `Scripts/` — the pipeline the panel
+  accepted live on 2026-09-21. Porting it into the kit means: BDF parse →
+  RGB canvas → the same full-frame GIF assembly; keep the ImageIO
+  pixel-exact check as the test oracle.

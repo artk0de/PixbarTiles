@@ -8,9 +8,11 @@ import Foundation
 /// quota.rs, `zai-usage-tracker`'s zaiService.ts) — z.ai documents no usage
 /// API. Therefore: every field is optional, every extra field is ignored, an
 /// answer that is not JSON reads as empty rather than throwing, and the only
-/// names written down are the ones a live response has shown. A field a future
-/// response renames degrades to a missing field, which is the degradation this
-/// whole reading is built to survive.
+/// names written down are the ones a live response has shown — model ids
+/// excepted, which ride as the wire spells them while the guide's vocabulary
+/// in `ZaiUsage` recognises them without gating. A field a future response
+/// renames degrades to a missing field, which is the degradation this whole
+/// reading is built to survive.
 public enum ZaiUsageDecoder {
     /// The quota answer: level and windows, or an empty answer for one that
     /// said nothing placeable.
@@ -27,14 +29,17 @@ public enum ZaiUsageDecoder {
         )
     }
 
-    /// The model-usage answer: the period totals, or an empty answer.
+    /// The model-usage answer: the period totals and the per-model breakdown,
+    /// each half taken on its own — an answer missing one still gives up the
+    /// other, and an answer that is not JSON reads as empty.
     public static func totals(from data: Data) -> ZaiUsageTotals {
-        guard let usage = unwrapped(data)?["totalUsage"] as? [String: Any] else {
-            return ZaiUsageTotals()
-        }
+        let root = unwrapped(data)
+        let usage = root?["totalUsage"] as? [String: Any]
+        let rawModels = root?["modelData"] as? [String: Any] ?? [:]
         return ZaiUsageTotals(
-            modelCalls: whole(usage["totalModelCallCount"]),
-            tokens: whole(usage["totalTokensUsage"])
+            modelCalls: usage.flatMap { whole($0["totalModelCallCount"]) },
+            tokens: usage.flatMap { whole($0["totalTokensUsage"]) },
+            models: rawModels.compactMap(model)
         )
     }
 
@@ -102,6 +107,15 @@ public enum ZaiUsageDecoder {
         if let integer = value as? Int { return integer }
         if let double = value as? Double { return Int(double) }
         return nil
+    }
+
+    /// One model entry, placed if it can be. The id rides as the wire spells
+    /// it — the guide's vocabulary in `ZaiUsage` recognises names, it does
+    /// not gate them — and an entry that is not an object has no shape to
+    /// carry, so it is dropped by itself.
+    private static func model(_ raw: (key: String, value: Any)) -> ZaiUsageModelUsage? {
+        guard let fields = raw.value as? [String: Any] else { return nil }
+        return ZaiUsageModelUsage(id: raw.key, tokens: whole(fields["tokens"]))
     }
 
     /// When the window turns over. The wire shape is ASSUMED, not observed

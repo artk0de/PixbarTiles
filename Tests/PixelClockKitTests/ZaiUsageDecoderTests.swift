@@ -9,7 +9,10 @@ import Testing
 // has been seen to carry (tokn-provider-zai's quota.rs and zai-usage-tracker's
 // zaiService.ts are the two observations this suite stands on), tolerates
 // missing and extra fields everywhere, and drops what it cannot place instead
-// of failing the whole answer.
+// of failing the whole answer. The one deliberate widening: per-model usage
+// (`modelData`) is decoded keyed by the id AS THE WIRE SPELLS IT — the guide's
+// model names live in `ZaiUsage`'s vocabulary, which recognises but never
+// gates a key.
 
 /// The quota answer as the community trackers saw it: an envelope, a plan
 /// level, and one limit object per window — tokens in 5-hour and weekly
@@ -25,9 +28,10 @@ private let quotaAnswer = Data("""
 ]}}
 """.utf8)
 
-/// The model-usage answer, same envelope, the two totals the trackers read.
-/// Whatever else a model breakdown lives under is extra here — no field of it
-/// has been observed with a name, so none is pinned.
+/// The model-usage answer, same envelope, the two totals the trackers read
+/// and the per-model breakdown the guide's model names give meaning to. The
+/// entry shape is the one a live key has shown (`tokens`); everything else a
+/// model entry may one day carry is extra.
 private let modelUsageAnswer = Data("""
 {"data":{"totalUsage":{"totalModelCallCount":42,"totalTokensUsage":1234567},
   "modelData":{"glm-4.6":{"tokens":999}},"span":"7d"}}
@@ -126,9 +130,60 @@ private let modelUsageAnswer = Data("""
         #expect(totals.tokens == 1_234_567)
     }
 
-    @Test func aModelUsageAnswerMissingItsTotalsReadsAsEmpty() {
+    /// The per-model breakdown rides the same answer: one entry per model the
+    /// period used, its id as the wire spells it and the tokens it spent.
+    @Test func theModelUsageAnswerCarriesItsPerModelTokens() {
+        let totals = ZaiUsageDecoder.totals(from: modelUsageAnswer)
+
+        #expect(totals.models == [ZaiUsageModelUsage(id: "glm-4.6", tokens: 999)])
+    }
+
+    /// Every entry is carried, keyed or not by the vocabulary — the guide's
+    /// model names recognise, they do not gate — and an entry whose tokens are
+    /// missing still stands. A value that is not an object has no shape to
+    /// carry and is dropped by itself.
+    @Test func everyModelEntryIsCarriedRegardlessOfItsName() {
+        let mixed = Data("""
+        {"data":{"modelData":{
+          "glm-5.3-flash[1m]":{"tokens":7},
+          "some-future-model":{},
+          "glm-4.6":5,
+          "glm-4.7":{"tokens":12}}}}
+        """.utf8)
+
+        let totals = ZaiUsageDecoder.totals(from: mixed)
+
+        // A keyed answer has no order to promise — the entries compare as a set.
+        #expect(Set(totals.models) == [
+            ZaiUsageModelUsage(id: "glm-5.3-flash[1m]", tokens: 7),
+            ZaiUsageModelUsage(id: "some-future-model", tokens: nil),
+            ZaiUsageModelUsage(id: "glm-4.7", tokens: 12),
+        ])
+    }
+
+    /// A model-usage answer with no breakdown — or none that is an object —
+    /// reads as a reading with no models, the same empty answer as ever.
+    @Test func aModelUsageAnswerWithoutAModelBreakdownReadsAsModelless() {
+        let modelless = Data("""
+        {"data":{"totalUsage":{"totalModelCallCount":9,"totalTokensUsage":100}}}
+        """.utf8)
+
+        #expect(ZaiUsageDecoder.totals(from: modelless).models.isEmpty)
         #expect(ZaiUsageDecoder.totals(from: Data("{}".utf8)) == ZaiUsageTotals())
         #expect(ZaiUsageDecoder.totals(from: Data("[1,2]".utf8)) == ZaiUsageTotals())
+    }
+
+    /// The totals and the breakdown are two halves of one answer: a response
+    /// that carries only the breakdown still gives it up.
+    @Test func aBreakdownSurvivesTotalsGoingMissing() {
+        let onlyModels = Data("""
+        {"data":{"modelData":{"glm-4.6":{"tokens":999}}}}
+        """.utf8)
+
+        let totals = ZaiUsageDecoder.totals(from: onlyModels)
+
+        #expect(totals.modelCalls == nil)
+        #expect(totals.models == [ZaiUsageModelUsage(id: "glm-4.6", tokens: 999)])
     }
 
     // MARK: - The reading
@@ -148,6 +203,7 @@ private let modelUsageAnswer = Data("""
         #expect(reading.mcpMonthly?.percentUsed == 7)
         #expect(reading.totalModelCalls == 42)
         #expect(reading.totalTokens == 1_234_567)
+        #expect(reading.models == [ZaiUsageModelUsage(id: "glm-4.6", tokens: 999)])
         #expect(reading.observedAt == Date(timeIntervalSince1970: 1_726_000_100))
     }
 }

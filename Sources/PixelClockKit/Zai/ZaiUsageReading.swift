@@ -59,16 +59,38 @@ public struct ZaiUsageLimits: Sendable, Equatable {
     }
 }
 
-/// What the model-usage route said: the period totals. Any per-model
-/// breakdown it may also carry is extra here — no field of it has been
-/// observed with a name, so none is pinned.
+/// One model's share of the period, as the wire carried it: the id spelled
+/// the way `modelData` keyed it, and the tokens it spent. The entry shape is
+/// the one a live key has shown; anything else a model entry may one day
+/// carry is extra here.
+public struct ZaiUsageModelUsage: Sendable, Equatable, Hashable {
+    /// The model's id as the answer spelled it — `glm-4.6`,
+    /// `glm-5.3-flash[1m]` — never translated: `ZaiUsage.canonicalModel` is
+    /// the one that recognises a name, and recognition gates nothing.
+    public let id: String
+    /// What the model spent in the period, when the answer said.
+    public let tokens: Int?
+
+    public init(id: String, tokens: Int? = nil) {
+        self.id = id
+        self.tokens = tokens
+    }
+}
+
+/// What the model-usage route said: the period totals, and the per-model
+/// breakdown beside them — every entry the answer carried, named by the
+/// guide's vocabulary or not.
 public struct ZaiUsageTotals: Sendable, Equatable {
     public let modelCalls: Int?
     public let tokens: Int?
+    /// One entry per model the period used; the answer keys them, so no
+    /// order is promised. Empty when the answer carried no breakdown.
+    public let models: [ZaiUsageModelUsage]
 
-    public init(modelCalls: Int? = nil, tokens: Int? = nil) {
+    public init(modelCalls: Int? = nil, tokens: Int? = nil, models: [ZaiUsageModelUsage] = []) {
         self.modelCalls = modelCalls
         self.tokens = tokens
+        self.models = models
     }
 }
 
@@ -81,6 +103,8 @@ public struct ZaiUsageReading: Sendable, Equatable {
     public let mcpMonthly: ZaiUsageWindow?
     public let totalModelCalls: Int?
     public let totalTokens: Int?
+    /// The period's per-model usage, as the answer carried it.
+    public let models: [ZaiUsageModelUsage]
     /// When the reading was taken. Nil for a reading built from answers alone.
     public let observedAt: Date?
 
@@ -93,6 +117,7 @@ public struct ZaiUsageReading: Sendable, Equatable {
         self.mcpMonthly = limits.mcpMonthly
         self.totalModelCalls = totals.modelCalls
         self.totalTokens = totals.tokens
+        self.models = totals.models
         self.observedAt = observedAt
     }
 }

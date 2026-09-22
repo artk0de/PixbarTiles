@@ -78,21 +78,15 @@ struct TileRowLine: Equatable {
 }
 
 /// The mark each connector's tile wears — on the clock-settings grid's cards
-/// and wherever a tile is named beside its face. A table rather than a
-/// `Connector` member so the kit stays out of naming screen marks: the app
-/// reads its own dialect of SF Symbols, and a connector with no row here is
-/// drawn the "unknown app" mark rather than nothing.
+/// and wherever a tile is named beside its face.
+///
+/// A forwarder now, not a table. It WAS a table, beside the kit's own, and
+/// the two had drifted: z.ai was a bar chart on its store card and the
+/// "unknown app" mark on its clock card, because this copy had no z.ai case.
+/// One tile, two faces, depending on which window was looking. The table
+/// lives in `TilePresentation`, where the store already reads it.
 enum TileRowIcon {
     static func symbol(forConnectorId connectorId: String) -> String {
-        switch connectorId {
-        // The ids as the connectors spell them — `id` is an instance member
-        // on the scene connectors, and spelling it here is cheaper than
-        // building one to read it.
-        case "weather": return "cloud.sun"
-        case "claude": return "terminal"
-        case "anecdotes": return "text.bubble"
-        case VPNConnector.id: return "lock.shield"
-        default: return "app.dashed"
-        }
+        TilePresentation.of(connectorId: connectorId).icon
     }
 }

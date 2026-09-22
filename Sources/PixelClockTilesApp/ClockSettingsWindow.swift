@@ -257,11 +257,14 @@ private struct ClockTileCard: View {
     }
 
     private var resultLine: String? {
+        // `lastFailure(of:)` already falls back to this tile's own
+        // maintenance failure. The second lookup that used to sit under it
+        // read `lastMaintenanceFailure`, which is projected onto
+        // `AppModel.selectedClockId` — so on a card of any clock that is not
+        // the selected one it could only ever show ANOTHER clock's failure,
+        // and on the selected one it repeated what the line above had said.
         if let failure = model.lastFailure(of: key) {
             return TileRowLine.failureWords(failure)
-        }
-        if let restock = model.lastMaintenanceFailure[key.connectorId] {
-            return TileRowLine.failureWords(restock)
         }
         if model.hold(of: key) != nil { return "held" }
         return model.lastResult(of: key)

@@ -27,13 +27,27 @@ final class StoreModel {
     /// The shelf showing, or nil for All. Every assignment refiles the
     /// cards, so the sidebar's tap and a re-aim's reset both land at once.
     var category: TileCategory? {
-        didSet { rebuildNow() }
+        didSet {
+            // A refusal belongs to the card that earned it; another shelf is
+            // another question.
+            lastRefusal = nil
+            rebuildNow()
+        }
     }
     /// The tile the last successful add put on the clock — the first half
     /// of the two-step commit. The window sees it change and opens the tile
     /// settings on it; a tile added with defaults and never configured is
     /// the mistake this second step exists to prevent.
     private(set) var lastAdded: TileKey?
+    /// Why the last add did not happen, or nil when the last one did.
+    ///
+    /// `addTile` has always answered `.refused(reason)` — a lamp whose slot
+    /// is taken, a tile already on the clock — and the store dropped the
+    /// answer on the floor: the card stayed "+ Add", nothing moved, and
+    /// nothing said why. A VPN card is where it shows, because VPN tiles are
+    /// `.perKey` and so never reach the `.notListed` that draws an "Added"
+    /// card: pressing one twice was a silent no-op for ever.
+    private(set) var lastRefusal: String?
     private(set) var cards: [StoreCard] = []
 
     init(model: AppModel) {
@@ -77,11 +91,24 @@ final class StoreModel {
     /// is never added and forgotten.
     func add(_ card: StoreCard) {
         guard case .add = card.action, let clockId else { return }
-        if case .saved = model.addTile(card.candidate.connectorId, to: clockId) {
+        // Cleared first, so a refusal from a previous press cannot be read as
+        // this one's answer.
+        lastRefusal = nil
+        switch model.addTile(card.candidate.connectorId, to: clockId) {
+        case .saved:
             let key = TileKey(clockId: clockId, connectorId: card.candidate.connectorId)
             model.openDetail(for: key)
             lastAdded = key
+        case let .refused(reason):
+            lastRefusal = reason
         }
+    }
+
+    /// Takes the refusal off screen — the window calls this when the card
+    /// grid is re-aimed or the shelf changes, so a reason never outlives the
+    /// question it answered.
+    func clearRefusal() {
+        lastRefusal = nil
     }
 
     // MARK: - The projection

@@ -87,23 +87,61 @@ public struct TileCandidate: Hashable, Sendable {
         )
     }
 
-    /// The store's presentation, by connector id — one table, because a tile
-    /// that moved shelves or changed its line in one surface and not the
-    /// others would be two tiles wearing one name.
-    private static func presentation(for connectorId: String) -> (
-        category: TileCategory, icon: String, blurb: String
-    ) {
+    static func presentation(for connectorId: String) -> TilePresentation {
+        TilePresentation.of(connectorId: connectorId)
+    }
+}
+
+/// How a tile presents itself, wherever one is drawn: its shelf, its mark and
+/// its line.
+///
+/// ONE table, and it is public because the surfaces that need it are in the
+/// other module. There used to be two — this one, and the app's own
+/// `TileRowIcon` — and they had already drifted: the kit gave z.ai a bar
+/// chart, the app had no z.ai case at all and fell through to the "unknown
+/// app" mark, so one tile wore two faces depending on which window was
+/// looking at it. The doc on `TileCandidate` asserted they were the same
+/// table, which is the sort of claim only a shared definition can keep.
+public struct TilePresentation: Sendable, Equatable {
+    public let category: TileCategory
+    /// The SF Symbol the tile wears — on a store card, on a clock's card,
+    /// beside its name anywhere.
+    public let icon: String
+    /// The one line under the name on a store card.
+    public let blurb: String
+
+    public init(category: TileCategory, icon: String, blurb: String) {
+        self.category = category
+        self.icon = icon
+        self.blurb = blurb
+    }
+
+    /// What a connector looks like, by id. A connector with no entry wears
+    /// the "unknown app" mark rather than nothing, so a tile the table has
+    /// not heard of is still visibly a tile.
+    public static func of(connectorId: String) -> TilePresentation {
         switch connectorId {
         case WeatherConnector.appName:
-            return (.weather, "cloud.sun", "The sky where the clock is")
+            TilePresentation(
+                category: .weather, icon: "cloud.sun", blurb: "The sky where the clock is"
+            )
         case ClaudeUsageConnector.id:
-            return (.dev, "terminal", "Claude usage, from the status line")
+            TilePresentation(
+                category: .dev, icon: "terminal", blurb: "Claude usage, from the status line"
+            )
         case ZaiUsageConnector.connectorId:
-            return (.dev, "chart.bar", "z.ai usage, week to date")
+            TilePresentation(category: .dev, icon: "chart.bar", blurb: "z.ai usage, week to date")
         case "anecdotes":
-            return (.system, "text.bubble", "The day's anecdotes, spoken")
+            TilePresentation(
+                category: .system, icon: "text.bubble", blurb: "The day's anecdotes, spoken"
+            )
+        case VPNConnector.id:
+            TilePresentation(
+                category: .network, icon: "lock.shield",
+                blurb: "A watched VPN, as a lamp on the clock"
+            )
         default:
-            return (.dev, "app.dashed", "")
+            TilePresentation(category: .dev, icon: "app.dashed", blurb: "")
         }
     }
 }

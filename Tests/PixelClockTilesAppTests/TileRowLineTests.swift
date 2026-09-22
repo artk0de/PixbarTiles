@@ -84,9 +84,28 @@ import Testing
     // The mark a row opens with is the connector's own, and no two shipped
     // connectors share one.
     @Test func everyShippedConnectorHasItsOwnSymbol() {
-        let symbols = ["weather", "claude", "anecdotes", VPNConnector.id]
-            .map { TileRowIcon.symbol(forConnectorId: $0) }
-        #expect(Set(symbols).count == 4)
+        let symbols = [
+            "weather", "claude", "anecdotes", ZaiUsageConnector.connectorId, VPNConnector.id,
+        ].map { TileRowIcon.symbol(forConnectorId: $0) }
+        #expect(Set(symbols).count == 5)
+    }
+
+    // One table, not two. There were two — this one and the kit's — and they
+    // had drifted where it shows: z.ai was a bar chart on its store card and
+    // the "unknown app" mark on its clock card, so one tile wore two faces
+    // depending on which window was looking at it.
+    @Test func theRowAndTheStoreCardReadTheSameTable() {
+        for connectorId in [
+            "weather", "claude", "anecdotes", ZaiUsageConnector.connectorId, VPNConnector.id,
+            "a connector nobody has written",
+        ] {
+            #expect(
+                TileRowIcon.symbol(forConnectorId: connectorId)
+                    == TilePresentation.of(connectorId: connectorId).icon,
+                "\(connectorId) wears two marks"
+            )
+        }
+        #expect(TileRowIcon.symbol(forConnectorId: ZaiUsageConnector.connectorId) == "chart.bar")
     }
 
     // A connector the icon table does not know still gets a mark — the row

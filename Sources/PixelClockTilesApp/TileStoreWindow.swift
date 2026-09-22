@@ -48,6 +48,20 @@ struct TileStoreWindow: View {
                 .scrollContentBackground(.hidden)
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            // The refusal, where the press happened. `addTile` has always
+            // answered with a reason — a lamp's slot taken, a tile already on
+            // the clock — and the store used to drop it, leaving a card that
+            // did nothing and said nothing.
+            if let refusal = store.lastRefusal {
+                Label(refusal, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
         .frame(minWidth: 560, minHeight: 380)
         .glassWindow()
         // The two-step commit's second step: a successful add opens the

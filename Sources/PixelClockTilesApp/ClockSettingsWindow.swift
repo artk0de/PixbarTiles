@@ -207,6 +207,7 @@ private struct ClockTileCard: View {
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("\(name) settings")
+                .help("\(name) settings")
             }
             if let line = resultLine {
                 Text(line)
@@ -215,19 +216,26 @@ private struct ClockTileCard: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
-                Spacer()
-                if confirming {
-                    Button("Remove") { model.removeTile(key) }
-                        .controlSize(.small)
-                    Button("Cancel") { confirming = false }
-                        .controlSize(.small)
-                } else {
+            if confirming {
+                // Said, not just asked twice. The card used to draw a bare
+                // Remove beside a bare Cancel with nothing naming what was
+                // about to go — the same two buttons on every card of the
+                // grid, so the one being answered was whichever one the
+                // hand happened to be over.
+                InlineConfirmRow(
+                    question: "Remove \(name) from this clock?",
+                    onConfirm: { model.removeTile(key) },
+                    onCancel: { confirming = false }
+                )
+            } else {
+                HStack {
+                    Spacer()
                     Button { confirming = true } label: {
                         Image(systemName: "trash")
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Remove \(name)")
+                    .help("Remove \(name)")
                 }
             }
         }
@@ -279,35 +287,29 @@ private struct ClockGeneralTab: View {
     @ObservedObject var model: AppModel
     let settings: SettingsModel
 
-    @State private var name = ""
     @State private var renaming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if renaming {
-                TextField(clock.name, text: $name)
-                    .textFieldStyle(.roundedBorder)
-                HStack {
-                    Button("Save") {
-                        settings.renameClock(clock.id, to: name)
+                InlineRenameField(
+                    current: clock.name,
+                    onSave: {
+                        settings.renameClock(clock.id, to: $0)
                         renaming = false
-                    }
-                    .controlSize(.small)
-                    Button("Cancel") { renaming = false }
-                        .controlSize(.small)
-                }
+                    },
+                    onCancel: { renaming = false }
+                )
             } else {
                 HStack {
                     Text(clock.name).font(.title3)
                     Spacer()
-                    Button {
-                        name = clock.name
-                        renaming = true
-                    } label: {
+                    Button { renaming = true } label: {
                         Image(systemName: "pencil")
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Rename \(clock.name)")
+                    .help("Rename \(clock.name)")
                 }
             }
             Text("\(clock.model.spokenName) · \(clock.address)")

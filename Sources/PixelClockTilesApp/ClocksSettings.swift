@@ -163,16 +163,11 @@ struct ClocksSettings: View {
     }
 
     private func removalRow(for entry: ClockListEntry) -> some View {
-        HStack(spacing: 8) {
-            Text(Self.removalQuestion(for: entry.name))
-                .font(.caption)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button("Remove") { onRemove(entry.id) }
-                .controlSize(.small)
-            Button("Cancel") { confirmingID = nil }
-                .controlSize(.small)
-        }
+        InlineConfirmRow(
+            question: Self.removalQuestion(for: entry.name),
+            onConfirm: { onRemove(entry.id) },
+            onCancel: { confirmingID = nil }
+        )
     }
 }
 
@@ -187,21 +182,19 @@ private struct ClockEntryRow: View {
     let onRemove: () -> Void
 
     @State private var renaming = false
-    @State private var newName: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 if renaming {
-                    TextField(entry.name, text: $newName)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Save") {
-                        onRename(newName)
-                        renaming = false
-                    }
-                    .controlSize(.small)
-                    Button("Cancel") { renaming = false }
-                        .controlSize(.small)
+                    InlineRenameField(
+                        current: entry.name,
+                        onSave: {
+                            onRename($0)
+                            renaming = false
+                        },
+                        onCancel: { renaming = false }
+                    )
                 } else {
                     Text(entry.name).font(.callout)
                     Spacer()
@@ -213,6 +206,10 @@ private struct ClockEntryRow: View {
                     .buttonStyle(.borderless)
                     .disabled(canMoveUp == false)
                     .accessibilityLabel("Move \(entry.name) up")
+                    // The label a screen reader hears, said again where a
+                    // mouse can read it: four icon-only buttons in a row is
+                    // exactly where a tooltip earns its keep.
+                    .help("Move \(entry.name) up")
                     Button {
                         onMoveDown()
                     } label: {
@@ -221,19 +218,19 @@ private struct ClockEntryRow: View {
                     .buttonStyle(.borderless)
                     .disabled(canMoveDown == false)
                     .accessibilityLabel("Move \(entry.name) down")
-                    Button {
-                        newName = entry.name
-                        renaming = true
-                    } label: {
+                    .help("Move \(entry.name) down")
+                    Button { renaming = true } label: {
                         Image(systemName: "pencil")
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Rename \(entry.name)")
+                    .help("Rename \(entry.name)")
                     Button(action: onRemove) {
                         Image(systemName: "trash")
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Remove \(entry.name)")
+                    .help("Remove \(entry.name)")
                 }
             }
             Text("\(entry.model) · \(entry.address) · \(entry.status)")
@@ -250,11 +247,20 @@ private struct AddByAddressRow: View {
 
     @State private var address = ""
 
+    private func add() {
+        guard !address.isEmpty else { return }
+        onAdd(address)
+    }
+
     var body: some View {
         HStack {
             TextField("Add by address — 10.0.0.5", text: $address)
                 .textFieldStyle(.roundedBorder)
-            Button("Add") { onAdd(address) }
+                // Typing an address and pressing Return is what a person
+                // does; reaching for the button beside it afterwards was the
+                // step this field made them take.
+                .onSubmit(add)
+            Button("Add", action: add)
                 .controlSize(.small)
                 .disabled(address.isEmpty)
         }

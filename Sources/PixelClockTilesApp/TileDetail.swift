@@ -1,3 +1,4 @@
+import AppKit
 import PixelClockKit
 import SwiftUI
 
@@ -385,6 +386,11 @@ enum VPNTilePalette {
         ("Solar Yellow", "#FFE600"),
         ("Alarm Red", "#FF1744"),
     ].map { Entry(name: $0.0, hex: $0.1, colour: Color(hex: $0.1)) }
+
+    /// What a lamp blinks when its tunnel drops, unless the user picks
+    /// otherwise: the palette's own red, so the down colour is from the same
+    /// eight as the up one.
+    static let alarm = "#FF1744"
 }
 
 extension Color {
@@ -397,6 +403,22 @@ extension Color {
             red: Double((rgb >> 16) & 0xFF) / 255,
             green: Double((rgb >> 8) & 0xFF) / 255,
             blue: Double(rgb & 0xFF) / 255
+        )
+    }
+
+    /// Back to `#RRGGBB`, which is the only colour the config stores and the
+    /// only one the firmware is told.
+    ///
+    /// Through sRGB on purpose: a `ColorPicker` hands back whatever space the
+    /// system picker was in, and asking a display-P3 colour for its red
+    /// component without converting first is how a picked colour and a lit
+    /// lamp stop matching.
+    var hexString: String {
+        let srgb = NSColor(self).usingColorSpace(.sRGB) ?? NSColor(self)
+        let byte = { (channel: CGFloat) in Int((channel * 255).rounded()) }
+        return String(
+            format: "#%02X%02X%02X",
+            byte(srgb.redComponent), byte(srgb.greenComponent), byte(srgb.blueComponent)
         )
     }
 }

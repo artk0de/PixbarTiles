@@ -39,6 +39,14 @@ final class TileSettingsModel {
     /// rendered yet": a connector that cannot be read (a key missing, a feed
     /// down) says so rather than leaving a blank a reader reads as breakage.
     private(set) var previewNote: String?
+    /// Why the last save did not happen, or nil when it did.
+    ///
+    /// Every control in the window used to write `_ = model.saveTile(...)`,
+    /// and `saveTile` refuses: two lamp tiles claiming one corner at the same
+    /// moment come back with the sentence naming the overlap. Discarded, the
+    /// control sprang back to its old value with nothing said — the user's
+    /// own change, undone by an invisible hand.
+    private(set) var lastRefusal: String?
 
     init(model: AppModel, debounce: TimeInterval = 0.12) {
         self.model = model
@@ -74,6 +82,7 @@ final class TileSettingsModel {
             self.key = landed
             self.loadDraft()
             self.preview = nil
+            self.lastRefusal = nil
             self.schedulePreview()
         }
     }
@@ -116,7 +125,50 @@ final class TileSettingsModel {
     /// through untouched.
     func saveConfig() {
         guard let key, let draft else { return }
-        _ = model.saveTile(key: key, policy: model.storedPolicy(of: key) ?? TileDefaults.weather, config: .weather(draft))
+        save(
+            policy: model.storedPolicy(of: key) ?? TileDefaults.weather,
+            config: .weather(draft)
+        )
+    }
+
+    // MARK: - The saves every control funnels through
+
+    /// One tile's save, with the model's answer kept rather than dropped.
+    ///
+    /// Every control in the window writes through here — the policy editor,
+    /// the Claude metric, the lamp's four pickers — so a refusal is said once
+    /// in one place instead of once per control, or, as it was, never.
+    @discardableResult
+    func save(policy: TilePolicy, config: TileConfig?) -> Bool {
+        guard let key else { return false }
+        switch model.saveTile(key: key, policy: policy, config: config) {
+        case .saved:
+            lastRefusal = nil
+            return true
+        case let .refused(reason):
+            lastRefusal = reason
+            return false
+        }
+    }
+
+    /// The lamp block's Preset picker: a move to the key the new VPN names.
+    @discardableResult
+    func changeLampVPN(to vpnId: String) -> Bool {
+        guard let key else { return false }
+        switch model.changeLampVPN(key, to: vpnId) {
+        case .saved:
+            lastRefusal = nil
+            return true
+        case let .refused(reason):
+            lastRefusal = reason
+            return false
+        }
+    }
+
+    /// Takes a refusal off screen — the window calls it when the tile it is
+    /// open on changes, so a reason never outlives the tile that earned it.
+    func clearRefusal() {
+        lastRefusal = nil
     }
 
     private func edit(_ change: (inout WeatherTileConfig) -> Void) {

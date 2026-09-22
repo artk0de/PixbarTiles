@@ -133,20 +133,21 @@ private func tile(_ connector: String, on clock: ClockRecord) -> TileRecord {
     subject.show(loft.id)
 
     // The lamp is `.perKey`, so it never reaches the `.notListed` that draws
-    // an "Added" card: its card stays "+ Add" for ever. Pressing it a second
-    // time is refused by the model — and the store used to drop that answer
-    // on the floor, leaving a card that did nothing and said nothing.
+    // an "Added" card: its card stays "+ Add" for ever. One press per VPN in
+    // the catalogue goes through, and the one after that is refused — and
+    // the store used to drop that answer on the floor, leaving a card that
+    // did nothing and said nothing.
     guard let lamp = subject.cards.first(where: { $0.title == "VPN" }) else {
         Issue.record("the store did not offer the lamp: \(subject.cards)")
         return
     }
-    subject.add(lamp)
-    #expect(await waitUntil { model.tileRecords.count == 1 })
+    for _ in WatchedVPN.catalogue { subject.add(lamp) }
+    #expect(await waitUntil { model.tileRecords.count == WatchedVPN.catalogue.count })
     #expect(subject.lastRefusal == nil)
 
     subject.add(lamp)
-    #expect(subject.lastRefusal == "already on Loft")
-    #expect(model.tileRecords.count == 1)
+    #expect(subject.lastRefusal == "every VPN already has a tile on Loft")
+    #expect(model.tileRecords.count == WatchedVPN.catalogue.count)
 
     // A reason belongs to the card that earned it: another shelf is another
     // question.
@@ -170,8 +171,8 @@ private func tile(_ connector: String, on clock: ClockRecord) -> TileRecord {
         Issue.record("the store did not offer both cards: \(subject.cards)")
         return
     }
-    subject.add(lamp)
-    #expect(await waitUntil { model.tileRecords.count == 1 })
+    for _ in WatchedVPN.catalogue { subject.add(lamp) }
+    #expect(await waitUntil { model.tileRecords.count == WatchedVPN.catalogue.count })
     subject.add(lamp)
     #expect(subject.lastRefusal != nil)
 
@@ -179,5 +180,5 @@ private func tile(_ connector: String, on clock: ClockRecord) -> TileRecord {
     // clock must not leave the last card's reason standing under it.
     subject.add(claude)
     #expect(subject.lastRefusal == nil)
-    #expect(await waitUntil { model.tileRecords.count == 2 })
+    #expect(await waitUntil { model.tileRecords.count == WatchedVPN.catalogue.count + 1 })
 }

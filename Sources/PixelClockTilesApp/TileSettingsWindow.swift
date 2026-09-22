@@ -64,8 +64,19 @@ struct TileSettingsWindow: View {
                     case .common:
                         TilePolicyEditor(policy: Binding(
                             get: { stored },
-                            set: { _ = model.saveTile(key: key, policy: $0, config: value.config) }
+                            set: { settings.save(policy: $0, config: value.config) }
                         ))
+                    }
+                    // What the model said no to, under the controls that
+                    // asked. Two lamp tiles claiming one corner at the same
+                    // moment is the refusal a person actually meets, and it
+                    // used to be discarded: the picker sprang back and the
+                    // window said nothing at all.
+                    if let refusal = settings.lastRefusal {
+                        Label(refusal, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                 }
@@ -121,7 +132,7 @@ struct TileSettingsWindow: View {
                     metric: value.config?.claude ?? .weekly,
                     onMetric: { metric in
                         guard let stored = model.storedPolicy(of: key) else { return }
-                        _ = model.saveTile(key: key, policy: stored, config: .claude(metric))
+                        settings.save(policy: stored, config: .claude(metric))
                     }
                 )
                 // Machine-wide state, one file, not a tile's: whatever tile's
@@ -134,9 +145,80 @@ struct TileSettingsWindow: View {
                 outcome: model.lastZaiKeyOutcome,
                 onSaveKey: { model.saveZaiKey($0, for: key) }
             )
+        } else if key.connectorId == VPNConnector.id {
+            // Keyed on the connector id, not on `connector is VPNConnector`:
+            // a lamp tile's connector is built per VPN by the clock's own
+            // session, and a tile whose settings are being opened may not
+            // have one in hand at all. The block is the tile's, not the
+            // running instance's.
+            lampBlock(for: key, config: value.config)
         } else {
             EmptyView()
         }
+    }
+
+    /// The lamp tile's block: which VPN, which corner, which colour, and
+    /// what "down" looks like.
+    ///
+    /// The block itself has existed since the tile did, with its own tests,
+    /// and nothing ever built one — so a VPN tile was the one tile in the
+    /// app whose settings window had no settings in it.
+    @ViewBuilder
+    private func lampBlock(for key: TileKey, config: TileConfig?) -> some View {
+        if let lamp = config?.lamp {
+            VPNTileBlock(
+                presets: WatchedVPN.catalogue.map(\.displayName),
+                preset: WatchedVPN.preset(id: lamp.vpn)?.displayName ?? lamp.vpn,
+                slots: IndicatorSlot.allCases.map(\.lampTitle),
+                slot: lamp.slot.lampTitle,
+                colour: Color(hex: lamp.upColour),
+                downBehaviour: lamp.whenDown == .off ? .off : .blink,
+                onPreset: { name in
+                    guard let chosen = WatchedVPN.catalogue.first(where: { $0.displayName == name })
+                    else { return }
+                    settings.changeLampVPN(to: chosen.id)
+                },
+                onSlot: { title in
+                    guard let chosen = IndicatorSlot.allCases.first(where: { $0.lampTitle == title })
+                    else { return }
+                    saveLamp(lamp, on: key) { $0.slot = chosen }
+                },
+                onColour: { colour in
+                    saveLamp(lamp, on: key) { $0.upColour = colour.hexString }
+                },
+                onDownBehaviour: { behaviour in
+                    saveLamp(lamp, on: key) {
+                        switch behaviour {
+                        case .off:
+                            $0.whenDown = .off
+                        case .blink:
+                            // Its own colour, kept when there already is one:
+                            // a lamp toggled off and back on must not forget
+                            // what it blinked.
+                            if case .blink = $0.whenDown { break }
+                            $0.whenDown = .blink(VPNTilePalette.alarm)
+                        }
+                    }
+                }
+            )
+        } else {
+            // A lamp tile with no lamp on it — a record written before the
+            // config existed, or one whose config failed to decode. Says so
+            // instead of drawing four pickers over nothing.
+            Text("This tile has no lamp settings. Remove it and add it again.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func saveLamp(
+        _ lamp: VPNTileConfig, on key: TileKey, _ change: (inout VPNTileConfig) -> Void
+    ) {
+        guard let stored = model.storedPolicy(of: key) else { return }
+        var edited = lamp
+        change(&edited)
+        settings.save(policy: stored, config: .vpn(edited))
     }
 
     // MARK: - The preview column

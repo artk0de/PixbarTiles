@@ -1170,6 +1170,22 @@ final class AppModel: ObservableObject {
     func addTile(
         _ connectorId: String, to clockId: UUID, instance: String = "", config: TileConfig? = nil
     ) -> TileSaveOutcome {
+        // A lamp tile's key carries its VPN, and a store card has no VPN to
+        // give — it knows a connector. Left empty, every press landed on the
+        // same key and the second one was refused as a duplicate, which is
+        // why a clock could never carry more than one lamp however many VPNs
+        // the catalogue held.
+        if connectorId == VPNConnector.id, instance.isEmpty {
+            guard let free = freeLampVPN(on: clockId) else {
+                return .refused(
+                    "every VPN already has a tile on \(clocks.first { $0.id == clockId }?.name ?? "this clock")"
+                )
+            }
+            return addTile(
+                connectorId, to: clockId, instance: free.id,
+                config: config ?? .vpn(startingLamp(for: free, on: clockId))
+            )
+        }
         let key = TileKey(clockId: clockId, connectorId: connectorId, instance: instance)
         switch availability(of: connectorId, on: clockId) {
         case let .unavailable(reason):
@@ -1206,6 +1222,73 @@ final class AppModel: ObservableObject {
     /// Where a removed tile's settings wait for its return.
     private static func restoreKey(for key: TileKey) -> String {
         "tileConfigRestore.\(key.clockId.uuidString).\(key.connectorId).\(key.instance)"
+    }
+
+    // MARK: - The lamp tiles
+
+    /// The first VPN in the catalogue that no tile on this clock is watching.
+    ///
+    /// Nil is the ceiling: a user cannot describe a bundle and its tunnel
+    /// binaries, so the catalogue is written in code, and a tile per entry is
+    /// as far as a clock goes.
+    func freeLampVPN(on clockId: UUID) -> WatchedVPN? {
+        let watched = Set(
+            tiles.all()
+                .filter { $0.key.clockId == clockId && $0.key.connectorId == VPNConnector.id }
+                .map(\.key.instance)
+        )
+        return WatchedVPN.catalogue.first { !watched.contains($0.id) }
+    }
+
+    /// What a lamp tile starts as: a corner nobody has claimed, a palette
+    /// colour of its own, and dark when its tunnel drops.
+    ///
+    /// A colour per preset rather than one for all, so two lamps added in a
+    /// row are told apart on the clock before either is configured. Dark and
+    /// not blinking, because a lamp added to see whether a VPN is up should
+    /// not be the brightest thing in the room the moment it is not.
+    private func startingLamp(for vpn: WatchedVPN, on clockId: UUID) -> VPNTileConfig {
+        let taken = Set(
+            tiles.all()
+                .filter { $0.key.clockId == clockId && $0.key.connectorId == VPNConnector.id }
+                .compactMap { $0.config?.lamp?.slot }
+        )
+        let index = WatchedVPN.catalogue.firstIndex { $0.id == vpn.id } ?? 0
+        return VPNTileConfig(
+            vpn: vpn.id,
+            slot: IndicatorSlot.allCases.first { !taken.contains($0) } ?? .topRight,
+            upColour: VPNTilePalette.palette[index % VPNTilePalette.palette.count].hex,
+            whenDown: .off
+        )
+    }
+
+    /// Points a lamp tile at another VPN — the block's Preset picker.
+    ///
+    /// A move and not an edit, because the VPN is the tile's identity: it is
+    /// the key's instance, which is what the migration wrote, what the
+    /// restore key reads, and what keeps two lamps on one clock apart. The
+    /// policy, the lamp and the colour come across untouched, and the window
+    /// is re-aimed at the key the tile now lives under.
+    func changeLampVPN(_ key: TileKey, to vpnId: String) -> TileSaveOutcome {
+        guard var lamp = storedTile(key)?.config?.lamp, let policy = storedPolicy(of: key) else {
+            return .refused("this tile is no longer on the clock")
+        }
+        guard key.instance != vpnId else { return .saved }
+        let moved = TileKey(clockId: key.clockId, connectorId: key.connectorId, instance: vpnId)
+        if tiles.all().contains(where: { $0.key == moved }) {
+            let name = WatchedVPN.preset(id: vpnId)?.displayName ?? vpnId
+            let clock = clocks.first { $0.id == key.clockId }?.name ?? "this clock"
+            return .refused("\(name) already has a tile on \(clock)")
+        }
+        lamp.vpn = vpnId
+        // The old record goes first and without `removeTile`: that path files
+        // the config away under the old key for a re-add to find, and this
+        // config is not being put away — it is moving house.
+        timers.removeValue(forKey: key)?.cancel()
+        try? tiles.replaceAll(tiles.all().filter { $0.key != key })
+        let outcome = saveTile(key: moved, policy: policy, config: .vpn(lamp))
+        if case .saved = outcome, detailTileKey == key { openDetail(for: moved) }
+        return outcome
     }
 
     /// Stores what the tile detail says, unless a VPN lamp is claimed by

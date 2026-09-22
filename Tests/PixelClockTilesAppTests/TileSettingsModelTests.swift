@@ -238,3 +238,58 @@ private func weatherTile(on clock: ClockRecord) -> TileRecord {
     #expect(await waitUntil { subject.preview != nil })
     await model.teardown()
 }
+
+// MARK: - The refusals the window used to swallow
+
+// Every control wrote `_ = model.saveTile(...)`, and `saveTile` refuses: two
+// lamp tiles claiming one corner at the same moment come back with the
+// sentence naming the overlap. Dropped on the floor, the control sprang back
+// to its old value and the window said nothing — the user's own change undone
+// by an invisible hand.
+@Test @MainActor func aRefusedSaveIsKeptAndSaidRatherThanDropped() async {
+    let lamps = VPNTileMigration.tiles(on: desk.id)
+    let (model, _) = weatherModel(tiles: lamps)
+    let subject = TileSettingsModel(model: model, debounce: 0)
+    let amnezia = lamps[1].key
+    model.openDetail(for: amnezia)
+    #expect(await waitUntil { subject.key == amnezia })
+
+    // Onto the corner Pritunl already lights, in hours that overlap.
+    guard var lamp = model.storedTile(amnezia)?.config?.lamp,
+        let stored = model.storedPolicy(of: amnezia)
+    else {
+        Issue.record("the lamp tile lost its config")
+        return
+    }
+    lamp.slot = .topRight
+    #expect(subject.save(policy: stored, config: .vpn(lamp)) == false)
+    #expect(subject.lastRefusal?.contains("claim the top lamp") == true)
+    #expect(model.storedTile(amnezia)?.config?.lamp?.slot == .bottomRight)
+
+    // And a save that goes through takes the reason off screen: a sentence
+    // that outlives the question it answered is worse than none.
+    #expect(subject.save(policy: stored, config: model.storedTile(amnezia)?.config) == true)
+    #expect(subject.lastRefusal == nil)
+    await model.teardown()
+}
+
+// The Preset picker moves the tile to another key, and the facade follows it
+// rather than being left pointed at a tile that no longer exists.
+@Test @MainActor func changingTheLampsVPNMovesTheWindowWithIt() async {
+    let lamps = VPNTileMigration.tiles(on: desk.id).filter {
+        $0.config?.lamp?.vpn == WatchedVPN.pritunl.id
+    }
+    let (model, _) = weatherModel(tiles: lamps)
+    let subject = TileSettingsModel(model: model, debounce: 0)
+    model.openDetail(for: lamps[0].key)
+    #expect(await waitUntil { subject.key == lamps[0].key })
+
+    #expect(subject.changeLampVPN(to: WatchedVPN.amnezia.id) == true)
+
+    let moved = TileKey(
+        clockId: desk.id, connectorId: VPNConnector.id, instance: WatchedVPN.amnezia.id
+    )
+    #expect(await waitUntil { subject.key == moved })
+    #expect(subject.lastRefusal == nil)
+    await model.teardown()
+}

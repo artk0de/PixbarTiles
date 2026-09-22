@@ -550,7 +550,12 @@ func testModel(
     // Nil: the model answers Add by address with a refusal, which is what a
     // test that never adds a clock wants. A test that does says what the dual
     // probe found.
-    probe: (@Sendable (String) async -> UlanziProbe.Detection)? = nil
+    probe: (@Sendable (String) async -> UlanziProbe.Detection)? = nil,
+    // Nil: every clock answers from the one registry the connectors were
+    // handed in, which is what every test written before per-clock registries
+    // existed assumes. A test about a tile whose connector differs PER CLOCK
+    // — the preview's own question — names a factory here.
+    makeClockRegistry: (@MainActor (ClockRecord) -> ConnectorRegistry)? = nil
 ) -> AppModel {
     var clocks = clocks
     // Empty is a state now — the no-clocks install — and means no first clock
@@ -625,6 +630,7 @@ func testModel(
         device: device,
         relocate: relocate,
         registry: registry,
+        makeClockRegistry: makeClockRegistry,
         // The fixture health probes the same transport the slot pushes
         // through, exactly as the shipped wiring does.
         makeUlanziDevice: { clock in

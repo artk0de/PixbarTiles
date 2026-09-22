@@ -99,6 +99,18 @@ public struct WeatherConnector: Connector {
         try await source.reading(at: location())
     }
 
+    /// The sky at a place the CALLER names, rather than the one the tile has
+    /// stored.
+    ///
+    /// The preview's own entry. Its controls edit a draft, and the place is
+    /// one of them: read through `read()` the preview answered the SAVED
+    /// place, so typing a new city changed the words under the field and
+    /// nothing on the panel beside it. The source caches per coordinate, so
+    /// asking for a place twice costs one request.
+    public func reading(at place: Coordinates) async throws -> WeatherReading {
+        try await source.reading(at: place)
+    }
+
     public var awtrixFace: AwtrixFace<WeatherReading> {
         AwtrixFace { Self.output(for: $0, config: config()) }
     }
@@ -112,7 +124,13 @@ public struct WeatherConnector: Connector {
     /// Separated from `read()` so the drawing can be tested against a reading
     /// rather than against a network, as `ClaudeUsageConnector.output(for:)`
     /// already is.
-    static func output(for reading: WeatherReading, config: WeatherTileConfig) -> AwtrixDelivery {
+    /// Public for the same reason `canvas(for:config:)` is: the preview IS a
+    /// caller, and it draws the DRAFT rather than the stored config — through
+    /// this very function, so what it shows cannot be a different drawing
+    /// from what a poll sends.
+    public static func output(
+        for reading: WeatherReading, config: WeatherTileConfig
+    ) -> AwtrixDelivery {
         // The felt temperature is the tile's own answer now: shown when the
         // tile says so, and colouring the digits only while it does — the
         // colour is what that feels like, and digits coloured from a number

@@ -222,6 +222,20 @@ public struct PixelCanvas: Sendable, Equatable {
         }
     }
 
+    /// Another raster laid on this one at `origin`, clipped to the panel.
+    ///
+    /// The primitive a composed face needs: text that must not spill into the
+    /// columns an icon owns is drawn on a strip of its own and blitted here,
+    /// so the clip is the STRIP's width rather than the panel's. Doing it by
+    /// hand at each call site is how two faces end up clipping differently.
+    public mutating func draw(_ other: PixelCanvas, at origin: PixelPoint) {
+        for y in 0..<other.height {
+            for x in 0..<other.width {
+                paint(origin.x + x, origin.y + y, other[x, y])
+            }
+        }
+    }
+
     /// The device's draw vocabulary, painted onto this raster — how a scene's
     /// own commands become the preview's pixels. Text draws through the
     /// canvas's font at the command's height (`large` at the double scale),

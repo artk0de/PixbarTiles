@@ -41,6 +41,44 @@ private func weatherTile(on clock: ClockRecord) -> TileRecord {
     )
 }
 
+// The preview's own wiring question, and the defect it shipped with: it drew
+// through `AppModel.registry`, the app-level copy the MENUS are named from.
+// Those instances are inert on purpose — z.ai's is built `key: { nil }`,
+// Claude's carries no metric, the weather's is closed over the FIRST clock's
+// place — so a z.ai tile with a key saved previewed "check its key", a Claude
+// tile set to the day previewed the week, and a weather tile on the second
+// clock previewed the first clock's city. The connector a tile's own clock
+// RUNS is the only one whose output that clock would receive.
+@Test @MainActor func aTilesConnectorComesFromItsOwnClocksRegistry() async {
+    let clocksOwn = ConnectorRegistry()
+    clocksOwn.register(StubConnector(id: "weather", displayName: "The clock's own"))
+    let model = testModel(
+        connectors: [weatherConnector(over: SkyAndClockTransport(sky: skyWithAnswers))],
+        clocks: [desk],
+        makeClockRegistry: { _ in clocksOwn }
+    )
+
+    let fromTheClock = model.connector(for: TileKey(clockId: desk.id, connectorId: "weather"))
+    #expect(fromTheClock is StubConnector)
+    // And the app-level copy still answers for the menus, unchanged.
+    #expect(model.registry.connector(id: "weather") is WeatherConnector)
+    await model.teardown()
+}
+
+// A clock this model has no factory for — every hand-wired test, and the VPN
+// tile, which is not a `Connector` at all — falls back to the app-level
+// registry rather than answering nothing.
+@Test @MainActor func aClockWithNoFactoryFallsBackToTheAppLevelRegistry() async {
+    let model = testModel(
+        connectors: [weatherConnector(over: SkyAndClockTransport(sky: skyWithAnswers))],
+        clocks: [desk]
+    )
+
+    #expect(model.connector(for: TileKey(clockId: desk.id, connectorId: "weather")) != nil)
+    #expect(model.connector(for: TileKey(clockId: desk.id, connectorId: "nobody")) == nil)
+    await model.teardown()
+}
+
 @Test @MainActor func theWindowFollowsTheTileThePanelAimedItAt() async {
     let (model, _) = weatherModel(tiles: [weatherTile(on: desk)])
     let subject = TileSettingsModel(model: model, debounce: 0)
@@ -76,9 +114,27 @@ private func weatherTile(on clock: ClockRecord) -> TileRecord {
 // flips with it — different settings, different bytes, because the pixels
 // are the face's own.
 @Test @MainActor func flippingAControlFlipsThePreview() async {
-    let (model, _) = weatherModel(tiles: [weatherTile(on: desk)])
+    // On a TC002, because the humidity is a TC002 answer: the AWTRIX face is
+    // the temperature and its sky icon, and nothing about humidity reaches
+    // it. The preview used to draw the TC002 canvas for BOTH models, so this
+    // flipped on an AWTRIX tile too — and that was the preview lying about
+    // the clock it named underneath itself.
+    let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.7")
+    let transport = SkyAndClockTransport(sky: skyWithAnswers)
+    let key = TileKey(clockId: kitchen.id, connectorId: "weather")
+    let model = testModel(
+        connectors: [weatherConnector(over: transport), StubConnector(isAudible: false)],
+        transport: transport,
+        clocks: [kitchen],
+        tiles: [
+            TileRecord(
+                key: key,
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600),
+                config: .weather(WeatherTileConfig(place: aDesk))
+            )
+        ]
+    )
     let subject = TileSettingsModel(model: model, debounce: 0)
-    let key = TileKey(clockId: desk.id, connectorId: "weather")
 
     model.openDetail(for: key)
     #expect(await waitUntil { subject.preview != nil })
@@ -86,6 +142,25 @@ private func weatherTile(on clock: ClockRecord) -> TileRecord {
 
     subject.setShowHumidity(false)
     #expect(await waitUntil { subject.preview != nil && subject.preview != withHumidity })
+    await model.teardown()
+}
+
+// The other half of the same fact: an AWTRIX tile previews the AWTRIX face,
+// which is 32×8 and not the TC002's 52×16. The GIF says which panel it is for
+// in its own screen descriptor, so the check is on the bytes rather than on a
+// picture nobody can compare.
+@Test @MainActor func anAwtrixTilePreviewsTheAwtrixPanelNotTheTC002s() async {
+    let (model, _) = weatherModel(tiles: [weatherTile(on: desk)])
+    let subject = TileSettingsModel(model: model, debounce: 0)
+
+    model.openDetail(for: TileKey(clockId: desk.id, connectorId: "weather"))
+    #expect(await waitUntil { subject.preview != nil })
+
+    let bytes = [UInt8](subject.preview ?? Data())
+    // "GIF89a", then width low/high and height low/high.
+    #expect(bytes.count > 10)
+    #expect(bytes[6] == UInt8(AwtrixScene.panelWidth) && bytes[7] == 0)
+    #expect(bytes[8] == UInt8(AwtrixScene.panelHeight) && bytes[9] == 0)
     await model.teardown()
 }
 

@@ -98,6 +98,23 @@ public protocol Connector: Sendable {
     /// dispatches on the real type, and the default below keeps every
     /// connector that says nothing faceless, which is the D11 default.
     var ulanziFace: UlanziFace<Reading>? { get }
+    /// The AWTRIX delivery a PREVIEW may draw.
+    ///
+    /// A requirement rather than an extension member, for the reason
+    /// `ulanziFace` is one: an extension member is resolved statically, so a
+    /// connector's own override would be invisible to anything holding
+    /// `any Connector` — which the preview does.
+    ///
+    /// It exists because `produce()` is not always free. The anecdotes' read
+    /// POPS a prepared anecdote and retires it, so opening a tile's settings
+    /// window spent one — the user lost a joke to looking at a picture of it,
+    /// and on an empty queue the window blocked on a model load and a minute
+    /// of synthesis. A connector whose read costs something overrides this
+    /// with a drawing that costs nothing; every other one runs the real thing,
+    /// which is what makes the preview honest.
+    func preview() async throws -> AwtrixDelivery
+    /// The TC002 counterpart, nil for a connector with no page there.
+    func previewUlanzi() async throws -> UlanziDelivery?
 }
 
 extension Connector {
@@ -161,6 +178,16 @@ extension Connector {
 public extension Connector {
     /// TC002 face; nil means the connector has no page on a TC002 clock (D11).
     var ulanziFace: UlanziFace<Reading>? { nil }
+
+    /// What a connector that says nothing previews with: the real delivery.
+    ///
+    /// The right default — a preview drawn from the same call the clock is
+    /// fed cannot disagree with the clock. Only a connector whose read SPENDS
+    /// something has a reason to answer differently, and it has to say so out
+    /// loud.
+    func preview() async throws -> AwtrixDelivery { try await produce() }
+
+    func previewUlanzi() async throws -> UlanziDelivery? { try await produceUlanzi() }
 
     /// TC002 counterpart of `produce()`: nil for a connector with no TC002
     /// face, the reading drawn for one that has it.

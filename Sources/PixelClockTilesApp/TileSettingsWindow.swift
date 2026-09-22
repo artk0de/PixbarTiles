@@ -102,7 +102,9 @@ struct TileSettingsWindow: View {
     private func connectorBlock(
         for key: TileKey, value: (name: String, config: TileConfig?)
     ) -> some View {
-        let connector = model.registry.connector(id: key.connectorId)
+        // The tile's own clock's connector, so the block a tile shows is
+        // decided by the instance that actually runs it.
+        let connector = model.connector(for: key)
         if connector is WeatherConnector {
             WeatherTileControls(settings: settings)
         } else if connector is AnecdoteConnector {
@@ -136,19 +138,34 @@ struct TileSettingsWindow: View {
     private var previewColumn: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("On the clock").font(.caption).foregroundStyle(.secondary)
-            if let data = settings.preview, let image = NSImage(data: data) {
-                Image(nsImage: Self.scaled(image, by: 6))
-                    .interpolation(.none)
-                    .border(Color.secondary.opacity(0.4))
-            } else {
-                Text(settings.draft == nil ? "This tile draws no preview." : "Rendering…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 312, height: 96)
-                    .border(Color.secondary.opacity(0.4))
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.black)
+                    .strokeBorder(.separator, lineWidth: 1)
+                if let data = settings.preview {
+                    // An `NSImageView` rather than SwiftUI's `Image`, because a
+                    // scrolling face is an ANIMATED GIF and `Image(nsImage:)`
+                    // draws frame one and stops. What the clock does with a
+                    // line too long for its panel is the thing the preview is
+                    // being read for.
+                    AnimatedPixelImage(gif: data, scale: Self.previewScale)
+                } else {
+                    // The facade's own sentence — why there is no picture —
+                    // rather than a guess. It used to read "This tile draws no
+                    // preview" for every tile that is not the weather, which
+                    // was a lie about Claude and z.ai, both of which have
+                    // faces and both of which were failing for a reason the
+                    // model had already worked out.
+                    Text(settings.previewNote ?? "Rendering…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(8)
+                }
             }
+            .frame(width: previewSize.width, height: previewSize.height)
             if let clock = model.clocks.first(where: { $0.id == model.detailTileKey?.clockId }) {
-                Text("\(clock.name) · \(clock.model.spokenName)")
+                Text("\(clock.name) · \(clock.model.spokenName) · \(panelWords(of: clock.model))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -156,17 +173,68 @@ struct TileSettingsWindow: View {
         }
     }
 
-    /// The panel's own pixels, six over one, drawn WITHOUT interpolation —
-    /// smoothing a 52×16 face into porridge is the one way to make a true
-    /// preview lie about what the clock looks like.
-    private static func scaled(_ image: NSImage, by factor: CGFloat) -> NSImage {
-        let size = NSSize(width: image.size.width * factor, height: image.size.height * factor)
-        let scaled = NSImage(size: size)
-        scaled.lockFocusFlipped(true)
-        NSGraphicsContext.current?.imageInterpolation = .none
-        image.draw(in: NSRect(origin: .zero, size: size))
-        scaled.unlockFocus()
-        return scaled
+    /// One clock pixel drawn as this many points. Six is what the design
+    /// names, and it is the one number both the box and the image use, so an
+    /// empty preview and a drawn one are the same size — the window does not
+    /// jump when the first render lands.
+    private static let previewScale: CGFloat = 6
+
+    /// The box the preview lives in: the clock's own panel, magnified. A
+    /// TC002 is 52×16 and an AWTRIX 32×8, so the two are not the same shape
+    /// and a fixed box would letterbox one of them.
+    private var previewSize: CGSize {
+        let panel = panelPixels(of: clockModelOfDetail)
+        return CGSize(
+            width: panel.width * Self.previewScale, height: panel.height * Self.previewScale
+        )
+    }
+
+    private var clockModelOfDetail: ClockModel {
+        model.clocks.first { $0.id == model.detailTileKey?.clockId }?.model ?? .ulanziTC002
+    }
+
+    private func panelPixels(of model: ClockModel) -> CGSize {
+        switch model {
+        case .ulanziTC002: CGSize(width: PixelCanvas.width, height: PixelCanvas.height)
+        case .awtrix3: CGSize(width: AwtrixScene.panelWidth, height: AwtrixScene.panelHeight)
+        }
+    }
+
+    private func panelWords(of model: ClockModel) -> String {
+        let panel = panelPixels(of: model)
+        return "\(Int(panel.width))×\(Int(panel.height))"
+    }
+}
+
+/// A GIF drawn at whole-pixel magnification, animating if it has frames to
+/// animate.
+///
+/// AppKit rather than SwiftUI, for one reason each way round: `NSImageView`
+/// is what plays an animated GIF without a timer of ours, and
+/// `imageScaling = .scaleProportionallyUpOrDown` with the layer's
+/// magnification filter set to nearest keeps a 52×16 face a grid of squares
+/// rather than smoothing it into porridge — which is the one way a true
+/// preview can still lie about what the clock looks like.
+private struct AnimatedPixelImage: NSViewRepresentable {
+    let gif: Data
+    let scale: CGFloat
+
+    func makeNSView(context: Context) -> NSImageView {
+        let view = NSImageView()
+        view.imageScaling = .scaleProportionallyUpOrDown
+        view.animates = true
+        view.wantsLayer = true
+        view.layer?.magnificationFilter = .nearest
+        view.layer?.minificationFilter = .nearest
+        return view
+    }
+
+    func updateNSView(_ view: NSImageView, context: Context) {
+        // Rebuilt rather than mutated: an `NSImage` keeps its animation state,
+        // and handing the same instance back with new bytes leaves the old
+        // frames playing.
+        view.image = NSImage(data: gif)
+        view.animates = true
     }
 }
 

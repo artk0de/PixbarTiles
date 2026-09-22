@@ -245,7 +245,26 @@ final class AppModel: ObservableObject {
     /// reaches no field and no validation, so a `http://10.0.0.5` typed into a
     /// terminal has to be dealt with where the URL is built.
     @Published private(set) var deviceHost: String
+    /// The app-level registry: what the menus and the catalogue read.
+    ///
+    /// Its instances are wired for NAMING a connector, not for running one —
+    /// the z.ai copy is built with `key: { nil }`, the weather copy with the
+    /// first clock's place, the Claude copy with no chosen metric. Nothing
+    /// produces through it. Anything that needs a connector's real OUTPUT
+    /// asks `connector(for:)` instead.
     let registry: ConnectorRegistry
+    /// How a clock's own registry is built — the one its session pushes
+    /// through, closed over that clock's place, its tile's metric and its
+    /// key in the keychain.
+    ///
+    /// Optional because a test wiring a model by hand names its connectors
+    /// directly and has no per-clock story; those fall back to `registry`,
+    /// which is what they were reading before this existed.
+    private let makeClockRegistry: (@MainActor (ClockRecord) -> ConnectorRegistry)?
+    /// Built once per clock and kept: a registry's connectors read their
+    /// stores on every call, so one instance stays current, and rebuilding it
+    /// per preview would re-read the keychain on every keystroke.
+    private var clockRegistries: [UUID: ConnectorRegistry] = [:]
     /// The selected clock's health, which is what the glyph is about.
     var monitor: DeviceMonitor {
         let id = selectedClockId ?? clock?.id
@@ -311,6 +330,33 @@ final class AppModel: ObservableObject {
     var lastMaintenanceFailure: [String: String] { projected(tileLastMaintenanceFailure) }
 
     private func session(for key: TileKey) -> (any ConnectorRunning)? { sessions[key.clockId] }
+
+    /// The connector a tile's OWN clock runs — the instance whose output that
+    /// clock would receive.
+    ///
+    /// The one a preview has to ask. Reading `registry` instead was the defect
+    /// the tile settings window shipped with: that copy exists to NAME
+    /// connectors for the menus, and its instances are deliberately inert —
+    /// z.ai's is built with `key: { nil }`, so the preview of a tile with a
+    /// key saved still reported "check its key"; Claude's carries no metric,
+    /// so a tile set to the day previewed the week; the weather's is closed
+    /// over the FIRST clock's place, so a tile on the second clock previewed
+    /// another city. Every one of those is the preview lying about the clock
+    /// it claims to be showing.
+    ///
+    /// Falls back to the app-level registry for a clock this model has no
+    /// factory for, which is every hand-wired test and the VPN tile — the
+    /// latter is not a `Connector` at all and answers nil from both.
+    func connector(for key: TileKey) -> (any Connector)? {
+        guard let makeClockRegistry,
+            let clock = clocks.first(where: { $0.id == key.clockId })
+        else {
+            return registry.connector(id: key.connectorId)
+        }
+        let own = clockRegistries[clock.id] ?? makeClockRegistry(clock)
+        clockRegistries[clock.id] = own
+        return own.connector(id: key.connectorId) ?? registry.connector(id: key.connectorId)
+    }
 
     /// The selected clock's tile of this connector, which is what the panel's
     /// rows are about until Phase 5 draws tiles.
@@ -624,6 +670,11 @@ final class AppModel: ObservableObject {
         // clock is away.
         relocate: RelocatingHost? = nil,
         registry: ConnectorRegistry,
+        // How a clock's own registry is built. `live()` hands over the very
+        // factory the sessions are built from, so a preview and a push ask
+        // the same instance; a test that names its connectors directly leaves
+        // it nil and reads the app-level registry as before.
+        makeClockRegistry: (@MainActor (ClockRecord) -> ConnectorRegistry)? = nil,
         // The device a TC002 clock's health probes — the same one its own
         // slot pushes through. Nil for a caller that drives no TC002 clock,
         // which is what every AWTRIX-only wiring answers.
@@ -665,6 +716,7 @@ final class AppModel: ObservableObject {
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.registry = registry
+        self.makeClockRegistry = makeClockRegistry
         self.makeUlanziDevice = makeUlanziDevice
         self.probe = probe
         self.installer = installer
@@ -963,6 +1015,9 @@ final class AppModel: ObservableObject {
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
+            // The very factory the sessions are built from, so a preview and
+            // a push ask the same connector instance about the same clock.
+            makeClockRegistry: makeRegistry,
             makeUlanziDevice: { clock in
                 UlanziDevice(host: clock.address, transport: transport)
             },
@@ -2167,8 +2222,11 @@ final class AppModel: ObservableObject {
             hostNote = nil
         }
         // The session's own device was built at the old address; it is dropped
-        // so `reloadClocks` builds one at the new one.
+        // so `reloadClocks` builds one at the new one. The clock's registry
+        // goes with it, for the same reason: its connectors are closed over
+        // the clock as it was.
         sessions[clockId] = nil
+        clockRegistries[clockId] = nil
         reloadClocks()
     }
 
@@ -2372,6 +2430,7 @@ final class AppModel: ObservableObject {
                 self?.restores[restoreKey] = nil
             }
             sessions[id] = nil
+            clockRegistries[id] = nil
         }
         // The healths follow the same list: a clock gone from the store has
         // no answer left to give, and a TC002 new to it probes from the next

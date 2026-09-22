@@ -148,45 +148,108 @@ final class TileSettingsModel {
             } catch { return }
             guard self.generation == thisGeneration, let key = self.key else { return }
             self.previewNote = nil
-            let connector = self.model.registry.connector(id: key.connectorId)
+            // The connector the tile's OWN clock runs, not the app-level copy
+            // the menus are named from: that one is wired inert — z.ai with no
+            // key, Claude with no metric, the weather closed over the FIRST
+            // clock's place — so every preview drawn through it was about a
+            // tile nobody has.
+            let connector = self.model.connector(for: key)
             let draft = self.draft
-            let clockModel = self.model.clocks.first { $0.id == key.clockId }?.model
-            let isWeather = key.connectorId == WeatherConnector.appName
-            let bytes = await Task.detached(priority: .userInitiated) { () -> (Data?, String?) in
-                guard let connector else { return (nil, nil) }
-                if isWeather, let draft, let weather = connector as? WeatherConnector {
-                    guard let reading = try? await weather.read() else {
-                        return (nil, "The sky could not be read — check the connection.")
-                    }
-                    let canvas = WeatherConnector.canvas(for: reading, config: draft)
-                    return ((try? FullFrameGif.encode(frames: [canvas], delay: 5)), nil)
-                }
-                switch clockModel {
-                case .ulanziTC002:
-                    guard let delivery = try? await connector.produceUlanzi(),
-                        let frame = delivery.scene.frames.first
-                    else { return (nil, "This connector draws no face for a TC002.") }
-                    var canvas = PixelCanvas()
-                    canvas.apply(frame.draw)
-                    return ((try? FullFrameGif.encode(frames: [canvas], delay: 5)), nil)
-                case .awtrix3, nil:
-                    guard let delivery = try? await connector.produce()
-                    else {
-                        return (
-                            nil, "The tile could not be read — check its key and connection."
-                        )
-                    }
-                    return (
-                        try? FullFrameGif.encode(frames: [delivery.scene.canvas()], delay: 5), nil
-                    )
-                }
+            let clockModel = self.model.clocks.first { $0.id == key.clockId }?.model ?? .awtrix3
+            let rendered = await Task.detached(priority: .userInitiated) { () -> Rendered in
+                await Self.render(connector: connector, draft: draft, on: clockModel)
             }.value
             // A change that landed while this render ran has moved the
             // generation; its own render is the one that shows.
             guard self.generation == thisGeneration else { return }
-            preview = bytes.0
-            previewNote = bytes.1
+            preview = rendered.gif
+            previewNote = rendered.note
         }
+    }
+
+    /// A render's two answers: the picture, or the reason there is none.
+    private struct Rendered: Sendable {
+        let gif: Data?
+        let note: String?
+
+        static func picture(_ frames: [PixelCanvas], delay: TimeInterval) -> Rendered {
+            guard frames.isEmpty == false else {
+                return Rendered(gif: nil, note: "This tile draws nothing on this clock.")
+            }
+            guard let gif = try? FullFrameGif.encode(frames: frames, delay: delay) else {
+                return Rendered(gif: nil, note: "The face could not be encoded.")
+            }
+            return Rendered(gif: gif, note: nil)
+        }
+
+        static func nothing(_ note: String) -> Rendered { Rendered(gif: nil, note: note) }
+    }
+
+    /// How long one frame of a scroll is shown. The firmware walks a line
+    /// across the panel at about this rate, and a preview that played it at
+    /// reading speed would be a different animation from the clock's.
+    private static let scrollFrameDelay: TimeInterval = 0.08
+    /// A still face's frame delay. Any value plays the same; this one keeps
+    /// the GIF's own timing honest rather than claiming a frame rate.
+    private static let stillFrameDelay: TimeInterval = 5
+
+    /// The face, drawn for the clock the tile actually sits on.
+    ///
+    /// Off the main actor, and static so it cannot reach the facade's state:
+    /// everything it needs is handed in, which is what lets the render run
+    /// while the window keeps answering.
+    private static func render(
+        connector: (any Connector)?, draft: WeatherTileConfig?, on clockModel: ClockModel
+    ) async -> Rendered {
+        guard let connector else {
+            // The VPN tile is the one that lands here: it is a lamp on the
+            // clock's corner, not a page, and it is not a `Connector` at all.
+            return .nothing("This tile is a lamp on the clock's corner, not a page.")
+        }
+
+        // The weather draws the DRAFT — the place, the scale and the two
+        // answers as the controls have them this second — through the same
+        // functions a poll draws with.
+        if let draft, let weather = connector as? WeatherConnector {
+            guard let reading = try? await weather.reading(at: draft.place) else {
+                return .nothing("The sky could not be read — check the connection.")
+            }
+            switch clockModel {
+            case .ulanziTC002:
+                return .picture(
+                    [WeatherConnector.canvas(for: reading, config: draft)], delay: stillFrameDelay
+                )
+            case .awtrix3:
+                return frames(
+                    of: WeatherConnector.output(for: reading, config: draft).scene
+                )
+            }
+        }
+
+        switch clockModel {
+        case .ulanziTC002:
+            guard let delivery = try? await connector.previewUlanzi() else {
+                return .nothing("The tile could not be read — check its key and connection.")
+            }
+            guard let frame = delivery.scene.frames.first else {
+                return .nothing("This tile draws no page on a TC002.")
+            }
+            var canvas = PixelCanvas()
+            canvas.apply(frame.draw)
+            return .picture([canvas], delay: stillFrameDelay)
+        case .awtrix3:
+            guard let delivery = try? await connector.preview() else {
+                return .nothing("The tile could not be read — check its key and connection.")
+            }
+            return frames(of: delivery.scene)
+        }
+    }
+
+    /// An AWTRIX scene as the clock plays it: one frame when the line fits,
+    /// the frames of the firmware's scroll when it does not.
+    private static func frames(of scene: AwtrixScene) -> Rendered {
+        let drawn = scene.canvasFrames()
+        return .picture(drawn, delay: drawn.count > 1 ? scrollFrameDelay : stillFrameDelay)
     }
 }
 

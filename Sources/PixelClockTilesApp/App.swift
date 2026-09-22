@@ -25,7 +25,7 @@ struct PixelClockTilesApp: App {
             // view: Liquid Glass is the navigation layer's own, and a view
             // that carried it could not be drawn without it — every pixel
             // test draws this content straight.
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
+            .glassPanel()
             // Behind the panel rather than inside `MenuPanel`, because it is
             // not the panel's business which window it is on — it is the
             // delegate's, and this scene is where the two already meet.
@@ -560,10 +560,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // window background there is nothing — the material rendered as a
         // dark slab. Clear background, once; it is the window's own and the
         // host does not fight AppKit over it.
-        if window.isOpaque {
-            window.isOpaque = false
-            window.backgroundColor = .clear
-        }
+        window.clearBackgroundForGlass()
         panelWindow = window
         panelDidOpen()
     }

@@ -118,11 +118,11 @@ struct MenuPanel: View {
             }
         }
         .panelWidth(from: defaults)
-        // Liquid Glass is the panel's material. The scene lays the panel onto
-        // the window; the effect is what draws the navigation layer's own
-        // material, and the panel is exactly that — the chrome floating over
-        // whatever is behind it.
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
+        // No material here. The SCENE lays it on (`App.swift`), and this view
+        // laid an identical `glassEffect` on top of that one — two layers of
+        // the same glass over one surface, each site's comment claiming to be
+        // the only one. The History swaps into this same window and carries
+        // none, so the stack depth changed as the user moved between them.
         // On the group rather than on `body`, and that is the point: the
         // History is drawn by the same view, and a panel that asked for a
         // reading every time somebody came back from the History would spend

@@ -18,21 +18,38 @@ struct TileStoreWindow: View {
             sidebar
                 .padding(.top, 24)
             Divider()
-            ScrollView {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12
-                ) {
-                    ForEach(store.cards, id: \.candidate) { card in
-                        TileStoreCardView(card: card) {
-                            store.add(card)
+            if store.cards.isEmpty {
+                // The one window that had no empty state: unaimed — which
+                // macOS's own window restoration can produce, since this is a
+                // `Window` scene the Window menu can open — it drew a sidebar
+                // beside a blank rectangle, and a grid with nothing in it
+                // reads as a window that failed to load.
+                ContentUnavailableView(
+                    "Nothing to add here",
+                    systemImage: "square.grid.2x2",
+                    description: Text(
+                        "Open the store from a clock's gear, or pick another shelf."
+                    )
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12
+                    ) {
+                        ForEach(store.cards, id: \.candidate) { card in
+                            TileStoreCardView(card: card) {
+                                store.add(card)
+                            }
                         }
                     }
+                    .padding(16)
                 }
-                .padding(16)
+                .scrollContentBackground(.hidden)
             }
         }
         .frame(minWidth: 560, minHeight: 380)
-        .glassWindow(cornerRadius: 16)
+        .glassWindow()
         // The two-step commit's second step: a successful add opens the
         // tile's settings window on it, so a tile is never added and
         // forgotten.
@@ -44,13 +61,17 @@ struct TileStoreWindow: View {
     }
 
     /// The shelves: All first, then every category. One showing at a time;
-    /// the grid is the showing one's cards. Liquid Glass lives HERE rather
-    /// than on the grid, because the spec draws the material's line where
-    /// macOS 26 does: navigation chrome takes it, content stays opaque.
+    /// the grid is the showing one's cards.
+    ///
+    /// No material of its own. It carried a second `glassEffect` inside a
+    /// window that already has one — glass over glass, at a different corner
+    /// radius, with a `Divider` drawing the seam a second time beside its
+    /// edge. The window's material is the window's; a sidebar that wants to
+    /// read as chrome does it by being chrome, not by stacking the same
+    /// effect twice.
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 4) {
             shelfButton(nil, title: "All")
-            Divider().padding(.vertical, 4)
             ForEach(TileCategory.allCases, id: \.self) { category in
                 shelfButton(category, title: category.title)
             }
@@ -58,7 +79,6 @@ struct TileStoreWindow: View {
         }
         .padding(12)
         .frame(width: 130, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func shelfButton(_ shelf: TileCategory?, title: String) -> some View {

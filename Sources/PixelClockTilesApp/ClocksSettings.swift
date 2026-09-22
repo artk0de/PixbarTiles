@@ -146,6 +146,11 @@ struct ClocksSettings: View {
             }
         }
         .formStyle(.grouped)
+        // A grouped form paints an opaque scroll background over whatever is
+        // behind it, so the Clocks tab was an opaque slab inside a window
+        // made of material. The tiles list next door already strips its own;
+        // this is the same line, in the one place that was missing it.
+        .scrollContentBackground(.hidden)
     }
 
     /// The neighbour a chevron swaps with — the entries as they are, which

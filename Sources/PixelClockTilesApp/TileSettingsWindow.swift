@@ -75,17 +75,23 @@ struct TileSettingsWindow: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .glassWindow(cornerRadius: 16)
+            .glassWindow()
             // The window going away is the detail closing: the panel's
             // branch sees nil the next time it asks, and the facade's draft
             // is dropped with it.
             .onDisappear { model.closeDetail() }
         } else {
-            Text("No tile selected.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .padding(40)
-                .frame(width: 320, height: 160)
+            // Said the way the other windows say it, and carrying the same
+            // material. It was a bare `Text` in a fixed 320×160 box with no
+            // background at all, so the one window that could be opened
+            // unaimed was also the one that stopped looking like the app.
+            ContentUnavailableView(
+                "No tile selected",
+                systemImage: "square.dashed",
+                description: Text("Open it from a tile's gear in the clock's settings.")
+            )
+            .frame(minWidth: 360, minHeight: 220)
+            .glassWindow()
         }
     }
 

@@ -45,7 +45,7 @@ struct SettingsRoot: View {
         // a person adds, and a fixed frame CLIPS what a window exists to
         // show. The tabs scroll; the window resizes.
         .frame(minWidth: 460, minHeight: 380)
-        .glassWindow(cornerRadius: 16)
+        .glassWindow()
     }
 }
 
@@ -113,6 +113,9 @@ private struct DefaultsTab: View {
 
     var body: some View {
         Form {
+            // Grouped, like the Clocks tab beside it: a plain `Form` and a
+            // grouped one in one window are two different-looking settings
+            // pages under one tab strip.
             Picker("New tile refresh", selection: Binding(
                 get: { model.newTileIntervalSeconds ?? -1 },
                 set: { model.setNewTileInterval(seconds: $0 < 0 ? nil : $0) }
@@ -129,7 +132,8 @@ private struct DefaultsTab: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(20)
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 }
 

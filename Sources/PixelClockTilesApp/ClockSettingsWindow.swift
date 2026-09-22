@@ -3,20 +3,24 @@ import PixelClockKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The tile drag's payload: the key said in one string, read back by the
-/// card it is dropped on. `|` separates the three parts, and an empty
-/// instance collapses — the round trip is the contract its test pins.
-extension TileKey {
-    var dragPayload: String {
-        [clockId.uuidString, connectorId, instance].joined(separator: "|")
-    }
-
-    init?(dragPayload: String) {
-        let parts = dragPayload.split(separator: "|", omittingEmptySubsequences: false)
-        guard parts.count == 3, let clockId = UUID(uuidString: String(parts[0])) else {
-            return nil
-        }
-        self.init(clockId: clockId, connectorId: String(parts[1]), instance: String(parts[2]))
+/// Where a dragged row lands.
+///
+/// A function of its own because the two sides speak different languages and
+/// the mismatch was silent. SwiftUI's `onMove(from:to:)` hands over an
+/// INSERTION index — the slot the row is being dropped BEFORE, measured in the
+/// list as it stands with the row still in it. `AppModel.moveTile(_:to:)`
+/// takes the row whose PLACE the dragged one should take. Dragging down, the
+/// insertion index is one past that row, so feeding it through unchanged put
+/// every downward drag one position too far: [weather, claude, anecdotes],
+/// drag weather down one, and it landed last.
+enum TileReorder {
+    /// The index of the row the dragged row should take the place of, or nil
+    /// when the drag changes nothing.
+    static func landing(draggedFrom source: Int, insertedAt insertion: Int, count: Int) -> Int? {
+        guard count > 0, source >= 0, source < count else { return nil }
+        let landing = insertion > source ? insertion - 1 : insertion
+        guard landing >= 0, landing < count, landing != source else { return nil }
+        return landing
     }
 }
 
@@ -61,7 +65,7 @@ struct ClockSettingsWindow: View {
             .padding(.top, 20)
             .padding(.leading, 48)
             .frame(minWidth: 440, minHeight: 300)
-            .glassWindow(cornerRadius: 16)
+            .glassWindow()
         } else {
             // A window opened with no aim — its launch state, or the clock
             // it was aimed at having been removed. Says so rather than
@@ -71,7 +75,7 @@ struct ClockSettingsWindow: View {
                 description: Text("Open it from a clock's gear on the panel.")
             )
             .frame(minWidth: 360, minHeight: 220)
-            .glassWindow(cornerRadius: 16)
+            .glassWindow()
         }
     }
 
@@ -119,10 +123,12 @@ private struct TilesGrid: View {
                         .listRowBackground(Color.clear)
                 }
                 .onMove { from, to in
-                    guard let source = from.first else { return }
-                    let destination = min(max(to, 0), records.count - 1)
-                    guard destination != source else { return }
-                    model.moveTile(records[source].key, to: records[destination].key)
+                    guard let source = from.first,
+                        let landing = TileReorder.landing(
+                            draggedFrom: source, insertedAt: to, count: records.count
+                        )
+                    else { return }
+                    model.moveTile(records[source].key, to: records[landing].key)
                 }
             }
             .listStyle(.plain)
@@ -234,13 +240,14 @@ private struct ClockTileCard: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .help(cardHelp)
-        // The whole card is the drag — through `onDrag`, whose item provider
-        // starts reliably inside a scrolling grid of buttons, where
-        // `.draggable` loses the gesture to the button hit-testing. A plain
-        // click is the settings' door.
-        .onDrag {
-            NSItemProvider(object: key.dragPayload as NSString)
-        }
+        // No `onDrag` here, and its absence is the fix. The card carried one
+        // whose payload had NO drop target anywhere in the app — the decoder
+        // that read it back had no call site at all — so a drag started, the
+        // card lifted, and nothing ever happened. Worse, it competed for the
+        // same press-and-drag gesture as the `List.onMove` one row up, which
+        // is the reorder that actually works. One mechanism per gesture: the
+        // list owns the drag, the platform animates it, and `TileReorder`
+        // translates where it landed.
     }
 
     /// What hovering the card says: a failed tile leads with its error.

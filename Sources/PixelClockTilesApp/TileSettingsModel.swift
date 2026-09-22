@@ -102,8 +102,7 @@ final class TileSettingsModel {
     }
 
     /// Saves the draft's place, said in words, through the field's own
-    /// parser. The one control that saves as it goes, because the place is
-    /// the one control the field's Save button has always stood behind.
+    /// parser.
     @discardableResult
     func savePlace(_ typed: String) -> Bool {
         guard let typed = LocationField.parse(typed) else { return false }
@@ -118,6 +117,7 @@ final class TileSettingsModel {
         guard let place = draft?.place else { return }
         draft = WeatherTileConfig(place: place)
         schedulePreview()
+        saveConfig()
     }
 
     /// Writes the draft into the tile's record — the save the controls
@@ -171,10 +171,26 @@ final class TileSettingsModel {
         lastRefusal = nil
     }
 
+    /// A control moved: the draft changes, the preview follows, and the
+    /// record is written.
+    ///
+    /// The write is the part that was missing, and its absence was the
+    /// window's worst lie. Every other tile's controls save as they are
+    /// touched — the Claude metric, all four of the lamp's pickers — while
+    /// the weather's units, its two answers and even its place only moved a
+    /// draft. The preview redrew at once and looked applied; closing the
+    /// window threw the lot away without a word. One small "Save settings"
+    /// button at the bottom of the column stood between the user and every
+    /// change they had already watched happen.
+    ///
+    /// The draft stays, and is still what the preview reads: it is what lets
+    /// a publish from elsewhere leave a half-finished edit alone. It is no
+    /// longer the only place the edit lives.
     private func edit(_ change: (inout WeatherTileConfig) -> Void) {
         guard draft != nil else { return }
         draft?.mutating(change)
         schedulePreview()
+        saveConfig()
     }
 
     // MARK: - The preview

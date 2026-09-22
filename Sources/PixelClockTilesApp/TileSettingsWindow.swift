@@ -384,12 +384,12 @@ struct WeatherTileControls: View {
                     get: { draft.showsFeelsLike },
                     set: { settings.setShowFeelsLike($0) }
                 ))
-                HStack {
-                    Button("Save settings") { settings.saveConfig() }
-                        .controlSize(.small)
-                    Button("Reset to defaults") { settings.resetToDefaults() }
-                        .controlSize(.small)
-                }
+                // No "Save settings" beside it any more. Every control here
+                // writes as it is touched, like every other tile's, so a
+                // button offering to save what is already saved is a button
+                // that teaches the opposite of what the window does.
+                Button("Reset to defaults") { settings.resetToDefaults() }
+                    .controlSize(.small)
             }
         } else {
             EmptyView()

@@ -234,13 +234,21 @@ struct WeatherTileBlock: View {
         _typed = State(initialValue: LocationField.text(for: place))
     }
 
+    private func save() {
+        guard typed != LocationField.text(for: place) else { return }
+        onSave(typed)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Location").font(.caption).foregroundStyle(.secondary)
             HStack {
                 TextField("55.7558, 37.6173", text: $typed)
                     .textFieldStyle(.roundedBorder)
-                Button("Save") { onSave(typed) }
+                    // A pair of coordinates typed out and then Return is what
+                    // a person does with a box like this one.
+                    .onSubmit { save() }
+                Button("Save") { save() }
                     .disabled(typed == LocationField.text(for: place))
             }
         }

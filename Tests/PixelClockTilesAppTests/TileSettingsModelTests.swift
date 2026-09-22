@@ -199,6 +199,36 @@ private func weatherTile(on clock: ClockRecord) -> TileRecord {
     await model.teardown()
 }
 
+// A control that has been touched has been saved. Every other tile's
+// controls work that way — the Claude metric, all four of the lamp's
+// pickers — and the weather's did not: its units, its two answers and its
+// place only moved a draft, the preview redrew at once and looked applied,
+// and closing the window threw the lot away without a word.
+@Test @MainActor func aFlippedControlIsWrittenWithoutASaveButton() async {
+    let (model, _) = weatherModel(tiles: [weatherTile(on: desk)])
+    let subject = TileSettingsModel(model: model, debounce: 0)
+    let key = TileKey(clockId: desk.id, connectorId: "weather")
+    model.openDetail(for: key)
+    #expect(await waitUntil { subject.key == key })
+
+    subject.setShowHumidity(false)
+
+    #expect(
+        await waitUntil { model.storedTile(key)?.config?.weatherConfig?.showsHumidity == false }
+    )
+    // And so is the scale, and so is the place — one rule for the whole
+    // block rather than one control that persists and three that do not.
+    subject.setUnits(.fahrenheit)
+    #expect(await waitUntil { model.storedTile(key)?.config?.weatherConfig?.units == .fahrenheit })
+    #expect(subject.savePlace("55.7558, 37.6173"))
+    #expect(
+        await waitUntil {
+            model.storedTile(key)?.config?.weatherConfig?.place.latitude == 55.7558
+        }
+    )
+    await model.teardown()
+}
+
 // The save is the draft into the record, policy untouched.
 @Test @MainActor func savingWritesTheDraftIntoTheRecord() async {
     let (model, _) = weatherModel(tiles: [weatherTile(on: desk)])

@@ -96,33 +96,28 @@ private func drawn(_ view: some View, width: CGFloat = 320, height: CGFloat = 42
 }
 
 @MainActor
-private func detail(
-    tile: String = "Weather", clock: String = "Desk",
-    policy: TilePolicy = TilePolicy(refreshSeconds: 300)
-) -> TileDetail {
-    TileDetail(
-        tileName: tile, clockName: clock, policy: policy,
-        connector: AnyView(EmptyView()),
-        onPolicy: { _ in }, onBack: {}
-    )
+private func editor(_ policy: TilePolicy) -> some View {
+    TilePolicyEditor(policy: .constant(policy))
 }
 
-@MainActor @Suite struct TileDetailSurfaceTests {
-    // The header names BOTH the tile and the clock it sits on — each of the
-    // two names changing changes the drawing on its own.
-    @Test func theHeaderNamesTheTileAndTheClock() {
-        let base = drawn(detail())
-        #expect(base != nil)
-        #expect(base != drawn(detail(tile: "Air quality")))
-        #expect(base != drawn(detail(clock: "Attic")))
-    }
+@MainActor @Suite struct TilePolicyEditorSurfaceTests {
+    // `theHeaderNamesTheTileAndTheClock` stood beside this one and drew
+    // `TileDetail`'s header. That surface is gone — `TileSettingsWindow`
+    // replaced it, and names the tile and its clock in its own headline —
+    // so the claim moved with the surface rather than being held here
+    // against a view nothing builds.
 
     // The when-unknown answer is on the surface, not only in the policy: a
     // tile that holds under an unnamed Focus draws differently from one that
-    // runs.
+    // runs. Drawn against the editor itself, which is what carries the
+    // picker and is what both the old surface and the window put on screen.
     @Test func theWhenUnknownPickerIsDrawnNotOnlyHeld() {
-        let runs = drawn(detail(policy: TilePolicy(refreshSeconds: 300, focus: FocusRule(whenUnknown: .run))))
-        let holds = drawn(detail(policy: TilePolicy(refreshSeconds: 300, focus: FocusRule(whenUnknown: .hold))))
+        let runs = drawn(
+            editor(TilePolicy(refreshSeconds: 300, focus: FocusRule(whenUnknown: .run)))
+        )
+        let holds = drawn(
+            editor(TilePolicy(refreshSeconds: 300, focus: FocusRule(whenUnknown: .hold)))
+        )
         #expect(runs != nil)
         #expect(runs != holds)
     }

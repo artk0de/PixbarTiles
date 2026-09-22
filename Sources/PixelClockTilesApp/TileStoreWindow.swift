@@ -96,7 +96,8 @@ struct TileStoreWindow: View {
     }
 
     private func shelfButton(_ shelf: TileCategory?, title: String) -> some View {
-        Button {
+        let showing = store.category == shelf
+        return Button {
             store.category = shelf
         } label: {
             Text(title)
@@ -104,13 +105,15 @@ struct TileStoreWindow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 3)
                 .padding(.horizontal, 8)
-                .background(
-                    store.category == shelf
-                        ? Color.secondary.opacity(0.2) : Color.clear
-                )
+                .background(showing ? Color.secondary.opacity(0.2) : Color.clear)
                 .cornerRadius(5)
         }
         .buttonStyle(.plain)
+        // Which shelf is showing was said in one way only: a slightly
+        // different grey behind one of six rows. That is nothing at all to a
+        // screen reader, and not much to anybody reading a sidebar at a
+        // glance either.
+        .accessibilityAddTraits(showing ? [.isSelected] : [])
     }
 }
 

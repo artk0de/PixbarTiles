@@ -35,9 +35,6 @@ final class SettingsModel {
     /// The tab showing, held by the window across visits. Settable rather
     /// than private(set): the tab picker binds to it.
     var tab: Tab = .clocks
-    /// The clock the Clocks tab is opened on — the one "Clock settings…"
-    /// named, or the user's own row selection.
-    var selectedClockId: UUID?
     /// Whether the Clocks tab is on screen right now. Driven by the tab's
     /// appearances and mirrored onto the model, where the browse rule reads
     /// it; kept here because the facade is what the tab talks to.
@@ -96,17 +93,7 @@ final class SettingsModel {
         await model.addClock(address: address)
     }
 
-    /// The clock a tab row is opened on, as the selection says — falling to
-    /// the first clock, the way the panel does.
-    var selectionOrDefault: UUID? { selectedClockId ?? model.clocks.first?.id }
-
     // MARK: - The tab
-
-    /// Where "Clock settings…" lands: the Clocks tab, the clock named.
-    func showClockSettings(_ clockId: UUID) {
-        tab = .clocks
-        selectedClockId = clockId
-    }
 
     /// Aims the per-clock settings window at its clock — the gear's ask. The
     /// window's content reads the id back, so a second gear's click

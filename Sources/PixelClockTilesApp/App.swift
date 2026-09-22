@@ -17,9 +17,7 @@ struct PixelClockTilesApp: App {
             MenuPanel(
                 model: delegate.model,
                 panel: delegate.panelModel,
-                settings: delegate.settingsModel,
-                store: delegate.storeModel,
-                discovery: delegate.discovery
+                settings: delegate.settingsModel
             )
             // The panel's material, laid on by the SCENE rather than the
             // view: Liquid Glass is the navigation layer's own, and a view

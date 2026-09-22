@@ -7,38 +7,12 @@ import SwiftUI
 // here decides when a tile runs — the kit types from phase 4a carry the rules,
 // and the editor only edits `TilePolicy` values through its binding.
 
-/// A tile's detail surface, opened for one tile on one clock.
-///
-/// A surface like the settings and the History: it opens in the panel's
-/// window, which stays one window with one width (D4). The connector's block
-/// is any view — the surface does not know which connector it serves, the way
-/// the editor does not know which connector's policy it edits.
-struct TileDetail: View {
-    let tileName: String
-    let clockName: String
-    let policy: TilePolicy
-    let connector: AnyView
-    let onPolicy: (TilePolicy) -> Void
-    let onBack: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button(action: onBack) {
-                Text("← \(tileName) · \(clockName)")
-                    .font(.headline)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("Back")
-            TilePolicyEditor(policy: Binding(
-                get: { policy },
-                set: { onPolicy($0) }
-            ))
-            connector
-            Spacer()
-        }
-        .padding(12)
-    }
-}
+// `TileDetail` stood here: a tile's whole behaviour on one surface, opened
+// inside the panel's own window with a Back chevron at the top. It has been
+// superseded by `TileSettingsWindow` — a real window, with the same policy
+// editor, the same per-connector blocks, and a live preview of the face
+// beside them — and nothing in the app has built one since. The blocks below
+// are what it was made of, and they all moved across.
 
 /// The policy editor every tile shares: when it runs, and why it would not.
 ///

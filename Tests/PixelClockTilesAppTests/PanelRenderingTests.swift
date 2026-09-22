@@ -47,8 +47,7 @@ private func rendered(
     let host = NSHostingView(
         rootView: MenuPanel(
             model: model, panel: PanelModel(model: model),
-            settings: SettingsModel(model: model), store: StoreModel(model: model),
-            discovery: discovery
+            settings: SettingsModel(model: model)
         )
     )
     host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
@@ -181,8 +180,7 @@ private func panelFields(deviceHost: String) -> [String] {
     let host = NSHostingView(
         rootView: MenuPanel(
             model: model, panel: PanelModel(model: model),
-            settings: SettingsModel(model: model), store: StoreModel(model: model),
-            discovery: discovery
+            settings: SettingsModel(model: model)
         )
     )
     host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
@@ -331,8 +329,7 @@ private func hostedPanel(_ model: AppModel) -> NSHostingView<MenuPanel> {
     discovery.browse.start()
     return hosted(MenuPanel(
         model: model, panel: PanelModel(model: model),
-        settings: SettingsModel(model: model), store: StoreModel(model: model),
-            discovery: discovery
+        settings: SettingsModel(model: model)
     ))
 }
 
@@ -364,8 +361,7 @@ private func panelControls(_ model: AppModel) -> [String] {
     discovery.browse.start()
     return fields(in: hosted(MenuPanel(
         model: model, panel: PanelModel(model: model),
-        settings: SettingsModel(model: model), store: StoreModel(model: model),
-            discovery: discovery
+        settings: SettingsModel(model: model)
     )))
 }
 
@@ -464,8 +460,7 @@ private func inkedColumns(of rep: NSBitmapImageRep, rows: Range<Int>) -> Range<I
     discovery.browse.start()
     let host = hosted(MenuPanel(
         model: model, panel: PanelModel(model: model),
-        settings: SettingsModel(model: model), store: StoreModel(model: model),
-            discovery: discovery
+        settings: SettingsModel(model: model)
     ))
     let rep = try #require(bitmap(host))
     let scale = rep.pixelsWide / Int(host.bounds.width)

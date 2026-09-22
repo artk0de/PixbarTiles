@@ -26,12 +26,6 @@ struct MenuPanel: View {
     /// The Settings window's facade: the general gear aims it before the
     /// window opens.
     let settings: SettingsModel
-    /// The store's facade: a clock's Add tile aims it before the window opens.
-    let store: StoreModel
-    /// Observed for the same reason a nested `ObservableObject` is always
-    /// observed directly: the Clocks section reads its list, and a nested
-    /// object publishes nothing to whoever holds it.
-    @ObservedObject var discovery: ClockDiscovery
     /// Opens the app's Settings window — the system action, so the window
     /// macOS already knows how to make key and restorable is the one made.
     @Environment(\.openSettings) private var openTheSettings
@@ -49,19 +43,22 @@ struct MenuPanel: View {
 
     /// Written out rather than left to the memberwise one, only so `defaults`
     /// can be private and still be handed in.
+    /// No `store` and no `discovery` among these any more. Both were stored,
+    /// both were required of every caller, and neither was ever READ: the
+    /// panel became statistics-only, and the two surfaces that consumed them
+    /// — the tile rows and the Clocks section — moved to windows of their
+    /// own and took their own facades with them. A parameter every call site
+    /// must supply and nothing ever asks for is a shape that outlives its
+    /// reason, and the next reader has to prove the negative to be sure.
     init(
         model: AppModel,
         panel: PanelModel,
         settings: SettingsModel,
-        store: StoreModel,
-        discovery: ClockDiscovery,
         defaults: UserDefaults = .standard
     ) {
         self.model = model
         self.panel = panel
         self.settings = settings
-        self.store = store
-        self.discovery = discovery
         self.defaults = defaults
     }
 

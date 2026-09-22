@@ -109,8 +109,6 @@ private func hostedPanel(readingWidthFrom defaults: UserDefaults) -> NSHostingVi
             model: model,
             panel: PanelModel(model: model),
             settings: SettingsModel(model: model),
-            store: StoreModel(model: model),
-            discovery: inertDiscovery(),
             defaults: defaults
         )
     )

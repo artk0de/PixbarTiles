@@ -10,17 +10,13 @@ import Testing
 private let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
 private let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.6")
 
-@Test @MainActor func theClockSettingsItemAimsTheWindowAtThatClocksTab() {
-    let model = testModel(clocks: [desk, kitchen], sessions: [desk.id: SpyHost(), kitchen.id: SpyHost()])
-    let subject = SettingsModel(model: model)
-
-    // A window opens wherever it was last; the gear's job is to move it
-    // BEFORE it opens, so what the user is shown is the clock they pressed.
-    subject.showClockSettings(kitchen.id)
-
-    #expect(subject.tab == .clocks)
-    #expect(subject.selectedClockId == kitchen.id)
-}
+// `theClockSettingsItemAimsTheWindowAtThatClocksTab` stood here and tested
+// `showClockSettings`, which aimed a TAB inside the general settings at a
+// clock. That surface is a window of its own now, aimed by `showClockWindow`,
+// and the claim the old test made — that the gear moves the aim BEFORE the
+// window opens, so the user is shown the clock they pressed — is made by
+// `theClockWindowIsAimedAndReaimedByTheGears` below, against the method that
+// is actually wired up.
 
 @Test @MainActor func theTabTheUserLeftItOnIsTheTabItOpensOn() {
     let subject = SettingsModel(model: testModel())

@@ -93,6 +93,12 @@ struct TileSettingsWindow: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // A floor, as the other three windows have. This branch had
+            // none: the controls column is a fixed 250 and the preview is a
+            // fixed panel, so dragging the window narrower clipped one of
+            // them off rather than laying them out smaller. The number is
+            // what the two columns, the divider and the padding come to.
+            .frame(minWidth: 560, minHeight: 320)
             .glassWindow()
             .sheet(isPresented: $showingHistory) { historySheet }
             // The window going away is the detail closing: the panel's

@@ -63,6 +63,11 @@ struct PixelClockTilesApp: App {
             )
         }
         .windowResizability(.contentSize)
+        // Opened at a size the content is comfortable at rather than at its
+        // floor. Without one, macOS starts every `Window` scene at the
+        // smallest size its content admits to, which for a two-column window
+        // is both columns at their minimum and nothing to spare.
+        .defaultSize(width: 720, height: 420)
 
         // The tile store: one window, re-aimed by whichever clock's gear
         // opened it. Choosing a tile is reading — categories and cards, not
@@ -71,6 +76,10 @@ struct PixelClockTilesApp: App {
             TileStoreWindow(store: delegate.storeModel)
         }
         .windowResizability(.contentSize)
+        // Wide enough for three cards on the adaptive grid: at the floor it
+        // is two, and a store whose shelf shows two things reads as a store
+        // with two things on it.
+        .defaultSize(width: 720, height: 480)
 
         // One clock's own settings: its tiles as cards, and the clock
         // itself. The facade carries the aim; a second gear's click
@@ -82,6 +91,11 @@ struct PixelClockTilesApp: App {
                 store: delegate.storeModel
             )
         }
+        // The same resize rule as its two siblings. It was the one window
+        // without it, so the three windows the app opens from a gear each
+        // behaved differently when dragged.
+        .windowResizability(.contentSize)
+        .defaultSize(width: 560, height: 460)
     }
 }
 

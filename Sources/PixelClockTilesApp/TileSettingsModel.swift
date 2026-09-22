@@ -207,9 +207,12 @@ final class TileSettingsModel {
             // tile nobody has.
             let connector = self.model.connector(for: key)
             let draft = self.draft
+            let lamp = self.model.storedTile(key)?.config?.lamp
             let clockModel = self.model.clocks.first { $0.id == key.clockId }?.model ?? .awtrix3
             let rendered = await Task.detached(priority: .userInitiated) { () -> Rendered in
-                await Self.render(connector: connector, draft: draft, on: clockModel)
+                await Self.render(
+                    connector: connector, draft: draft, lamp: lamp, on: clockModel
+                )
             }.value
             // A change that landed while this render ran has moved the
             // generation; its own render is the one that shows.
@@ -251,12 +254,17 @@ final class TileSettingsModel {
     /// everything it needs is handed in, which is what lets the render run
     /// while the window keeps answering.
     private static func render(
-        connector: (any Connector)?, draft: WeatherTileConfig?, on clockModel: ClockModel
+        connector: (any Connector)?, draft: WeatherTileConfig?, lamp: VPNTileConfig?,
+        on clockModel: ClockModel
     ) async -> Rendered {
         guard let connector else {
             // The VPN tile is the one that lands here: it is a lamp on the
             // clock's corner, not a page, and it is not a `Connector` at all.
-            return .nothing("This tile is a lamp on the clock's corner, not a page.")
+            // Said in words rather than drawn, and that is deliberate — the
+            // indicator LEDs sit outside the 32×8 matrix, so a picture of
+            // them would be a geometry this app invented. A sentence about
+            // what the corner will do is the honest preview of a lamp.
+            return .nothing(LampPreviewLine.text(for: lamp))
         }
 
         // The weather draws the DRAFT — the place, the scale and the two

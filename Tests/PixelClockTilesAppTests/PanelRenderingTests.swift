@@ -834,6 +834,24 @@ private func redrawn(_ host: NSHostingView<MenuPanel>) -> Data? {
     withExtendedLifetime(panel) {}
 }
 
+// The anecdote tile's settings window shows the same list in a sheet of its
+// own, so asking for it must not swap the menu bar's panel to a surface the
+// menu bar was never opened for. Its button used to call `openHistory`, which
+// did exactly that — and did nothing visible in the window that pressed it,
+// because nothing there reads the flag.
+@Test @MainActor func askingForTheListDoesNotSwapThePanelToIt() async throws {
+    let played = PlayedAnecdote(
+        anecdote: try playableAnecdote(id: "a", text: "Заходит улитка в бар"),
+        playedAt: Date()
+    )
+    let model = testModel(anecdotes: StubAnecdotes(history: [played]))
+
+    model.loadHistory()
+
+    #expect(await waitUntil { model.history?.count == 1 })
+    #expect(model.historyIsOpen == false)
+}
+
 // MARK: - The menu opens on the panel
 
 /// A launched delegate over `model`, hearing only what this test posts, with

@@ -1789,6 +1789,18 @@ final class AppModel: ObservableObject {
     /// surface opened right after a run has to show that run.
     func openHistory() {
         historyIsOpen = true
+        loadHistory()
+    }
+
+    /// Asks what has played, without swapping the panel to show it.
+    ///
+    /// The half of `openHistory` that is about the LIST rather than about the
+    /// panel. The anecdote tile's settings window shows the same history in a
+    /// sheet of its own, and its button used to call `openHistory` — which
+    /// flipped a flag nothing in that window reads, so the press did nothing
+    /// visible there and left the menu bar's panel swapped to a surface
+    /// nobody had asked it for.
+    func loadHistory() {
         // Whatever the last replay said goes with the surface it was said on.
         // Opening the History is asking what has played, not asking again about
         // the last thing that was pressed — and an answer kept across the open

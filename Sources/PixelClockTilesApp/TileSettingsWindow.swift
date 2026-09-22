@@ -18,6 +18,13 @@ struct TileSettingsWindow: View {
     /// Which half of the settings is showing: what makes THIS tile special,
     /// or the rules every tile shares.
     @State private var section: Section = .tile
+    /// Whether the anecdote history is up over this window.
+    ///
+    /// A sheet here and a panel swap there, over one `HistoryList`. The
+    /// comment on the panel's side — that a sheet vanishes when its host
+    /// loses focus — is true of a menu bar extra's window and of nothing
+    /// else: this is an ordinary window, and a sheet on it stays up.
+    @State private var showingHistory = false
 
     enum Section: String, CaseIterable, Identifiable {
         case tile
@@ -87,6 +94,7 @@ struct TileSettingsWindow: View {
             .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .glassWindow()
+            .sheet(isPresented: $showingHistory) { historySheet }
             // The window going away is the detail closing: the panel's
             // branch sees nil the next time it asks, and the facade's draft
             // is dropped with it.
@@ -110,6 +118,26 @@ struct TileSettingsWindow: View {
         model.clocks.first { $0.id == key.clockId }?.name ?? ""
     }
 
+    /// What has played, over the tile that plays it.
+    ///
+    /// The same `HistoryList` the panel swaps in — one list, two hosts. The
+    /// height is fixed rather than the panel's stored one: that number is a
+    /// size somebody dragged a menu bar surface to, and it has nothing to say
+    /// about a sheet.
+    private var historySheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("History").font(.headline)
+            HistoryList(model: model, height: 320)
+            HStack {
+                Spacer()
+                Button("Done") { showingHistory = false }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 380)
+    }
+
     // MARK: - The controls column
 
     /// The tile's own block beside the shared policy editor: what this
@@ -125,7 +153,10 @@ struct TileSettingsWindow: View {
         if connector is WeatherConnector {
             WeatherTileControls(settings: settings)
         } else if connector is AnecdoteConnector {
-            AnecdoteTileBlock(onHistory: { model.openHistory() })
+            AnecdoteTileBlock(onHistory: {
+                model.loadHistory()
+                showingHistory = true
+            })
         } else if connector is ClaudeUsageConnector {
             VStack(alignment: .leading, spacing: 10) {
                 ClaudeTileBlock(

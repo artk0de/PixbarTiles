@@ -95,25 +95,3 @@ import Testing
         #expect(TileRowIcon.symbol(forConnectorId: "slack") == "app.dashed")
     }
 }
-
-@Suite struct AddTileMenuItemTests {
-    // The menu renders reasons; it does not compute them. A reason composed
-    // elsewhere must survive the item whole.
-    @Test func unavailableItemCarriesItsReason() {
-        let item = AddTileMenuItem(title: "Weather",
-                                   availability: .unavailable(
-                                       reason: "already speaking through Kitchen"),
-                                   onAdd: {})
-        guard case let .unavailable(reason) = item.availability else {
-            Issue.record("expected an unavailable item")
-            return
-        }
-        #expect(reason == "already speaking through Kitchen")
-    }
-
-    @Test func availableItemIsAvailable() {
-        let item = AddTileMenuItem(title: "Weather", availability: .available,
-                                   onAdd: {})
-        #expect(item.availability == .available)
-    }
-}

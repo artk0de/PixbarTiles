@@ -22,7 +22,9 @@ public struct WeatherConnector: Connector {
     public static let appName = "weather"
 
     public let id = "weather"
-    public let displayName = "Weather"
+    /// The tile's name as every surface says it — the store card, the panel's
+    /// row, the settings window's title. The spec's own name for it.
+    public let displayName = "Better Weather"
     /// How often the CLOCK is refreshed — which is a different question from
     /// how often the SERVICE has something new, and the two numbers are
     /// deliberately no longer one.
@@ -72,10 +74,23 @@ public struct WeatherConnector: Connector {
     /// Read on every read rather than held, so a location typed into the
     /// settings takes effect at the next poll instead of at the next launch.
     private let location: @Sendable () -> Coordinates
+    /// Read on every draw for the same reason: the tile's own settings — the
+    /// scale, the humidity, the felt temperature — reach the next poll, not
+    /// the next launch. The provider is who the stored config answers through;
+    /// the preview passes its draft instead, and the SAME face code draws
+    /// both, which is what keeps a preview from being able to lie. No default
+    /// on purpose: the shipped wiring answers from the stored tile record, and
+    /// a silent guess here would draw a tile nobody configured.
+    private let config: @Sendable () -> WeatherTileConfig
 
-    public init(source: OpenMeteoSource, location: @escaping @Sendable () -> Coordinates) {
+    public init(
+        source: OpenMeteoSource,
+        location: @escaping @Sendable () -> Coordinates,
+        config: @escaping @Sendable () -> WeatherTileConfig
+    ) {
         self.source = source
         self.location = location
+        self.config = config
     }
 
     /// Goes out for the sky where the clock is. Nothing is drawn here; see
@@ -85,11 +100,11 @@ public struct WeatherConnector: Connector {
     }
 
     public var awtrixFace: AwtrixFace<WeatherReading> {
-        AwtrixFace { Self.output(for: $0) }
+        AwtrixFace { Self.output(for: $0, config: config()) }
     }
 
     public var ulanziFace: UlanziFace<WeatherReading>? {
-        UlanziFace { Self.ulanziOutput(for: $0) }
+        UlanziFace { Self.ulanziOutput(for: $0, config: config()) }
     }
 
     /// What a reading looks like on the matrix.
@@ -97,24 +112,23 @@ public struct WeatherConnector: Connector {
     /// Separated from `read()` so the drawing can be tested against a reading
     /// rather than against a network, as `ClaudeUsageConnector.output(for:)`
     /// already is.
-    static func output(for reading: WeatherReading) -> AwtrixDelivery {
-        let theme = WeatherTheme(code: reading.code, isDay: reading.isDay)
-        // Two quantities in one element: the digits are the AIR temperature,
-        // which is what a thermometer would agree with, and the colour is what
-        // that feels like. Collapsing them — showing the apparent temperature —
-        // gains one number and loses the other. Falling back to the air
-        // temperature when the service omitted the felt one, because a reading
-        // with no colour is drawn in whatever the previous app left behind.
-        let felt = reading.apparentTemperature ?? reading.temperature
+    static func output(for reading: WeatherReading, config: WeatherTileConfig) -> AwtrixDelivery {
+        // The felt temperature is the tile's own answer now: shown when the
+        // tile says so, and colouring the digits only while it does — the
+        // colour is what that feels like, and digits coloured from a number
+        // they do not show read as broken rather than as informed.
+        let felt = config.showsFeelsLike
+            ? reading.apparentTemperature ?? reading.temperature
+            : reading.temperature
         return AwtrixDelivery(
-            text: Self.degrees(reading.temperature),
+            text: Self.degrees(reading.temperature, units: config.units),
             // The sky, drawn inside the app rather than over the whole matrix.
             // The overlay below already carries it to the device, but four
             // skies share `clear` there and night is not a layer at all — so on
             // an overcast evening the clock shows a number and nothing else.
             // The icon is what distinguishes the eleven, in the eight pixels next
             // to the reading they belong to.
-            icon: theme.icon,
+            icon: WeatherTheme(code: reading.code, isDay: reading.isDay).icon,
             color: TemperatureColour(celsius: felt).hex,
             surface: .app(Self.appName),
             // An hour without a fresh reading and the clock drops the app on
@@ -128,7 +142,7 @@ public struct WeatherConnector: Connector {
             // reading stops being weather anyway, so nothing is lost by waiting
             // that long to drop it.
             lifetime: 3_600,
-            overlay: theme.overlay
+            overlay: WeatherTheme(code: reading.code, isDay: reading.isDay).overlay
         )
     }
 
@@ -145,44 +159,106 @@ public struct WeatherConnector: Connector {
     /// sign is the one reading a person can misread as Fahrenheit without ever
     /// noticing they did. Four glyphs still fit beside the icon; the firmware
     /// scrolls anything that does not.
-    static func degrees(_ celsius: Double) -> String {
-        "\(Int(celsius.rounded()))°C"
+    static func degrees(_ celsius: Double, units: WeatherTileConfig.Units) -> String {
+        switch units {
+        case .celsius: "\(Int(celsius.rounded()))°C"
+        case .fahrenheit: "\(Int(Self.fahrenheit(celsius).rounded()))°F"
+        }
     }
 
     /// What a reading looks like on the TC002's 52×16 panel.
     ///
     /// The device has no text rendering to hand the reading to, so the face
-    /// rasters it here — the 3×5 font at scale 2, the biggest the 16 rows
-    /// carry, centred, in the same felt-temperature colour the AWTRIX face
-    /// names in hex. No `C` after the degrees: the panel is 52 pixels wide and
-    /// the colour already says what the letter would.
-    static func ulanziOutput(for reading: WeatherReading) -> UlanziDelivery {
-        let felt = reading.apparentTemperature ?? reading.temperature
-        let ink = UlanziColour(hex: TemperatureColour(celsius: felt).hex)
-        return UlanziDelivery(
+    /// rasters it here. The temperature rides the top band at the biggest
+    /// scale the 16 rows carry, in the felt-temperature colour the AWTRIX face
+    /// names in hex; the tile's own answers ride the small band under it —
+    /// humidity at the left, the felt temperature at the right, each present
+    /// only while the tile asks for it and each dropped, with its band, when
+    /// neither does.
+    static func ulanziOutput(
+        for reading: WeatherReading, config: WeatherTileConfig
+    ) -> UlanziDelivery {
+        UlanziDelivery(
             scene: UlanziScene(
                 frames: [
-                    UlanziFrame(
-                        duration: 5,
-                        draw: [Self.raster("\(Int(reading.temperature.rounded()))°", ink: ink)]
-                    )
+                    UlanziFrame(duration: 5, draw: [Self.raster(reading, config: config)])
                 ]
             )
         )
     }
 
-    /// `text` centred on a fresh panel at `scale`, as one full-screen bitmap.
-    private static func raster(_ text: String, ink: UlanziColour, scale: Int = 2) -> UlanziDraw {
+    /// The panel the TC002 face shows — built as a canvas, because the
+    /// preview draws the very same pixels the delivery pushes, and a GIF
+    /// wants a canvas where the delivery wants a command. Public because the
+    /// preview IS a caller: the app's tile settings window renders this, the
+    /// same pixels `ulanziOutput` pushes.
+    public static func canvas(
+        for reading: WeatherReading, config: WeatherTileConfig
+    ) -> PixelCanvas {
         var canvas = PixelCanvas()
-        let width = text.unicodeScalars.count * 4 * scale - scale
+        let felt = config.showsFeelsLike
+            ? reading.apparentTemperature ?? reading.temperature
+            : reading.temperature
+        let ink = Pixel(colour: UlanziColour(hex: TemperatureColour(celsius: felt).hex))
+
+        // The temperature, with its scale named: a picker chooses it now, so
+        // a bare number is the reading a person misreads as the other scale.
+        let top = Self.degrees(reading.temperature, units: config.units)
+        let hasBand = config.showsHumidity || config.showsFeelsLike
+        let scale = 2
+        let topWidth = top.unicodeScalars.count * 4 * scale - scale
         canvas.drawText(
-            text,
+            top,
             at: PixelPoint(
-                x: (PixelCanvas.width - width) / 2, y: (PixelCanvas.height - 5 * scale) / 2
+                x: (PixelCanvas.width - topWidth) / 2,
+                y: hasBand ? 1 : (PixelCanvas.height - 5 * scale) / 2
             ),
-            ink: Pixel(colour: ink),
+            ink: ink,
             scale: scale
         )
-        return canvas.drawCommands()
+
+        // The small band, scale 1: humidity at the left edge, the felt
+        // temperature at the right. Each present only when the tile says so —
+        // a reading that carries no humidity draws the temperature alone even
+        // when the tile asks for it.
+        let secondary = Pixel.white
+        if config.showsHumidity, let humidity = reading.relativeHumidity {
+            canvas.drawText(
+                "H\(Int(humidity.rounded()))%",
+                at: PixelPoint(x: 1, y: 11),
+                ink: secondary
+            )
+        }
+        if config.showsFeelsLike {
+            let line = "feels \(Int(Self.fahrenheitOrCelsius(felt, units: config.units).rounded()))°"
+            let width = line.unicodeScalars.count * 4 - 1
+            canvas.drawText(
+                line,
+                at: PixelPoint(x: PixelCanvas.width - width - 1, y: 11),
+                ink: secondary
+            )
+        }
+        return canvas
+    }
+
+    /// `text` centred on a fresh panel at `scale`, as one full-screen bitmap.
+    private static func raster(
+        _ reading: WeatherReading, config: WeatherTileConfig
+    ) -> UlanziDraw {
+        canvas(for: reading, config: config).drawCommands()
+    }
+
+    private static func fahrenheit(_ celsius: Double) -> Double {
+        celsius * 9 / 5 + 32
+    }
+
+    /// The value the scale's own letter names, for the small band's felt line.
+    private static func fahrenheitOrCelsius(
+        _ celsius: Double, units: WeatherTileConfig.Units
+    ) -> Double {
+        switch units {
+        case .celsius: celsius
+        case .fahrenheit: fahrenheit(celsius)
+        }
     }
 }

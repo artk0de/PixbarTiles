@@ -1039,3 +1039,206 @@ What later tasks owe:
   accepted live on 2026-09-21. Porting it into the kit means: BDF parse →
   RGB canvas → the same full-frame GIF assembly; keep the ImageIO
   pixel-exact check as the test oracle.
+
+## The modern UI redesign — what it leaves, 2026-09-21
+
+The spec `docs/superpowers/specs/2026-09-21-pixelclocktiles-modern-ui-design.md`,
+phases 1–5, landed in one working pass. The panel is grouped now: every clock a
+section under its own status dot — green while its last push was delivered,
+yellow while it is reachable with nothing yet delivered or a push in flight,
+red when it is unreachable or its last push failed — and its own gear (add,
+reorder, settings), each item aimed at ITS clock. The projection the panel
+draws is `PanelModel`, the first of the facades: `@Observable` types that read
+`AppModel` and hold what only presentation knows. `SettingsModel` (which tab,
+which clock the Clocks tab names), `TileSettingsModel` (the draft, the debounced
+off-main render) and `StoreModel` (the shelves, the cards) followed, and the
+model's own panel sections, menu-item builders and settings-open bookkeeping
+were deleted as each facade took them — never left beside them.
+
+The surfaces moved out of the panel into the app's own windows. Settings is a
+real Settings scene now — Clocks (add/rename/remove/reorder, the discovery
+list), Defaults (the new-tile interval), General (microphone gate, the FDI
+sentence, login item, icon removal) — opened with the system action. The tile's
+detail is a `Window(id:)` whose content swaps as rows ask: the policy editor
+beside the tile's own block on the left, the live preview on the right. The
+store is a third window: categories on the sidebar, cards on the grid, each
+card saying in one glance whether the clock it is aimed at can take the tile —
+`.notListed` draws as a disabled "Added" card rather than a hole, because a
+grid with gaps reads as a bug — and a successful add opens the tile's settings
+on it (the two-step commit: a tile is never added and forgotten). What the
+menu deleted the window keeps.
+
+Two infrastructure pieces landed with the surfaces. `FullFrameGif` is the
+Scripts/ Python writer ported into the kit — full-frame GIF89a, own LZW,
+Poskanzer growth — byte-identical to `MakeTimedGif.py`'s output, with ImageIO
+as the decode oracle; it is why the preview can promise the same settings give
+the same bytes. `WeatherTileConfig` grew the settings the Better Weather
+controls flip — scale, humidity, felt temperature, each wired through to the
+canvas and the TC002 face, whose temperature now names its scale (`-12°C`) and
+rides the small band when the tile asks for humidity or feels. Records written
+before the settings existed decode as the shipped defaults; nothing rewrites
+them.
+
+Removed by design, so nobody "restores" them: the battery line left the panel
+(battery stays on the Clocks tab's rows), the ClockSwitcher and the panel's
+ClockStatusBlock are gone with the grouped panel, the AddTileMenu and the
+settings sheet are gone with the windows, and `AppModel` holds no panel
+projection anymore.
+
+What later tasks owe:
+
+- The Defaults tab carries the new-tile interval and nothing else. A
+  brightness or quiet-hours policy belongs there, but none was invented in
+  passing — the tab waits for the policy to be designed.
+- The discovery status line's next home is the Clocks tab; it has no surface
+  on the grouped panel.
+- The BDF 5×7 font (ASCII + Cyrillic) is still a Scripts/ artifact. The
+  canvas's `drawText` speaks its own built-in face; porting the BDF parser is
+  the door to Cyrillic on the TC002, and the full-frame GIF assembly it needs
+  is already in the kit.
+- The GIF carries one delay per FILE (`FullFrameGif.encode(frames:delay:)`).
+  Per-frame delays (a marquee that scrolls and then dwells) are a signature
+  widening away, wanted the day a tile needs it.
+
+Measured at close: 1542 tests (587 app + 955 kit), serial run green to the
+last, zero build warnings. The app bundle's waitUntil budget (5 s) is
+sensitive to Swift Testing's parallel workers when the machine is loaded — a
+full parallel run can time out a wave of network-shaped tests (the two
+UlanziClockSlot upsert pins were the first known specimens; under load the wave
+widens). A serial run — `swift test --no-parallel` — is the arbiter: green
+throughout. tea-rags has the project indexed (alias `pixelclocktiles`, 4783
+chunks; Swift support arrived with the tool) — reached through the `tea-rags`
+CLI, since the MCP server is not attached to this repo's sessions.
+
+### The first run's corrections, same day
+
+The launch against the real desktop caught three things the suite could not:
+
+- **The detail window opened itself.** The panel carried an opener whose
+  `.onAppear` called `openWindow` — and a `MenuBarExtra` panel's content
+  appears EVERY open, so while a tile's key stood set, opening the menu bar
+  yanked the key off the panel onto the settings window, the panel resigned
+  and closed itself, and the settings window kept fronting over everything.
+  To the hand it read as "windows do not click, do not close". The opener is
+  gone; the ⋯ row button opens the window at the click (`onOpenDetailWindow`,
+  a view question the facade cannot answer), and the store's add already did.
+- **Liquid Glass was missing.** `.glassEffect` is scene-layer material: the
+  panel takes it from the `MenuBarExtra` content in `App.swift`, the store
+  sidebar on its own column. The view stays content, drawable in tests
+  without the glass — a pixel pin that includes the material flattens to
+  uniform noise under offscreen `cacheDisplay` and the dot test fails on the
+  equality it exists to make.
+- **The preview is every tile's.** Requirement 6 said so and the first pass
+  shipped weather only. `PixelCanvas` now carries its own dimensions (the
+  statics keep spelling the 52×16 TC002 panel), `FullFrameGif` encodes at the
+  first frame's size, `PixelCanvas.apply(_:)` paints the TC002 draw
+  vocabulary, and `AwtrixScene.canvas()` draws the AWTRIX panel's 32×16 —
+  words centred in the kit's font (the BDF port widens the glyph set later),
+  the scene's colour, the progress bar over the bottom band. The weather
+  keeps answering its draft; every other tile renders its own face.
+
+The quit button read as broken for the same family of reasons: against a
+clock that cannot answer, the budget spends up to fifteen seconds on the
+held banner's dismiss with the panel showing an unchanged Quit button. The
+row now says `Quitting…` for exactly that stretch — the wait itself is
+measured design (see QuitBudget), the silence was the defect.
+
+### The corrected requirements, same evening
+
+The first live session produced a set of corrections that redrew the panel
+and added a surface. All are the user's calls, made against the running app:
+
+- **The panel is statistics only.** No tile rows: the panel answers "what are
+  my clocks doing" — the dot, the connection in words, the battery beside it
+  (`Connected · 🔋 77%`), per clock, and nothing else. A TC002 draws the
+  connection alone, which is the truth about a clock with no cell. The spec's
+  requirement 1 and the panel section were rewritten to match.
+- **The clock's gear opens the clock's own window** (`Clock Settings`,
+  `id: "clock-settings"`, re-aimed like every other window): a Tiles tab
+  laying the clock's tiles out as a GRID of cards — mark, name, last result,
+  settings / move earlier–later / remove, and a dashed Add card at the end —
+  and a General tab that names the clock and says its model, address and
+  status. The grid reuses `TileRowLine` for its result line, so the
+  thrown-error wording pin moved with it; `TileRow`/`TileRowValue` are
+  deleted outright, and `TileRowIcon` moved to `TileRowLine.swift`.
+- **Every window opened from the panel is activated**: `openAndFocus` wraps
+  each `openWindow`/`openSettings` call with `NSApp.activate()`, because an
+  accessory app's window opens without the key otherwise and sat behind the
+  user's attention. This was the "focus does not move to the opened window"
+  report.
+- **The store's cards carry previews**: the connector's own face rendered
+  once per connector per session (`StoreModel.previews`), shown at 3×
+  nearest-neighbour over black. The render spends one reading — the same
+  reading the tile's first delivery would have spent; the anecdotes pop what
+  they pop and restock behind it.
+- **"Weather" is "Better Weather"** — the connector's `displayName`, the
+  spec's own name, everywhere a surface says it.
+- **Nothing clips**: the Settings window is a floor (`minWidth`/`minHeight`)
+  with scrolling tabs, not a fixed box; the store window is resizable too.
+  The Clocks tab's rows carry explicit up/down chevrons beside the drag.
+- **A render that cannot happen says why**: the tile-settings preview grew
+  `previewNote` — "The sky could not be read…", "This connector draws no
+  face for a TC002." — instead of a blank a reader reads as breakage.
+
+On Liquid Glass, measured: the machine runs dark appearance, and Apple's dark
+glass is dense — the panel's `glassEffect` renders as a dark rounded slab
+whose translucency is easy to miss. The material is in (panel, store
+sidebar); what carries the modern look in dark mode is the structure — grids,
+cards, segmented tabs, a scrolling settings window. A light-appearance launch
+shows the glass unmistakably.
+
+### The second live pass, same evening
+
+- **Gear opens the window, not a menu.** The per-clock gear's context menu
+  asked a question the click had already answered; the gear is a button now.
+- **Liquid Glass, the recipe that actually renders.** `glassEffect` behind
+  an opaque window background refracts nothing — it drew a dark slab. Every
+  window now clears its own background through a `WindowBackgroundClearer`
+  view (`.glassWindow(cornerRadius:)`), and the panel's window is cleared
+  by `panelMoved` the moment the reader hands it over. Measured with a
+  standalone probe before wiring: clear window + glass effect is the pair
+  that renders. Dark appearance keeps the material dense; light shows it
+  fully.
+- **Store previews removed.** The preview belongs to the tile settings —
+  before adding, the store card says what the tile IS (mark, name, blurb,
+  availability), not what it draws. The black thumbnails read as broken
+  screenshots and are gone with the code that drew them.
+- **The clock's tiles stack vertically**, full-width, the whole card a door
+  to the tile's settings; drag & drop between cards moves a tile (the key
+  rides a `dragPayload` string, round-trip pinned), chevrons stay for the
+  hand that wants buttons.
+- **The battery survives an outage**: the panel says the last KNOWN charge
+  (`DeviceMonitor.lastKnownBattery`) — a figure that vanished every time the
+  Wi-Fi blipped was a figure nobody planned around. A clock that never
+  answered still says nothing, and the status line says "last push failed"
+  beside a red dot instead of a bare "Connected" that contradicted it.
+- **Already-configured clocks stay out of "Found on the network"** — the
+  address is the identity both sides speak.
+- **The Clocks tab is a `Form`** — grouped sections, the platform's own
+  settings idiom — and every tab reads from the top.
+
+### The third live pass, same evening
+
+- **Drag to reorder the clock's tiles is `List.onMove`.** Two gesture
+  reimplementations (`.draggable` payloads, then `onDrag` providers) lost
+  the drag to the buttons living on the card; the platform's own move drag
+  does not. The rows still draw the colour cards; the chrome is stripped.
+- **The status dot is the CONNECTION only.** Red = unreachable. A failed
+  push belongs to the failed TILE: its card wears the red
+  `exclamationmark.triangle.fill`, the words on hover (`.help`), and the
+  card's line reads failures through `TileRowLine.failureWords` — no
+  NSError dictionaries on the glass. The panel's words come off the same
+  table the dot reads, so they cannot disagree again.
+- **The battery is drawn, not emoji'd** — SF battery symbols by charge,
+  bolt for charging, hourglass while the trend is unestablished —
+  percentage and ETA unchanged, urgency colours unchanged, and the LAST
+  KNOWN charge survives an outage (`DeviceMonitor.lastKnownBattery`).
+- **A removed tile's settings wait for its return**: `removeTile` stashes
+  the config in defaults, `addTile` restores it when the same connector
+  returns to the same clock. Reset-to-defaults sits beside Save settings in
+  the tile's Tile tab (the place is kept; it is where the clock stands).
+- **Windows are chromeless glass**: `hiddenTitleBar` everywhere, traffic
+  lights over the content, the content keeping clear of their corner.
+- **Already-configured clocks stay out of "Found on the network"**, the
+  Settings tabs read from the top, the general Settings surface is a
+  labelled button in the panel's corner (a third gear was one too many).

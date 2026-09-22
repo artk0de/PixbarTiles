@@ -19,7 +19,10 @@ private let pritunl = VPNTileConfig(
 private let zaiHandle = ZaiTileConfig(keyAccount: "8C0D2E7A-6A4B-4E5C-9D1F-2B3A4C5D6E7F.zai")
 
 @Test func aTileConfigIsStoredUnderTheConnectorItBelongsTo() throws {
-    #expect(try json(TileConfig.weather(moscow)) == #"{"weather":{"latitude":55.7558,"longitude":37.6173}}"#)
+    #expect(try json(TileConfig.weather(moscow)) == """
+    {"weather":{"latitude":55.7558,"longitude":37.6173,\
+    "showsFeelsLike":true,"showsHumidity":true,"units":"celsius"}}
+    """)
     #expect(try json(TileConfig.vpn(pritunl)) == """
     {"vpn":{"slot":"top","upColour":"#90EE90","vpn":"pritunl",\
     "whenDown":{"colour":"#FF0000","kind":"blink"}}}

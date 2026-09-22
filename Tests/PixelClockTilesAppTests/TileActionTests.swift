@@ -156,14 +156,19 @@ private func liveTC002() throws -> (StubTransport, AppModel, TileKey) {
     )
 
     // The second row dragged onto where the first stands: it takes that
-    // place, and everything else keeps its relative order.
+    // place, and everything else keeps its relative order. Read off the
+    // store's order — what a clock's rows are drawn from — clock by clock.
     subject.moveTile(assembledKey("claude", on: desk), to: assembledKey("weather", on: desk))
 
-    let order = subject.tileRows.map { $0.key.connectorId }
+    let order = subject.tileRecords
+        .filter { $0.key.clockId == desk.id }
+        .map { $0.key.connectorId }
     #expect(order == ["claude", "weather", "anecdotes"])
     // And the other clock's order is untouched, inside the same record.
-    subject.selectedClockId = loft.id
-    #expect(subject.tileRows.map { $0.key.connectorId } == ["weather", "claude"])
+    #expect(
+        subject.tileRecords.filter { $0.key.clockId == loft.id }.map { $0.key.connectorId }
+            == ["weather", "claude"]
+    )
 }
 
 @Test @MainActor func aRowDroppedOnAnotherClocksRowIsNotAMove() {
@@ -180,7 +185,10 @@ private func liveTC002() throws -> (StubTransport, AppModel, TileKey) {
 
     subject.moveTile(assembledKey("weather", on: desk), to: assembledKey("weather", on: loft))
 
-    #expect(subject.tileRows.map { $0.key.connectorId } == ["weather", "claude"])
+    #expect(
+        subject.tileRecords.filter { $0.key.clockId == desk.id }.map { $0.key.connectorId }
+            == ["weather", "claude"]
+    )
 }
 
 @Test @MainActor func aRowDroppedOntoItselfIsNotAMove() {
@@ -195,12 +203,10 @@ private func liveTC002() throws -> (StubTransport, AppModel, TileKey) {
 
     subject.moveTile(assembledKey("weather", on: desk), to: assembledKey("weather", on: desk))
 
-    #expect(subject.tileRows.map { $0.key.connectorId } == ["weather", "claude"])
-}
-
-@Test @MainActor func aDragPayloadRoundTripsThroughTheKeyItNames() {
-    let key = TileKey(clockId: desk.id, connectorId: "claude", instance: "pritunl")
-    #expect(TileKey(dragPayload: key.dragPayload) == key)
+    #expect(
+        subject.tileRecords.filter { $0.key.clockId == desk.id }.map { $0.key.connectorId }
+            == ["weather", "claude"]
+    )
 }
 
 private func assembledRecord(

@@ -1145,7 +1145,9 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
 
 // Rule 3. A settings surface is a view, not a mode: the schedule keeps its
 // place, the poll keeps asking, and a delivery already under way is not
-// cancelled by somebody looking at a text field.
+// cancelled by somebody looking at a text field. The window's one model
+// side-effect — the Clocks tab's visibility, which steers the browse — is
+// the state that has to prove it changes nothing about the schedule.
 @Test @MainActor func openingTheSettingsDoesNotDisturbAScheduledRun() async {
     let gate = Gate()
     let host = SpyHost(parkInRun: gate)
@@ -1157,14 +1159,14 @@ private func scratchDefaults() throws -> (UserDefaults, String) {
     schedule.tick()
     #expect(await waitUntil { gate.enteredCount == 1 })
 
-    subject.openSettings()
+    subject.clocksSectionVisibilityChanged(true)
 
     // The run in flight still finishes, and the schedule takes its next turn.
     #expect(subject.lastResults["stub"] == "running…")
     gate.open()
     #expect(await waitUntil { subject.lastResults["stub"] == "delivered" })
     #expect(await waitUntil { schedule.parked == 1 })
-    #expect(subject.settingsAreOpen)
+    #expect(subject.clocksSectionVisible)
     await subject.teardown()
 }
 
@@ -2206,4 +2208,57 @@ func isDue(_ next: NextRun?) -> Bool {
     await wiring.host.restoreDeviceState(borrowedBy: nil)
 
     #expect(transport.currentOverlay == "snow")
+}
+
+// MARK: - What the model keeps for the surfaces
+
+// The two pins that outlived the flat projection they used to live beside:
+// the selection the model remembers, and the detail surface's key. Both are
+// the model's answers, held here with the rest of its behaviour.
+
+// D3: the selection is a stored key, so the panel that opens tomorrow opens
+// on the clock it was left on.
+@Test @MainActor func theSelectionIsRememberedByTheNextModel() throws {
+    let defaults = try #require(UserDefaults(suiteName: "projection-\(UUID().uuidString)"))
+    let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
+    let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.6")
+    let first = testModel(
+        defaults: defaults,
+        clocks: [desk, kitchen],
+        tiles: [],
+        sessions: [desk.id: SpyHost(), kitchen.id: SpyHost()]
+    )
+    first.selectedClockId = kitchen.id
+
+    let second = testModel(
+        defaults: defaults,
+        clocks: [desk, kitchen],
+        tiles: [],
+        sessions: [desk.id: SpyHost(), kitchen.id: SpyHost()]
+    )
+
+    #expect(second.selectedClockId == kitchen.id)
+}
+
+// D4: the detail is a surface, opened for one tile and closed again.
+@Test @MainActor func theDetailSurfaceCarriesTheTileItWasOpenedFor() {
+    let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
+    let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.6")
+    let subject = testModel(
+        clocks: [desk, kitchen],
+        tiles: [
+            TileRecord(
+                key: TileKey(clockId: kitchen.id, connectorId: "claude"),
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600)
+            )
+        ],
+        sessions: [desk.id: SpyHost(), kitchen.id: SpyHost()]
+    )
+    let key = TileKey(clockId: kitchen.id, connectorId: "claude")
+
+    subject.openDetail(for: key)
+    #expect(subject.detailTileKey == key)
+
+    subject.closeDetail()
+    #expect(subject.detailTileKey == nil)
 }

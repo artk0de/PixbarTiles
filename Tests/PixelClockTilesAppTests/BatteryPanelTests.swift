@@ -73,16 +73,13 @@ private func reading(
     #expect(BatteryLine.text(for: nil) == nil)
 }
 
-@Test func anUnestablishedStateMarksTheLineRatherThanLeavingABareNumber() throws {
-    let line = try #require(BatteryLine.text(for: reading(83, .unknown)))
+// The unestablished direction is the SYMBOL's to mark — the hourglass —
+// while the words stay the bare number they honestly are.
+@Test func anUnestablishedStateIsMarkedByTheSymbolNotTheWords() throws {
+    let reading = reading(83, .unknown)
 
-    #expect(line.hasSuffix("83%"))
-    // The defect, stated as the thing that must not come back.
-    #expect(line != "83%")
-    // And one marker, not a marker and a word: the separator is what the line
-    // puts before a trailing phrase, and a second thing saying "still working
-    // it out" is noise on a row read at a glance.
-    #expect(line.contains("·") == false)
+    #expect(BatteryLine.text(for: reading) == "83%")
+    #expect(BatteryLine.symbol(for: reading) == "hourglass")
 }
 
 @Test func aDischargeWithNoEstimateYetSaysSoRatherThanGuessing() {
@@ -102,13 +99,23 @@ private func reading(
     #expect(line?.contains("14400") == false)
 }
 
-@Test func aChargingLineIsThePlugAndThePercentageAndNothingElse() {
-    let line = BatteryLine.text(for: reading(100, .charging, remaining: 14_400))
+// The bolt-on-cell symbol says what is happening, and any word beside it is
+// noise. How full the clock is is what a person reads this line for, so the
+// percentage stays and nothing else joins it.
+@Test func aChargingLineIsTheBoltSymbolAndThePercentageAndNothingElse() {
+    let reading = reading(100, .charging, remaining: 14_400)
 
-    // The plug already says what is happening, and any word beside it is noise.
-    // How full the clock is is what a person reads this line for, so the
-    // percentage stays and nothing else joins it.
-    #expect(line == "\u{1F50C} 100%")
+    #expect(BatteryLine.text(for: reading) == "100%")
+    #expect(BatteryLine.symbol(for: reading) == "battery.100percent.bolt")
+}
+
+// The four rungs, by charge: the drawn battery fills as the clock does.
+@Test func theDischargeSymbolFollowsTheCharge() {
+    #expect(BatteryLine.symbol(for: reading(83, .discharging)) == "battery.100percent")
+    #expect(BatteryLine.symbol(for: reading(60, .discharging)) == "battery.75percent")
+    #expect(BatteryLine.symbol(for: reading(40, .discharging)) == "battery.50percent")
+    #expect(BatteryLine.symbol(for: reading(10, .discharging)) == "battery.25percent")
+    #expect(BatteryLine.symbol(for: nil) == nil)
 }
 
 @Test func aChargingLineCarriesNoCountdownEvenWhenHandedOne() {
@@ -126,7 +133,8 @@ private func reading(
     // the ratchet holds it. The line prints what the ratchet holds.
     let held = reading(99, .charging, shown: 100)
 
-    #expect(BatteryLine.text(for: held) == "\u{1F50C} 100%")
+    #expect(BatteryLine.text(for: held) == "100%")
+    #expect(BatteryLine.symbol(for: held) == "battery.100percent.bolt")
 }
 
 @Test func urgencyIsReadOffTheRealFigureRatherThanTheHeldOne() {
@@ -220,68 +228,11 @@ private func reading(
     #expect(BatteryLine.colour(for: reading(4, .charging)) == comfortable)
 }
 
+
 // MARK: - On the panel
 
-/// The panel, drawn at the width it ships at, with the battery already read.
-///
-/// A ramp of polls rather than a pair, and a minute apart rather than twenty
-/// seconds: the direction is a line fitted across a window now, so a pair
-/// inside two minutes establishes nothing and both panels would draw the same
-/// unknown state. The instants are supplied rather than taken, so nothing here
-/// depends on how long a render took.
-///
-/// No window and no run loop: `cacheDisplay` renders the layer tree
-/// synchronously, which is what keeps this deterministic rather than a wait on
-/// something asynchronous to settle.
-@MainActor
-private func panelPixels(percent: Int, raw: [Int]) async -> Data? {
-    let clock = ScriptedTransport(bodies: raw.map { statsBody(percent: percent, raw: $0) })
-    let model = testModel(transport: clock)
-    let origin = Date(timeIntervalSince1970: 1_700_000_000)
-    for step in raw.indices {
-        await model.monitor.refresh(at: origin.addingTimeInterval(Double(step) * 60))
-    }
-    let browsing = FakeBonjourBrowser()
-    let discovery = ClockDiscovery(
-        browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
-        sightings: { AsyncStream { $0.finish() } }
-    )
-    discovery.browse.start()
-    let host = NSHostingView(
-        rootView: MenuPanel(model: model, monitor: model.monitor, discovery: discovery)
-    )
-    host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
-    host.layoutSubtreeIfNeeded()
-    guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
-    host.cacheDisplay(in: host.bounds, to: target)
-    return target.representation(using: .png, properties: [:])
-}
-
-/// Twelve minutes of a raw figure climbing two steps a minute, and half an hour
-/// of it falling one.
-///
-/// The two are not the same length because the two answers are not read off the
-/// same window: a charge is twenty-five raw steps per ten minutes and is
-/// believed almost at once, while a fall is a twentieth of that and is not
-/// believed until twenty minutes of it have been watched.
-private let climbing = (0..<12).map { 640 + 2 * $0 }
-private let falling = (0..<31).map { 600 - $0 }
-
-@Test @MainActor func whatTheTrajectorySaysIsDrawnOnThePanel() async {
-    // The same percentage, drawn twice, differing only in which way the raw
-    // reading trended. Deleting the battery line from `body` leaves every pure
-    // test above green — this is the one that notices.
-    let charging = await panelPixels(percent: 42, raw: climbing)
-    let discharging = await panelPixels(percent: 42, raw: falling)
-
-    #expect(charging != nil)
-    #expect(charging != discharging)
-}
-
-@Test @MainActor func thePanelDrawsTheSameBatteryTwice() async {
-    // Otherwise the expectation above passes on noise rather than on content.
-    let once = await panelPixels(percent: 42, raw: falling)
-    let again = await panelPixels(percent: 42, raw: falling)
-
-    #expect(once == again)
-}
+// The panel's battery line is gone with the redesign: the dot is the clock's
+// status now, one per section, and the spec's drawing carries no battery row.
+// The line's own rules — every test above — still hold, because the dialog
+// and the warnings speak them, and a later surface that draws the line again
+// inherits them from here.

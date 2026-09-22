@@ -46,9 +46,16 @@ public struct WeatherReading: Sendable, Equatable {
     /// faster than its own updates.
     public let interval: TimeInterval
 
+    /// Percent of relative humidity, as the service reports it — the weather
+    /// tile's optional second line. Optional like `apparentTemperature`: a
+    /// response that stops carrying it reads as "no answer for that", and a
+    /// tile asked to show humidity with no answer shows the temperature alone.
+    public let relativeHumidity: Double?
+
     public init(
         code: Int, isDay: Bool, temperature: Double, apparentTemperature: Double? = nil,
-        precipitation: Double, windSpeed: Double, interval: TimeInterval
+        precipitation: Double, windSpeed: Double, interval: TimeInterval,
+        relativeHumidity: Double? = nil
     ) {
         self.code = code
         self.isDay = isDay
@@ -57,6 +64,7 @@ public struct WeatherReading: Sendable, Equatable {
         self.precipitation = precipitation
         self.windSpeed = windSpeed
         self.interval = interval
+        self.relativeHumidity = relativeHumidity
     }
 }
 
@@ -97,12 +105,15 @@ public actor OpenMeteoSource {
 
     public static let endpoint = "https://api.open-meteo.com/v1/forecast"
 
-    /// The six fields the request asks for, verified against the live service.
+    /// The fields the request asks for, verified against the live service.
     /// `apparent_temperature` arrives in the same `current` object as the air
     /// temperature and costs nothing extra to ask for — one request answers
-    /// both the digits and the colour.
+    /// both the digits and the colour. `relative_humidity_2m` is the weather
+    /// tile's own answer: a tile told to show humidity draws it from the same
+    /// request rather than paying a second one.
     public static let fields =
-        "weather_code,is_day,precipitation,temperature_2m,apparent_temperature,wind_speed_10m"
+        "weather_code,is_day,precipitation,temperature_2m,apparent_temperature,"
+            + "wind_speed_10m,relative_humidity_2m"
 
     private let transport: any Transport
     /// Injected so a test can step over a quarter of an hour rather than wait
@@ -170,6 +181,7 @@ private struct Forecast: Decodable {
         let apparentTemperature: Double?
         let precipitation: Double
         let windSpeed: Double
+        let relativeHumidity: Double?
         /// Optional so a response that stops carrying it reads as "use the
         /// floor" rather than as a malformed answer — the cadence is a courtesy
         /// of the service, not a reading.
@@ -181,6 +193,7 @@ private struct Forecast: Decodable {
             case isDay = "is_day"
             case temperature = "temperature_2m"
             case apparentTemperature = "apparent_temperature"
+            case relativeHumidity = "relative_humidity_2m"
             case precipitation
             case windSpeed = "wind_speed_10m"
         }
@@ -194,7 +207,8 @@ private struct Forecast: Decodable {
             apparentTemperature: current.apparentTemperature,
             precipitation: current.precipitation,
             windSpeed: current.windSpeed,
-            interval: current.interval ?? OpenMeteoSource.defaultInterval
+            interval: current.interval ?? OpenMeteoSource.defaultInterval,
+            relativeHumidity: current.relativeHumidity
         )
     }
 }

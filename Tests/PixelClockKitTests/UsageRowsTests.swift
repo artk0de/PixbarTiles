@@ -20,16 +20,17 @@ private let ink = UlanziColour.white
         UsageRows.Row(label: "S", value: "-", colour: ink)
     ])
 
-    // `S` rows: ##./..#/.#./#../.##; the `-` lights only the middle row,
-    // against the right edge. Dots run 50, 49, 47, 51, 50 between the ends.
+    // `S` rows: .##/#../.#./..#/##. — re-pinned when the glyph was un-mirrored
+    // (it used to draw a thin Z). The `-` lights only the middle row, against
+    // the right edge.
     #expect(
         goldenASCII(of: draw)
             == [
-                "##..................................................",
-                "..#.................................................",
-                ".#...............................................###",
-                "#...................................................",
                 ".##.................................................",
+                "#...................................................",
+                ".#...............................................###",
+                "..#.................................................",
+                "##..................................................",
             ]
     )
 }
@@ -46,13 +47,15 @@ private let ink = UlanziColour.white
     let width = PixelCanvas.width
 
     // The spare top row is dark; every band starts where the arithmetic says.
-    #expect(pixelValue(of: draw, x: 0, y: 0, width: width) == 0)
-    #expect(pixelValue(of: draw, x: 0, y: 1, width: width) == UsageRows.labelColour.value)
-    #expect(pixelValue(of: draw, x: 0, y: 6, width: width) == UsageRows.labelColour.value)
-    #expect(pixelValue(of: draw, x: 0, y: 11, width: width) == UsageRows.labelColour.value)
+    // Column 1 rather than 0: the un-mirrored `S` opens with `.##`, so its
+    // first lit column on the band's top row is the middle one.
+    #expect(pixelValue(of: draw, x: 1, y: 0, width: width) == 0)
+    #expect(pixelValue(of: draw, x: 1, y: 1, width: width) == UsageRows.labelColour.value)
+    #expect(pixelValue(of: draw, x: 1, y: 6, width: width) == UsageRows.labelColour.value)
+    #expect(pixelValue(of: draw, x: 1, y: 11, width: width) == UsageRows.labelColour.value)
 
     // The label is dim where the value is not.
-    #expect(pixelValue(of: draw, x: 0, y: 1, width: width) != UlanziColour.white.value)
+    #expect(pixelValue(of: draw, x: 1, y: 1, width: width) != UlanziColour.white.value)
     #expect(pixelValue(of: draw, x: 51, y: 3, width: width) == UlanziColour.white.value)
 }
 

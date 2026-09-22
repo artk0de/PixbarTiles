@@ -9,23 +9,57 @@ public enum Instancing: Sendable, Equatable {
     case perKey
 }
 
+/// Where a tile belongs on the store's shelves, as the sidebar names them.
+public enum TileCategory: String, CaseIterable, Sendable, Equatable {
+    case weather
+    case system
+    case dev
+    case network
+
+    /// The sidebar's word for the shelf.
+    public var title: String {
+        switch self {
+        case .weather: "Weather"
+        case .system: "System"
+        case .dev: "Dev"
+        case .network: "Network"
+        }
+    }
+}
+
 /// A connector as the Add tile menu needs to see it: no reading, no faces,
-/// just what decides whether it may go on a clock.
-public struct TileCandidate: Equatable, Sendable {
+/// just what decides whether it may go on a clock — and, since the store
+/// became its front door, how it presents there: its shelf, its mark, and
+/// the one line under its name.
+public struct TileCandidate: Hashable, Sendable {
     public let connectorId: String
     /// The models it has a face for — which is the only thing that says what
     /// it supports, so the two cannot disagree.
     public let models: Set<ClockModel>
     public let instancing: Instancing
     public let isAudible: Bool
+    /// The shelf the store files it on.
+    public let category: TileCategory
+    /// The store card's mark, in the app's own dialect of SF Symbols. The
+    /// row's mark reads the same table (the app's `TileRowIcon`), so a tile
+    /// wears one face everywhere and the tables are the price of the kit
+    /// never naming screen marks for the app.
+    public let storeIcon: String
+    /// The one line under the card's name.
+    public let blurb: String
 
     public init(
-        connectorId: String, models: Set<ClockModel>, instancing: Instancing, isAudible: Bool
+        connectorId: String, models: Set<ClockModel>, instancing: Instancing, isAudible: Bool,
+        category: TileCategory? = nil, storeIcon: String? = nil, blurb: String? = nil
     ) {
         self.connectorId = connectorId
         self.models = models
         self.instancing = instancing
         self.isAudible = isAudible
+        let presentation = Self.presentation(for: connectorId)
+        self.category = category ?? presentation.category
+        self.storeIcon = storeIcon ?? presentation.icon
+        self.blurb = blurb ?? presentation.blurb
     }
 
     /// A scene connector. The faces it HAS are the models it supports, and
@@ -47,8 +81,30 @@ public struct TileCandidate: Equatable, Sendable {
     /// The VPN tile: a lamp on an AWTRIX clock, one per watched VPN, silent.
     public init(_ vpn: VPNConnector) {
         self.init(
-            connectorId: vpn.id, models: [.awtrix3], instancing: .perKey, isAudible: false
+            connectorId: vpn.id, models: [.awtrix3], instancing: .perKey, isAudible: false,
+            category: .network, storeIcon: "lock.shield",
+            blurb: "A watched VPN, as a lamp on the clock"
         )
+    }
+
+    /// The store's presentation, by connector id — one table, because a tile
+    /// that moved shelves or changed its line in one surface and not the
+    /// others would be two tiles wearing one name.
+    private static func presentation(for connectorId: String) -> (
+        category: TileCategory, icon: String, blurb: String
+    ) {
+        switch connectorId {
+        case WeatherConnector.appName:
+            return (.weather, "cloud.sun", "The sky where the clock is")
+        case ClaudeUsageConnector.id:
+            return (.dev, "terminal", "Claude usage, from the status line")
+        case ZaiUsageConnector.connectorId:
+            return (.dev, "chart.bar", "z.ai usage, week to date")
+        case "anecdotes":
+            return (.system, "text.bubble", "The day's anecdotes, spoken")
+        default:
+            return (.dev, "app.dashed", "")
+        }
     }
 }
 

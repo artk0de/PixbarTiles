@@ -123,6 +123,50 @@ public struct AwtrixScene: Sendable, Equatable {
 /// What an AWTRIX face produces and the AWTRIX session delivers.
 public typealias AwtrixDelivery = Delivery<AwtrixScene>
 
+public extension AwtrixScene {
+    /// The AWTRIX panel's size — the geometry the preview draws this scene
+    /// at, the way the TC002's is `PixelCanvas`'s own default.
+    static let panelWidth = 32
+    static let panelHeight = 16
+
+    /// The scene as the preview draws it: the words centred on the panel in
+    /// the kit's font, in the colour the scene names, with the progress bar
+    /// over the panel's bottom band. The device sets its own glyphs and
+    /// fetches an icon's pixels from its flash — neither is here, and a word
+    /// wider than the double height falls to the single one rather than off
+    /// the sides.
+    func canvas() -> PixelCanvas {
+        var canvas = PixelCanvas(width: Self.panelWidth, height: Self.panelHeight)
+        let ink = UlanziColour(hex: color ?? "#FFFFFF")
+        let textWidth = { (scale: Int) in text.unicodeScalars.count * 4 * scale - scale }
+        let scale = textWidth(2) <= Self.panelWidth ? 2 : 1
+        let height = 5 * scale
+        // Centred, one band above the bar: the same two-band layout the TC002
+        // faces draw, said once here.
+        canvas.drawText(
+            text,
+            at: PixelPoint(
+                x: (Self.panelWidth - textWidth(scale)) / 2,
+                y: (Self.panelHeight - height - 2) / 2
+            ),
+            ink: Pixel(colour: ink),
+            scale: scale
+        )
+        if let progress {
+            let track = Pixel(colour: UlanziColour(hex: progress.track))
+            let fill = Pixel(colour: UlanziColour(hex: progress.fill))
+            canvas.drawRect(
+                PixelRect(x: 0, y: 14, width: Self.panelWidth, height: 2), color: track
+            )
+            let filled = Self.panelWidth * progress.percent / 100
+            canvas.drawRect(
+                PixelRect(x: 0, y: 14, width: filled, height: 2), color: fill
+            )
+        }
+        return canvas
+    }
+}
+
 extension Delivery where Scene == AwtrixScene {
     /// Everything an AWTRIX delivery can say, in the labels and the order the
     /// connectors have always used.

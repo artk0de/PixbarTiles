@@ -1318,8 +1318,11 @@ let liveSky = Data("""
 
 let aDesk = Coordinates(latitude: 55.7558, longitude: 37.6173)
 
-func weatherConnector(over transport: any Transport) -> WeatherConnector {
-    WeatherConnector(source: OpenMeteoSource(transport: transport), location: { aDesk })
+func weatherConnector(
+    over transport: any Transport,
+    config: @escaping @Sendable () -> WeatherTileConfig = { WeatherTileConfig(place: aDesk) }
+) -> WeatherConnector {
+    WeatherConnector(source: OpenMeteoSource(transport: transport), location: { aDesk }, config: config)
 }
 
 // MARK: - VPN and the clock's lamps

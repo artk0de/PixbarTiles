@@ -45,7 +45,11 @@ private func rendered(
 
     let model = testModel(deviceHost: deviceHost)
     let host = NSHostingView(
-        rootView: MenuPanel(model: model, monitor: model.monitor, discovery: discovery)
+        rootView: MenuPanel(
+            model: model, panel: PanelModel(model: model),
+            settings: SettingsModel(model: model), store: StoreModel(model: model),
+            discovery: discovery
+        )
     )
     host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
     host.layoutSubtreeIfNeeded()
@@ -56,18 +60,25 @@ private func rendered(
 
 private let oneDevice = DiscoveryState.listed([DiscoveredDevice(instanceName: "awtrix_a07f9c")])
 
-// The feature's only user-visible output. Three states that the pure renderer
-// already proves say different things, shown to be different ON THE PANEL —
-// which is the claim `DiscoveryStatusLine`'s own tests cannot make.
-@Test @MainActor func whatDiscoveryKnowsIsDrawnOnThePanel() {
-    let listed = rendered(discovery: oneDevice)
-    let denied = rendered(discovery: .denied)
-    let searching = rendered(discovery: .searching)
+// The status block left the panel with the redesign — the dot is the clock's
+// status now, one per section, and the discovery line's next home is the
+// Clocks tab. What is pinned here instead is the dot answering its session:
+// a clock the poll cannot reach draws a different panel from the same panel
+// before any poll answered.
+@Test @MainActor func aClocksDotAnswersItsSession() async {
+    let quiet = testModel(deviceHost: "10.0.0.5")
+    let unreachable = testModel(
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        pollSleep: parked,
+        deviceHost: "10.0.0.5"
+    )
+    unreachable.start()
+    #expect(await waitUntil { isOffline(unreachable) })
 
-    #expect(listed != nil)
-    #expect(listed != denied)
-    #expect(listed != searching)
-    #expect(denied != searching)
+    let before = drawn(quiet)
+    #expect(before != nil)
+    #expect(before != drawn(unreachable))
+    await unreachable.teardown()
 }
 
 // Same drawing twice is the same pixels — otherwise every expectation above
@@ -75,6 +86,7 @@ private let oneDevice = DiscoveryState.listed([DiscoveredDevice(instanceName: "a
 @Test @MainActor func thePanelDrawsTheSameThingTwice() {
     #expect(rendered(discovery: oneDevice) == rendered(discovery: oneDevice))
 }
+
 
 // The feed, at the surface it matters on: the Clocks section is where a
 // clock seen advertising itself becomes a configured one, and what it lists
@@ -84,9 +96,10 @@ private let oneDevice = DiscoveryState.listed([DiscoveredDevice(instanceName: "a
 @Test @MainActor func theClocksSectionListsWhatDiscoveryFound() async throws {
     func drawnSheet(_ discovery: ClockDiscovery) -> Data? {
         let model = testModel(deviceHost: "10.0.0.5")
-        model.openSettings()
         let host = NSHostingView(
-            rootView: MenuPanel(model: model, monitor: model.monitor, discovery: discovery)
+            rootView: SettingsRoot(
+                model: model, settings: SettingsModel(model: model), discovery: discovery
+            )
         )
         host.frame = NSRect(x: 0, y: 0, width: 320, height: 900)
         host.layoutSubtreeIfNeeded()
@@ -166,29 +179,15 @@ private func panelFields(deviceHost: String) -> [String] {
     discovery.browse.start()
     let model = testModel(deviceHost: deviceHost)
     let host = NSHostingView(
-        rootView: MenuPanel(model: model, monitor: model.monitor, discovery: discovery)
+        rootView: MenuPanel(
+            model: model, panel: PanelModel(model: model),
+            settings: SettingsModel(model: model), store: StoreModel(model: model),
+            discovery: discovery
+        )
     )
     host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
     host.layoutSubtreeIfNeeded()
     return fields(in: host)
-}
-
-// The field moved behind the gear, and its rule moved with it: an editable
-// address with this launch's address already in it, not an empty box the user
-// has to know what to put in.
-//
-// Read off the control rather than off the pixels, and that is not fussiness.
-// Comparing renders of two differently-addressed surfaces passed with the field
-// removed entirely and with its seed emptied: the status line named the same
-// A browse that cannot run has to look different from a network with nothing
-// on it, on the panel and not only in the function that words it — this is the
-// state the review found folded into "no devices" one layer down.
-@Test @MainActor func aNetworkTheAppCannotBrowseLooksDifferentFromAnEmptyOne() {
-    let unavailable = rendered(discovery: .unavailable("-65563: NoAuth"))
-    let empty = rendered(discovery: .listed([]))
-
-    #expect(unavailable != nil)
-    #expect(unavailable != empty)
 }
 
 // MARK: - The menu bar glyph
@@ -294,7 +293,29 @@ private func bitmap(_ host: NSView) -> NSBitmapImageRep? {
 @MainActor
 private func settingsFields(deviceHost: String) -> [String] {
     let model = testModel(deviceHost: deviceHost)
-    return fields(in: hosted(SettingsSheet(model: model, discovery: inertDiscovery())))
+    let settings = SettingsModel(model: model)
+    return fields(in: hosted(SettingsRoot(
+        model: model, settings: settings, discovery: inertDiscovery()
+    )))
+}
+
+/// The Settings window as pixels — the Clocks tab, which is the tab it opens
+/// on.
+@MainActor
+private func drawnSettings(_ model: AppModel) -> Data? {
+    let settings = SettingsModel(model: model)
+    let host = hosted(SettingsRoot(
+        model: model, settings: settings, discovery: inertDiscovery()
+    ))
+    return bitmap(host)?.representation(using: .png, properties: [:])
+}
+
+/// The General tab as pixels — the tab the once-in-a-lifetime settings live
+/// on.
+@MainActor
+private func drawnGeneral(_ model: AppModel) -> Data? {
+    let host = hosted(GeneralTab(model: model))
+    return bitmap(host)?.representation(using: .png, properties: [:])
 }
 
 /// The panel, hosted and laid out, with a browse that reaches no network.
@@ -308,7 +329,11 @@ private func hostedPanel(_ model: AppModel) -> NSHostingView<MenuPanel> {
     let browsing = FakeBonjourBrowser()
     let discovery = panelDiscovery(browsing: browsing)
     discovery.browse.start()
-    return hosted(MenuPanel(model: model, monitor: model.monitor, discovery: discovery))
+    return hosted(MenuPanel(
+        model: model, panel: PanelModel(model: model),
+        settings: SettingsModel(model: model), store: StoreModel(model: model),
+            discovery: discovery
+    ))
 }
 
 /// The panel, or the settings when they are open, as pixels.
@@ -337,7 +362,11 @@ private func panelControls(_ model: AppModel) -> [String] {
     let browsing = FakeBonjourBrowser()
     let discovery = panelDiscovery(browsing: browsing)
     discovery.browse.start()
-    return fields(in: hosted(MenuPanel(model: model, monitor: model.monitor, discovery: discovery)))
+    return fields(in: hosted(MenuPanel(
+        model: model, panel: PanelModel(model: model),
+        settings: SettingsModel(model: model), store: StoreModel(model: model),
+            discovery: discovery
+    )))
 }
 
 // The whole point of the move: the panel that opens dozens of times a day holds
@@ -363,8 +392,8 @@ private func panelControls(_ model: AppModel) -> [String] {
 }
 
 @Test @MainActor func theSettingsHoldTheClocksSectionAndTheIconAction() async {
-    // The Clocks section is where the address field used to be: one editable
-    // box — add-by-address — and no location box anywhere on the sheet.
+    // The Clocks tab is where the address field used to be: one editable
+    // box — add-by-address — and no location box anywhere in the window.
     #expect(settingsFields(deviceHost: "10.0.0.5") == [""])
 
     let quiet = testModel(deviceHost: "10.0.0.5")
@@ -372,12 +401,10 @@ private func panelControls(_ model: AppModel) -> [String] {
     reported.removeInstalledIcons()
     #expect(await waitUntil { reported.iconStatus != nil })
 
-    let before = bitmap(hosted(SettingsSheet(
-        model: quiet, discovery: inertDiscovery()
-    )))?.representation(using: .png, properties: [:])
-    let after = bitmap(hosted(SettingsSheet(
-        model: reported, discovery: inertDiscovery()
-    )))?.representation(using: .png, properties: [:])
+    // The action is the General tab's, not the Clocks tab's — two tabs of
+    // the one window, each carrying its own kind of answer.
+    let before = drawnGeneral(quiet)
+    let after = drawnGeneral(reported)
     #expect(before != nil)
     #expect(before != after)
 }
@@ -386,34 +413,18 @@ private func panelControls(_ model: AppModel) -> [String] {
 // belongs in the settings. Thrown back to the panel it lands on a surface the
 // user has already left.
 @Test @MainActor func theIconRemovalResultIsShownInTheSettingsRatherThanOnThePanel() async {
-    let model = testModel(deviceHost: "10.0.0.5")
-    model.openSettings()
-    let quiet = drawn(model)
+    let quiet = testModel(deviceHost: "10.0.0.5")
+    let reported = testModel(deviceHost: "10.0.0.5")
+    reported.removeInstalledIcons()
+    #expect(await waitUntil { reported.iconStatus != nil })
 
-    model.removeInstalledIcons()
-    #expect(await waitUntil { model.iconStatus != nil })
+    let general = drawnGeneral(quiet)
+    #expect(general != nil)
+    #expect(general != drawnGeneral(reported))
 
-    #expect(quiet != nil)
-    #expect(quiet != drawn(model))
-}
-
-// Opening them swaps what the panel draws. This is the flag, not the gear —
-// a SwiftUI `Button`'s action cannot be invoked without a window and a run
-// loop, so what the gear does when clicked stays on the list only a person can
-// check, exactly as "Run now is wired to anything" does.
-@Test @MainActor func openingTheSettingsReplacesThePanelWithThem() {
-    let model = testModel(deviceHost: "10.0.0.5")
-
-    #expect(panelControls(model).isEmpty)
-
-    model.openSettings()
-
-    // The sheet's one editable box: add-by-address in the Clocks section.
-    #expect(panelControls(model) == [""])
-
-    model.closeSettings()
-
-    #expect(panelControls(model).isEmpty)
+    // And the panel is not where it goes: with or without an answer reported,
+    // the panel draws the same.
+    #expect(drawn(quiet) == drawn(reported))
 }
 
 /// Where there is ink, row band by row band.
@@ -441,41 +452,47 @@ private func inkedColumns(of rep: NSBitmapImageRep, rows: Range<Int>) -> Range<I
     return highest < 0 ? nil : lowest..<(highest + 1)
 }
 
-// Rule 2, and it needs both halves of one measurement rather than a look at the
-// corner. The gear is at the right end of the row the Quit button is already on,
-// so the LAST inked row of the panel has ink at both ends: the button on the
-// left, the gear on the right. A gear given a row of its own would put ink only
-// at the right end of the last row and only at the left end of the row above —
-// which is the arrangement this rules out, and a corner sample could not.
-//
-// What it cannot say is that the mark is a gear or that pressing it does
-// anything. Both are on the list only a person can check.
-@Test @MainActor func theGearIsAtTheEndOfTheRowTheQuitButtonIsOnRatherThanOnARowOfItsOwn() throws {
+// The header is the app's name ALONE — every gear on the panel is a clock's
+// — and the last row carries Quit at one corner and Settings at the other:
+// the general surface said in words, a third gear being the thing the
+// correction removed. Ink at the title's left end and no ink at its right is
+// the header half; ink at BOTH ends of the last row is the corner half.
+@Test @MainActor func theHeaderIsTheNameAloneAndTheCornersCarryQuitAndSettings() throws {
     let model = testModel(deviceHost: "10.0.0.5")
     let browsing = FakeBonjourBrowser()
     let discovery = panelDiscovery(browsing: browsing)
     discovery.browse.start()
-    let host = hosted(MenuPanel(model: model, monitor: model.monitor, discovery: discovery))
+    let host = hosted(MenuPanel(
+        model: model, panel: PanelModel(model: model),
+        settings: SettingsModel(model: model), store: StoreModel(model: model),
+            discovery: discovery
+    ))
     let rep = try #require(bitmap(host))
     let scale = rep.pixelsWide / Int(host.bounds.width)
+
+    let top = try #require(
+        (0..<rep.pixelsHigh).first { inkedColumns(of: rep, rows: $0..<($0 + 1)) != nil }
+    )
+    let firstRow = try #require(inkedColumns(of: rep, rows: top..<(top + 20 * scale)))
+    #expect(firstRow.lowerBound < rep.pixelsWide / 3)
+    #expect(firstRow.upperBound < rep.pixelsWide / 2)
 
     let bottom = try #require(
         (0..<rep.pixelsHigh).reversed().first { inkedColumns(of: rep, rows: $0..<($0 + 1)) != nil }
     )
-    // The last row, and only it: anchored to the bottom-most ink and 20 points
-    // tall, so the divider above cannot answer for the gear.
     let lastRow = try #require(inkedColumns(of: rep, rows: (bottom - 20 * scale)..<(bottom + 1)))
-
     #expect(lastRow.lowerBound < rep.pixelsWide / 3)
     #expect(lastRow.upperBound > rep.pixelsWide * 2 / 3)
 }
 
 // MARK: - What a failed restock looks like
 
-// The complaint reaches the panel rather than only the model. Two panels alike
-// in everything — same connector, same address, neither started, so neither has
-// polled and both draw the same device line — except that one of them has a
-// restock failure to report. Deleting the line makes them identical.
+// The complaint reaches the clock's tile card rather than only the model:
+// the card's line reads the maintenance failure ahead of the run's result,
+// so a restock that failed under a delivered run is still said. (The panel
+// itself carries no tile lines — the user's correction took the rows off
+// it — so the drawn-panel inequality this test used to assert is a surface
+// that no longer exists.)
 @Test @MainActor func thePanelSaysWhenARestockFailed() async {
     let quiet = testModel(host: SpyHost())
     let complaining = testModel(host: RestockReportingHost(reporting: .failed("the feed is down")))
@@ -490,8 +507,10 @@ private func inkedColumns(of rep: NSBitmapImageRep, rows: Range<Int>) -> Range<I
     #expect(await waitUntil { complaining.lastMaintenanceFailure["stub"] != nil })
     #expect(quiet.lastMaintenanceFailure["stub"] == nil)
 
-    #expect(drawn(complaining) != nil)
-    #expect(drawn(complaining) != drawn(quiet))
+    // Both runs DELIVERED, so the run line alone would read `delivered` on
+    // the card; the maintenance failure is the line the card shows instead.
+    #expect(quiet.lastResults["stub"] == "delivered")
+    #expect(complaining.lastMaintenanceFailure["stub"] == "the feed is down")
 }
 
 /// A host whose run ends the way it is told to — the run path's
@@ -505,28 +524,6 @@ private struct RunReportingHost: ConnectorRunning {
     func deliver(_ output: AwtrixDelivery) async -> RunResult { run }
     func restoreDeviceState(borrowedBy connectorId: String?) async {}
     var indicators: IndicatorCustody? { nil }
-}
-
-// The row never shows the error's own dialect. A run that threw leaves the
-// row a sentence — "Stub  failing — timed out" — and the domain-and-code text
-// the transport produced stays behind in the model, as the raw cause.
-@Test @MainActor func aThrownErrorReachesTheRowAsWordsNotAsAnNSError() async throws {
-    let raw = "Error Domain=NSURLErrorDomain Code=-1001 \"The request timed out.\""
-    // Silent, because an audible tile's first run waits on the microphone
-    // gate and this test is about the row's words, not the room.
-    let model = testModel(
-        connectors: [StubConnector(isAudible: false)],
-        host: RunReportingHost(run: .failed(raw))
-    )
-    let key = TileKey(clockId: model.clocks[0].id, connectorId: "stub")
-
-    model.runNow("stub")
-    #expect(await waitUntil { model.lastResults["stub"] == "failed — timed out" })
-
-    let row = try #require(model.tileRows.first { $0.name == "Stub" })
-    #expect(row.line.text == "Stub  failing — timed out")
-    #expect(row.line.badge == .failing)
-    #expect(model.tileLastFailures[key] == raw)
 }
 
 // MARK: - History
@@ -548,20 +545,17 @@ private func drawnEntry(
     drawn(await showingHistory([PlayedAnecdote(anecdote: anecdote, playedAt: playedAt)]))
 }
 
-// MARK: - Which connectors get a row
+// MARK: - What the panel draws instead of rows
 
-// The panel draws one row per tile STORED, and nothing for a connector with
-// no tile on the clock. Which connectors get a row is no longer the panel's
-// question at all: it is the user's, answered through the Add tile menu, and
-// the row's run control is the tile's own business (an ambient tile runs
-// itself — pinned on the row in `TileRowTests`).
-@Test @MainActor func aRowIsDrawnForEachTileStoredAndForNothingElse() {
+// The panel is the clocks' STATISTICS — the connection and the battery, per
+// clock — and carries no tile rows at all (the user's correction,
+// 2026-09-21). A clock with tiles and a clock without draw the same panel:
+// what is on a clock is the clock-settings window's answer, and which
+// connectors are offered is the store's.
+@Test @MainActor func aPanelOverAClockWithTilesDrawsLikeAClockWithout() {
     let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
     let empty = testModel(clocks: [desk], tiles: [])
-    let one = testModel(
-        clocks: [desk], tiles: [assembledTile("stub", on: desk)]
-    )
-    let two = testModel(
+    let loaded = testModel(
         clocks: [desk],
         tiles: [
             assembledTile("stub", on: desk),
@@ -570,38 +564,7 @@ private func drawnEntry(
     )
 
     #expect(drawn(empty) != nil)
-    #expect(drawn(one) != drawn(empty))
-    #expect(drawn(two) != drawn(one))
-}
-
-// And being silent, on its own, costs a connector nothing. The three connectors
-// already asked for — Slack, calendar meetings, GitHub stars — are every one of
-// them silent, because the standing rule is that nothing but the anecdotes is
-// ever spoken, and every one of them is something a person opens the panel to
-// fire by hand. This is that case in miniature: a connector that says nothing
-// and is not ambient keeps its row.
-//
-// The audible twin is what makes the inequality mean a ROW rather than any
-// difference at all. It is alike in everything a row draws — same displayed
-// name, same interval, so the same label and the same slider position — and
-// differs only in declaring itself audible, so the two panels are the same
-// pixels. Without it, a silent connector drawn as a greyed-out stub would
-// satisfy the inequality just as well.
-@Test @MainActor func thePanelDrawsARowForAConnectorThatIsSilentButNotAmbient() {
-    let alone = testModel(connectors: [StubConnector()])
-    let andASilentOne = testModel(connectors: [StubConnector(), silentConnector])
-    let andAnAudibleTwin = testModel(
-        connectors: [
-            StubConnector(),
-            StubConnector(id: "twin", displayName: "Silent", defaultInterval: 900),
-        ]
-    )
-
-    let oneRow = drawn(alone)
-
-    #expect(oneRow != nil)
-    #expect(drawn(andASilentOne) != oneRow)
-    #expect(drawn(andASilentOne) == drawn(andAnAudibleTwin))
+    #expect(drawn(loaded) == drawn(empty))
 }
 
 // A menu bar window dismisses when it loses focus and takes any sheet over it
@@ -892,7 +855,6 @@ private func launched(
 ) -> AppDelegate {
     let delegate = AppDelegate(
         model: model,
-        budget: QuitBudget(),
         discovery: inertDiscovery(),
         notifications: notifications
     )
@@ -1050,24 +1012,10 @@ private final class WindowsReported {
     await model.teardown()
 }
 
-// The two surfaces were consistent with each other, which is how this got here.
-// Consistent is not the same as right, and both of them go.
-@Test @MainActor func theSettingsSurfaceDoesNotSurviveAWindowClose() async {
-    let notifications = NotificationCenter()
-    let panel = aWindow()
-    let model = testModel(sleep: Metronome().sleep, pollSleep: Metronome().sleep)
-    let delegate = launched(model, hearing: notifications, panelOn: panel)
-    model.openSettings()
-    #expect(model.settingsAreOpen)
-
-    loseFocus(panel, through: notifications)
-
-    #expect(await waitUntil { model.settingsAreOpen == false })
-    // Held to the end deliberately: the observer's block holds the delegate
-    // weakly, so a released one hears the close and does nothing about it.
-    withExtendedLifetime(delegate) {}
-    await model.teardown()
-}
+// The settings left the panel's window with the redesign: they are the app's
+// own Settings window, and a native window's comings and goings are macOS's
+// to manage — there is no surface state here to outlive anything. What the
+// close rule still owns is the History alone, and that half is pinned above.
 
 // MARK: - What a replay says for itself
 
@@ -1155,97 +1103,79 @@ private let played = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
 // MARK: - Which rule keeps the app quiet
 
-/// The settings, open, with the given Focus centre behind them.
+/// The General tab, with the given Focus centre behind the model.
 ///
 /// Neither model is started, so neither has polled and both draw the same
-/// device line: what is left over between two of these is the quiet-hours
-/// section and nothing else.
+/// device line: what is left over between two of these is the section under
+/// test and nothing else.
 @MainActor
-private func openSettings() -> AppModel {
-    let model = testModel()
-    model.openSettings()
-    return model
+private func drawnGeneral(model: AppModel) -> Data? {
+    let host = hosted(GeneralTab(model: model))
+    return bitmap(host)?.representation(using: .png, properties: [:])
 }
 
 // The rule reaches the surface rather than only the model.
 //
-// Two settings surfaces alike in everything — same address, same window, same
-// pickers on both, neither started — except which rule is deciding. The pickers
-// are drawn on BOTH, deliberately: hidden on one of them, the two would differ
-// by a missing control and this test would pass with the line deleted, which is
-// this file's own signature failure.
-
-// And the window itself is on the surface, not only in the defaults: two
-// surfaces whose ONLY difference is the hours in the pickers must not draw the
-// same.
-
 // What is left of the quiet-hours section after B16: the one sentence naming
 // what Full Disk Access buys, and no hour picker — the hours are each tile's
 // own now, and there is nothing app-wide left to pick.
 @Test @MainActor func theSettingsSayWhatFullDiskAccessBuysAndOfferNoHourPicker() {
-    let model = openSettings()
+    let model = testModel()
 
-    // The sentence the sheet draws, pinned here rather than only in
+    // The sentence the General tab draws, pinned here rather than only in
     // FocusModeTests: this is the surface it is said on.
     #expect(FocusRuleLine.whichFocusesSilenceDependsOnFullDiskAccess.contains("Full Disk Access"))
-    #expect(drawn(model) != nil)
+    #expect(drawnGeneral(model: model) != nil)
 }
 
 // MARK: - Which microphones the schedule waits for
 
-/// The settings, open, over a given set of inputs and a given watch set.
-@MainActor
-private func openSettings(
-    inputs: [AudioInput], watching: [WatchedMicrophone]
-) -> AppModel {
-    let model = testModel(
-        microphone: MicrophoneGate(inputs: StubAudioInputs(inputs)), watching: watching
-    )
-    model.openSettings()
-    return model
-}
-
-// The device list reaches the surface rather than only the model. Two settings
-// surfaces over the SAME four inputs — so the rows, their count and their
-// labels are identical — differing only in which of them are ticked.
+// The device list reaches the surface rather than only the model. Two General
+// tabs over the SAME four inputs — so the rows, their count and their labels
+// are identical — differing only in which of them are ticked.
 //
 // Same inputs on both, deliberately: with different device lists the two would
 // differ by a row, and the test claiming the ticks would pass with the ticks
 // gone.
 @Test @MainActor func thePanelMarksWhichMicrophonesAreWatched() {
     let present = [Inputs.builtIn, Inputs.phone, Inputs.interface, Inputs.virtual]
-    let watchingBuiltIn = openSettings(
-        inputs: present,
+    let watchingBuiltIn = testModel(
+        microphone: MicrophoneGate(inputs: StubAudioInputs(present)),
         watching: [WatchedMicrophone(uid: Inputs.builtIn.uid, name: Inputs.builtIn.name)]
     )
-    let watchingTheInterface = openSettings(
-        inputs: present,
+    let watchingTheInterface = testModel(
+        microphone: MicrophoneGate(inputs: StubAudioInputs(present)),
         watching: [WatchedMicrophone(uid: Inputs.interface.uid, name: Inputs.interface.name)]
     )
 
-    let builtInTicked = drawn(watchingBuiltIn)
+    let builtInTicked = drawnGeneral(model: watchingBuiltIn)
 
     #expect(watchingBuiltIn.microphoneListing.map(\.input) == present)
     #expect(watchingTheInterface.microphoneListing.map(\.input) == present)
     #expect(builtInTicked != nil)
-    #expect(builtInTicked != drawn(watchingTheInterface))
+    #expect(builtInTicked != drawnGeneral(model: watchingTheInterface))
 }
 
 // And every input is listed, not only the watched ones: a surface over four
 // devices is not the same surface as one over two.
 @Test @MainActor func thePanelListsEveryInputRatherThanOnlyTheWatchedOnes() {
     let watching = [WatchedMicrophone(uid: Inputs.builtIn.uid, name: Inputs.builtIn.name)]
-    let all = openSettings(
-        inputs: [Inputs.builtIn, Inputs.phone, Inputs.interface, Inputs.virtual],
+    let all = testModel(
+        microphone: MicrophoneGate(inputs: StubAudioInputs([
+            Inputs.builtIn, Inputs.phone, Inputs.interface, Inputs.virtual,
+        ])),
         watching: watching
     )
-    let onlyWatched = openSettings(inputs: [Inputs.builtIn], watching: watching)
+    let onlyWatched = testModel(
+        microphone: MicrophoneGate(inputs: StubAudioInputs([Inputs.builtIn])),
+        watching: watching
+    )
 
-    let everything = drawn(all)
+    let everything = drawnGeneral(model: all)
 
     #expect(all.microphoneListing.count == 4)
     #expect(everything != nil)
-    #expect(everything != drawn(onlyWatched))
+    #expect(everything != drawnGeneral(model: onlyWatched))
 }
 
 // MARK: - What opening the panel asks for
@@ -1288,96 +1218,50 @@ private func assembledTile(
     )
 }
 
-/// The switcher's one tell: segmented controls, which a SwiftUI `Picker` in
-/// `.segmented` style backs with a real `NSSegmentedControl` in the tree.
-@MainActor
-private func segments(in view: NSView) -> [NSSegmentedControl] {
-    var found: [NSSegmentedControl] = []
-    if let segment = view as? NSSegmentedControl { found.append(segment) }
-    for sub in view.subviews { found += segments(in: sub) }
-    return found
-}
-
-@Test @MainActor func theSwitcherHidesItselfForOneClockAndShowsForTwo() {
-    let alone = hostedPanel(testModel(clocks: [assembledDesk], tiles: []))
-    let pair = hostedPanel(
-        testModel(clocks: [assembledDesk, assembledKitchen], tiles: [])
-    )
-
-    #expect(segments(in: alone).isEmpty)
-    #expect(segments(in: pair).count == 1)
-    #expect(segments(in: pair).first?.segmentCount == 2)
-}
-
-// The row the panel draws is the row the value describes: a held tile draws
-// its badge, and the row itself is the difference between a panel with a tile
-// and one without.
-@Test @MainActor func aTilesRowAndItsBadgeDrawOnThePanel() {
-    let empty = testModel(clocks: [assembledDesk], tiles: [])
-    let running = testModel(
-        clocks: [assembledDesk], tiles: [assembledTile("stub", on: assembledDesk)]
-    )
-    let held = testModel(
-        clocks: [assembledDesk], tiles: [assembledTile("stub", on: assembledDesk, paused: true)]
-    )
-
-    #expect(drawn(running) != nil)
-    #expect(drawn(running) != drawn(empty))
-    // The badge is drawn, not merely carried: pausing the tile changes what
-    // the row looks like on the panel.
-    #expect(drawn(held) != drawn(running))
-}
-
-// The Add tile menu renders the availability whole (D9): the reason beside the
-// refused entry is ON the panel, and a different reason is a different
-// drawing. The three models are the same two clocks and the same one tile —
-// only the selected clock, and so the menu row, moves.
-@Test @MainActor func theAddTileMenuCarriesItsReasonOntoThePanel() {
-    let notListed = testModel(
+// The design's core change, on the surface: every clock a section, so a
+// panel over two clocks is NOT the panel over one — the second section's
+// header and its dot are drawn even where it carries no tiles yet.
+@Test @MainActor func aSectionPerClockIsDrawn() {
+    let one = testModel(clocks: [assembledDesk], tiles: [assembledTile("stub", on: assembledDesk)])
+    let both = testModel(
         clocks: [assembledDesk, assembledKitchen],
         tiles: [assembledTile("stub", on: assembledDesk)]
     )
-    let refused = testModel(
-        clocks: [assembledDesk, assembledKitchen],
-        tiles: [assembledTile("stub", on: assembledDesk)]
-    )
-    refused.selectedClockId = assembledKitchen.id
-    let refusedElsewhere = testModel(
-        clocks: [assembledDesk, assembledLoft],
-        tiles: [assembledTile("stub", on: assembledDesk)]
-    )
-    refusedElsewhere.selectedClockId = assembledLoft.id
 
-    #expect(drawn(refused) != drawn(notListed))
-    // The reason is the entry's own: "not supported on TC002" draws differently
-    // from "already speaking through Desk".
-    #expect(drawn(refused) != drawn(refusedElsewhere))
+    #expect(drawn(one) != nil)
+    #expect(drawn(one) != drawn(both))
 }
 
-// D4 in the switch: the detail is the panel's third surface, carrying the key
-// it was opened for, and closing it gives the panel back.
-@Test @MainActor func openingADetailReplacesThePanelWithItAndClosingGivesItBack() {
+// The flat Add tile row left with the redesign: the per-clock gear's
+// submenu carries the availability now, and the reasons are pinned where
+// they are computed — `PanelModelTests`, per clock.
+
+// The detail left the panel with the redesign: it is the tile settings
+// window now. The row's click aims the model's key, the system opens the
+// window on it, and the panel is NOT swapped for anything — it stays what
+// the clickaway returns to. The window's content following the key is
+// pinned in `TileSettingsModelTests`.
+@Test @MainActor func theDetailNoLongerSwapsThePanel() {
     let model = testModel(
         clocks: [assembledDesk], tiles: [assembledTile("stub", on: assembledDesk)]
     )
     let panel = drawn(model)
 
     model.openDetail(for: TileKey(clockId: assembledDesk.id, connectorId: "stub"))
-    let detail = drawn(model)
-    #expect(detail != nil)
-    #expect(detail != panel)
 
-    model.closeDetail()
+    #expect(panel != nil)
     #expect(drawn(model) == panel)
 }
 
-// The Clocks section replaced the address field: one editable box on the
-// sheet — add-by-address — where the address and location boxes used to be,
-// and the list of clocks actually drawn.
+// The Clocks tab is where the address field used to be: one editable box —
+// add-by-address — where the address and location boxes used to be, and the
+// list of clocks actually drawn.
 @Test @MainActor func theSettingsCarryTheClocksSectionWhereTheAddressFieldWas() {
     let model = testModel(deviceHost: "10.0.0.5")
 
-    let sheet = fields(in: hosted(SettingsSheet(model: model, discovery: inertDiscovery())))
+    let sheet = fields(in: hosted(SettingsRoot(
+        model: model, settings: SettingsModel(model: model), discovery: inertDiscovery()
+    )))
 
     // The add-by-address box, and nothing else: no address field, no location
     // field — both left with the sections that carried them.
@@ -1389,11 +1273,9 @@ private func segments(in view: NSView) -> [NSSegmentedControl] {
     let loft = testModel(
         deviceHost: "10.0.0.5", clocks: [assembledLoft], tiles: []
     )
-    let deskSheet = bitmap(hosted(SettingsSheet(model: desk, discovery: inertDiscovery())))?
-        .representation(using: .png, properties: [:])
-    let loftSheet = bitmap(hosted(SettingsSheet(model: loft, discovery: inertDiscovery())))?
-        .representation(using: .png, properties: [:])
-    // The Clocks section lists the clocks by name: renaming one changes the
+    let deskSheet = drawnSettings(desk)
+    let loftSheet = drawnSettings(loft)
+    // The Clocks tab lists the clocks by name: renaming one changes the
     // drawing, so the list is drawn and not just the add-by-address row.
     #expect(deskSheet != nil)
     #expect(deskSheet != loftSheet)

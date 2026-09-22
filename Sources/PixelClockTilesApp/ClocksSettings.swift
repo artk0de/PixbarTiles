@@ -46,6 +46,11 @@ struct ClocksSettings: View {
     /// The twice-added clock is the case this exists for: the store stayed
     /// empty twice and nothing ever said why.
     let outcome: String?
+    /// Where a dragged row landed: the source clock moves to the destination
+    /// row's place. The order IS the store's — the one the panel's sections
+    /// follow — so the row keeps its drag on its reading parts, exactly as a
+    /// tile's row does.
+    let onMove: (UUID, UUID) -> Void
     let onRename: (UUID, String) -> Void
     let onRemove: (UUID) -> Void
     let onAddDiscovered: (DiscoveredClock) -> Void
@@ -62,6 +67,7 @@ struct ClocksSettings: View {
         entries: [ClockListEntry], discovered: [DiscoveredClock],
         confirming: Bool = false,
         outcome: String? = nil,
+        onMove: @escaping (UUID, UUID) -> Void = { _, _ in },
         onRename: @escaping (UUID, String) -> Void,
         onRemove: @escaping (UUID) -> Void,
         onAddDiscovered: @escaping (DiscoveredClock) -> Void,
@@ -71,6 +77,7 @@ struct ClocksSettings: View {
         self.discovered = discovered
         self.confirmingID = confirming ? entries.first?.id : nil
         self.outcome = outcome
+        self.onMove = onMove
         self.onRename = onRename
         self.onRemove = onRemove
         self.onAddDiscovered = onAddDiscovered
@@ -81,24 +88,41 @@ struct ClocksSettings: View {
     @State private var confirmingID: UUID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Clocks").font(.headline)
-            ForEach(entries) { entry in
-                if entry.id == confirmingID {
-                    removalRow(for: entry)
-                } else {
-                    ClockEntryRow(
-                        entry: entry,
-                        onRename: { onRename(entry.id, $0) },
-                        onRemove: { confirmingID = entry.id }
-                    )
+        Form {
+            Section {
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    if entry.id == confirmingID {
+                        removalRow(for: entry)
+                    } else {
+                        ClockEntryRow(
+                            entry: entry,
+                            canMoveUp: index > 0,
+                            canMoveDown: index < entries.count - 1,
+                            onMoveUp: { move(entry, by: -1) },
+                            onMoveDown: { move(entry, by: 1) },
+                            onRename: { onRename(entry.id, $0) },
+                            onRemove: { confirmingID = entry.id }
+                        )
+                        // The drop destination, beside the row: a drag released
+                        // here moves the dragged clock to this row's place. The
+                        // payload is the clock's own id, read back by the model.
+                        .dropDestination(for: String.self) { payload, _ in
+                            guard let source = payload.first, let id = UUID(uuidString: source),
+                                id != entry.id
+                            else { return false }
+                            onMove(id, entry.id)
+                            return true
+                        }
+                        .onDrag {
+                            NSItemProvider(object: entry.id.uuidString as NSString)
+                        }
+                    }
                 }
+            } header: {
+                Text("Clocks")
             }
             if !discovered.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Found on the network")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                Section("Found on the network") {
                     ForEach(discovered, id: \.address) { clock in
                         HStack {
                             Text("\(clock.name) · \(clock.model)")
@@ -109,16 +133,28 @@ struct ClocksSettings: View {
                     }
                 }
             }
-            AddByAddressRow(onAdd: onAddByAddress)
-            // Under the section rather than beside either button: both paths
-            // answer here, so the reader of one refusal is the reader of both.
-            if let outcome {
-                Text(outcome)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            Section {
+                AddByAddressRow(onAdd: onAddByAddress)
+                // Under the section rather than beside either button: both paths
+                // answer here, so the reader of one refusal is the reader of both.
+                if let outcome {
+                    Text(outcome)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
+        .formStyle(.grouped)
+    }
+
+    /// The neighbour a chevron swaps with — the entries as they are, which
+    /// is the store's own order the panel's sections follow.
+    private func move(_ entry: ClockListEntry, by step: Int) {
+        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        let target = index + step
+        guard entries.indices.contains(target) else { return }
+        onMove(entry.id, entries[target].id)
     }
 
     private func removalRow(for entry: ClockListEntry) -> some View {
@@ -135,9 +171,13 @@ struct ClocksSettings: View {
     }
 }
 
-/// One configured clock's row, with the rename and remove controls.
+/// One configured clock's row, with the rename, reorder and remove controls.
 private struct ClockEntryRow: View {
     let entry: ClockListEntry
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
     let onRename: (String) -> Void
     let onRemove: () -> Void
 
@@ -160,6 +200,22 @@ private struct ClockEntryRow: View {
                 } else {
                     Text(entry.name).font(.callout)
                     Spacer()
+                    Button {
+                        onMoveUp()
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(canMoveUp == false)
+                    .accessibilityLabel("Move \(entry.name) up")
+                    Button {
+                        onMoveDown()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(canMoveDown == false)
+                    .accessibilityLabel("Move \(entry.name) down")
                     Button {
                         newName = entry.name
                         renaming = true

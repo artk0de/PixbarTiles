@@ -53,6 +53,13 @@ struct TileRowLine: Equatable {
     /// sentence. Each one the app actually meets is named here once; a failure
     /// with no known dialect keeps its raw message, cut to what a row shows,
     /// rather than being flattened into a word that says nothing.
+    /// A failure as the card's line says it — the cause in words, the raw
+    /// NSError dictionary kept behind. What the panel's row did, said now by
+    /// the grid card that replaced it.
+    static func failureWords(_ raw: String) -> String {
+        "failing — \(cause(from: raw))"
+    }
+
     static func cause(from raw: String) -> String {
         let lower = raw.lowercased()
         if lower.contains("timed out") { return "timed out" }
@@ -67,5 +74,25 @@ struct TileRowLine: Equatable {
             return "could not reach the server"
         }
         return String(raw.prefix(60))
+    }
+}
+
+/// The mark each connector's tile wears — on the clock-settings grid's cards
+/// and wherever a tile is named beside its face. A table rather than a
+/// `Connector` member so the kit stays out of naming screen marks: the app
+/// reads its own dialect of SF Symbols, and a connector with no row here is
+/// drawn the "unknown app" mark rather than nothing.
+enum TileRowIcon {
+    static func symbol(forConnectorId connectorId: String) -> String {
+        switch connectorId {
+        // The ids as the connectors spell them — `id` is an instance member
+        // on the scene connectors, and spelling it here is cheaper than
+        // building one to read it.
+        case "weather": return "cloud.sun"
+        case "claude": return "terminal"
+        case "anecdotes": return "text.bubble"
+        case VPNConnector.id: return "lock.shield"
+        default: return "app.dashed"
+        }
     }
 }

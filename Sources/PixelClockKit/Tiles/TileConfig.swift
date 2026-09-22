@@ -13,15 +13,29 @@ import Foundation
 ///           "whenDown":{"colour":"#FF0000","kind":"blink"}}}
 ///   {"claude":"daily"}
 public enum TileConfig: Equatable, Sendable {
-    case weather(Coordinates)
+    case weather(WeatherTileConfig)
     case vpn(VPNTileConfig)
     case zai(ZaiTileConfig)
     case claude(ClaudeDisplayMetric)
 
+    /// A weather tile's config in the shipped defaults, at this place — the
+    /// form every caller that knows only the place means. Overloading the
+    /// case keeps the pre-settings call sites, and the records they write,
+    /// reading exactly as they did.
+    public static func weather(_ place: Coordinates) -> TileConfig {
+        .weather(WeatherTileConfig(place: place))
+    }
+
+    /// The weather tile's whole config, or nil for any other tile.
+    public var weatherConfig: WeatherTileConfig? {
+        guard case let .weather(config) = self else { return nil }
+        return config
+    }
+
     /// The weather tile's place, or nil for any other tile.
     public var location: Coordinates? {
-        guard case let .weather(place) = self else { return nil }
-        return place
+        guard case let .weather(config) = self else { return nil }
+        return config.place
     }
 
     /// The VPN tile's lamp, or nil for any other tile.
@@ -61,7 +75,7 @@ extension TileConfig: Codable {
         }
         switch key {
         case .weather:
-            self = .weather(try container.decode(Coordinates.self, forKey: .weather))
+            self = .weather(try container.decode(WeatherTileConfig.self, forKey: .weather))
         case .vpn:
             self = .vpn(try container.decode(VPNTileConfig.self, forKey: .vpn))
         case .zai:

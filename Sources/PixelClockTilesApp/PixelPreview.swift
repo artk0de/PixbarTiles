@@ -11,9 +11,15 @@ import SwiftUI
 /// what lets the view below draw them as squares.
 struct PixelPreviewFrames: Equatable {
     let images: [CGImage]
-    /// Seconds per frame. One value, because the encoder writes one:
-    /// `FullFrameGif` gives every frame the same delay.
-    let delay: TimeInterval
+    /// Seconds each frame is shown, frame by frame: a page that dwells and
+    /// then moves — the usage face's percentages, then its marquee — carries
+    /// a delay per frame, and a preview that read only the first would play
+    /// the marquee at the dwell's pace.
+    let delays: [TimeInterval]
+
+    /// The first frame's delay — the whole timing of a GIF whose frames
+    /// share one.
+    var delay: TimeInterval { delays.first ?? 1 }
 
     /// Nil for bytes that are not a picture — a preview that cannot be read
     /// is the preview's note to explain, not a crash to have.
@@ -26,14 +32,14 @@ struct PixelPreviewFrames: Equatable {
         let images = (0..<count).compactMap { CGImageSourceCreateImageAtIndex(source, $0, nil) }
         guard images.count == count else { return nil }
         self.images = images
-        self.delay = Self.delay(of: source)
+        self.delays = (0..<count).map { Self.delay(of: source, at: $0) }
     }
 
-    /// The first frame's delay, unclamped: ImageIO clamps anything under a
-    /// tenth of a second UP to a tenth in `DelayTime`, and the scroll's 0.08 is
-    /// exactly the kind of figure that clamping would slow down.
-    private static func delay(of source: CGImageSource) -> TimeInterval {
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+    /// One frame's delay, unclamped: ImageIO clamps anything under a tenth of
+    /// a second UP to a tenth in `DelayTime`, and the scroll's 0.08 is exactly
+    /// the kind of figure that clamping would slow down.
+    private static func delay(of source: CGImageSource, at index: Int) -> TimeInterval {
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
         let gif = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
         let delay = gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double
             ?? gif?[kCGImagePropertyGIFDelayTime] as? Double
@@ -53,18 +59,18 @@ struct PixelPreviewFrames: Equatable {
 /// then lands on a whole device pixel on a 1x screen and on a 2x one, and
 /// whatever filter the renderer applies has nothing to blend across.
 ///
-/// A `TimelineView` does the animation, stepping at the GIF's own delay, so a
-/// scroll plays at the rate the clock plays it.
+/// A `TimelineView` does the animation, each frame held for the GIF's own
+/// delay for it, so a scroll plays at the rate the clock plays it.
 struct PixelPreview: View {
     private let magnified: [CGImage]
-    private let delay: TimeInterval
+    private let delays: [TimeInterval]
     private let size: CGSize
 
     /// `scale` is points per clock pixel.
     init(frames: PixelPreviewFrames, scale: CGFloat) {
         let factor = Int((scale * Self.backingHeadroom).rounded())
         magnified = frames.images.compactMap { Self.magnify($0, by: factor) }
-        delay = frames.delay
+        delays = frames.delays
         let first = frames.images.first
         size = CGSize(
             width: CGFloat(first?.width ?? 0) * scale, height: CGFloat(first?.height ?? 0) * scale
@@ -77,16 +83,33 @@ struct PixelPreview: View {
 
     var body: some View {
         if magnified.count > 1 {
-            TimelineView(.periodic(from: .now, by: delay)) { context in
-                square(magnified[index(at: context.date)])
+            // Ticking at the shortest delay lands on every frame boundary
+            // closely enough — the usage face's delays are all whole tenths.
+            TimelineView(.periodic(from: .now, by: delays.min() ?? 1)) { context in
+                square(magnified[min(
+                    Self.frameIndex(
+                        at: context.date.timeIntervalSinceReferenceDate, delays: delays
+                    ),
+                    magnified.count - 1
+                )])
             }
         } else if let only = magnified.first {
             square(only)
         }
     }
 
-    private func index(at date: Date) -> Int {
-        Int(date.timeIntervalSinceReferenceDate / delay) % magnified.count
+    /// The frame on show `elapsed` seconds into the loop: the one whose
+    /// stretch of the cycle — its own delay, after every earlier frame's —
+    /// the moment falls in.
+    nonisolated static func frameIndex(at elapsed: TimeInterval, delays: [TimeInterval]) -> Int {
+        let cycle = delays.reduce(0, +)
+        guard cycle > 0 else { return 0 }
+        var moment = elapsed.truncatingRemainder(dividingBy: cycle)
+        for (index, delay) in delays.enumerated() {
+            if moment < delay { return index }
+            moment -= delay
+        }
+        return delays.count - 1
     }
 
     private func square(_ image: CGImage) -> some View {

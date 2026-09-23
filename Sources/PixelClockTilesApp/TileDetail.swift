@@ -246,8 +246,9 @@ struct AnecdoteTileBlock: View {
 /// limit, the weekly window, or the current session.
 ///
 /// Values in, closures out, like every block here. On the TC001 the choice
-/// picks one of the connector's three faces; on the TC002 the face draws all
-/// three at once and the choice answers only the AWTRIX page.
+/// picks one of the connector's three faces; on the TC002 the shared usage
+/// face draws the session and the week at once, and the choice answers only
+/// the AWTRIX page.
 struct ClaudeTileBlock: View {
     let metric: ClaudeDisplayMetric
     let onMetric: (ClaudeDisplayMetric) -> Void
@@ -260,6 +261,59 @@ struct ClaudeTileBlock: View {
                 Text(candidate.displayName).tag(candidate)
             }
         }
+    }
+}
+
+/// The shared usage face's block, on the Claude tile and the z.ai tile alike:
+/// how long the percentages stand before a hot row shows its reset, and from
+/// what percentage a row is hot.
+///
+/// Values in, closures out: the block hands back the whole config with one
+/// field moved, and whoever owns the record keeps what else it says.
+struct UsageFaceBlock: View {
+    let config: UsageFaceConfig
+    let onChange: (UsageFaceConfig) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("On the TC002").font(.caption).foregroundStyle(.secondary)
+            Picker("Show reset every", selection: Binding(
+                get: { config.resetEvery },
+                set: { onChange(UsageFaceConfig(resetEvery: $0, resetAfter: config.resetAfter)) }
+            )) {
+                ForEach(everySteps, id: \.self) { Text(Self.everyCaption($0)).tag($0) }
+            }
+            Picker("Show reset after", selection: Binding(
+                get: { config.resetAfter },
+                set: { onChange(UsageFaceConfig(resetEvery: config.resetEvery, resetAfter: $0)) }
+            )) {
+                ForEach(afterSteps, id: \.self) { Text(Self.afterCaption($0)).tag($0) }
+            }
+        }
+    }
+
+    /// The steps, plus the stored value when a record carries one the design
+    /// does not offer — a picker whose selection matches no tag draws blank,
+    /// which reads as a setting lost.
+    private var everySteps: [TimeInterval] {
+        UsageFaceConfig.resetEverySteps.contains(config.resetEvery)
+            ? UsageFaceConfig.resetEverySteps
+            : (UsageFaceConfig.resetEverySteps + [config.resetEvery]).sorted()
+    }
+
+    private var afterSteps: [Int] {
+        UsageFaceConfig.resetAfterSteps.contains(config.resetAfter)
+            ? UsageFaceConfig.resetAfterSteps
+            : (UsageFaceConfig.resetAfterSteps + [config.resetAfter]).sorted()
+    }
+
+    /// Seconds as the picker says them: `10 s` under a minute, `2 min` from.
+    nonisolated static func everyCaption(_ seconds: TimeInterval) -> String {
+        seconds < 60 ? "\(Int(seconds)) s" : "\(Int(seconds / 60)) min"
+    }
+
+    nonisolated static func afterCaption(_ percent: Int) -> String {
+        "\(percent)%"
     }
 }
 

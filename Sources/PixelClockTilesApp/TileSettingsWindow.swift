@@ -167,21 +167,22 @@ struct TileSettingsWindow: View {
             VStack(alignment: .leading, spacing: 10) {
                 ClaudeTileBlock(
                     metric: value.config?.claude ?? .weekly,
-                    onMetric: { metric in
-                        guard let stored = model.storedPolicy(of: key) else { return }
-                        settings.save(policy: stored, config: .claude(metric))
-                    }
+                    onMetric: { settings.setClaudeMetric($0) }
                 )
+                usageFaceBlock
                 // Machine-wide state, one file, not a tile's: whatever tile's
                 // window it is edited from edits it for every Claude tile.
                 ClaudeCodeSettings(link: claudeCode())
             }
         } else if connector is ZaiUsageConnector {
-            ZaiTileBlock(
-                hasKey: model.hasZaiKey(for: key),
-                outcome: model.lastZaiKeyOutcome,
-                onSaveKey: { model.saveZaiKey($0, for: key) }
-            )
+            VStack(alignment: .leading, spacing: 10) {
+                ZaiTileBlock(
+                    hasKey: model.hasZaiKey(for: key),
+                    outcome: model.lastZaiKeyOutcome,
+                    onSaveKey: { model.saveZaiKey($0, for: key) }
+                )
+                usageFaceBlock
+            }
         } else if key.connectorId == VPNConnector.id {
             // Keyed on the connector id, not on `connector is VPNConnector`:
             // a lamp tile's connector is built per VPN by the clock's own
@@ -191,6 +192,15 @@ struct TileSettingsWindow: View {
             lampBlock(for: key, config: value.config)
         } else {
             EmptyView()
+        }
+    }
+
+    /// The shared usage face's two pickers — the same block on the Claude
+    /// tile and the z.ai tile, because the face they tune is one.
+    @ViewBuilder
+    private var usageFaceBlock: some View {
+        if let usageFace = settings.usageFace {
+            UsageFaceBlock(config: usageFace, onChange: { settings.setUsageFace($0) })
         }
     }
 

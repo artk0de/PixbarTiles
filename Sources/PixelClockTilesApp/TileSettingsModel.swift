@@ -131,6 +131,58 @@ final class TileSettingsModel {
         )
     }
 
+    // MARK: - The usage face's settings
+
+    /// The shared usage face's two settings as the tile has them, or nil for
+    /// a tile that does not draw that face. A Claude or z.ai tile with no
+    /// config yet — a z.ai tile nobody pasted a key into — is at the defaults.
+    var usageFace: UsageFaceConfig? {
+        guard let key, Self.drawsUsageFace(key) else { return nil }
+        return model.storedTile(key)?.config?.usageFace ?? .standard
+    }
+
+    /// Writes the usage face's settings into the tile's record, keeping what
+    /// else the record says — the Claude metric, the z.ai key handle. The
+    /// preview follows, so the new timing is on screen at once.
+    func setUsageFace(_ usageFace: UsageFaceConfig) {
+        guard let key, Self.drawsUsageFace(key) else { return }
+        let stored = model.storedTile(key)?.config
+        let config: TileConfig = switch key.connectorId {
+        case ClaudeUsageConnector.id:
+            .claude(ClaudeTileConfig(metric: stored?.claude ?? .weekly, usageFace: usageFace))
+        default:
+            // The handle is DERIVED, never minted: a tile tuned before its
+            // key was pasted names the account the key will be filed under.
+            .zai(ZaiTileConfig(
+                keyAccount: stored?.key?.keyAccount ?? ZaiTileConfig.account(for: key),
+                usageFace: usageFace
+            ))
+        }
+        guard save(policy: model.storedPolicy(of: key) ?? TileDefaults.claude, config: config)
+        else { return }
+        schedulePreview()
+    }
+
+    /// The Claude metric picker's save, keeping the usage face's settings the
+    /// record already carries — a bare `.claude(metric)` would put them back
+    /// to the defaults behind the user's back.
+    func setClaudeMetric(_ metric: ClaudeDisplayMetric) {
+        guard let key, key.connectorId == ClaudeUsageConnector.id,
+            let policy = model.storedPolicy(of: key)
+        else { return }
+        let usageFace = model.storedTile(key)?.config?.usageFace ?? .standard
+        guard save(policy: policy, config: .claude(ClaudeTileConfig(metric: metric, usageFace: usageFace)))
+        else { return }
+        schedulePreview()
+    }
+
+    /// Keyed on the connector id, like the lamp block: the settings are the
+    /// tile's, whatever instance is running it.
+    private static func drawsUsageFace(_ key: TileKey) -> Bool {
+        key.connectorId == ClaudeUsageConnector.id
+            || key.connectorId == ZaiUsageConnector.connectorId
+    }
+
     // MARK: - The saves every control funnels through
 
     /// One tile's save, with the model's answer kept rather than dropped.
@@ -309,6 +361,15 @@ final class TileSettingsModel {
             }
             guard let frame = delivery.scene.frames.first else {
                 return .nothing("This tile draws no page on a TC002.")
+            }
+            // A page that ships as ONE full-panel GIF — the usage face's
+            // timeline — previews as that GIF: the very bytes the clock is
+            // sent, every frame with its own delay, not a redraw of them.
+            if frame.draw.isEmpty, frame.image.count == 1, let image = frame.image.first,
+                image.position.x == 0, image.position.y == 0,
+                let gif = Data(base64Encoded: image.base64)
+            {
+                return Rendered(gif: gif, note: nil)
             }
             var canvas = PixelCanvas()
             canvas.apply(frame.draw)

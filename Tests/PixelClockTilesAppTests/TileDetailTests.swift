@@ -196,4 +196,22 @@ private func editor(_ policy: TilePolicy) -> some View {
         #expect(base != drawn(block(.daily)))
         #expect(base != drawn(block(.session)))
     }
+
+    // The usage face's block: two pickers, each opening with the stored
+    // setting, each setting drawn differently — and the captions say the
+    // steps the design names.
+    @Test func theUsageFaceBlockOpensWithTheStoredSettings() {
+        func block(_ config: UsageFaceConfig) -> UsageFaceBlock {
+            UsageFaceBlock(config: config, onChange: { _ in })
+        }
+
+        let base = drawn(block(.standard))
+        #expect(base != nil)
+        #expect(base != drawn(block(UsageFaceConfig(resetEvery: 60, resetAfter: 80))))
+        #expect(base != drawn(block(UsageFaceConfig(resetEvery: 10, resetAfter: 95))))
+        #expect(UsageFaceConfig.resetEverySteps.map(UsageFaceBlock.everyCaption) == [
+            "5 s", "10 s", "15 s", "30 s", "1 min", "2 min", "5 min",
+        ])
+        #expect(UsageFaceBlock.afterCaption(80) == "80%")
+    }
 }

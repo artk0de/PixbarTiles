@@ -906,6 +906,16 @@ final class AppModel: ObservableObject {
                                     && $0.key.connectorId == ClaudeUsageConnector.id
                             }
                             .flatMap(\.config)?.claude ?? .weekly
+                    },
+                    // The TC002 face's two settings, off the same record at
+                    // the same moment: a picker moved reaches the next poll.
+                    usageFace: {
+                        storedTiles.all()
+                            .first {
+                                $0.key.clockId == clock.id
+                                    && $0.key.connectorId == ClaudeUsageConnector.id
+                            }
+                            .flatMap(\.config)?.usageFace ?? .standard
                     }
                 )
             )
@@ -921,7 +931,17 @@ final class AppModel: ObservableObject {
                                 clockId: clock.id, connectorId: ZaiUsageConnector.connectorId
                             )))
                         }
-                    )
+                    ),
+                    // The TC002 face's two settings, read off the tile's
+                    // record at every draw, the way the Claude tile's are.
+                    usageFace: {
+                        storedTiles.all()
+                            .first {
+                                $0.key.clockId == clock.id
+                                    && $0.key.connectorId == ZaiUsageConnector.connectorId
+                            }
+                            .flatMap(\.config)?.usageFace ?? .standard
+                    }
                 )
             )
             return registry
@@ -1353,11 +1373,16 @@ final class AppModel: ObservableObject {
 
         // The policy stands; only the handle joins the record, derived the
         // same way the connector reads it back. A tile saved before any paste
-        // still gets its config here — there is nothing to read first.
+        // still gets its config here — there is nothing to read first. The
+        // usage face's settings the record already carries stay: a paste is
+        // about the key, not about when the page shows its resets.
         if outcome != .refused, let policy = storedPolicy(of: key) {
             _ = saveTile(
                 key: key, policy: policy,
-                config: .zai(ZaiTileConfig(keyAccount: account))
+                config: .zai(ZaiTileConfig(
+                    keyAccount: account,
+                    usageFace: storedTile(key)?.config?.usageFace ?? .standard
+                ))
             )
         }
         return outcome

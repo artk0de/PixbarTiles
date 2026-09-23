@@ -19,13 +19,15 @@ EDGE_STEP_MS = 100       # edge marquee: one pixel per step
 EDGE_HOLD_START_MS = 1000
 EDGE_HOLD_END_MS = 1500
 TRACK = (0x30, 0x30, 0x30)
-# The unspent part of a bar with nothing near its limit. White, so the bar
-# reads as a bar at a glance: at brightness two the old 0x303030 against a
-# 52-pixel row is a line nobody sees, and a reader had the filled part alone to
-# judge the proportion from.
-EMPTY = (0xFF, 0xFF, 0xFF)
+# The SPENT part of a bar — the progress itself. Bright white, so what a
+# glance lands on is how much of the window is gone, against the grey of what
+# is left. The warning bands no longer colour this bar — a page that turned
+# red at 95% put the loudest thing on the panel on the tile with the least to
+# say — so they are gone from this design entirely. `UsageBand` in the kit
+# still classifies, and the AWTRIX page still draws its bar in the band's
+# colour; only the TC002 face stopped.
+PROGRESS = (0xFF, 0xFF, 0xFF)
 LABEL = (0x60, 0x60, 0x60)
-BANDS = [(80, None), (90, (0xFF, 0xD2, 0x4A)), (95, (0xFF, 0x8C, 0x1A)), (10**9, (0xFF, 0x3B, 0x30))]
 
 
 def hexrgb(h):
@@ -117,31 +119,18 @@ class Canvas:
             x += len(G[ch][0]) + 1
 
 
-def band_colour(pct, brand):
-    for limit, colour in BANDS:
-        if pct < limit:
-            return colour or brand
-    return BANDS[-1][1]
-
-
-def track_colour(pct):
-    """The bar's unfilled part.
-
-    White while the window is steady, and the dark track once a warning
-    colour is showing: yellow, orange or red against white is a warning
-    fighting its own bar, and what the eye should land on then is the warning.
-
-    A row with NO reading keeps the dark track too. White there would draw a
-    full empty bar, which reads as nothing spent rather than nothing known.
-    """
-    if pct is None:
-        return TRACK
-    return TRACK if pct >= BANDS[0][0] else EMPTY
-
-
 # Layout: logo 8x5 at (0,1); rows at y=1 and y=9 (text 5 rows, gap, 1px bar).
 TEXT_X = 9
 ROWS = (("s", 1), ("w", 9))
+# The labels are centred on each other rather than flush left. In the
+# proportional face "s" is three columns wide and "w" is five, so left-aligned
+# they hang off one another by two pixels — one row's mark visibly left of the
+# other's on a panel where the two rows are read as a pair.
+LABEL_BOX = max(len(G[label][0]) for label, _ in ROWS)
+
+
+def label_x(label):
+    return TEXT_X + (LABEL_BOX - len(G[label][0])) // 2
 
 
 def value_area(label):
@@ -155,7 +144,7 @@ def draw(vendor, pcts, values):
     cv = Canvas()
     cv.bitmap(v["logo"], 0, 1, v["logo_colour"])
     for (label, top), pct, (value, x) in zip(ROWS, pcts, values):
-        cv.text(label, TEXT_X, top, LABEL)
+        cv.text(label, label_x(label), top, LABEL)
         # The figure in the vendor's MARK colour, not the band's. The mark and
         # the figures are the tile's identity — which account this is — and the
         # band is about how much is left, which the bar under it already says
@@ -164,9 +153,9 @@ def draw(vendor, pcts, values):
         ink = TRACK if pct is None else v["logo_colour"]
         cv.text(value, W - text_width(value) if x is None else x, top, ink, value_area(label))
         bar_y = top + 6
-        cv.rect(0, bar_y, W, 1, track_colour(pct))
+        cv.rect(0, bar_y, W, 1, TRACK)
         if pct:
-            cv.rect(0, bar_y, max(1, round(W * min(pct, 100) / 100)), 1, band_colour(pct, v["brand"]))
+            cv.rect(0, bar_y, max(1, round(W * min(pct, 100) / 100)), 1, PROGRESS)
     return cv
 
 

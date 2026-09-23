@@ -322,24 +322,56 @@ private func figureInk(_ vendor: UsageFace.Vendor, session: Int?) -> Set<String>
     }
 }
 
-// The bar's unspent part, while nothing is near a limit. At brightness two the
-// old dark track against a 52-pixel row is a line nobody sees.
-@Test func aSteadyBarsUnspentPartIsWhite() {
+// The progress itself is bright white against the grey of what is left, so
+// what a glance lands on is how much of the window is gone.
+@Test func theSpentPartOfABarIsBrightWhiteAndTheRestIsGrey() {
     // 17% of 52 columns is filled; column 51 is not.
-    #expect(facePixel(.claude, session: 17, at: (51, 7)) == "FFFFFF")
-    #expect(facePixel(.claude, session: 17, at: (0, 7)) == "D97757")
+    #expect(facePixel(.claude, session: 17, at: (0, 7)) == "FFFFFF")
+    #expect(facePixel(.claude, session: 17, at: (51, 7)) == "303030")
 }
 
-// Once a warning is showing the track goes dark again: yellow, orange or red
-// against white is a warning fighting its own bar.
-@Test func aWarningBarKeepsTheDarkTrack() {
-    #expect(facePixel(.claude, session: 85, at: (51, 7)) == "303030")
-    #expect(facePixel(.claude, session: 85, at: (0, 7)) == "FFD24A")
+// And it stays white as the window fills. The warning bands do not colour this
+// bar: a page that turned red at 95% put the loudest thing on the panel on the
+// tile with the least to say.
+@Test func aBarNearItsLimitIsStillWhite() {
+    for percent in [85, 92, 99] {
+        #expect(facePixel(.claude, session: percent, at: (0, 7)) == "FFFFFF", "\(percent)%")
+        #expect(facePixel(.zai, session: percent, at: (0, 7)) == "FFFFFF", "\(percent)%")
+    }
 }
 
-// A row with nothing to report keeps the dark track. White there would draw a
-// full empty bar, which reads as nothing spent rather than nothing known.
-@Test func aRowWithNoReadingKeepsTheDarkTrack() {
+// A row with nothing to report draws no progress at all — an unlit track from
+// end to end, rather than a bar at nought.
+@Test func aRowWithNoReadingDrawsNoProgress() {
     #expect(facePixel(.claude, session: nil, at: (51, 7)) == "303030")
     #expect(facePixel(.claude, session: nil, at: (0, 7)) == "303030")
+}
+
+// The two labels are centred on each other rather than flush left. In the
+// proportional face "s" is three columns wide and "w" is five, so left-aligned
+// they hang off one another by two pixels — on a panel where the two rows are
+// read as a pair.
+@Test func theRowLabelsAreCentredOnEachOther() {
+    // "w" starts at the label column; "s", two columns narrower, starts one
+    // to the right of it.
+    let frames = UsageFace.timeline(
+        vendor: .claude,
+        session: UsageFace.Window(percent: 50, resetsAt: nil),
+        weekly: UsageFace.Window(percent: 50, resetsAt: nil),
+        config: .standard,
+        timeZone: TimeZone(identifier: "UTC")!
+    )
+    let canvas = frames[0].canvas
+
+    func firstLitColumn(ofRowAt top: Int) -> Int? {
+        (9..<16).first { x in
+            (top..<(top + 5)).contains { y in
+                let pixel = canvas[x, y]
+                return (pixel.red, pixel.green, pixel.blue) == (0x60, 0x60, 0x60)
+            }
+        }
+    }
+
+    #expect(firstLitColumn(ofRowAt: 9) == 9)
+    #expect(firstLitColumn(ofRowAt: 1) == 10)
 }

@@ -90,29 +90,30 @@ public enum UsageFace {
     /// grey as `ClaudeUsageConnector.trackColour`, and for the same reason.
     static let trackColour = UlanziColour(value: 0x30_30_30)
 
-    /// The unspent part of a bar with nothing near its limit.
+    /// The SPENT part of a bar — the progress itself.
     ///
-    /// White, so the bar reads as a bar at a glance: at brightness two the
-    /// dark track against a 52-pixel row is a line nobody sees, and a reader
-    /// had the filled part alone to judge the proportion from.
-    static let emptyColour = UlanziColour(value: 0xFF_FF_FF)
-
-    /// The bar's unfilled part.
-    ///
-    /// White while the window is steady, and the dark track once a warning
-    /// colour is showing: yellow, orange or red against white is a warning
-    /// fighting its own bar, and what the eye should land on then is the
-    /// warning.
-    ///
-    /// A row with NO reading keeps the dark track too. White there would draw
-    /// a full empty bar, which reads as nothing spent rather than nothing
-    /// known.
-    static func trackColour(for percent: Int?) -> UlanziColour {
-        guard let percent else { return trackColour }
-        return UsageBand(utilization: percent) == .steady ? emptyColour : trackColour
-    }
+    /// Bright white, so what a glance lands on is how much of the window is
+    /// gone, against the grey of what is left. The warning bands no longer
+    /// colour it: a page that turned red at 95% put the loudest thing on the
+    /// panel on the tile with the least to say. `UsageBand` still classifies
+    /// and the AWTRIX page still draws its bar in the band's colour; only
+    /// this face stopped.
+    static let progressColour = UlanziColour(value: 0xFF_FF_FF)
     private static let logoOrigin = PixelPoint(x: 0, y: 1)
     private static let labelX = 9
+    /// The box the two labels are centred in — the wider of them.
+    ///
+    /// In the proportional face "s" is three columns wide and "w" is five, so
+    /// flush left they hang off one another by two pixels: one row's mark
+    /// visibly left of the other's, on a panel where the two rows are read as
+    /// a pair.
+    private static var labelBox: Int {
+        rows.map { font.width(of: $0.label, scale: 1) }.max() ?? 0
+    }
+
+    private static func labelX(of label: String) -> Int {
+        labelX + (labelBox - font.width(of: label, scale: 1)) / 2
+    }
     /// Columns between a label and the value area. Fewer, and a scrolling
     /// value reads as one word with its label.
     private static let labelGap = 4
@@ -273,11 +274,9 @@ public enum UsageFace {
         }
         for ((label, top), (window, value)) in zip(rows, zip(windows, values)) {
             canvas.drawText(
-                label, at: PixelPoint(x: labelX, y: top), ink: Pixel(colour: labelColour), font: font
+                label, at: PixelPoint(x: labelX(of: label), y: top),
+                ink: Pixel(colour: labelColour), font: font
             )
-            let bandInk = window.map {
-                UlanziColour(hex: UsageBand(utilization: $0.percent).fillColour(brand: vendor.brand))
-            }
             // The value on a strip as wide as its area, laid on the page: the
             // strip's edge is the clip, so a scrolling reset never reaches
             // the label.
@@ -299,12 +298,13 @@ public enum UsageFace {
             let barY = top + 6
             canvas.drawRect(
                 PixelRect(x: 0, y: barY, width: PixelCanvas.width, height: 1),
-                color: Pixel(colour: Self.trackColour(for: window?.percent))
+                color: Pixel(colour: trackColour)
             )
-            if let window, window.percent > 0, let bandInk {
+            if let window, window.percent > 0 {
                 let filled = max(1, (PixelCanvas.width * min(window.percent, 100) + 50) / 100)
                 canvas.drawRect(
-                    PixelRect(x: 0, y: barY, width: filled, height: 1), color: Pixel(colour: bandInk)
+                    PixelRect(x: 0, y: barY, width: filled, height: 1),
+                    color: Pixel(colour: progressColour)
                 )
             }
         }

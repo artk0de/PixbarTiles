@@ -244,3 +244,104 @@ private final class Clock: @unchecked Sendable {
     #expect(transport.requests.count == 2)
     #expect(moscowAgain.code == 71)
 }
+
+// MARK: - The wider request: the face's day, its hours and its wind
+
+/// A live answer to the wider request, trimmed to three hours and two days:
+/// `timeformat=unixtime` makes every time an epoch second, and the daily
+/// buckets are the place's local days.
+private let wideBody = Data("""
+{"current":{"time":1790171100,"interval":900,"weather_code":3,"is_day":1,"temperature_2m":18.0,"apparent_temperature":18.2,"wind_speed_10m":7.3,"wind_direction_10m":101,"wind_gusts_10m":20.2,"relative_humidity_2m":77,"uv_index":0.55,"precipitation":0.0},
+ "hourly":{"time":[1790110800,1790114400,1790118000],"temperature_2m":[15.6,15.4,15.0],"precipitation_probability":[60,35,15]},
+ "daily":{"time":[1790110800,1790197200],"temperature_2m_max":[18.3,20.9],"temperature_2m_min":[12.8,11.6],"sunrise":[1790133381,1790219897],"sunset":[1790177183,1790263424]}}
+""".utf8)
+
+@Test func theSourceAsksForTheWindTheDayAndTheHours() async throws {
+    let transport = RecordingTransport()
+    transport.body = wideBody
+    let source = OpenMeteoSource(transport: transport)
+
+    _ = try await source.reading(at: moscow)
+
+    let request = try #require(transport.requests.first)
+    let url = try #require(request.url)
+    let items = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+    func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
+
+    let current = try #require(value("current")).split(separator: ",").map(String.init)
+    for field in ["wind_direction_10m", "wind_gusts_10m", "uv_index"] {
+        #expect(current.contains(field), "current does not ask for \(field)")
+    }
+    #expect(value("hourly") == "temperature_2m,precipitation_probability")
+    #expect(value("daily") == "temperature_2m_max,temperature_2m_min,sunrise,sunset")
+    // Epochs, so no date string has to be parsed in a zone the app has to
+    // guess; the place's own days, so "today" is the place's today.
+    #expect(value("timeformat") == "unixtime")
+    #expect(value("timezone") == "auto")
+    #expect(value("forecast_days") == "2")
+}
+
+@Test func theWiderAnswerDecodesEveryNewField() async throws {
+    let transport = RecordingTransport()
+    transport.body = wideBody
+    let source = OpenMeteoSource(transport: transport)
+
+    let reading = try await source.reading(at: moscow)
+
+    #expect(reading.windSpeed == 7.3)                 // still km/h, as the service answers
+    #expect(reading.windDirection == 101)
+    #expect(reading.windGusts == 20.2)
+    #expect(reading.uvIndex == 0.55)
+    #expect(reading.relativeHumidity == 77)
+    #expect(reading.todayHigh == 18.3)
+    #expect(reading.todayLow == 12.8)
+    #expect(reading.sunrises == [1_790_133_381, 1_790_219_897].map { Date(timeIntervalSince1970: $0) })
+    #expect(reading.sunsets == [1_790_177_183, 1_790_263_424].map { Date(timeIntervalSince1970: $0) })
+    #expect(reading.hourly == [
+        WeatherReading.HourlyPoint(
+            time: Date(timeIntervalSince1970: 1_790_110_800), temperature: 15.6, precipitationProbability: 60),
+        WeatherReading.HourlyPoint(
+            time: Date(timeIntervalSince1970: 1_790_114_400), temperature: 15.4, precipitationProbability: 35),
+        WeatherReading.HourlyPoint(
+            time: Date(timeIntervalSince1970: 1_790_118_000), temperature: 15.0, precipitationProbability: 15),
+    ])
+}
+
+// Each new field drops its own detail, never the poll: an answer carrying
+// the `current` block alone is the reading it always was.
+@Test func anAnswerWithTheCurrentBlockAloneLeavesEveryNewFieldEmpty() async throws {
+    let transport = RecordingTransport()
+    transport.body = body()
+    let source = OpenMeteoSource(transport: transport)
+
+    let reading = try await source.reading(at: moscow)
+
+    #expect(reading.code == 3)
+    #expect(reading.windDirection == nil)
+    #expect(reading.windGusts == nil)
+    #expect(reading.uvIndex == nil)
+    #expect(reading.todayHigh == nil)
+    #expect(reading.todayLow == nil)
+    #expect(reading.sunrises.isEmpty)
+    #expect(reading.sunsets.isEmpty)
+    #expect(reading.hourly.isEmpty)
+}
+
+// The hourly arrays are parallel; a series whose arrays disagree in length is
+// read as far as all of them reach, and a missing probability is "no answer
+// for that hour" rather than a zero.
+@Test func hourlyArraysAreZippedToTheShortestAndANullProbabilityStaysNil() async throws {
+    let transport = RecordingTransport()
+    transport.body = Data("""
+    {"current":{"interval":900,"weather_code":0,"is_day":1,"temperature_2m":1,"precipitation":0,"wind_speed_10m":0},
+     "hourly":{"time":[100,3700,7300],"temperature_2m":[1.5,2.5],"precipitation_probability":[null,40,50]}}
+    """.utf8)
+    let source = OpenMeteoSource(transport: transport)
+
+    let reading = try await source.reading(at: moscow)
+
+    #expect(reading.hourly == [
+        WeatherReading.HourlyPoint(time: Date(timeIntervalSince1970: 100), temperature: 1.5, precipitationProbability: nil),
+        WeatherReading.HourlyPoint(time: Date(timeIntervalSince1970: 3_700), temperature: 2.5, precipitationProbability: 40),
+    ])
+}

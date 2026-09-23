@@ -52,10 +52,56 @@ public struct WeatherReading: Sendable, Equatable {
     /// tile asked to show humidity with no answer shows the temperature alone.
     public let relativeHumidity: Double?
 
+    // The TC002 face's details. Every one is optional for the reason
+    // `apparentTemperature` is, and more so: each feeds one line of a rotation,
+    // so a response that stops carrying it drops that line rather than the
+    // poll. Defaulted in `init` so every reading built before the face existed
+    // still reads as the reading it was.
+
+    /// Degrees the wind comes FROM, as the service reports it. The face's arrow
+    /// points the other way, where the air goes.
+    public let windDirection: Double?
+    /// Kilometres per hour, like `windSpeed` — the service's unit. The face
+    /// converts to the tile's unit; thresholds are compared in m/s.
+    public let windGusts: Double?
+    public let uvIndex: Double?
+    /// Today's daily maximum and minimum, degrees Celsius — "today" as the
+    /// service's local day at the place, which `timezone=auto` asks for.
+    public let todayHigh: Double?
+    public let todayLow: Double?
+    /// Today's and tomorrow's sunrise and sunset, in that order. Empty when
+    /// the answer carries no daily block. Tomorrow's is what "the next sun
+    /// event" becomes once today's sunset has passed.
+    public let sunrises: [Date]
+    public let sunsets: [Date]
+    /// The hourly series from the start of the place's today, by time. Empty
+    /// when absent.
+    public let hourly: [HourlyPoint]
+
+    /// One hour of the forecast.
+    public struct HourlyPoint: Sendable, Equatable {
+        /// The start of the hour.
+        public let time: Date
+        /// Degrees Celsius.
+        public let temperature: Double
+        /// Percent. `nil` when the service has no answer for the hour — which
+        /// is "unknown", not a dry hour, so it never reads as zero.
+        public let precipitationProbability: Int?
+
+        public init(time: Date, temperature: Double, precipitationProbability: Int?) {
+            self.time = time
+            self.temperature = temperature
+            self.precipitationProbability = precipitationProbability
+        }
+    }
+
     public init(
         code: Int, isDay: Bool, temperature: Double, apparentTemperature: Double? = nil,
         precipitation: Double, windSpeed: Double, interval: TimeInterval,
-        relativeHumidity: Double? = nil
+        relativeHumidity: Double? = nil,
+        windDirection: Double? = nil, windGusts: Double? = nil, uvIndex: Double? = nil,
+        todayHigh: Double? = nil, todayLow: Double? = nil,
+        sunrises: [Date] = [], sunsets: [Date] = [], hourly: [HourlyPoint] = []
     ) {
         self.code = code
         self.isDay = isDay
@@ -65,6 +111,14 @@ public struct WeatherReading: Sendable, Equatable {
         self.windSpeed = windSpeed
         self.interval = interval
         self.relativeHumidity = relativeHumidity
+        self.windDirection = windDirection
+        self.windGusts = windGusts
+        self.uvIndex = uvIndex
+        self.todayHigh = todayHigh
+        self.todayLow = todayLow
+        self.sunrises = sunrises
+        self.sunsets = sunsets
+        self.hourly = hourly
     }
 }
 
@@ -111,9 +165,20 @@ public actor OpenMeteoSource {
     /// both the digits and the colour. `relative_humidity_2m` is the weather
     /// tile's own answer: a tile told to show humidity draws it from the same
     /// request rather than paying a second one.
+    ///
+    /// The last three are the TC002 face's wind arrow, gust note and UV line.
     public static let fields =
         "weather_code,is_day,precipitation,temperature_2m,apparent_temperature,"
-            + "wind_speed_10m,relative_humidity_2m"
+            + "wind_speed_10m,relative_humidity_2m,wind_direction_10m,wind_gusts_10m,uv_index"
+
+    /// The face's hourly chart and rain window: a temperature and a chance of
+    /// rain per hour.
+    public static let hourlyFields = "temperature_2m,precipitation_probability"
+
+    /// The face's hi/lo line and its sunrise/sunset line, for today and
+    /// tomorrow — tomorrow's sunrise is the next sun event after tonight's
+    /// sunset.
+    public static let dailyFields = "temperature_2m_max,temperature_2m_min,sunrise,sunset"
 
     private let transport: any Transport
     /// Injected so a test can step over a quarter of an hour rather than wait
@@ -152,6 +217,16 @@ public actor OpenMeteoSource {
             URLQueryItem(name: "latitude", value: String(place.latitude)),
             URLQueryItem(name: "longitude", value: String(place.longitude)),
             URLQueryItem(name: "current", value: Self.fields),
+            URLQueryItem(name: "hourly", value: Self.hourlyFields),
+            URLQueryItem(name: "daily", value: Self.dailyFields),
+            // Epoch seconds rather than local date strings, so no time has to
+            // be parsed in a zone the app would have to guess; `auto` makes the
+            // daily buckets the place's own days, so "today's high" is the
+            // place's today; two days, because after sunset the next sun event
+            // is tomorrow's sunrise and the hourly chart runs past midnight.
+            URLQueryItem(name: "timeformat", value: "unixtime"),
+            URLQueryItem(name: "timezone", value: "auto"),
+            URLQueryItem(name: "forecast_days", value: "2"),
         ]
         guard let url = components?.url else { throw WeatherError.invalidLocation(place) }
 
@@ -167,8 +242,58 @@ public actor OpenMeteoSource {
 
 /// The response, as the service shapes it: everything under a `current` object
 /// that carries its own update interval beside the readings.
+///
+/// `hourly` and `daily` are optional containers of parallel arrays, one array
+/// per field asked for; each is decoded with `decodeIfPresent` so an answer
+/// that drops one drops the details built from it, not the poll.
 private struct Forecast: Decodable {
     let current: Current
+    let hourly: Hourly?
+    let daily: Daily?
+
+    struct Hourly: Decodable {
+        let time: [Double]?
+        let temperature: [Double]?
+        /// `null` inside the array is an hour without an answer.
+        let precipitationProbability: [Int?]?
+
+        private enum CodingKeys: String, CodingKey {
+            case time
+            case temperature = "temperature_2m"
+            case precipitationProbability = "precipitation_probability"
+        }
+
+        /// The arrays zipped to the shortest of them: an entry needs a time
+        /// and a temperature to be a bar, and a series whose arrays disagree
+        /// is read only as far as all of them reach. A probability array
+        /// missing altogether leaves every hour's probability unknown rather
+        /// than cutting the series to nothing.
+        var points: [WeatherReading.HourlyPoint] {
+            guard let time, let temperature else { return [] }
+            var count = min(time.count, temperature.count)
+            if let precipitationProbability { count = min(count, precipitationProbability.count) }
+            return (0..<count).map { index in
+                WeatherReading.HourlyPoint(
+                    time: Date(timeIntervalSince1970: time[index]),
+                    temperature: temperature[index],
+                    precipitationProbability: precipitationProbability?[index]
+                )
+            }
+        }
+    }
+
+    struct Daily: Decodable {
+        let temperatureMax: [Double?]?
+        let temperatureMin: [Double?]?
+        let sunrise: [Double]?
+        let sunset: [Double]?
+
+        private enum CodingKeys: String, CodingKey {
+            case temperatureMax = "temperature_2m_max"
+            case temperatureMin = "temperature_2m_min"
+            case sunrise, sunset
+        }
+    }
 
     struct Current: Decodable {
         let code: Int
@@ -182,6 +307,9 @@ private struct Forecast: Decodable {
         let precipitation: Double
         let windSpeed: Double
         let relativeHumidity: Double?
+        let windDirection: Double?
+        let windGusts: Double?
+        let uvIndex: Double?
         /// Optional so a response that stops carrying it reads as "use the
         /// floor" rather than as a malformed answer — the cadence is a courtesy
         /// of the service, not a reading.
@@ -196,6 +324,9 @@ private struct Forecast: Decodable {
             case relativeHumidity = "relative_humidity_2m"
             case precipitation
             case windSpeed = "wind_speed_10m"
+            case windDirection = "wind_direction_10m"
+            case windGusts = "wind_gusts_10m"
+            case uvIndex = "uv_index"
         }
     }
 
@@ -208,7 +339,17 @@ private struct Forecast: Decodable {
             precipitation: current.precipitation,
             windSpeed: current.windSpeed,
             interval: current.interval ?? OpenMeteoSource.defaultInterval,
-            relativeHumidity: current.relativeHumidity
+            relativeHumidity: current.relativeHumidity,
+            windDirection: current.windDirection,
+            windGusts: current.windGusts,
+            uvIndex: current.uvIndex,
+            // Index 0 is today: `timezone=auto` makes the first daily bucket
+            // the place's current local day.
+            todayHigh: daily?.temperatureMax?.first ?? nil,
+            todayLow: daily?.temperatureMin?.first ?? nil,
+            sunrises: (daily?.sunrise ?? []).map { Date(timeIntervalSince1970: $0) },
+            sunsets: (daily?.sunset ?? []).map { Date(timeIntervalSince1970: $0) },
+            hourly: hourly?.points ?? []
         )
     }
 }

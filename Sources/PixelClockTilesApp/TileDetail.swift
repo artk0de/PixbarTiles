@@ -37,6 +37,43 @@ struct TilePolicyEditor: View {
     /// The Focuses the "works in" boxes run over: every case but `.unknown`.
     nonisolated static let worksInBoxes: [MacFocus] = MacFocus.allCases.filter { $0 != .unknown }
 
+    /// The four modes macOS ships, two by two, in the order its own Focus list
+    /// puts them.
+    ///
+    /// "No Focus" is not among them and is drawn under the square instead: it
+    /// is the ABSENCE of a mode, and a fifth box inside a square of four reads
+    /// as a fifth mode. `.unknown` is not a box at all — the picker beside
+    /// them is what decides it.
+    nonisolated static let focusGrid: [[MacFocus]] = [
+        [.work, .personal],
+        [.doNotDisturb, .sleep],
+    ]
+
+    /// The glyph a mode is known by. macOS's own, so a reader recognises the
+    /// square before reading a word of it.
+    nonisolated static func symbol(_ focus: MacFocus) -> String {
+        switch focus {
+        case .work: "briefcase.fill"
+        case .personal: "person.fill"
+        case .doNotDisturb: "moon.fill"
+        case .sleep: "bed.double.fill"
+        case .noFocus: "circle.dashed"
+        case .unknown: "questionmark.circle"
+        }
+    }
+
+    /// What "any other Focus" means, which its own label cannot say.
+    ///
+    /// The picker was the one control on this surface nobody could act on:
+    /// "Any other Focus — Run / Hold" says what the switch does and nothing
+    /// about which Focuses it decides.
+    nonisolated static let anyOtherFocusHint = """
+        macOS names only its four built-in modes. Anything else — a Focus you \
+        made yourself, or one this Mac will not disclose — arrives here as \
+        "other". Run shows the tile through it; Hold keeps the tile off until \
+        the Focus ends.
+        """
+
     /// The box's state: ticked means the tile WORKS there, so the answer is
     /// read against `silencedIn`.
     nonisolated static func isChecked(_ focus: MacFocus, in policy: TilePolicy) -> Bool {
@@ -123,22 +160,36 @@ struct TilePolicyEditor: View {
         )
     }
 
+    /// Three blocks, because these are three questions and they used to be one
+    /// undifferentiated column: whether the tile runs at all, which Focuses it
+    /// runs through, and which hours.
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        Section {
             Toggle("Paused", isOn: Binding(
                 get: { policy.isPaused },
                 set: { policy.isPaused = $0 }
             ))
             if showsRefresh {
                 TileRefreshControl(
-                    label: "Refresh", ladder: refreshSteps, policy: $policy
+                    label: "Refresh every", ladder: refreshSteps, policy: $policy
                 )
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Works in").font(.caption).foregroundStyle(.secondary)
-                ForEach(Self.worksInBoxes, id: \.self) { focus in
-                    Toggle(focus.displayName, isOn: worksIn(focus))
+        }
+        Section("Works in") {
+            // A square of four, then the absence of a mode under it. As five
+            // switches in a column the four modes macOS actually ships did not
+            // read as a set at all, and "No Focus" read as a fifth one.
+            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+                ForEach(Array(Self.focusGrid.enumerated()), id: \.offset) { row in
+                    GridRow {
+                        ForEach(row.element, id: \.self) { focus in
+                            focusBox(focus)
+                        }
+                    }
                 }
+            }
+            focusBox(.noFocus)
+            HStack(spacing: 4) {
                 Picker("Any other Focus", selection: Binding(
                     get: { policy.focus.whenUnknown },
                     set: { policy.focus.whenUnknown = $0 }
@@ -146,7 +197,13 @@ struct TilePolicyEditor: View {
                     Text("Run").tag(FocusRule.WhenUnknown.run)
                     Text("Hold").tag(FocusRule.WhenUnknown.hold)
                 }
+                Image(systemName: "questionmark.circle")
+                    .foregroundStyle(.secondary)
+                    .help(Self.anyOtherFocusHint)
+                    .accessibilityLabel("What is any other Focus?")
             }
+        }
+        Section("Hours") {
             Picker("Hours", selection: Binding(
                 get: { Self.hoursKind(of: policy) },
                 set: { Self.setHours($0, in: &policy) }
@@ -155,12 +212,28 @@ struct TilePolicyEditor: View {
                 Text("Quiet").tag(Self.HoursKind.quiet)
                 Text("Working").tag(Self.HoursKind.active)
             }
+            .labelsHidden()
+            .pickerStyle(.segmented)
             if case let .quiet(window) = policy.window {
                 hourPickers(window: window) { policy.window = .quiet($0) }
             } else if case let .active(window) = policy.window {
                 hourPickers(window: window) { policy.window = .active($0) }
             }
         }
+    }
+
+    /// One mode's box: its glyph, its name, and whether the tile works there.
+    ///
+    /// A button rather than a switch. Two switches side by side in a column
+    /// this narrow leave "Do Not Disturb" no room to be read, and what a
+    /// reader wants from a square of four is which ones are LIT.
+    private func focusBox(_ focus: MacFocus) -> some View {
+        Toggle(isOn: worksIn(focus)) {
+            Label(focus.displayName, systemImage: Self.symbol(focus))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toggleStyle(.button)
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder

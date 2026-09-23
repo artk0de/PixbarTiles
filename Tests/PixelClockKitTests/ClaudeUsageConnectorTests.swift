@@ -3,8 +3,8 @@ import Foundation
 import Testing
 @testable import PixelClockKit
 
-// The TC002 face of the Claude usage connector: the shared three-row usage
-// face fed all three windows at once — daily, weekly, session — whatever the
+// The TC002 face of the Claude usage connector: the shared usage face
+// (`UsageFace`) fed the five-hour and the seven-day windows, whatever the
 // tile's metric picks. The AWTRIX half is the metric's own; its tests live
 // beside the other faces in ConnectorFaceTests.
 
@@ -20,7 +20,7 @@ import Testing
         func read() async throws -> ClaudeUsageReading? { reading }
     }
 
-    /// One reading carrying all three windows, for the rows to pick from.
+    /// One reading carrying every window.
     private let reading = ClaudeUsageReading(
         utilization: 41,
         resetsAt: nil,
@@ -29,56 +29,79 @@ import Testing
         observedAt: nil
     )
 
-    // The page carries all three figures in the order the tile detail names
-    // them — the metric answers only the AWTRIX page, and the TC002 ignores it.
-    @Test func thePageCarriesAllThreeRowsWhateverTheMetricChooses() {
-        let rows = ClaudeUsageConnector.rows(for: reading)
+    private let utc = TimeZone(identifier: "UTC")!
 
-        #expect(rows.map(\.label) == ["DAY", "WK", "SES"])
-        #expect(rows.map(\.value) == ["23%", "41%", "8%"])
-    }
+    // The page is the shared usage face: the five-hour window on the session
+    // row, the seven-day figure — the reading's own — on the weekly row, each
+    // with its own reset instant. The metric answers only the AWTRIX page.
+    @Test func thePageIsTheSharedUsageFaceFedBothWindows() {
+        let config = UsageFaceConfig(resetEvery: 30, resetAfter: 20)
+        let weekly = ClaudeUsageReading(
+            utilization: 41,
+            resetsAt: Date(timeIntervalSince1970: 1_790_845_200),
+            fiveHour: reading.fiveHour,
+            contextWindow: 8
+        )
 
-    // A window the document did not carry is a dash, not a zero: nothing here
-    // knows that figure, and a dash says so at a glance.
-    @Test func aMissingWindowIsADash() {
-        let bare = ClaudeUsageReading(utilization: 41, resetsAt: nil)
-
-        let rows = ClaudeUsageConnector.rows(for: bare)
-
-        #expect(rows.map(\.value) == ["-", "41%", "-"])
-    }
-
-    // Each value inks in its own band's colour — the weekly 41% in the brand's
-    // orange, a missing figure in the empty bar's track — so the page reads as
-    // three figures, not one warning.
-    @Test func everyValueInksInItsOwnBand() {
-        let rows = ClaudeUsageConnector.rows(for: reading)
-
-        #expect(rows[0].colour == UlanziColour(hex: UsageBand(utilization: 23).fillColour))
-        #expect(rows[1].colour == UlanziColour(hex: ClaudeUsage.brandColour))
-        #expect(rows[2].colour == UlanziColour(hex: UsageBand(utilization: 8).fillColour))
         #expect(
-            ClaudeUsageConnector.rows(for: ClaudeUsageReading(utilization: 41, resetsAt: nil))[0].colour
-                == UlanziColour(hex: ClaudeUsageConnector.trackColour)
+            ClaudeUsageConnector.ulanziOutput(for: weekly, config: config, timeZone: utc)
+                == UsageFace.delivery(
+                    vendor: .claude,
+                    session: UsageFace.Window(percent: 23, resetsAt: reading.fiveHour?.resetsAt),
+                    weekly: UsageFace.Window(
+                        percent: 41, resetsAt: Date(timeIntervalSince1970: 1_790_845_200)
+                    ),
+                    config: config,
+                    timeZone: utc
+                )
         )
     }
 
-    // And the whole page ships as the one bitmap, with no image beside it —
-    // the star's place on this panel was taken by the rows.
-    @Test func thePageShipsAsOneBitmapWithNoImage() throws {
+    // A five-hour window the document did not carry is a row with no reading
+    // — the face's `--` over an empty bar, never a zero.
+    @Test func aMissingFiveHourWindowIsARowWithNoReading() {
+        let bare = ClaudeUsageReading(utilization: 41, resetsAt: nil)
+
+        #expect(
+            ClaudeUsageConnector.ulanziOutput(for: bare, config: .standard, timeZone: utc)
+                == UsageFace.delivery(
+                    vendor: .claude,
+                    session: nil,
+                    weekly: UsageFace.Window(percent: 41, resetsAt: nil),
+                    config: .standard,
+                    timeZone: utc
+                )
+        )
+    }
+
+    // The tile's two settings and the zone are read when the face draws, not
+    // when the connector is built: a picker moved in the tile's window
+    // reaches the next poll.
+    @Test func theFaceReadsTheTilesSettingsWhenItDraws() throws {
+        let config = UsageFaceConfig(resetEvery: 60, resetAfter: 20)
+        let connector = ClaudeUsageConnector(
+            reporter: Reports(reading: nil),
+            usageFace: { config },
+            timeZone: { TimeZone(identifier: "UTC")! }
+        )
+
+        let delivery = try #require(connector.ulanziFace?.draw(reading))
+
+        #expect(
+            delivery == ClaudeUsageConnector.ulanziOutput(for: reading, config: config, timeZone: utc)
+        )
+    }
+
+    // And the whole page ships as one image — the GIF at the panel's origin —
+    // inside every measured limit.
+    @Test func thePageShipsAsOneImageInsideTheLimits() throws {
         let connector = makeConnector()
         let delivery = try #require(connector.ulanziFace?.draw(reading))
         let frame = delivery.scene.frames[0]
 
         #expect(delivery.scene.frames.count == 1)
-        #expect(frame.draw.count == 1)   // the single db (D2)
-        #expect(frame.image.isEmpty)
-        guard case .bitmap = try #require(frame.draw.first) else {
-            Issue.record("not a bitmap")
-            return
-        }
-        // Declared metadata sits inside every measured limit (A4), so the
-        // scene the face builds always encodes.
+        #expect(frame.draw.isEmpty)
+        #expect(frame.image.count == 1)
         #expect((try UlanziScene(frames: [frame]).jsonObject()).isEmpty == false)
     }
 }

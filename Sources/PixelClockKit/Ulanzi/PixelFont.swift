@@ -91,18 +91,19 @@ public extension PixelFontFace {
 
 /// The faces the kit draws with.
 ///
-/// Two of them, and the split is the panel's, not a preference. The TC002's
-/// usage page stacks three bands into sixteen rows, which leaves five rows a
-/// band and settles the small cell at 3×5. Anything with room — a headline
-/// figure, an AWTRIX line, a word in Russian — draws in the X11 5×7 face,
-/// which is the one the live demo proved on 2026-09-21 and the only one with
-/// a Cyrillic alphabet.
+/// Three of them, and the split is the panel's, not a preference. Sixteen
+/// rows stacked into bands leave five rows a band, which settles the small
+/// cell at 3×5. Anything with room — a headline figure, an AWTRIX line, a
+/// word in Russian — draws in the X11 5×7 face, which is the one the live
+/// demo proved on 2026-09-21 and the only one with a Cyrillic alphabet. The
+/// shared usage face draws in its own five-row proportional face, the one its
+/// approved design was drawn in.
 public enum PixelFont {
     /// What a face draws for a mark it has no shape for. Printable, so it
     /// survives `UlanziScene`'s own ASCII filter on the way to the device.
     public static let substitute: Character = "?"
 
-    /// The 3×5 cell the three-band usage page is built around.
+    /// The 3×5 cell a five-row band is built around.
     public static let tiny = PixelFontFace(width: 3, height: 5, gap: 1, glyphs: tinyGlyphs)
 
     /// The X11 "Misc Fixed" 5×7 face — every printable ASCII mark plus the

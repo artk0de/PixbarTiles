@@ -241,39 +241,62 @@ private let usageBody = Data("""
         #expect(drawn.scene.text.contains("12%") == false)
     }
 
-    /// The TC002 page is the shared three-row usage face, fed the plan's
-    /// windows in the order the plan names them: five hours, week, MCP month.
-    @Test func theTC002FaceFeedsTheSharedThreeRowFace() {
-        let rows = ZaiUsageConnector.rows(for: reading)
+    private let utc = TimeZone(identifier: "UTC")!
 
-        #expect(rows.map(\.label) == ["DAY", "WK", "MCP"])
-        #expect(rows.map(\.value) == ["12%", "35%", "7%"])
+    /// The TC002 page is the shared usage face fed the plan's five-hour and
+    /// weekly windows, each with the reset instant the quota route dated it
+    /// with. The MCP month has no row on this face.
+    @Test func theTC002FaceIsTheSharedUsageFaceFedFiveHoursAndTheWeek() {
+        let config = UsageFaceConfig(resetEvery: 15, resetAfter: 10)
+
+        #expect(
+            ZaiUsageConnector.ulanziOutput(for: reading, config: config, timeZone: utc)
+                == UsageFace.delivery(
+                    vendor: .zai,
+                    session: UsageFace.Window(percent: 12, resetsAt: reading.fiveHour?.resetsAt),
+                    weekly: UsageFace.Window(percent: 35, resetsAt: reading.weekly?.resetsAt),
+                    config: config,
+                    timeZone: utc
+                )
+        )
     }
 
-    /// A window the quota route did not name is a dash, never a zero — the
-    /// shared face's own rule, and the band keeps its place on the page.
-    @Test func aWindowTheRouteDidNotNameIsADashNeverAZero() {
+    /// A window the quota route did not name is a row with no reading — the
+    /// face's `--` over an empty bar, never a zero — and the row keeps its
+    /// place on the page.
+    @Test func aWindowTheRouteDidNotNameIsARowWithNoReading() {
         let sparse = ZaiUsageReading(
             limits: ZaiUsageLimits(weekly: ZaiUsageWindow(percentUsed: 35)),
             totals: ZaiUsageTotals(), observedAt: nil
         )
 
-        let rows = ZaiUsageConnector.rows(for: sparse)
-
-        #expect(rows.map(\.label) == ["DAY", "WK", "MCP"])
-        #expect(rows[0].value == "-")
-        #expect(rows[1].value == "35%")
-        #expect(rows[2].value == "-")
+        #expect(
+            ZaiUsageConnector.ulanziOutput(for: sparse, config: .standard, timeZone: utc)
+                == UsageFace.delivery(
+                    vendor: .zai,
+                    session: nil,
+                    weekly: UsageFace.Window(percent: 35, resetsAt: nil),
+                    config: .standard,
+                    timeZone: utc
+                )
+        )
     }
 
-    /// One frame, one db command — the shared face's whole page — and the
-    /// scene it builds always encodes.
-    @Test func theTC002FaceShipsTheSharedFaceAsOneBitmap() throws {
-        let connector = makeConnector(reading)
+    /// The tile's settings and the zone are read at draw time, so a picker
+    /// moved in the tile's window reaches the next poll.
+    @Test func theFaceReadsTheTilesSettingsWhenItDraws() throws {
+        let config = UsageFaceConfig(resetEvery: 120, resetAfter: 5)
+        let connector = ZaiUsageConnector(
+            source: Reports(reading: reading),
+            usageFace: { config },
+            timeZone: { TimeZone(identifier: "UTC")! }
+        )
+
         let delivery = try #require(connector.ulanziFace?.draw(reading))
 
-        #expect(delivery.scene.frames.count == 1)
-        #expect(delivery.scene.frames[0].draw.count == 1)
+        #expect(
+            delivery == ZaiUsageConnector.ulanziOutput(for: reading, config: config, timeZone: utc)
+        )
         #expect((try UlanziScene(frames: delivery.scene.frames).jsonObject()).isEmpty == false)
     }
 }

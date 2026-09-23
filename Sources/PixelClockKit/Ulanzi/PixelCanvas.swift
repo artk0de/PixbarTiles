@@ -185,12 +185,14 @@ public struct PixelCanvas: Sendable, Equatable {
     }
 
     /// Walks the face per character, painting `ink` where a glyph bit is set
-    /// and stepping one advance — the cell plus its gap — between them.
+    /// and stepping one advance — the glyph's columns plus the gap — between
+    /// them.
     ///
-    /// The face is a parameter because the kit draws in two of them: the 3×5
-    /// cell the three-band usage page is built around, and the X11 5×7 face
-    /// with the Cyrillic alphabet. It defaults to the small one, so every face
-    /// written before the second one existed draws exactly where it did.
+    /// The face is a parameter because the kit draws in several: the 3×5
+    /// cell, the X11 5×7 face with the Cyrillic alphabet, and the usage
+    /// face's five-row proportional one. It defaults to the small one, so
+    /// every face written before the others existed draws exactly where it
+    /// did.
     ///
     /// A mark the face has no shape for draws the SUBSTITUTE rather than
     /// nothing. Skipping it was the old behaviour and it is what made the

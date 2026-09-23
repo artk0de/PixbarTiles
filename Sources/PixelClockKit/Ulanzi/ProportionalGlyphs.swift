@@ -15,8 +15,11 @@
 /// the glyph's own row mirrored.
 ///
 /// The set is what the face spells: digits, `%`, `-`, `:`, `.`, space, the
-/// row labels `s` and `w`, `rst`, and every letter of the twelve month
-/// abbreviations. `?` is not in the design — nothing the face draws spells
+/// row labels `s` and `w`, `rst`, every letter of the twelve month
+/// abbreviations, and the weather face's marks — `h i k z x`, `°`, `/`, the
+/// trend arrows `↑ ↓`, the eight wind arrows `⇑ ⇗ ⇒ ⇘ ⇓ ⇙ ⇐ ⇖` and the
+/// sunrise mark `☀`, copied from the skill's `weather/wgen.py` (`G`) and held
+/// to it by `WeatherGlyphTests`. `?` is not in the design — nothing the face draws spells
 /// it — and is here only so the substitute rule has a shape to draw: the
 /// `tiny` face's own question mark.
 extension PixelFont {
@@ -60,5 +63,25 @@ extension PixelFont {
         "v": (3, [0b101, 0b101, 0b101, 0b101, 0b010]),
         "w": (5, [0b10001, 0b10001, 0b10101, 0b10101, 0b01010]),
         "y": (3, [0b101, 0b101, 0b110, 0b100, 0b011]),
+        // The weather face's letters and marks (wgen.py `G`).
+        "h": (3, [0b001, 0b001, 0b011, 0b101, 0b101]),
+        "i": (1, [0b1, 0b0, 0b1, 0b1, 0b1]),
+        "k": (3, [0b001, 0b101, 0b011, 0b101, 0b101]),
+        "z": (3, [0b111, 0b100, 0b010, 0b001, 0b111]),
+        "x": (3, [0b101, 0b101, 0b010, 0b101, 0b101]),
+        "°": (3, [0b010, 0b101, 0b010, 0b000, 0b000]),
+        "/": (3, [0b100, 0b100, 0b010, 0b001, 0b001]),
+        "↑": (3, [0b010, 0b111, 0b010, 0b010, 0b010]),
+        "↓": (3, [0b010, 0b010, 0b010, 0b111, 0b010]),
+        // Wind arrows point where the air GOES, five columns.
+        "⇑": (5, [0b00100, 0b01110, 0b10101, 0b00100, 0b00100]),
+        "⇗": (5, [0b11100, 0b11000, 0b10100, 0b00010, 0b00001]),
+        "⇒": (5, [0b00100, 0b01000, 0b11111, 0b01000, 0b00100]),
+        "⇘": (5, [0b00001, 0b00010, 0b10100, 0b11000, 0b11100]),
+        "⇓": (5, [0b00100, 0b00100, 0b10101, 0b01110, 0b00100]),
+        "⇙": (5, [0b10000, 0b01000, 0b00101, 0b00011, 0b00111]),
+        "⇐": (5, [0b00100, 0b00010, 0b11111, 0b00010, 0b00100]),
+        "⇖": (5, [0b00111, 0b00011, 0b00101, 0b01000, 0b10000]),
+        "☀": (5, [0b00100, 0b01110, 0b11111, 0b00100, 0b00000]),
     ]
 }

@@ -239,6 +239,34 @@ A `GitHubTileBlock` beside the existing blocks in `TileSettingsWindow`:
     `https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks+and+PRs+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read`
     — GitHub documents prefilling the form by these parameters.
 
+## CI of the default branch (added 2026-09-24)
+
+The first design left CI out on the agent's own call; the user asked for it
+back. Decided in the browser and on the panel (2026-09-23/24):
+
+- **A lamp, only when something needs a look.** A 3×3 badge on the icon's
+  bottom-right corner (`ggen.LAMP_CELLS`), painted over whatever icon the
+  ticker shows. `pending` = amber `#D29922`, a ring filling to a full square
+  and back every 500 ms; `failure` = red `#F85149`, blinking 500/500 ms.
+  `success`, and a repo without checks, draw nothing — a green lamp on every
+  healthy repo was "too much". Picked over a column beside the hero (it
+  touched a fourth digit) and one in the gutter.
+- **An event on the transition to failure.** A new failing head commit of the
+  default branch is an interruption like a fork or a PR: own page only on the
+  TC002 (ggen case `c8-ci-failed`: the failed-check octicon, red with a white
+  cross, hero `ci`, then `<branch> fail`, then `☺<commit author>`); on the
+  TC001 a notification with its own jingle. The same failing commit never
+  celebrates twice: the snapshot remembers the last failing head commit.
+- **Data.** The GraphQL query gains the default branch's head commit:
+  `defaultBranchRef { name target { ... on Commit { oid author { user { login } }
+  statusCheckRollup { state } } } }`. `SUCCESS` → success, `FAILURE`/`ERROR` →
+  failure, `PENDING`/`EXPECTED` → pending, no rollup → none.
+- **Budget.** The lamp cuts frames at its 500 ms phase; the worst case, a
+  marquee name with a blinking lamp, is 353 frames at the fixed 10 s dwell
+  (`a13-ci-worst`).
+- **TC001.** No lamp (the AWTRIX face is one text line); the failure event
+  only.
+
 ## Testing
 
 - S1: the moved contract suite runs against both stores; the file store adds
@@ -261,6 +289,6 @@ A `GitHubTileBlock` beside the existing blocks in `TileSettingsWindow`:
 ## Out of scope
 
 - Sound on the TC002.
-- Issues, releases, CI status, traffic, stargazer trends — candidates for a
-  later page of the same tile.
+- Issues, releases, traffic, stargazer trends — candidates for a later page
+  of the same tile. (CI status moved in scope on 2026-09-24, see below.)
 - Moving the anecdote or weather tiles onto instancing.

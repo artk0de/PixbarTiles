@@ -51,6 +51,9 @@ B.update({
     "m": [".....", ".....", ".....", "##.#.", "#.#.#", "#.#.#", "#.#.#", "#.#.#", "#.#.#"],
     "★": ["....#....", "....#....", "...###...", "#########", ".#######.", "..#####..",
           "..##.##..", ".##...##.", ".#.....#."],
+    # The CI event's hero, lowercase at x-height like `m` (DRAFT, 2026-09-23).
+    "c": [".....", ".....", ".....", ".###.", "#...#", "#....", "#....", "#...#", ".###."],
+    "i": [".", "#", ".", "#", "#", "#", "#", "#", "#"],
 })
 
 
@@ -69,6 +72,10 @@ WHITE = hexrgb("#E8E8E8")
 PERSON = hexrgb("#909090")
 MARK = hexrgb("#B8B8B8")
 SHINE = hexrgb("#FFFFFF")
+# The default branch's CI: GitHub's own check colours. Success has none — the
+# lamp is absent then (the user's call, 2026-09-23).
+CI_FAIL = hexrgb("#F85149")
+CI_PENDING = hexrgb("#D29922")
 
 # ---- icons (16x16, [(grid, ms)] loops) ------------------------------------------
 
@@ -191,8 +198,10 @@ def nodata_icon():
 
 
 class Reading:
-    def __init__(self, repo, stars, forks, prs):
-        self.repo, self.stars, self.forks, self.prs = repo, stars, forks, prs
+    def __init__(self, repo, stars, forks, prs, ci=None):
+        """ci: the default branch's rollup — success | failure | pending, or
+        None when the repo has no checks (the lamp is then absent)."""
+        self.repo, self.stars, self.forks, self.prs, self.ci = repo, stars, forks, prs, ci
 
 
 class Config:
@@ -365,7 +374,75 @@ def ambient(r, cfg, has_token=True):
         (fork_icon(), line_state([(str(r.forks), FORK)], cfg.change_ms)),
         (pr_icon(), line_state([(str(r.prs), PR)], cfg.change_ms)),
     ]
-    return lace(ticker_segments(hero(compact(r.stars), STAR, star=True), states))
+    frames = lace(ticker_segments(hero(compact(r.stars), STAR, star=True), states))
+    loop = lamp_loop(r.ci)
+    return with_lamp(frames, loop) if loop else frames
+
+
+# ---- the CI lamp -------------------------------------------------------------------------
+#
+# The default branch's checks, as a 3x3 badge on the icon's bottom-right corner
+# — a status dot on an avatar. Picked in the browser over a column beside the
+# hero (it touched a fourth digit) and one in the gutter (2026-09-23). It shows
+# only while something needs a look: a green lamp on every healthy repo was "too
+# much", so success draws nothing, like a repo without checks. Colour alone does
+# not read on the dim panel (tc002-tile-screen), so the two states differ in
+# motion too: pending fills from a ring to a full square and back, failure blinks.
+
+LAMP_CELLS = [(x, y) for y in range(13, 16) for x in range(13, 16)]
+LAMP_MS = 500
+
+
+def lamp_loop(state):
+    """[(cells {(x, y): colour}, ms)] — one loop of the lamp, or None when there
+    is nothing to show (success, or no checks)."""
+    if state == "failure":
+        return [({p: CI_FAIL for p in LAMP_CELLS}, LAMP_MS), ({}, LAMP_MS)]
+    if state == "pending":
+        ring = {p: CI_PENDING for p in LAMP_CELLS if p != (14, 14)}
+        return [(ring, LAMP_MS), ({p: CI_PENDING for p in LAMP_CELLS}, LAMP_MS)]
+    return None
+
+
+def with_lamp(frames, loop):
+    """Paints the lamp over a whole timeline, its phase running on across every
+    frame (one GIF, tc002-ticker-motion): a frame that spans a lamp change is
+    cut there."""
+    total = sum(ms for _, ms in loop)
+    out, t = [], 0
+    for grid, ms in frames:
+        left = ms
+        while left > 0:
+            pos, acc = t % total, 0
+            for cells, d in loop:
+                if pos < acc + d:
+                    break
+                acc += d
+            span = min(acc + d - pos, left)
+            g = [row[:] for row in grid]
+            for (x, y), c in cells.items():
+                g[y][x] = c
+            out.append((g, span))
+            t += span
+            left -= span
+    return out
+
+
+def ci_icon():
+    """GitHub's failed-check glyph in red; the disc brightens and settles in
+    turn for as long as the event lasts."""
+    cov = coverage("ci")
+
+    def disc(colour):
+        # The cross is holes in the disc; at LED scale holes read as a plain
+        # disc, so the holes inside it are lit white.
+        f = glyph("ci", colour)
+        for y in range(16):
+            for x in range(16):
+                if cov[y][x] < EDGE and (x - 7.5) ** 2 + (y - 7.5) ** 2 <= 36:
+                    f[y][x] = WHITE
+        return f
+    return [(disc(CI_FAIL), 400), (disc(hexrgb("#FF9A92")), 400)]
 
 
 # ---- celebration ------------------------------------------------------------------------
@@ -402,7 +479,16 @@ def celebration(kind, count, who, cfg, pr_numbers=()):
         "star": (STAR, star_icon()),
         "fork": (FORK, ([], fork_icon())),
         "pr": (PR, ([], pr_icon())),
+        "ci": (CI_FAIL, ([], ci_icon())),
     }[kind]
+    if kind == "ci":
+        # DRAFT (2026-09-23): `count` is unused; `who` is the head commit's
+        # author, `pr_numbers` carries the branch name.
+        top = hero("ci", colour)
+        branch = pr_numbers[0] if pr_numbers else "main"
+        lines = [[(branch, WHITE), ("fail", CI_FAIL)]]   # `main failed` is 36 px
+        lines += [[("☺", PERSON), (login.lower(), WHITE)] for login in who[:1]]
+        return _celebration_timeline(top, lines, pop, loop, cfg)
     top = hero(f"+{count}", colour)
     noun = {"star": ("star", "stars"), "fork": ("fork", "forks"), "pr": ("pr", "prs")}[kind][count != 1]
     label = [(noun, LABEL)]
@@ -418,7 +504,10 @@ def celebration(kind, count, who, cfg, pr_numbers=()):
             lines.append([("☺", PERSON), (login.lower(), WHITE)])
     if len(who) > MAX_LOGINS:
         lines.append([(f"+{len(who) - MAX_LOGINS}", colour), ("more", LABEL)])
+    return _celebration_timeline(top, lines, pop, loop, cfg)
 
+
+def _celebration_timeline(top, lines, pop, loop, cfg):
     slides = (len(lines) - 1) * (SLIDE - 1) * STEP_MS
     dwell = max(1200, (cfg.celebrate_ms - slides) // len(lines))
     # One icon for the whole celebration: every state shares the loop, so it
@@ -470,7 +559,19 @@ CASES = [
          prs=[42, 43]),
     dict(id="c7-long-login", desc="длинный логин не влезает → edge-marquee (значение, не имя)", kind="star",
          count=1, who=["a-really-long-github-login"]),
+    dict(id="a10-ci-pending", desc="CI main идёт: янтарный бейдж на углу иконки, наливается кольцо → квадрат",
+         kind="ambient", reading=R("artk0de/tea-rags", 1234, 45, 3, ci="pending")),
+    dict(id="a11-ci-failure", desc="CI main упал: красный бейдж мигает 500/500 мс", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 45, 3, ci="failure")),
+    dict(id="a12-ci-success", desc="CI main зелёный: бейджа нет (как у репо без CI)", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 45, 3, ci="success")),
+    dict(id="a13-ci-worst", desc="худший бюджет: длинное имя (marquee) + мигающий бейдж — 353 кадра при 10 s",
+         kind="ambient", reading=R("typescript-language-server/typescript-language-server", 9999, 45012, 912,
+                                   ci="failure")),
+    dict(id="c8-ci-failed", desc="событие: main упал (только своя страница) — иконка failed-check, "
+         "hero «ci», «main fail», автор коммита", kind="ci", count=1, who=["dave"], prs=["main"]),
 ]
+CASES_REVIEW = CASES
 
 DWELLS = [3000, 5000, 8000, 10000, 15000]
 CELEBRATES = [5000, 8000, 10000, 15000]
@@ -506,7 +607,7 @@ def main():
     out_dir = os.path.join(HERE, "out")
     os.makedirs(out_dir, exist_ok=True)
     cases, report = [], []
-    for c in CASES:
+    for c in CASES_REVIEW:
         variants = {}
         values = DWELLS if c["kind"] == "ambient" else CELEBRATES
         for v in values:

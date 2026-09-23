@@ -7,7 +7,8 @@ generator reads the baked table and needs neither.
 import os, subprocess, tempfile, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ICONS = {"mark": "mark-github", "star": "star-fill", "fork": "repo-forked", "pr": "git-pull-request"}
+ICONS = {"mark": "mark-github", "star": "star-fill", "fork": "repo-forked", "pr": "git-pull-request",
+         "ci": "x-circle-fill"}
 URL = "https://raw.githubusercontent.com/primer/octicons/main/icons/{}-16.svg"
 
 

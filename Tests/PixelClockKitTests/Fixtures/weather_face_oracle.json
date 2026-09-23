@@ -222,6 +222,13 @@
     "#..",
     "#.."
    ],
+   "q": [
+    ".##",
+    "#.#",
+    ".##",
+    "..#",
+    "..#"
+   ],
    "r": [
     ".##",
     "#..",
@@ -534,6 +541,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -826,6 +834,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -1134,6 +1143,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -1442,6 +1452,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -1750,6 +1761,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -2058,6 +2070,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -2366,6 +2379,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -2674,6 +2688,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -2982,6 +2997,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -3290,6 +3306,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -3598,6 +3615,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -3906,6 +3924,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -4214,6 +4233,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -4522,6 +4542,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -4830,6 +4851,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -5138,6 +5160,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -5446,6 +5469,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -5754,6 +5778,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -6062,6 +6087,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -6370,6 +6396,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -6678,6 +6705,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -6986,6 +7014,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -7294,6 +7323,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -7602,6 +7632,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -7910,6 +7941,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -8218,6 +8250,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -8526,6 +8559,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -8834,6 +8868,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -9142,6 +9177,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -9450,6 +9486,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -9758,6 +9795,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -10066,6 +10104,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -10374,6 +10413,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -10682,10 +10722,11 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
-    "icon": "moon3",
+    "icon": "clearNight",
     "moon": 3,
     "sun": {
      "event": "rise",
@@ -10709,7 +10750,7 @@
     ]
    },
    "burst": null,
-   "framesZ": "7d3BTqNAHAfgd+HcQ9Pa1vVVTA+USLIHNXEPezB9923ENUQcAkyBAh8mpGl1pj+Hmf981rTvSfr2lCYPj+/J85/kYbter1fJ2+vfy+3HZP1xbLd5nmXl87pyhO6/nSNZJU2efOj2ROPMbHSmclzihOZO2zj70tfocWJGZ9wI4kwuTsysmcTcmeIx1zjVS6XJZVN/iQ5fuS5xQk+77Sy4hU3RV5xuo3Nrm6KeRmfEuVP/tJsvvzcR53heFQjaIxACIRACMYM4CMQMc4/DDMzADJYCBEIgBEIgZhAHgWwUFkcgZmAGcycmziHLs19p+Vx9tHo71EL9d4YeDfWOQAiEQAhkky0OAtn3iMMMzMAM0Wb4aXTi48R/f8fRQSAEQiAEYgZxEMg2DoGYgRmYoe3oNPm9xcdp0gICIRACIZBNtjgIhEDiMAMzMMNVzfA/TttGYuI06Sv2H+G8JxwEQRAEUYM4EGSbTQ3UQA3UEIjT7Qf7iBMza74jyOtACIRACMQM4iAQMywwDjMwAzMsbilAIARCIARiBnEQiBmWGYcZmIEZ2saZyadqIRACIRACMYM4CMQMS4vDDMzADG3jzOpTtRAIgRAIgZhBHARihuXEYQZmYIaYODP5VC0EQiAEQiBmEAeBmEEcZmAGZhh+dEabO8fzcZX8zl5fLvT5fHO4XQVD1z126S499LUUFY3nH0dx+6uLcr+h43SfZodNcb5iis1+s9/elRuvnjuv2UXj+d3T6XRff67v6McumjfepKPhuygaj+mi2tHwXcxjLAa7aAebejELSK87supaN8Cmr/QGo33XkAGSFTXkWxflOwe+BNQQNUQNUUNGVP0CakgTJHSmThUnPV0CocbVEDVEDVFDOGSi1ZFD1BA1RA1ZUg2prnVqyDVecrnu6yFqiBqihqghHRaQXpEQ+pvLENSZ/+shI24j1BA1RA1RQ2bvkOP5Hw=="
+   "framesZ": "7d3LbtpAGAbQd/GahRVKSPMqEQtjxVIXbaR00UXEuxfFvVhxxrI9xtfjSBYKMMPHMPPPCRG8Jdnrc5Y8Pr0l338mj/s0TXfJ68uv6+WnJH0/9vuiyPPqOa0dod/P50h2SZsHH7q80DgrG52lHNc4obnTNc595WfyODGjM20EcRYXJ2bWLGLuLPFYa5z6S6XNy6b5JTp+5brGCT3srrNgDpuif3H6jc7cNkU3Gp0J507zw26//M4izumyKxF0j0AIhEAIxAziIBAzrD0OMzADM1gKEAiBEAiBmEEcBLJR2ByBmIEZzJ2YOMe8yL9m1XP92vrlUAvNtwxdG+odgRAIgRDIJlscBLLvEYcZmIEZos3w2ejEx4m/fc/RQSAEQiAEYgZxEMg2DoGYgRmYoevotHne4uO0aQGBEAiBEMgmWxwEQiBxmIEZmGFQM/yN07WRmDht+or9RzifCQdBEARB1CAOBNlmUwM1UAM1BOL0u+Mt4sTMmo8I8j4QAiEQAjGDOAjEDBuMwwzMwAybWwoQCIEQCIGYQRwEYoZtxmEGZmCGrnFW8q1aCIRACIRAzCAOAjHD1uIwAzMwQ9c4q/pWLQRCIARCIGYQB4GYYTtxmIEZmCEmzkq+VQuBEAiBEIgZxEEgZhCHGZiBGcYfncnmzuly2iXf8pcfV/r8+XC4Qw1Di16KBuzikB2yY7cuzg9Zfrwrz4OnqDZefHk+nx8G7KLabPW8lC5Cjc+2i+L96NRFTJaWYxHTXe8uqufmudNyXoSaLc+hed1pdofOZePl4PZYQOJXp/FW2v8fMKqGtJnlaogaMmwX1TVADRmzhvReQNrUkOalY4nL4HpryAg1PrSZGLCGdEqhhqghasgiasj0SFBDOEQN8bcsNUQNUUMW/eR5P2SzNaQHEmKUe6Ma8mkKNUQNUUPUEDWEQzhkxjVkI++HnC6/AQ=="
   },
   {
    "id": "rule-moon-new",
@@ -10743,10 +10784,11 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
-    "icon": "moon0",
+    "icon": "clearNight",
     "moon": 0,
     "sun": null,
     "rain": null,
@@ -10754,7 +10796,7 @@
     "hours": []
    },
    "burst": null,
-   "framesZ": "7d3BSutAGAbQd8m6i2Bt5foq0kUIFlyo4F3chfTdbzEqwTglySSTJjkRSmh1pp+TmX+OlfY9K94ei+z+4T17/pvdb/M832Rvr//O5w9Z/nFst8djWdZv88YRuv96jmyTtXnyofOZxlnY6MzlOMcJzZ2ucfa1r8njxIzOtBHEmV2cmFkzi7kzx2OpcZqXSpvL5vIlmr5yneOEnnbXWXANm6LvOP1G59o2RSONzoRz5/LTbr/8XkWcw2lTIWiPQAiEQAjEDOIgEDMsPQ4zMAMzWAoQCIEQCIGYQRwEslFYHYGYgRnMnZg4d+Wx/FPUb5uPNs9DLVz+ztCjod4RCIEQCIFsssVBIPsecZiBGZgh2gy/jU58nPjv7zk6CIRACIRAzCAOAtnGIRAzMAMzdB2dNr+3+DhtWkAgBEIgBLLJFgeBEEgcZmAGZhjUDF9xujYSE6dNX7H/COc94SAIgiCIGsSBINtsaqAGaqCGQJx+PzhGnJhZ8xNBXgdCIARCIGYQB4GYYYVxmIEZmGF1SwECIRACIRAziINAzLDOOMzADMzQNc5CPlULgRAIgRCIGcRBIGZYWxxmYAZm6BpnUZ+qhUAIhEAIxAziIBAzrCcOMzADM8TEWcinaiEQAiEQAjGDOAjEDOIwAzMwQ/rRmWzuHE6HTfZUvr6c6fP55nC7BoaGPXbFrrgbaymqGj9+HNX5dxf1fkPHzf5mv72tbgdMUW82dNt7zW7TeJuOfu2ia+OXO0rfRUzjoY7Sd7GMsUh20SabejELyKg7suZal2DTV3uD0bFrSIJkVQ350UX9zsSXgBqihqghasiEql9BDWmDhN7UaeJkpEsg1LgaooaoIWoIh8y0OnKIGqKGqCFrqiHNtU4NGeIll2FfD1FD1BA1RA3psYCMioTQ31xSUGf5r4dMuI1QQ9QQNUQNWbxDDqf/"
+   "framesZ": "7d3LbtpAGAbQd/GahRVKSPMqEQtjxVIXbaR00UXEuxfFvVhxxrI9xtfjSBYKMMPHMPPPCRG8Jdnrc5Y8Pr0l338mj/s0TXfJ68uv6+WnJH0/9vuiyPPqOa0dod/P50h2SZsHH7q80DgrG52lHNc4obnTNc595WfyODGjM20EcRYXJ2bWLGLuLPFYa5z6S6XNy6b5JTp+5brGCT3srrNgDpuif3H6jc7cNkU3Gp0J507zw26//M4izumyKxF0j0AIhEAIxAziIBAzrD0OMzADM1gKEAiBEAiBmEEcBLJR2ByBmIEZzJ2YOMe8yL9m1XP92vrlUAvNtwxdG+odgRAIgRDIJlscBLLvEYcZmIEZos3w2ejEx4m/fc/RQSAEQiAEYgZxEMg2DoGYgRmYoevotHne4uO0aQGBEAiBEMgmWxwEQiBxmIEZmGFQM/yN07WRmDht+or9RzifCQdBEARB1CAOBNlmUwM1UAM1BOL0u+Mt4sTMmo8I8j4QAiEQAjGDOAjEDBuMwwzMwAybWwoQCIEQCIGYQRwEYoZtxmEGZmCGrnFW8q1aCIRACIRAzCAOAjHD1uIwAzMwQ9c4q/pWLQRCIARCIGYQB4GYYTtxmIEZmCEmzkq+VQuBEAiBEIgZxEEgZhCHGZiBGcYfncnmzuly2iXf8pcfV/r8+XC4Qw1Di16KBuzikB2yY7cuzg9Zfrwrz4OnqDZefHk+nx8G7KLabPW8lC5Cjc+2i+L96NRFTJaWYxHTXe8uqufmudNyXoSaLc+hed1pdofOZePl4PZYQOJXp/FW2v8fMKqGtJnlaogaMmwX1TVADRmzhvReQNrUkOalY4nL4HpryAg1PrSZGLCGdEqhhqghasgiasj0SFBDOEQN8bcsNUQNUUMW/eR5P2SzNaQHEmKUe6Ma8mkKNUQNUUPUEDWEQzhkxjVkI++HnC6/AQ=="
   },
   {
    "id": "rule-moon-full",
@@ -10788,6 +10830,408 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "clearNight",
+    "moon": 4,
+    "sun": null,
+    "rain": null,
+    "arrow": "⇗",
+    "hours": []
+   },
+   "burst": null,
+   "framesZ": "7d3LbtpAGAbQd/GahRVKSPMqEQtjxVIXbaR00UXEuxfFvVhxxrI9xtfjSBYKMMPHMPPPCRG8Jdnrc5Y8Pr0l338mj/s0TXfJ68uv6+WnJH0/9vuiyPPqOa0dod/P50h2SZsHH7q80DgrG52lHNc4obnTNc595WfyODGjM20EcRYXJ2bWLGLuLPFYa5z6S6XNy6b5JTp+5brGCT3srrNgDpuif3H6jc7cNkU3Gp0J507zw26//M4izumyKxF0j0AIhEAIxAziIBAzrD0OMzADM1gKEAiBEAiBmEEcBLJR2ByBmIEZzJ2YOMe8yL9m1XP92vrlUAvNtwxdG+odgRAIgRDIJlscBLLvEYcZmIEZos3w2ejEx4m/fc/RQSAEQiAEYgZxEMg2DoGYgRmYoevotHne4uO0aQGBEAiBEMgmWxwEQiBxmIEZmGFQM/yN07WRmDht+or9RzifCQdBEARB1CAOBNlmUwM1UAM1BOL0u+Mt4sTMmo8I8j4QAiEQAjGDOAjEDBuMwwzMwAybWwoQCIEQCIGYQRwEYoZtxmEGZmCGrnFW8q1aCIRACIRAzCAOAjHD1uIwAzMwQ9c4q/pWLQRCIARCIGYQB4GYYTtxmIEZmCEmzkq+VQuBEAiBEIgZxEEgZhCHGZiBGcYfncnmzuly2iXf8pcfV/r8+XC4Qw1Di16KBuzikB2yY7cuzg9Zfrwrz4OnqDZefHk+nx8G7KLabPW8lC5Cjc+2i+L96NRFTJaWYxHTXe8uqufmudNyXoSaLc+hed1pdofOZePl4PZYQOJXp/FW2v8fMKqGtJnlaogaMmwX1TVADRmzhvReQNrUkOalY4nL4HpryAg1PrSZGLCGdEqhhqghasgiasj0SFBDOEQN8bcsNUQNUUMW/eR5P2SzNaQHEmKUe6Ma8mkKNUQNUUPUEDWEQzhkxjVkI++HnC6/AQ=="
+  },
+  {
+   "id": "rule-moon-shown-0-night",
+   "now": 1790206800,
+   "reading": {
+    "code": 0,
+    "isDay": false,
+    "temperature": 9.0,
+    "apparentTemperature": 7.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": [
+     1790146121,
+     1790232602
+    ],
+    "sunsets": [
+     1790190129,
+     1790276387
+    ],
+    "hourly": [
+     [
+      1790121600,
+      12.5,
+      10
+     ],
+     [
+      1790125200,
+      11.7,
+      10
+     ],
+     [
+      1790128800,
+      11.2,
+      10
+     ],
+     [
+      1790132400,
+      11.0,
+      10
+     ],
+     [
+      1790136000,
+      11.2,
+      10
+     ],
+     [
+      1790139600,
+      11.7,
+      10
+     ],
+     [
+      1790143200,
+      12.5,
+      10
+     ],
+     [
+      1790146800,
+      13.5,
+      10
+     ],
+     [
+      1790150400,
+      14.7,
+      10
+     ],
+     [
+      1790154000,
+      16.0,
+      10
+     ],
+     [
+      1790157600,
+      17.3,
+      10
+     ],
+     [
+      1790161200,
+      18.5,
+      10
+     ],
+     [
+      1790164800,
+      19.5,
+      10
+     ],
+     [
+      1790168400,
+      20.3,
+      10
+     ],
+     [
+      1790172000,
+      20.8,
+      10
+     ],
+     [
+      1790175600,
+      21.0,
+      10
+     ],
+     [
+      1790179200,
+      20.8,
+      10
+     ],
+     [
+      1790182800,
+      20.3,
+      10
+     ],
+     [
+      1790186400,
+      19.5,
+      10
+     ],
+     [
+      1790190000,
+      18.5,
+      10
+     ],
+     [
+      1790193600,
+      17.3,
+      10
+     ],
+     [
+      1790197200,
+      16.0,
+      10
+     ],
+     [
+      1790200800,
+      14.7,
+      10
+     ],
+     [
+      1790204400,
+      13.5,
+      10
+     ],
+     [
+      1790208000,
+      12.5,
+      10
+     ],
+     [
+      1790211600,
+      11.7,
+      10
+     ],
+     [
+      1790215200,
+      11.2,
+      10
+     ],
+     [
+      1790218800,
+      11.0,
+      10
+     ],
+     [
+      1790222400,
+      11.2,
+      10
+     ],
+     [
+      1790226000,
+      11.7,
+      10
+     ],
+     [
+      1790229600,
+      12.5,
+      10
+     ],
+     [
+      1790233200,
+      13.5,
+      10
+     ],
+     [
+      1790236800,
+      14.7,
+      10
+     ],
+     [
+      1790240400,
+      16.0,
+      10
+     ],
+     [
+      1790244000,
+      17.3,
+      10
+     ],
+     [
+      1790247600,
+      18.5,
+      10
+     ],
+     [
+      1790251200,
+      19.5,
+      10
+     ],
+     [
+      1790254800,
+      20.3,
+      10
+     ],
+     [
+      1790258400,
+      20.8,
+      10
+     ],
+     [
+      1790262000,
+      21.0,
+      10
+     ],
+     [
+      1790265600,
+      20.8,
+      10
+     ],
+     [
+      1790269200,
+      20.3,
+      10
+     ],
+     [
+      1790272800,
+      19.5,
+      10
+     ],
+     [
+      1790276400,
+      18.5,
+      10
+     ],
+     [
+      1790280000,
+      17.3,
+      10
+     ],
+     [
+      1790283600,
+      16.0,
+      10
+     ],
+     [
+      1790287200,
+      14.7,
+      10
+     ],
+     [
+      1790290800,
+      13.5,
+      10
+     ]
+    ]
+   },
+   "config": {
+    "layout": "anchor",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": true,
+    "showsHumidity": false,
+    "showsWind": true,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "moon3",
+    "moon": 3,
+    "sun": {
+     "event": "rise",
+     "at": 1790232602,
+     "text": "6:50"
+    },
+    "rain": 10,
+    "arrow": "⇗",
+    "hours": [
+     1790204400,
+     1790208000,
+     1790211600,
+     1790215200,
+     1790218800,
+     1790222400,
+     1790226000,
+     1790229600,
+     1790233200,
+     1790236800,
+     1790240400
+    ]
+   },
+   "burst": null,
+   "framesZ": "7dxPb9owGAfg75IzBwQtdP0qFQdARdphq9Qddqj47kNNV0V1HTlx/kDyZFIUhc7ODyd+/ZSKt2L/+rwvHp/eil9/isf1crlcFK8vfy/HT8XyfVuvT6fjsbpfBlvs/PVsxaJIufjY8Y3Gmdjo3Mp2iRN7dprG2VT+jR4nZ3TGjSDOzcXJeWpu4tm5xW2qccJbJeW2qb9Fh69clzixy276FFzDougzTrvRubZFUU+jM+KzU3/Z6dPvVcTZnRclgjYIhEAIhEDMIA4CMcPU4zADMzCDqQCBEAiBEIgZxEEgC4XZEYgZmMGzkxNnezwdf+yr+/DV8DjWQv1Pxl6N9Y5ACIRACGSRLQ4CWfeIwwzMwAzZZvhudPLj5P98y9FBIARCIARiBnEQyDIOgZiBGZih6eikvG/5cVJaQCAEQiAEssgWB4EQSBxmYAZm6NQM/+M0bSQnTkpfuX8I5zvhIAiCIIgaxIEgy2xqoAZqoIZInHb/sY84OU/NVwT5HAiBEAiBmEEcBGKGGcZhBmZghtlNBQiEQAiEQMwgDgIxwzzjMAMzMEPTOKe758PhodxXz4TH1S12PvZqfZvhNSAQAiEQAllki4NACCQOMzADM3RqhkWRc9kp55seZ40OAiEQAiEQM4iDQMwwnzjMwAzM0PfopL+f7SLkh0IgBEIgBGIGcRCIGcRhBmZghgbPTs672tWIdPOHcL4TDoIgCIKoQRwIssymBmqgBmqovdlS3uGmd3v9+ZT22yPI50AIhEAIxAziIBAzTD4OMzADM5gKEAiBEAiBmEEcBGKG2cVhBmZghnZxwmk2Zcqtn96HX/UhEAIhEAIxgzgIxAwzjcMMzMAM6XFil910yr2GFTgCIRACIRAziINAzDCjOMzADMyQE6fd6FzbkhWBEAiBEIgZxEEgZhCHGZiBGUYYndGend15tyh+Hl9+X+jz8eVw9wGGut3u9/f7bV9TUdn46X0rjz+7qPYb2w4P++N2Ve47TLHarDbru2rj4b71nF02Xv2FUmxf39G3XaQ3ntLR8F2Ujed0EXY0fBfTGIvBbtrBHr2cCaTXFVk41w2w6Kt8wWjfNWSAZGUN+dJF9eTAt4AaooaoIWrIiKqfQQ1JQUJr6oQ46ekWiDWuhqghaogawiE3Wh05RA1RQ9SQOdWQcK5TQ7r4yKXbz0PUEDVEDVFDWkwgvSIh9juXIagz/c9DRlxGqCFqiBqihkzeIbvzPw=="
+  },
+  {
+   "id": "rule-moon-shown-new",
+   "now": 1789164000,
+   "reading": {
+    "code": 0,
+    "isDay": false,
+    "temperature": 9.0,
+    "apparentTemperature": 7.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": null,
+    "sunsets": null,
+    "hourly": null
+   },
+   "config": {
+    "layout": "anchor",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": true,
+    "showsHumidity": false,
+    "showsWind": true,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "moon0",
+    "moon": 0,
+    "sun": null,
+    "rain": null,
+    "arrow": "⇗",
+    "hours": []
+   },
+   "burst": null,
+   "framesZ": "7dxPT9swGAfg75JzDxWlZeOroB5KRKUdNiR22AH1u68iDEUYd07c/H+CFEWlxPnh2K8fgvpaHF6eDsX9w2vx83dxv1mv16vi5fnP+fihWL9tm83xWJb1/TrYYq+PZytWRcrFx44nGmdmvTOV7RwnNnaaxtnVvgaPk9M7w0YQZ3JxckbNJMbOFLe5xglvlZTb5vIt2n/lOseJXXbTUTCGRdFHnHa9M7ZFUUe9M+DYuXzZ6dPvKOLsT6sKQTsEQiAEQiBmEAeBmGHucZiBGZjBVIBACIRACMQM4iCQhcLiCMQMzGDs5MS5K4/l90N9H343PI6d4fI7Y9+NtY5ACIRACGSRLQ4CWfeIwwzMwAzZZviqd/Lj5L+/Ze8gEAIhEAIxgzgIZBmHQMzADMzQtHdSfm/5cVLOgEAIhEAIZJEtDgIhkDjMwAzMcFUz/IvT9CQ5cVLayv1HOJ8JB0EQBEHUIA4EWWZTAzVQAzVE4rT7wS7i5IyazwjyHAiBEAiBmEEcBGKGBcZhBmZghsVNBQiEQAiEQMwgDgIxwzLjMAMzMEN6nOPt0+Pjt2ofviF8Pf2dCIRACIRACCQOAiEQAnUehxmYgRnaxQkvKeUYgRAIgRAIgcQRB4EQaLA4zMAMzNBFnLDvmsZEIARCIARCIHEQCIEQSBxmYIaJ9U6sF8ZLIJ8JB0EQBEHUIA4EWWZTAzVQAzU0jBP2UUqosSDIcyAEQiAEYgZxEIgZFkIgZmAGZlj0VIBACIRACMQM4iCQhQICMQMzGDspccJpNmXKvTy997/qQyAEQiAEYgZxEMi6B4GYwc3GDP+JE7vsplPuGFbgCIRACIRAzCAOAlnGIRAzMAMzJMVp1ztjW7IiEAIhEAIxgzgIZFUqDjMwAzMM0DuDjZ39ab8qfpTPv870ef9wuG2Aoetu28P2cNfVVFSd/Pi2VccfTdTbjW03u5vd5rbaXzFF/bSxfes5O+XkKQ192UTTk19uqP8mck4ea6j/JubRF73dtL0NvZwJpNMVWTjX9bDoq33AaNc1pIdkVQ351ET9xZ5vATVEDVFD1JABVb+AGpKChNbUCXHS0S0QO7kaooaoIWoIh0y0OnKIGqKGqCFLqiHhXKeGXOORy3Wfh6ghaogaooa0mEA6RULsby59UGf+z0MGXEaoIWqIGqKGzN4h+9Nf"
+  },
+  {
+   "id": "rule-moon-shown-full",
+   "now": 1790460000,
+   "reading": {
+    "code": 0,
+    "isDay": false,
+    "temperature": 9.0,
+    "apparentTemperature": 7.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": null,
+    "sunsets": null,
+    "hourly": null
+   },
+   "config": {
+    "layout": "anchor",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": true,
+    "showsHumidity": false,
+    "showsWind": true,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
     "showsHourly": false
    },
    "facts": {
@@ -10799,7 +11243,316 @@
     "hours": []
    },
    "burst": null,
-   "framesZ": "7d3NbptAFAbQd2HtBarrOM2rRF5gFKQu2kjpoovI714rpBEKGQQMPwYOkRCyY8afh5k7J47s1yR7ecqSh8fX5Nef5GGfpukueXn+ez1+TNK3bb8vijyv7tPaFrr9drZkl7R58qHjhcZZWe8sZbvGCY2drnHuKj+zx4npnXkjiLO4ODGjZhFjZ4nbWuPUL5U2l03zJTp95brGCT3trqPgFhZFH3H69c6tLYpG6p0Zx07z024//d5EnNNlVyLoDoEQCIEQiBnEQSBmWHscZmAGZjAVIBACIRACMYM4CGShsDkCMQMzGDsxcY55kf/Iqvv6vfXj0BmafzN0b6h1BEIgBEIgi2xxEMi6RxxmYAZmiDbDV70THyf+93v2DgIhEAIhEDOIg0CWcQjEDMzADF17p83rFh+nzRkQCIEQCIEsssVBIAQShxmYgRkGNcP/OF1PEhOnTVux/wjnM+EgCIIgiBrEgSDLbGqgBmqghkCcfg8cI07MqPmMIO8DIRACIRAziINAzLDBOMzADMywuakAgRAIgRCIGcRBIGbYZhxmYAZm6BpnJd+qhUAIhEAIxAziIBAzbC0OMzADM3SNs6pv1UIgBEIgBGIGcRCIGbYThxmYgRli4qzkW7UQCIEQCIGYQRwEYgZxmIEZmGH63plt7Jwup13yM3/+faXP+4fDHWoYGnY7ZIfsONZUVJ68eNvK448mqu2GtvN9lh+/lfsBU1RPG9r3nrPLhxffn87n++Z9c0NfNtH+5G0amr6J6ivcr4l6Q9M3sY6+mOyinWzoxUwgo67I6nPdBIu+ygeMjl1DJkhW1pBPTVRvnPgSUEPUEDVEDZlR9RuoIW2Q0Js6dZyMdAmETq6GqCFqiBrCIQutjhyihqghasiWakh9rlNDhnjLZdj3Q9QQNUQNUUN6TCCjIiH0N5cpqLP+90NmXEaoIWqIGqKGrN4hp8s/"
+   "framesZ": "7dzNTttAFAbQd/E6i6hpCOVVUBaORaQuWiS66ALl3RthiiyGscZ2/H9cybIMePwxnrlzapTXLH95yrOHx9fs15/sYbfdbjfZy/Pf6/Fjtn3bdrvzuSiq+22wxc5PZ8s2WcrNx45nGmdhvTOX7RonNnaaxrmr/Bs9TpfeGTeCOLOL02XUzGLszHFbapzwUUl5bOof0eEr1zVO7LabjoIpLIo+4rTrnaktinrqnRHHTv1tp0+/k4hzvGxKBN0hEAIhEAIxgzgIxAxLj8MMzMAMpgIEQiAEQiBmEAeBLBRWRyBmYAZjp0ucQ3EufuTVffjV8Dh2hfrvjH011joCIRACIZBFtjgIZN0jDjMwAzN0NsNXvdM9Tvfvb9k7CIRACIRAzCAOAlnGIRAzMAMzNO2dlN9b9zgpV0AgBEIgBLLIFgeBEEgcZmAGZripGf7HaXqRLnFS2ur6h3A+Ew6CIAiCqEEcCLLMpgZqoAZqiMRp94N9xOkyaj4jyHsgBEIgBGIGcRCIGVYYhxmYgRlWNxUgEAIhEAIxgzgIxAzrjMMMzMAMTeOcvz+dTvflvnqm/ri6xc4jEAIhEAIhkDgIhEAI1GMcZmAGZmgaJ+X2EAiBEAiBEIgZxEEgBJpcHGZgBmboEsdbIARCIARCIGYQB4EQSBxmYIYVmGGpb4F8JhwEQRAEUYM4EGSZTQ3WpdSgdxrGiY2pdueHRpD3QAiEQAjEDOIgEDMsPg4zMAMzmAoQCIEQCIGYQRwEslBYHYGYgRmMnXZxwmk2Zcqtn96HX/UhEAIhEAIxgzgIZN2zOgIxAzMwQ9M4sdtuOuVOYQWOQAiEQAjEDOIgkGUcAjEDMzBDUpx2vTO1JSsCIRACIRAziINAVqXiMAMzMMMIvTPa2DlejpvsZ/H8+0qf9w+H2wcYuu22z/f5oa+pqLz4+W0rjz+aqLYb2073eXH4Vu5vmKJ62di+9Zxd/nj4p83hvr6hL5tIv3hKQ8M3Uf0Nt2sibGj4JpbRF4M9tIMNvS4TSK8rsnCuG2DRV/mA0b5ryADJyhryqYnqyYEfATVEDVFD1JARVb+CGpKChNbUCXHS0yMQu7gaooaoIWoIh8y0OnKIGqKGqCFrqiHhXKeG3OKVy23fh6ghaogaooa0mEB6RULs/1yGoM7y34eMuIxQQ9QQNUQNWbxDjpd/"
+  },
+  {
+   "id": "rule-moon-shown-cloudy-night-unchanged",
+   "now": 1790206800,
+   "reading": {
+    "code": 2,
+    "isDay": false,
+    "temperature": 8.0,
+    "apparentTemperature": 6.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": [
+     1790146121,
+     1790232602
+    ],
+    "sunsets": [
+     1790190129,
+     1790276387
+    ],
+    "hourly": [
+     [
+      1790121600,
+      12.5,
+      10
+     ],
+     [
+      1790125200,
+      11.7,
+      10
+     ],
+     [
+      1790128800,
+      11.2,
+      10
+     ],
+     [
+      1790132400,
+      11.0,
+      10
+     ],
+     [
+      1790136000,
+      11.2,
+      10
+     ],
+     [
+      1790139600,
+      11.7,
+      10
+     ],
+     [
+      1790143200,
+      12.5,
+      10
+     ],
+     [
+      1790146800,
+      13.5,
+      10
+     ],
+     [
+      1790150400,
+      14.7,
+      10
+     ],
+     [
+      1790154000,
+      16.0,
+      10
+     ],
+     [
+      1790157600,
+      17.3,
+      10
+     ],
+     [
+      1790161200,
+      18.5,
+      10
+     ],
+     [
+      1790164800,
+      19.5,
+      10
+     ],
+     [
+      1790168400,
+      20.3,
+      10
+     ],
+     [
+      1790172000,
+      20.8,
+      10
+     ],
+     [
+      1790175600,
+      21.0,
+      10
+     ],
+     [
+      1790179200,
+      20.8,
+      10
+     ],
+     [
+      1790182800,
+      20.3,
+      10
+     ],
+     [
+      1790186400,
+      19.5,
+      10
+     ],
+     [
+      1790190000,
+      18.5,
+      10
+     ],
+     [
+      1790193600,
+      17.3,
+      10
+     ],
+     [
+      1790197200,
+      16.0,
+      10
+     ],
+     [
+      1790200800,
+      14.7,
+      10
+     ],
+     [
+      1790204400,
+      13.5,
+      10
+     ],
+     [
+      1790208000,
+      12.5,
+      10
+     ],
+     [
+      1790211600,
+      11.7,
+      10
+     ],
+     [
+      1790215200,
+      11.2,
+      10
+     ],
+     [
+      1790218800,
+      11.0,
+      10
+     ],
+     [
+      1790222400,
+      11.2,
+      10
+     ],
+     [
+      1790226000,
+      11.7,
+      10
+     ],
+     [
+      1790229600,
+      12.5,
+      10
+     ],
+     [
+      1790233200,
+      13.5,
+      10
+     ],
+     [
+      1790236800,
+      14.7,
+      10
+     ],
+     [
+      1790240400,
+      16.0,
+      10
+     ],
+     [
+      1790244000,
+      17.3,
+      10
+     ],
+     [
+      1790247600,
+      18.5,
+      10
+     ],
+     [
+      1790251200,
+      19.5,
+      10
+     ],
+     [
+      1790254800,
+      20.3,
+      10
+     ],
+     [
+      1790258400,
+      20.8,
+      10
+     ],
+     [
+      1790262000,
+      21.0,
+      10
+     ],
+     [
+      1790265600,
+      20.8,
+      10
+     ],
+     [
+      1790269200,
+      20.3,
+      10
+     ],
+     [
+      1790272800,
+      19.5,
+      10
+     ],
+     [
+      1790276400,
+      18.5,
+      10
+     ],
+     [
+      1790280000,
+      17.3,
+      10
+     ],
+     [
+      1790283600,
+      16.0,
+      10
+     ],
+     [
+      1790287200,
+      14.7,
+      10
+     ],
+     [
+      1790290800,
+      13.5,
+      10
+     ]
+    ]
+   },
+   "config": {
+    "layout": "anchor",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": true,
+    "showsHumidity": false,
+    "showsWind": true,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "partlyCloudyNight",
+    "moon": 3,
+    "sun": {
+     "event": "rise",
+     "at": 1790232602,
+     "text": "6:50"
+    },
+    "rain": 10,
+    "arrow": "⇗",
+    "hours": [
+     1790204400,
+     1790208000,
+     1790211600,
+     1790215200,
+     1790218800,
+     1790222400,
+     1790226000,
+     1790229600,
+     1790233200,
+     1790236800,
+     1790240400
+    ]
+   },
+   "burst": null,
+   "framesZ": "7dzBbuIwFIXhd8maBSpQaF+l6iIwRZrFTKXOYhZV331Qo5Eigl0nNm2TfK5kRQF8c+Jcn/snlNeqfnmqq/uH1+rXn+p+tVwuF9XL89/T9kO1fG+r1XH/Y9Xul50W2v99WrWoUg4+tD1SORObnbG0k5z03Im329bfqGfnayWQMyI5E8ud5YTaVOV0L5WUyyZ+iX6+c53khA47XU56gfRpcszONyxNI3JSlt/85b2wnMe3RQNBtxAIAkEgZRxmIEfuYIapy8EMmAEzWAogEASCQMo4zECO3FEozA6BMANmkDs5craH4+GubvfdV7vboRHi7wy9GooOgSAQBFLGKbLJgUDqHnIwA2bADNnMcGl28uXkv3/g7EAgCASBlHGYgRy5o4yDQJgBM2CGvrOTct7y5aSMAIEgEARSximyyYFAEIgczIAZMENRZvgvp+8gOXJSYuV+Ec5vwoEgEKSQQw3kyB1lNmpADagBNQTkDPvgNeTkZM05BHkOBIEgkDIOM5AjdzDDDOVgBsyAGWa3FEAgCASBlHGYgRy5gxnmKQczYAbM0FfOcf203++avr2nu91uof2hV+Njdo8BAkEgCKSMU2STA4EgEDmYATNghqLMsKhyDjtlf9/trNmBQBAIAinjMAM5cgczzEcOZsAMmOHas5N+PodJyBcFgSAQBFLGYQZy5A5mIAczYAbM0CN3cs5qqRkp80U4vwkHgkCQQg41kCN3lNmoATWgBtQQvdhSznDfqz2+P2X84RDkORAEgkDKOMxAjtzBDJOXgxkwA2awFEAgCASBlHGYgRy5gxlmJwczYAbMMExOd5lNWXLjy/vnV30QCAJBIGUcZiBH7mCGmcrBDJgBM6TLCR12upz0ahwCQSAIBIEU2eRAIAhETjE5mAEzYIYcOZ4CQSAIBIEgEGYgR+5AIHIwA2aYATOUm53vUOOdEOhxUf08PP8+oU/DQje7DgyNaCna1Jt6+3GI/a4+bG+avu/gx/fWDnQWoj34sDs8H6poD178fyq/METxG2KhEJlfO4hPd7fve71FLtq7ul7vd6G+SOrdHrab3S7UN+9JCXoxRPOReIjue0KBzkKkDJ4SOhIiZ/BQoCuFaM/XWYj1er3fHEr15/fTxu0hvdKxr4c0rfGQXovKNBZ4HsJDeAgP4SHZHpIICTyEh1zDQ0o5yYepl+8kkRClnGSwTQ1e4K/hJFcN0fQXQ5R1Eh7CQ3gID+EhPISHuJfFQ3gID+EhPGRY80ydh/AQHsJDeAgOwSE85NJF65l6JIRn6p6pex7CQ3gID+Eh4/SQx7d/"
   },
   {
    "id": "rule-mainly-clear-day-1",
@@ -11080,6 +11833,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -11388,6 +12142,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -11696,6 +12451,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -12004,6 +12760,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -12312,6 +13069,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -12620,6 +13378,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -12928,6 +13687,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -13236,6 +13996,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -13544,6 +14305,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -13852,6 +14614,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -14160,6 +14923,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -14468,6 +15232,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -14776,10 +15541,11 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
-    "icon": "moon3",
+    "icon": "clearNight",
     "moon": 3,
     "sun": {
      "event": "rise",
@@ -15084,6 +15850,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -15392,6 +16159,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -15700,6 +16468,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -16008,6 +16777,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -16316,6 +17086,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -16624,6 +17395,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -16932,6 +17704,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -17240,6 +18013,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -17548,6 +18322,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -17856,6 +18631,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -18164,6 +18940,7 @@
     "showsRainChance": false,
     "showsUV": true,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -18472,6 +19249,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -18780,10 +19558,11 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
-    "icon": "moon3",
+    "icon": "clearNight",
     "moon": 3,
     "sun": {
      "event": "rise",
@@ -18807,7 +19586,7 @@
     ]
    },
    "burst": null,
-   "framesZ": "7d3NTttAFAbQd/E6CyshgfIqKIsExRKLFokuukC8e6MaVVbNDDf+S23OIFlWcDz5mLGvT4yS1+LwcjoU9w+vxfefxf2mLMtV8fL867z+UJSN9q2sqs2mTLT6t81lapvySq1YFe2XGn+RzcdT61eJE3/Z+cf/k9EZKs51WzBO/NjJt13jZ9ajM14EcWYXJ15TZnTszL0tNU57GqQmRmSbyATbtX76H2XnOJGnp7aJv4zIn6X/CeTTOPm/3nhxuo1RJs6lEYaKM+pk6z86+WMkf/RdPNn2b6saQTsEQiAEQiBmEAeBmGHpcZiBGZih22Rb1KkAgRAIgRCIGcRBIGZAIGZgBmaIxIncyYzcU223qjpu16fmMrVNaj3/XARCIARCIGYQB4EQCIGYgRmYIWyG8e+gdouQX0cgBEIgBHKRLQ4CIZA4zMAMzNDJDLG3DyLjlY8TGZ32Nu4CIRACIZCLbHEQCIHEYQZmYIZBzXBJnPiIXDoKfbb/mEA+Ew6CIAiCqEEcCHKZTQ3UQA3U0CNO5E5nn9HJx3EfCIEQCIFcZIuDQAgkDjMwAzMMZAafCYdACIRACMQM4iAQAi2MQMzADMwQibOQb9VCIARCIARiBnEQiBkQiBmYgRm6TbZhj6OJvlULgRAIgRCIGcRBIGZAIGZgBmboE2dm36qFQAiEQAjEDOIgEDOIwwzMwAxDvX0wTZye/wi3XxVPj88/zvR5/3C4bQJDQ7XtYXu4HetUVO+8+tPq9b9dNPtNtePd4fF2XS8HTLHerXebm+bO28vO5+x659XN6Xi8yy/zHX3YRXznkY6m76LeeZ8u2h1N38UyxmKySTvZodfnBDLqFVn7XDfBRV/jA0bHriETJKtryD9dNB+ceAqoIWqIGqKGXFH1X6CGRJDQmTptnIw0BVI7V0PUEDVEDeGQmVZHDlFD1BA15CvVkPa5Tg0Z4pbLsPdD1BA1RA1RQzqcQEZFQuo9lymos/z7IVe8jFBD1BA1RA1ZvEP2b78B"
+   "framesZ": "7d3NbtpAFAbQd/GahRUKSfMqEQuIsNRFGylddBHl3YvqSrXkzPTaY37sHCNZiBgPH+OZ64MjeKv2r8d99fj0Vn3/WT2u67peVa8vv073n6q6s3ytm2a9rhNL+9fuOrVNfaWlWlX9lxp/kd3HU/evEif+svOP30jvTBXnukswTnzs5Jdt5zbr3jlfBHFmFydeU2Y0dua+LDVO/zBIHRiRbSIH2LZ3Kx9lpziRp6e2ib+MyNtSPoH8N07+3TtfnHF9lIkzNMJUcc56sJX3Tn6M5Eff4INt975qEbRFIARCIARiBnEQiBmWHocZmIEZxh1si5oKEAiBEAiBmEEcBGIGBGIGZmCGSJzIlczINdX+0jSHzd2xu05tk7qffy4CIRACIRAziINACIRAzMAMzBA2w/mvoI6LkL+PQAiEQAjkJFscBEIgcZiBGZhhlBliHx9E+isfJ9I7/W1cBUIgBEIgJ9niIBACicMMzMAMk5phSJx4jwzthZLtPyaQ74SDIAiCIGoQB4KcZlMDNVADNRTEiVzpLOmdfBzXgRAIgRDISbY4CIRA4jADMzDDRGbwnXAIhEAIhEDMIA4CIdDCCMQMzMAMkTgL+VUtBEIgBEIgZhAHgZgBgZiBGZhh3ME27Ti60K9qIRACIRACMYM4CMQMCMQMzMAMJXFm9qtaCIRACIRAzCAOAjGDOMzADMww1ccHl4lT+I9wu1X17fnlx4k+f78cbpPA0Eynogmb2Ow3+/thTRwe9s/3d+168hTdnTdfjofDw4RNdHfbXc+lidTOb7aJ5s8yqImSLMG+KGludBPddX7sBMdFarftOjWuB43u1Lrdedu5IyaQ8tnpcjPtvy8YVUMio1wNUUOmbaI7B6ghl6whoyeQSA3JTx1znAaXW0MuUONTJxMT1pBBKdQQNUQNmUUNuT4S1BAOUUN8lqWGqCFqyKzfPNdDPm0NGYGEEuWeqYZ8mEINUUPUEDVEDeEQDrnhGvJJrofs3n8D"
   },
   {
    "id": "sun-after-sunset",
@@ -19088,10 +19867,11 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
-    "icon": "moon3",
+    "icon": "clearNight",
     "moon": 3,
     "sun": {
      "event": "rise",
@@ -19115,7 +19895,7 @@
     ]
    },
    "burst": null,
-   "framesZ": "7d3NbptAFAbQd2HtBTIGp3mVyAs7NVIXbaR00UXkd2/ciVoaDJqYHwc4E2mECGH4DMzlxJL9kuyfj/vk/uEl+f4zuc/SNF0lz0+/XpcfkrTSvqRlmWVpQwu/rfZN26Q3askqqR9q/EFW1zct3yRO/GG3r/8kZ6evOLdtkXHi7532VlR+Jn12hosgzuTixNeUCd07U29zjVO/DOqXRNOl0n7xlOUhXx+rffw2MX/7Lk7Mldy0TXv86iG1r++yTWScmLNQ1H6GODsDxYk/IzGv8EfPSI9x2l//oc/OB+6d3WkVEFQgEAIhEAIxgzgIxAxzj8MMzMAM13l7VlMBAiEQAiEQM4iDQMyAQMzADMyAQAiEQAiEQMwgDgJ5UFg0gZiBGdw7U49TfD2XidAjEAIhEAIxgzgIhEAIxAwuNnGizbBKsux15TH0n+FQ68ez2Z4PO/QIhEAIhEAessVBIAQSRxxxmKGDGS7FOS/nm9CPcfD/j9UPgXwmHARBEARRgzgQ5LlUHHGogRo6xDkvF3no/63ZvvWVNXno27ap72cIBHkfCIEQCIGYQRwE8pAtDjMwAzNcjDOrqQCBEAiBEIgZxEEgD9nLicMMzMAMXaaCmXyrFgIhEAIhEDOIg0DMsGQCMQMzMMPivokXgRAIgRCIGcRBIGZAIGZgBma4Ls4kv1ULgRAIgRCIGcRBIGYQhxmYgRn6ihN/RmJe4UG+VWt32q2Sb49PP17p8/bhcHkDhvpq+T7fb4eaisLOyz8tLP8dojpuUzvc7R+369D3mGJdrItsU915vb96zg47LzfHw+GuvW8f6OIQ8TuPGWj8IcLOuwxRH2j8IeZxLka7aEe79bpMIIM+kdXnuhEe+iofMDp0DRkhWagh74aorhz5ElBD1BA1RA25oeoXUENikHA1deo4GegSaNq5GqKGqCFqCIdMtDpyiBqihqghS6oh9blODenjLZd+3w9RQ9QQNUQNuWICGRQJTf9zGYM6838/5IaPEWqIGqKGqCGzd8ju9Bs="
+   "framesZ": "7d1Pb6JAGAfg78LZA6mi3X6VxoN2JdnDbpPuYQ+N3321NOnsImT4pwIPTSaEUoafA/Py1ETfk93bYZc8Pb8nP38nT8s0TRfJ2+uf0/pzkgbLtzTPl8u0Yil+G7ZV+6Q3WpJFUj7V+JMMt1et3yRO/GnXb7+T0ekrzm2XyDjx9079sg5+Rj06w0UQZ3Rx4mvKiO6dsS9TjVO+DMqXRNWlUn/x5Pk+eziEbfw+MX/7X5yYK7lqn/r44SnVb++yT2ScmFFYl36GGJ2B4sSPSMwr3HREeoxT//oPPToN7p3tcVEgaI1ACIRACMQM4iAQM0w9DjMwAzO08/akpgIEQiAEQiBmEAeBmAGBmIEZmAGBEAiBEAiBmEEcBPKgMGsCMQMzuHfGHmf9/VwmihaBEAiBEIgZxEEgBEIgZnCxiRNthkWyXJ42Hor2Hk61fD6rzfm0ixaBEAiBEMhDtjgIhEDiiCMOM3Qww6U45/VsVbTXOPl/++qHQD4TDoIgCIKoQRwI8lwqjjjUQA0d4pzX11nRfm3ZfLbBlqxo6/YpH2cIBHkfCIEQCIGYQRwE8pAtDjMwAzNcjDOpqQCBEAiBEIgZxEEgD9nzicMMzMAMXaaCiXyrFgIhEAIhEDOIg0DMMGcCMQMzMMPsvokXgRAIgRCIGcRBIGZAIGZgBmZoF2eU36qFQAiEQAjEDOIgEDOIwwzMwAx9xYkfkZhXeJBv1doet4vkx8vrrxN9Pj8cLqvA0Einoh67yHbZbtOsi/3j7mXzULS9pwgPnq8O+/1jj12Ehw3bsXRRdfC77SL/WBp10SVL5Fh06a51F2Fbf+9E3hdVhy3aqvu60d1d1RYHLwa3xQTSfXa63kz79QGjakjMXa6GqCH9dhHOAWrINWtI6wkkpobUTx1jnAanW0OuUOOrHiZ6rCGNUqghaogaMooacnskqCEcoob4X5YaooaoIaN+8bwfMtsa0gIJXZQ7UA25mEINUUPUEDVEDeEQDrnjGjKT90O2x78="
   },
   {
    "id": "sun-daytime-set",
@@ -19396,6 +20176,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -19704,6 +20485,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -20012,6 +20794,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -20320,6 +21103,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -20628,6 +21412,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -20936,6 +21721,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -21244,6 +22030,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -21552,6 +22339,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -21860,6 +22648,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -22168,6 +22957,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -22470,6 +23260,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -22533,6 +23324,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -22829,6 +23621,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -22890,6 +23683,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -22920,6 +23714,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -22950,6 +23745,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {
@@ -23242,6 +24038,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -23550,6 +24347,7 @@
     "showsRainChance": true,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -23858,6 +24656,7 @@
     "showsRainChance": false,
     "showsUV": false,
     "showsSunEvents": false,
+    "showsMoon": false,
     "showsHourly": false
    },
    "facts": {
@@ -23886,6 +24685,637 @@
    },
    "burst": null,
    "framesZ": "7ZnBjoIwEIbfpWcOFcIGfBXDAYUmHlwT97AH47vvbsiaxto6aitgvjGZEKz9+89YvgBH1R76Vi1XR7X7UsuF1jpTh/337/FKaStqbUxRaE8M39rZN0aPFCpT7lLli7TP+45HsSNfdvj8RLoTy864IbQj3zvh+LA+s+5OOgvYmZ0dOVNmtHfmHtjBDnaw84Z2mlOTqe1m/3m+G8orz82QL4xZl3k/2XJeSMhXKx8ZcGFMbRYbN0cp1P+EXV601/J9Qq+RcKsqlxh+G+7LWIVK2m7bsrkREf60Xdmt+9KX3WXc2Yu/CEu4Y3xCTqFuTy6RDkg8M7lPKJGE3a8Liaqvq7aKlc8wyWAIDIEhMASGwBAYAkPemCHTLNTLGCIhSZSt9zxJgoWKQ5KHMfXwBT4FSZJKDPmqRFySwBAYAkNgCAyBITAEhvAsC4bAEBgCQ2AIDIEhMASGwBAYAkN4lsU7dd6p804dhsAQGAJDYAgM8TKkOf0A"
+  },
+  {
+   "id": "moon-pages-full-night",
+   "now": 1790460000,
+   "reading": {
+    "code": 0,
+    "isDay": false,
+    "temperature": 9.0,
+    "apparentTemperature": 7.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": null,
+    "sunsets": null,
+    "hourly": null
+   },
+   "config": {
+    "layout": "pages",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": false,
+    "showsHumidity": true,
+    "showsWind": false,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "moon4",
+    "moon": 4,
+    "sun": null,
+    "rain": null,
+    "arrow": "⇗",
+    "hours": []
+   },
+   "burst": null,
+   "framesZ": "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"
+  },
+  {
+   "id": "moon-pages-first-quarter-day",
+   "now": 1789732800,
+   "reading": {
+    "code": 2,
+    "isDay": true,
+    "temperature": 15.0,
+    "apparentTemperature": 14.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": null,
+    "sunsets": null,
+    "hourly": null
+   },
+   "config": {
+    "layout": "pages",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": false,
+    "showsHumidity": false,
+    "showsWind": false,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "partlyCloudyDay",
+    "moon": 2,
+    "sun": null,
+    "rain": null,
+    "arrow": "⇗",
+    "hours": []
+   },
+   "burst": null,
+   "framesZ": "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"
+  },
+  {
+   "id": "moon-pages-waning-crescent",
+   "now": 1791342000,
+   "reading": {
+    "code": 3,
+    "isDay": false,
+    "temperature": 6.0,
+    "apparentTemperature": 4.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": null,
+    "sunsets": null,
+    "hourly": null
+   },
+   "config": {
+    "layout": "pages",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": true,
+    "showsHumidity": false,
+    "showsWind": false,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "cloudNight",
+    "moon": 7,
+    "sun": null,
+    "rain": null,
+    "arrow": "⇗",
+    "hours": []
+   },
+   "burst": null,
+   "framesZ": "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"
+  },
+  {
+   "id": "moon-anchor-full-night",
+   "now": 1790460000,
+   "reading": {
+    "code": 0,
+    "isDay": false,
+    "temperature": 9.0,
+    "apparentTemperature": 7.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": null,
+    "sunsets": null,
+    "hourly": null
+   },
+   "config": {
+    "layout": "anchor",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": true,
+    "showsHumidity": false,
+    "showsWind": false,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "moon4",
+    "moon": 4,
+    "sun": null,
+    "rain": null,
+    "arrow": "⇗",
+    "hours": []
+   },
+   "burst": null,
+   "framesZ": "7d3BSuNAHAfgd5lzDsFaFV9FekiLBQ+7gh48SN/dYkTCZqekaTNJJt8IIQTM5LfJzH8+s7SfoXp7rsLj02f48x4eV2VZFuHt9eO4/xTK77Za7fe7XXNbtlrs+HRaKEKXi4/tzzROZndnLu0YJzZ2zo1z1/gZPc4ld2fcCOLMLs4lo2YWY2eOLdc47Uely2Nz+hFNX7mOcWKXfe4omMKi6DdOv7sztUXRQHdnxLFz+rK7T7+TiLM5FDWC7hAIgRAIgZhBHARihtzjMAMzMIOpAIEQCIEQiBnEQSALhcURiBmYwdjpF2d/+7zdPtTb5pHT+80WO45ACIRACIRA4iAQAiEQMzADM0zGDEXocnkIhEAIhEAIxAziIBACzYZAzMAMzNAljrdACIRACIRAzCAOAiGQOMzADAswQ65vgXwmHARBEARRgzgQZJlNDdal1ODunBknNqb6HU+NIO+BEAiBEIgZxEEgZsg+DjMwAzOYChAIgRAIgZhBHASyUFgcgZiBGYydfnEy+VYtBEIgBEIgZhAHgax7lkYgZmAGZjg3TlbfqoVACIRACMQM4iCQZRwCMQMzMEOXOJl8qxYCIRACIRAziINAVqXiMAMzMEP6uzPa2NkcNkV42b3+PdLn58Ph1i0MXbetq3V1P9RUVJ98/93q/d8umv3G2vah2t3f1NsrpmieNrbtPWfXv97+r83t7emO/ttF95N36Sh9F81/4X5dtDtK30Ue9yLZQ5ts6F0ygQy6ImvPdQkWfY0PGB26hiRIVteQf7poHkz8CKghaogaooaMqPoF1JAuSOhNnTZOBnoEYidXQ9QQNUQN4ZCZVkcOUUPUEDVkSTWkPdepIdd45XLd9yFqiBqihqghPSaQQZEQ+5tLCurk/z5kxGWEGqKGqCFqSPYO2Ry+AA=="
+  },
+  {
+   "id": "moon-anchor-waxing-gibbous-day",
+   "now": 1790173200,
+   "reading": {
+    "code": 1,
+    "isDay": true,
+    "temperature": 18.4,
+    "apparentTemperature": 17.2,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": [
+     1790146121,
+     1790232602
+    ],
+    "sunsets": [
+     1790190129,
+     1790276387
+    ],
+    "hourly": [
+     [
+      1790121600,
+      12.5,
+      10
+     ],
+     [
+      1790125200,
+      11.7,
+      10
+     ],
+     [
+      1790128800,
+      11.2,
+      10
+     ],
+     [
+      1790132400,
+      11.0,
+      10
+     ],
+     [
+      1790136000,
+      11.2,
+      10
+     ],
+     [
+      1790139600,
+      11.7,
+      10
+     ],
+     [
+      1790143200,
+      12.5,
+      10
+     ],
+     [
+      1790146800,
+      13.5,
+      10
+     ],
+     [
+      1790150400,
+      14.7,
+      10
+     ],
+     [
+      1790154000,
+      16.0,
+      10
+     ],
+     [
+      1790157600,
+      17.3,
+      10
+     ],
+     [
+      1790161200,
+      18.5,
+      10
+     ],
+     [
+      1790164800,
+      19.5,
+      10
+     ],
+     [
+      1790168400,
+      20.3,
+      10
+     ],
+     [
+      1790172000,
+      20.8,
+      10
+     ],
+     [
+      1790175600,
+      21.0,
+      10
+     ],
+     [
+      1790179200,
+      20.8,
+      10
+     ],
+     [
+      1790182800,
+      20.3,
+      10
+     ],
+     [
+      1790186400,
+      19.5,
+      10
+     ],
+     [
+      1790190000,
+      18.5,
+      10
+     ],
+     [
+      1790193600,
+      17.3,
+      10
+     ],
+     [
+      1790197200,
+      16.0,
+      10
+     ],
+     [
+      1790200800,
+      14.7,
+      10
+     ],
+     [
+      1790204400,
+      13.5,
+      10
+     ],
+     [
+      1790208000,
+      12.5,
+      10
+     ],
+     [
+      1790211600,
+      11.7,
+      10
+     ],
+     [
+      1790215200,
+      11.2,
+      10
+     ],
+     [
+      1790218800,
+      11.0,
+      10
+     ],
+     [
+      1790222400,
+      11.2,
+      10
+     ],
+     [
+      1790226000,
+      11.7,
+      10
+     ],
+     [
+      1790229600,
+      12.5,
+      10
+     ],
+     [
+      1790233200,
+      13.5,
+      10
+     ],
+     [
+      1790236800,
+      14.7,
+      10
+     ],
+     [
+      1790240400,
+      16.0,
+      10
+     ],
+     [
+      1790244000,
+      17.3,
+      10
+     ],
+     [
+      1790247600,
+      18.5,
+      10
+     ],
+     [
+      1790251200,
+      19.5,
+      10
+     ],
+     [
+      1790254800,
+      20.3,
+      10
+     ],
+     [
+      1790258400,
+      20.8,
+      10
+     ],
+     [
+      1790262000,
+      21.0,
+      10
+     ],
+     [
+      1790265600,
+      20.8,
+      10
+     ],
+     [
+      1790269200,
+      20.3,
+      10
+     ],
+     [
+      1790272800,
+      19.5,
+      10
+     ],
+     [
+      1790276400,
+      18.5,
+      10
+     ],
+     [
+      1790280000,
+      17.3,
+      10
+     ],
+     [
+      1790283600,
+      16.0,
+      10
+     ],
+     [
+      1790287200,
+      14.7,
+      10
+     ],
+     [
+      1790290800,
+      13.5,
+      10
+     ]
+    ]
+   },
+   "config": {
+    "layout": "anchor",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": true,
+    "showsHumidity": false,
+    "showsWind": false,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": true
+   },
+   "facts": {
+    "icon": "mainlyClearDay",
+    "moon": 3,
+    "sun": {
+     "event": "set",
+     "at": 1790190129,
+     "text": "19:02"
+    },
+    "rain": 10,
+    "arrow": "⇗",
+    "hours": [
+     1790172000,
+     1790175600,
+     1790179200,
+     1790182800,
+     1790186400,
+     1790190000,
+     1790193600,
+     1790197200,
+     1790200800,
+     1790204400,
+     1790208000
+    ]
+   },
+   "burst": null,
+   "framesZ": "7d3LbtpAGAbQd/GaBQ2BQl4lYgEBS120kdJFF1HevZBJUjdmnPENczmuNLJMyvhj7PnnOBV9zlZP21V2d/+c/fyd3U3G4/Eoe3r8s9u/z8aFbTHO88lkHNnCq8U29jPjgbZslJVPNf0ki8dj+4PEST/t6uMnMjpdxRl2S4yTfu9Ub7PCn7Menf4iiHN2cdJryhndO+e+XWqc8mWQcknELrzqy7K/arWLEzvt9Cs8pVodZyH0EafZ6NSNc2Gjc4R7p/q0q6fWUyNDtnwZBQTNEAiBEAiBmEEcBGKGS4/DDMzADKYCBEIgBEIgZhAHgSwUro5AzMAM7p1mcfLb7Xo9D23xSHm/uMWOx16tfs/yOSAQAiEQAllki4NACCQOMzADM3RqhlHW5rRTjtfdbzU6CIRACIRAzCAOAlnGIRAzMAMzdDU66Z9nswjtQyEQAiEQAjGDOAhkVSoOMzADM9S4d9p8ql2NSDf/EM53wkEQBEEQNYgDQZbZ1EAN1EANlRdbyidc92qvPp7y/s0R5PdACIRACMQM4iAQM1x8HGZgBmYwFSAQAiEQAjGDOAjEDFcXhxmYgRkQCIEQCIEQiBnEQSALhauLwwzM4N6pcbEt9lNuaN+GPn89kheOlH5mu97vhxaBEAiBEAiBmEEcBLKMG2IZxwwuNmYYNM5mst8PbTiynu33Q/s21b++upj09r9qIRACIRACMYM4CGQZJ444zMAMpxxnttnvhzYcuf2+3w9tcwL5TjgIgiAIogZxIMi6VBxqoAZqONs4+3OZbEP778j0NrSHEeT3QAiEQAjEDOIgkEU2MzADMzDDATP4QgQEQiAEQiBmEAeBEOjKCcQMzHBdZniPU55CU6bT2KRdPaX3t9JDIARCIARiBnEQiBkQiBmYgRm+iBM77fTpNGVpdJxVNwIhEAIhEDOIg0DMgEDMwAzMkBSn2ejUjdP76CAQAiEQAjGDOAjEDOIwAzMww+mMTu/3zvJlOcp+PDz+2tHn48vhDmMotuX5enqz7XUqOkIXnU+o5XPO80X+7SG0ddNVpCi+baxt+UG9v9XmZrI61NboIoQtRv7/bKu6eG8/v0PCWNTr4hQ+qEGG+2gXbfmt8sjWYReb6Wa9nZbb6k6/7KL4F2NdxDpN7CL9bWMdfdnFfLuYr+bN2s/P09QQNUQNUUPUEDXkaDXkCI9E1JCLqSHlyM1qSM2xUENOvYaU5+OUStLg7q5bSZJTNK8kiV20qSSJXbSpJGqIGqKGqCFqiBoyQA3xLEsN8SxLDenw7k6vJI27SK8ktSaQZpWkVhe91pA2lUQNUUPUEDVEDVFDBqghnmWpIZ5lqSGeZXmWpYaoIWqIGqKGqCFNa8jy5S8="
+  },
+  {
+   "id": "moon-anchor-only-line",
+   "now": 1790992800,
+   "reading": {
+    "code": 3,
+    "isDay": false,
+    "temperature": 5.0,
+    "apparentTemperature": 3.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": null,
+    "sunsets": null,
+    "hourly": null
+   },
+   "config": {
+    "layout": "anchor",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": false,
+    "showsHumidity": false,
+    "showsWind": false,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "cloudNight",
+    "moon": 6,
+    "sun": null,
+    "rain": null,
+    "arrow": "⇗",
+    "hours": []
+   },
+   "burst": null,
+   "framesZ": "7ZnBioMwEIbfJWcPLmpr+yrFQxSFPewWuoc9FN99ywolmM1kdGI17p9CEBvz53dm/Ai5K31rtTpf7urjS53f0jRN1O36/bi+qCzr0vbk6lOj2Xe21lSiOIs0x2zZFNNOdNGh0yyW9rATKhYH4xe1nXUt7NuOa9lRR0f+Kdh47ezsyxa1nS5v67ocevOO69q8YzbXv/R4/jxeO3wL9GI4C5NoLRQdznhOFDg2hbUz9e3J7fDTT2iHUwtT7cjn8dip+ipR783187kbyszN0A6+rCOJQhf66Bx80jqvS7sP6OLQHIuytHta1CthPuiScIkyJfjTuoS8Enme10Uzr18ro+jM4eQPU4J+w/YyJklwMsceQws9JaamJZ2of0pIJqeFgkuY8RpJSPLfVRGvq4uqT/4FQ7rfBoaAIWAIGAKG7I4h9CZBKDFMPjDEFpJUP9PFPHp4U0BOD69EqKIkJGKqFV4sJCSZHQs+SQgShiLJDEwJk3YJkiwkYcZrJLEESbAPWX4fEpAhYXcgYAgYAoaAIWDI5s9DwBAwBAwBQ8AQMAQMAUPAEDAEDAFD1jlywZk6ztRxpo4zdZypgyFgCBgChoAhYMhrGVL1Pw=="
+  },
+  {
+   "id": "moon-hybrid-full-night",
+   "now": 1790460000,
+   "reading": {
+    "code": 0,
+    "isDay": false,
+    "temperature": 9.0,
+    "apparentTemperature": 7.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": null,
+    "sunsets": null,
+    "hourly": null
+   },
+   "config": {
+    "layout": "hybrid",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": false,
+    "showsHumidity": true,
+    "showsWind": false,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "moon4",
+    "moon": 4,
+    "sun": null,
+    "rain": null,
+    "arrow": "⇗",
+    "hours": []
+   },
+   "burst": null,
+   "framesZ": "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"
+  },
+  {
+   "id": "moon-hybrid-last-quarter-day",
+   "now": 1791028800,
+   "reading": {
+    "code": 0,
+    "isDay": true,
+    "temperature": 18.0,
+    "apparentTemperature": 17.0,
+    "relativeHumidity": 64,
+    "windSpeed": 12.6,
+    "windDirection": 225,
+    "windGusts": 21.6,
+    "uvIndex": 4.4,
+    "todayHigh": 21.3,
+    "todayLow": 12.8,
+    "sunrises": null,
+    "sunsets": null,
+    "hourly": null
+   },
+   "config": {
+    "layout": "hybrid",
+    "changeEvery": 3,
+    "units": "celsius",
+    "windUnit": "metresPerSecond",
+    "feelsLikeColour": true,
+    "showsFeelsLike": true,
+    "showsHumidity": false,
+    "showsWind": true,
+    "showsHiLo": false,
+    "showsRainChance": false,
+    "showsUV": false,
+    "showsSunEvents": false,
+    "showsMoon": true,
+    "showsHourly": false
+   },
+   "facts": {
+    "icon": "clearDay",
+    "moon": 6,
+    "sun": null,
+    "rain": null,
+    "arrow": "⇗",
+    "hours": []
+   },
+   "burst": null,
+   "framesZ": "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"
   },
   {
    "id": "over-budget-storm-all-hybrid",
@@ -24166,6 +25596,7 @@
     "showsRainChance": true,
     "showsUV": true,
     "showsSunEvents": true,
+    "showsMoon": false,
     "showsHourly": true
    },
    "facts": {

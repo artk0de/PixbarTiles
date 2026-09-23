@@ -62,6 +62,10 @@ Live demo: `TC002_HOST=<ip> python3 weather/weather_demo.py [flags]`.
   boundaries (an experiment in keeping two GIFs in step); the default is `layered`,
   and `single` for Pages;
 - `--items feels,humidity,…` — which detail lines rotate, in the spec's order;
+  `moon` is the tile's **Moon phase** setting (`showsMoon`, off by default):
+  it adds the moon line (Anchor/Hybrid) or page (Pages), and makes a clear
+  night the moon in its phase instead of `clearNight` — e.g.
+  `--scenario 20 --items feels,moon --layout pages`;
 - `--interval <s>` — seconds per state (the tile's "Change every");
 - `--burst <ms>` — Pages/Hybrid: icon motion after each change, then rest
   (0 loops the icons through every dwell);

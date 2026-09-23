@@ -22,7 +22,7 @@ private let zaiHandle = ZaiTileConfig(keyAccount: "8C0D2E7A-6A4B-4E5C-9D1F-2B3A4
     #expect(try json(TileConfig.weather(moscow)) == """
     {"weather":{"changeEvery":10,"feelsLikeColour":true,"latitude":55.7558,"layout":"anchor",\
     "longitude":37.6173,"showsFeelsLike":true,"showsHiLo":true,"showsHourly":true,\
-    "showsHumidity":true,"showsRainChance":true,"showsSunEvents":false,"showsUV":false,\
+    "showsHumidity":true,"showsMoon":false,"showsRainChance":true,"showsSunEvents":false,"showsUV":false,\
     "showsWind":true,"units":"celsius","windUnit":"metresPerSecond"}}
     """)
     #expect(try json(TileConfig.vpn(pritunl)) == """

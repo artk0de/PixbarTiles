@@ -30,7 +30,7 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
     /// One line of the face's rotation, in the order the spec's table puts
     /// them on screen — `allCases` IS that order.
     public enum Detail: String, Codable, Sendable, CaseIterable {
-        case feels, humidity, wind, hilo, rain, uv, sun, hourly
+        case feels, humidity, wind, hilo, rain, uv, sun, moon, hourly
     }
 
     /// The intervals the settings window offers between two states.
@@ -57,6 +57,10 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
     public var showsRainChance: Bool
     public var showsUV: Bool
     public var showsSunEvents: Bool
+    /// The `moon` line and page — the phase, a date fact, by day and by
+    /// night — and the moon in its phase as a clear night's icon; off, a
+    /// clear night is the plain `clearNight`.
+    public var showsMoon: Bool
     public var showsHourly: Bool
 
     public init(
@@ -65,7 +69,7 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
         layout: Layout = .anchor, changeEvery: TimeInterval = 10, feelsLikeColour: Bool = true,
         showsWind: Bool = true, windUnit: WindUnit = .metresPerSecond, showsHiLo: Bool = true,
         showsRainChance: Bool = true, showsUV: Bool = false, showsSunEvents: Bool = false,
-        showsHourly: Bool = true
+        showsMoon: Bool = false, showsHourly: Bool = true
     ) {
         self.place = place
         self.units = units
@@ -80,6 +84,7 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
         self.showsRainChance = showsRainChance
         self.showsUV = showsUV
         self.showsSunEvents = showsSunEvents
+        self.showsMoon = showsMoon
         self.showsHourly = showsHourly
     }
 
@@ -95,6 +100,7 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
             case .rain: showsRainChance
             case .uv: showsUV
             case .sun: showsSunEvents
+            case .moon: showsMoon
             case .hourly: showsHourly
             }
         }
@@ -103,7 +109,7 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case latitude, longitude, units, showsHumidity, showsFeelsLike
         case layout, changeEvery, feelsLikeColour, showsWind, windUnit, showsHiLo
-        case showsRainChance, showsUV, showsSunEvents, showsHourly
+        case showsRainChance, showsUV, showsSunEvents, showsMoon, showsHourly
     }
 
     public init(from decoder: any Decoder) throws {
@@ -130,6 +136,7 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
         showsRainChance = try read(.showsRainChance, defaults.showsRainChance)
         showsUV = try read(.showsUV, defaults.showsUV)
         showsSunEvents = try read(.showsSunEvents, defaults.showsSunEvents)
+        showsMoon = try read(.showsMoon, defaults.showsMoon)
         showsHourly = try read(.showsHourly, defaults.showsHourly)
     }
 
@@ -149,6 +156,7 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
         try container.encode(showsRainChance, forKey: .showsRainChance)
         try container.encode(showsUV, forKey: .showsUV)
         try container.encode(showsSunEvents, forKey: .showsSunEvents)
+        try container.encode(showsMoon, forKey: .showsMoon)
         try container.encode(showsHourly, forKey: .showsHourly)
     }
 }

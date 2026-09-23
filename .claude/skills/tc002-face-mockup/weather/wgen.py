@@ -46,7 +46,7 @@ G = {
     "r": [".##", "#..", "#..", "#..", "#.."], "s": [".##", "#..", ".#.", "..#", "##."],
     "t": [".#.", "###", ".#.", ".#.", ".##"], "u": ["#.#", "#.#", "#.#", "#.#", ".##"],
     "v": ["#.#", "#.#", "#.#", "#.#", ".#."], "w": ["#...#", "#...#", "#.#.#", "#.#.#", ".#.#."],
-    "y": ["#.#", "#.#", ".##", "..#", "##."],
+    "y": ["#.#", "#.#", ".##", "..#", "##."], "q": [".##", "#.#", ".##", "..#", "..#"],
     # additions for weather
     "h": ["#..", "#..", "##.", "#.#", "#.#"], "i": ["#", ".", "#", "#", "#"],
     "k": ["#..", "#.#", "##.", "#.#", "#.#"], "z": ["###", "..#", ".#.", "#..", "###"],
@@ -156,6 +156,12 @@ RAINC = hexrgb("#4DA6FF")
 RAIN_CAP = hexrgb("#D8F0FF")
 SUNC = hexrgb("#FFB52E")
 WHITE = hexrgb("#E8E8E8")
+MOONC = hexrgb("#F4EBB8")
+
+# the moon's phases by index (moon_index): the two-line page name, the ticker noun
+MOON_NAMES = [("new", "moon"), ("waxing", "crescent"), ("first", "quarter"), ("waxing", "gibbous"),
+              ("full", "moon"), ("waning", "gibbous"), ("last", "quarter"), ("waning", "crescent")]
+MOON_NOUNS = ["new", "crescent", "quarter", "gibbous", "full", "gibbous", "quarter", "crescent"]
 
 
 def arrow(from_deg):
@@ -185,13 +191,15 @@ class Reading:
     hourly: list | None = None       # [(epoch, temp_c, pop or None)]
 
 
-ORDER = ["feels", "humidity", "wind", "hilo", "rain", "uv", "sun", "hourly"]
+ORDER = ["feels", "humidity", "wind", "hilo", "rain", "uv", "sun", "moon", "hourly"]
 DEFAULT_ITEMS = ("feels", "humidity", "wind", "hilo", "rain", "hourly")
 
 
 @dataclass(frozen=True)
 class Config:
-    """The tile's settings. `items` are the enabled detail keys, in order."""
+    """The tile's settings. `items` are the enabled detail keys, in order;
+    "moon" among them is the tile's showsMoon, which also owns the clear
+    night's icon."""
     layout: str = "anchor"           # anchor | pages | hybrid
     change_ms: int = 10000
     units: str = "c"                 # c | f
@@ -275,8 +283,9 @@ def clock_text(epoch, tz):
     return "%d:%02d" % (d.hour, d.minute)
 
 
-def select_icon(r, now):
-    """Spec §4.1, first match wins."""
+def select_icon(r, now, moon=False):
+    """Spec §4.1, first match wins. A clear night is the moon in its phase
+    when the tile shows the moon (`moon`), else the plain clear night."""
     if r is None:
         return "nodata"
     code = r.code if r.code is not None else 0
@@ -322,7 +331,9 @@ def select_icon(r, now):
         if t <= -10:
             return "frostyClear"
     if code == 0:
-        return "clearDay" if day else "moon%d" % moon_index(now)
+        if day:
+            return "clearDay"
+        return "moon%d" % moon_index(now) if moon else "clearNight"
     if code == 1:
         return dn("mainlyClearDay", "mainlyClearNight")
     if code == 2:
@@ -334,7 +345,7 @@ def facts(r, cfg, now, tz):
     """What the face derives from a reading before drawing anything."""
     sun = next_sun(r, now)
     return {
-        "icon": select_icon(r, now),
+        "icon": select_icon(r, now, "moon" in cfg.items),
         "moon": moon_index(now),
         "sun": {"event": sun[0], "at": sun[1], "text": clock_text(sun[1], tz)} if sun else None,
         "rain": rain_chance(r, now, tz),
@@ -443,6 +454,8 @@ def detail_lines(v):
         out["uv"] = line([("uv", LABEL, G), ("%d" % uv, uv_colour(uv), G)])
     if f["sun"] is not None:
         out["sun"] = line([(f["sun"]["event"], LABEL, G), (f["sun"]["text"], SUNC, G)])
+    if "moon" in v.cfg.items:   # a date fact: there by day and by night
+        out["moon"] = line([(MOON_NOUNS[f["moon"]], MOONC, G)])
     if v.hours:
         out["hourly"] = hourly_chart(v)
     return out
@@ -483,6 +496,8 @@ def item_icon(v, key):
         return "feelsWarm" if r.fl >= 10 else "feelsCold"
     if key == "sun":
         return "sunrise" if v.facts["sun"]["event"] == "rise" else "sunset"
+    if key == "moon":
+        return "moon%d" % v.facts["moon"]
     return {"humidity": "humidity", "wind": "wind", "rain": "umbrella", "uv": "uv"}.get(key)
 
 
@@ -517,6 +532,12 @@ def pages(v, feels_colour):
                                      wind_colour(mps(r.gust_kmh)), G)] if v.gusty() else []
         wp.runs(0, 11, [(arrow(r.wdir), wc, G)] + gust)
         out.append(("wind", "wind", wp))
+    if "moon" in v.cfg.items:
+        mp = Area()
+        first, second = MOON_NAMES[v.facts["moon"]]
+        mp.text(first, 0, 2, MOONC)
+        mp.text(second, 0, 9, MOONC)
+        out.append(("moon", "moon%d" % v.facts["moon"], mp))
     return out
 
 
@@ -847,7 +868,8 @@ def case_config(sc, **kw):
 # Gallery groups: (title, [(icon, trigger)]) — the trigger is what selects it.
 GROUPS = [
     ("По коду WMO (Open-Meteo weather_code)", [
-        ("clearDay", "0 · день"), ("moon4", "0 · ночь → луна в текущей фазе"),
+        ("clearDay", "0 · день"), ("clearNight", "0 · ночь"),
+        ("moon4", "0 · ночь + «фаза луны» → луна в текущей фазе"),
         ("mainlyClearDay", "1 · день"), ("mainlyClearNight", "1 · ночь"),
         ("partlyCloudyDay", "2 · день"), ("partlyCloudyNight", "2 · ночь"),
         ("cloudDay", "3 · день"), ("cloudNight", "3 · ночь"),

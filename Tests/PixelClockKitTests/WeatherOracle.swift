@@ -67,6 +67,7 @@ struct WeatherOracle {
         let showsRainChance: Bool
         let showsUV: Bool
         let showsSunEvents: Bool
+        let showsMoon: Bool
         let showsHourly: Bool
     }
 

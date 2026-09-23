@@ -20,6 +20,15 @@ extension WeatherFace {
     static let rainInk = rgb(0x4D_A6_FF)
     static let rainCap = rgb(0xD8_F0_FF)
     static let sunInk = rgb(0xFF_B5_2E)
+    static let moonInk = rgb(0xF4_EB_B8)
+
+    /// The moon's phases by index (`WeatherFacts.moonPhase`): the Pages
+    /// page's two-line name and the ticker line's one noun.
+    static let moonNames: [(String, String)] = [
+        ("new", "moon"), ("waxing", "crescent"), ("first", "quarter"), ("waxing", "gibbous"),
+        ("full", "moon"), ("waning", "gibbous"), ("last", "quarter"), ("waning", "crescent"),
+    ]
+    static let moonNouns = ["new", "crescent", "quarter", "gibbous", "full", "gibbous", "quarter", "crescent"]
 
     static func rgb(_ value: UInt32) -> Pixel {
         Pixel(red: UInt8(value >> 16 & 0xFF), green: UInt8(value >> 8 & 0xFF), blue: UInt8(value & 0xFF))
@@ -62,11 +71,14 @@ extension WeatherFace {
         let hours: [WeatherReading.HourlyPoint]
         let rain: Int?
         let sun: (word: String, text: String)?
+        /// The moon's phase, 0–7: a date fact, there with or without a reading.
+        let moon: Int
 
         init(reading: WeatherReading?, config: WeatherTileConfig, now: Date, timeZone: TimeZone) {
             self.reading = reading
             self.config = config
-            icon = WeatherFacts.icon(for: reading, at: now)
+            icon = WeatherFacts.icon(for: reading, at: now, showsMoon: config.showsMoon)
+            moon = WeatherFacts.moonPhase(at: now)
             guard let reading else {
                 hours = []
                 rain = nil
@@ -248,6 +260,9 @@ extension WeatherFace {
         if let sun = context.sun {
             lines[.detail(.sun)] = line([Part(text: sun.word, ink: label), Part(text: sun.text, ink: sunInk)])
         }
+        if context.config.showsMoon {   // a date fact: there by day and by night
+            lines[.detail(.moon)] = line([Part(text: moonNouns[context.moon], ink: moonInk)])
+        }
         if context.hours.isEmpty == false {
             lines[.detail(.hourly)] = hourlyChart(context.hours)
         }
@@ -283,6 +298,7 @@ extension WeatherFace {
         case .wind: return .wind
         case .rain: return .umbrella
         case .uv: return .uv
+        case .moon: return WeatherFacts.moonIcon(context.moon)
         case .hilo, .hourly: return nil
         }
     }
@@ -305,7 +321,7 @@ extension WeatherFace {
     }
 
     /// Spec §3.5: the temperature page always, then feels, humidity and wind
-    /// as the reading has them.
+    /// as the reading has them, then the moon when the tile shows it.
     static func pages(_ context: Context, feelsColour: Bool) -> [Page] {
         guard let reading = context.reading else {
             return [Page(detail: nil, icon: .nodata,
@@ -349,6 +365,13 @@ extension WeatherFace {
             }
             drawRuns(parts, on: &area, x: 0, y: 11)
             pages.append(Page(detail: .wind, icon: .wind, area: area))
+        }
+        if context.config.showsMoon {
+            var area = PixelCanvas(width: areaWidth, height: height)
+            let (first, second) = moonNames[context.moon]
+            area.drawText(first, at: PixelPoint(x: 0, y: 2), ink: moonInk, font: .proportional)
+            area.drawText(second, at: PixelPoint(x: 0, y: 9), ink: moonInk, font: .proportional)
+            pages.append(Page(detail: .moon, icon: WeatherFacts.moonIcon(context.moon), area: area))
         }
         return pages
     }

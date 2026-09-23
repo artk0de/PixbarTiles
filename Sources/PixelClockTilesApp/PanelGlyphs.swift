@@ -14,8 +14,9 @@ enum PanelGlyph {
 
     // MARK: - Devices
 
-    /// The AWTRIX 3 clock: the wide LED bar with its three buttons on top,
-    /// showing the time it spends most of its life showing.
+    /// The AWTRIX 3 clock: the wide LED bar showing the time it spends most of
+    /// its life showing. The case is FLAT on top — the TC001 carries no
+    /// buttons above its frame, and the three drawn there were wrong.
     ///
     /// On the user's clock's own 21x18 canvas and in its palette keys, so the
     /// two devices sit in a card's leading slot at one size and the approved
@@ -29,7 +30,7 @@ enum PanelGlyph {
         ".....................",
         ".....................",
         ".....................",
-        "....TT...TTT...TT....",
+        ".....................",
         ".FFFFFFFFFFFFFFFFFFF.",
         "FMMMMMMMMMMMMMMMMMMMF",
         "FMSwSSwwwSSSwwwSwSwMF",
@@ -45,13 +46,57 @@ enum PanelGlyph {
         ".....................",
     ]
 
-    /// Which drawing stands for a clock: the TC002 is the user's own clock,
-    /// the one the menu bar already draws.
+    /// The TC002: a taller screen than the TC001's — 52x16 against 32x8 — with
+    /// the four page dots its top level draws down the right edge, the first
+    /// one lit, and the orange knob it is driven by standing on the LEFT of
+    /// the case, where the clock carries it.
+    ///
+    /// Same canvas and palette keys as the AWTRIX, plus the knob's two:
+    ///
+    ///     k knob top   K knob side
+    static let tc002 = [
+        ".....................",
+        ".....................",
+        "...kkk...............",
+        "..kkkkk..............",
+        "..KKKKK..............",
+        ".FFFFFFFFFFFFFFFFFFF.",
+        "FMMMMMMMMMMMMMMMMMMMF",
+        "FSSSSSSSSSSSSSSSSSSpF",
+        "FSwSSwwwSSSwwwSwSwSSF",
+        "FwwSSSSwSbSSSwSwSwSbF",
+        "FSwSSwwwSSSwwwSwwwSSF",
+        "FSwSSwSSSbSSSwSSSwSbF",
+        "FwwwSwwwSSSwwwSSSwSSF",
+        "FSSSSSSSSSSSSSSSSSSbF",
+        "FMMMMMMMMMMMMMMMMMMMF",
+        ".FFFFFFFFFFFFFFFFFFF.",
+        ".....................",
+        ".....................",
+    ]
+
+    /// Which drawing stands for a clock — each as the device it is. The user's
+    /// own clock is the app's mark, in the header and on the menu bar.
     static func map(for model: ClockModel) -> [String] {
         switch model {
-        case .ulanziTC002: UserClock.map
+        case .ulanziTC002: tc002
         case .awtrix3: awtrix
         }
+    }
+
+    /// The knob's orange, lit top and shaded side.
+    static let knobTop: UInt32 = 0xFF9F0A
+    static let knobSide: UInt32 = 0xC2610A
+
+    /// A device's colours: the shared screen palette, and for the TC002 its
+    /// knob — the case's plastic, so it stays yellow when the screen goes out.
+    static func devicePalette(for model: ClockModel, dark: Bool, live: Bool) -> Palette {
+        var palette = devicePalette(dark: dark, live: live)
+        if model == .ulanziTC002 {
+            palette["k"] = knobTop
+            palette["K"] = knobSide
+        }
+        return palette
     }
 
     /// The device drawing's colours: lit while the clock answers, screen out
@@ -129,7 +174,10 @@ enum PanelGlyph {
     /// rest left empty. No reading lights nothing.
     static func batteryPalette(for reading: BatteryReading?, ink: UInt32, live: Bool) -> Palette {
         var palette: Palette = ["F": ink]
-        let lit = reading.map { filledCells(for: $0.percent) } ?? 0
+        // The shown figure, not the raw one: the cells sit beside the number,
+        // and a card whose drawing and whose digits disagree is worse than
+        // either alone.
+        let lit = reading.map { filledCells(for: $0.shownPercent) } ?? 0
         let tint = reading.map { live ? batteryTint(for: $0) : staleTint }
         for (index, key) in "12345".enumerated() {
             palette[key] = index < lit ? tint : .some(nil)

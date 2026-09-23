@@ -212,7 +212,9 @@ private struct ClockSectionView: View {
         HStack(alignment: .top, spacing: 12) {
             PixelArt(
                 map: PanelGlyph.map(for: section.clock.model),
-                palette: PanelGlyph.devicePalette(dark: dark, live: section.isLive),
+                palette: PanelGlyph.devicePalette(
+                    for: section.clock.model, dark: dark, live: section.isLive
+                ),
                 pixel: 2
             )
             VStack(alignment: .leading, spacing: 8) {

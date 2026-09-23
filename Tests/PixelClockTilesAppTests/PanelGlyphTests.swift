@@ -11,6 +11,7 @@ import Testing
 
 private let everyMap: [(String, [String])] = [
     ("awtrix", PanelGlyph.awtrix),
+    ("tc002", PanelGlyph.tc002),
     ("battery", PanelGlyph.battery),
     ("bolt", PanelGlyph.bolt),
     ("led", PanelGlyph.led),
@@ -34,6 +35,13 @@ private func reading(
     }
 }
 
+// The TC001's case is FLAT on top — no buttons stand above the frame, which
+// is what the user corrected. Every row above the frame is empty.
+@Test func theAwtrixCaseIsFlatOnTop() {
+    let frame = try! #require(PanelGlyph.awtrix.firstIndex { $0.contains("F") })
+    #expect(PanelGlyph.awtrix[..<frame].allSatisfy { $0.allSatisfy { $0 == "." } })
+}
+
 // The AWTRIX clock stands on the same canvas as the user's own clock, so the
 // two sit in a card's leading slot at one size — and it speaks the same
 // palette keys, so the approved dark, light and offline palettes colour it
@@ -46,9 +54,59 @@ private func reading(
     #expect(used.isSubset(of: keys), "unpaletted keys: \(used.subtracting(keys))")
 }
 
+// The two clocks are two devices, and the card draws each as itself: the
+// AWTRIX 3 as the TC001's flat LED bar, the TC002 as its taller 52x16 screen
+// under the yellow knob it is driven by. The user's own clock stays the app's
+// mark in the header.
 @Test func eachModelIsDrawnAsItsOwnDevice() {
-    #expect(PanelGlyph.map(for: .ulanziTC002) == UserClock.map)
+    #expect(PanelGlyph.map(for: .ulanziTC002) == PanelGlyph.tc002)
     #expect(PanelGlyph.map(for: .awtrix3) == PanelGlyph.awtrix)
+    #expect(PanelGlyph.tc002 != PanelGlyph.awtrix)
+}
+
+@Test func theTC002StandsOnTheSameCanvasInTheSamePaletteKeysPlusItsKnob() {
+    #expect(PanelGlyph.tc002.count == UserClock.height)
+    #expect(PanelGlyph.tc002.allSatisfy { $0.count == UserClock.width })
+    let keys = Set(UserClock.darkOnline.keys).union([".", "k", "K"])
+    let used = Set(PanelGlyph.tc002.joined())
+    #expect(used.isSubset(of: keys), "unpaletted keys: \(used.subtracting(keys))")
+}
+
+// The knob is what tells a TC002 from a TC001 at a glance, and only the TC002
+// has one. It sits on the LEFT of the case, where the clock carries it.
+@Test func onlyTheTC002CarriesTheKnobAndItIsOnTheLeft() {
+    #expect(PanelGlyph.tc002.joined().contains("k"))
+    #expect(PanelGlyph.tc002.joined().contains("K"))
+    #expect(!PanelGlyph.awtrix.joined().contains("k"))
+
+    let columns = PanelGlyph.tc002.flatMap { row in
+        row.enumerated().filter { $0.element == "k" || $0.element == "K" }.map(\.offset)
+    }
+    let rightmost = try! #require(columns.max())
+    #expect(rightmost < UserClock.width / 2, "the knob sits left of centre")
+}
+
+// Orange, the colour of the clock's own knob — not the yellow first drawn.
+@Test func theKnobIsOrange() {
+    #expect(PanelGlyph.knobTop == 0xFF9F0A)
+    #expect(PanelGlyph.knobSide == 0xC2610A)
+}
+
+// The knob is the case's plastic, not the screen: it stays yellow when the
+// clock goes down and only the screen goes out.
+@Test func theKnobStaysYellowWhenTheScreenGoesOut() {
+    for dark in [true, false] {
+        for live in [true, false] {
+            let palette = PanelGlyph.devicePalette(for: .ulanziTC002, dark: dark, live: live)
+            #expect(palette["k"] == PanelGlyph.knobTop)
+            #expect(palette["K"] == PanelGlyph.knobSide)
+            #expect(palette["w"] == PanelGlyph.devicePalette(dark: dark, live: live)["w"])
+        }
+    }
+    #expect(
+        PanelGlyph.devicePalette(for: .awtrix3, dark: true, live: true)
+            == PanelGlyph.devicePalette(dark: true, live: true)
+    )
 }
 
 @Test func theBatteryHasFiveCells() {

@@ -9,15 +9,17 @@ import PixelClockKit
 /// The preview is THE FACE, not a drawing of it: the connector reads the sky
 /// and the same `WeatherFace` timeline the device push ships encodes to a GIF
 /// through the kit's own writer, so the pixels on screen are the pixels a
-/// poll would send. What makes that affordable is the debounce — every
-/// control change costs a render — and what makes it honest is that the
-/// draft, not the stored config, feeds it: the preview cannot show what the
-/// tile is not about to become.
+/// poll would send. Every control change costs a render, started the moment
+/// the control moves; what makes it honest is that the draft, not the stored
+/// config, feeds it, so the preview cannot show what the tile is not about to
+/// become.
 @MainActor
 @Observable
 final class TileSettingsModel {
     private let model: AppModel
-    /// How long a control change waits before it costs a render.
+    /// How long a control change waits before it costs a render. Zero in the
+    /// app, and that is the shipped answer rather than an oversight: see
+    /// `schedulePreview`.
     private let debounce: TimeInterval
     /// The subscription that hears which tile the window is for.
     private var pulse: AnyCancellable?
@@ -25,6 +27,16 @@ final class TileSettingsModel {
     /// — a cancelled render's answer is dropped, not shown late.
     private var scheduled: Task<Void, Never>?
     private var generation = 0
+    /// The look at whether the WINDOW has moved to another tile.
+    ///
+    /// Its own slot, and that is a fix rather than a tidy. It used to share
+    /// `scheduled` with the render, and it cancels before it checks: so every
+    /// publish from the model — a poll, a reachability answer, a push state,
+    /// several a second in a running app — killed whatever render an edit had
+    /// just asked for, then found the window had not moved and did nothing.
+    /// Flipping a control wrote the record and left the preview showing the
+    /// answer before it.
+    private var reload: Task<Void, Never>?
 
     /// The tile the window is opened for, mirrored from the model.
     private(set) var key: TileKey?
@@ -48,7 +60,7 @@ final class TileSettingsModel {
     /// own change, undone by an invisible hand.
     private(set) var lastRefusal: String?
 
-    init(model: AppModel, debounce: TimeInterval = 0.12) {
+    init(model: AppModel, debounce: TimeInterval = 0) {
         self.model = model
         self.debounce = debounce
         key = model.detailTileKey
@@ -71,18 +83,22 @@ final class TileSettingsModel {
     }
 
     private func tileChangedAfterTheChangeLands() {
-        scheduled?.cancel()
-        scheduled = Task { [weak self] in
+        reload?.cancel()
+        reload = Task { [weak self] in
             guard let self else { return }
             // Reload only when the WINDOW moved to another tile: the model
             // publishes for every tile in the app, and a tick elsewhere must
-            // not throw away the draft a hand is mid-way through.
+            // not throw away the draft a hand is mid-way through — nor the
+            // render that draft just asked for, which is what cancelling the
+            // shared slot up here used to do.
             let landed = self.model.detailTileKey
             guard landed != self.key else { return }
             self.key = landed
             self.loadDraft()
             self.preview = nil
             self.lastRefusal = nil
+            // The render IS dropped when the window really moved — by
+            // `schedulePreview`'s own cancel, where it belongs.
             self.schedulePreview()
         }
     }
@@ -290,9 +306,18 @@ final class TileSettingsModel {
 
     // MARK: - The preview
 
-    /// One control change, one render — coalesced by the debounce: the
-    /// scheduled render is cancelled and a later one takes its place, so
-    /// dragging through three answers in a row costs the last one only.
+    /// One control change, one render, started at once.
+    ///
+    /// The debounce it used to wait out bought nothing. It is there for a
+    /// control that STREAMS — a drag costing a render per pixel — and nothing
+    /// in this window streams: a segmented picker, a toggle and a submitted
+    /// field each move once per gesture. Coalescing one move with nothing cost
+    /// the whole interval before the picture answered, on top of a render
+    /// measured at 127-280 ms for the TC002 weather face. A burst still
+    /// coalesces without it: a later render cancels the one before it and the
+    /// generation drops a late answer. The suite had been passing
+    /// `debounce: 0` at nearly every call site to get anything done, which was
+    /// the reading to believe.
     ///
     /// The weather is the one tile whose preview answers the DRAFT rather
     /// than the record — its controls edit a draft, and a preview that read
@@ -306,9 +331,11 @@ final class TileSettingsModel {
         scheduled?.cancel()
         scheduled = Task { [weak self] in
             guard let self else { return }
-            do {
-                try await Task.sleep(for: .seconds(self.debounce))
-            } catch { return }
+            if self.debounce > 0 {
+                do {
+                    try await Task.sleep(for: .seconds(self.debounce))
+                } catch { return }
+            }
             guard self.generation == thisGeneration, let key = self.key else { return }
             self.previewNote = nil
             // The connector the tile's OWN clock runs, not the app-level copy

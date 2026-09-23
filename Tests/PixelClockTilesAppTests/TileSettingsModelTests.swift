@@ -419,3 +419,143 @@ private func expectSetterLands(
     #expect(played?.images.first?.height == PixelCanvas.height)
     await model.teardown()
 }
+
+// A control's change must survive the model ticking underneath it.
+//
+// The window schedules its render into `scheduled` and then writes the record;
+// the subscription that watches the model for the window MOVING to another
+// tile cancelled `scheduled` before it checked whether the window had moved at
+// all. Both jobs shared one slot, so any publish inside the debounce — and a
+// running app publishes constantly: a poll, a reachability answer, a push
+// state — killed the render the edit had just asked for, then found the window
+// had not moved and did nothing. The suite never saw it because a store write
+// alone does not publish.
+//
+// The layout is the control the user reported it on, and the TC002 is where it
+// shows: the face branches on it (`WeatherFace.timeline`), so two layouts are
+// two pictures.
+@Test @MainActor func aModelTickDoesNotThrowAwayTheRenderAnEditJustAskedFor() async {
+    let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.7")
+    let key = TileKey(clockId: kitchen.id, connectorId: "weather")
+    let transport = SkyAndClockTransport(sky: skyWithAnswers)
+    let model = testModel(
+        connectors: [weatherConnector(over: transport), StubConnector(isAudible: false)],
+        transport: transport,
+        clocks: [kitchen],
+        tiles: [
+            TileRecord(
+                key: key,
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600),
+                config: .weather(WeatherTileConfig(place: aDesk))
+            )
+        ]
+    )
+    // A real debounce, so the tick lands while the render is still waiting.
+    let subject = TileSettingsModel(model: model, debounce: 0.05)
+
+    model.openDetail(for: key)
+    #expect(await waitUntil { subject.preview != nil })
+    let before = subject.preview
+
+    subject.setLayout(.pages)
+    // The poll, arriving mid-debounce. The window has not moved.
+    model.objectWillChange.send()
+
+    #expect(await waitUntil { subject.preview != nil && subject.preview != before })
+    await model.teardown()
+}
+
+// Every layout takes, and every layout draws its own picture.
+//
+// Reported from the panel: Pages took, and after it neither Anchor nor Hybrid
+// did. One control, three values, and only the first move worked — so the walk
+// is all three in a row rather than one flip, which is the only shape that
+// catches a value that takes once and then stops.
+@Test @MainActor func everyLayoutTakesAndDrawsItsOwnPicture() async {
+    let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.7")
+    let key = TileKey(clockId: kitchen.id, connectorId: "weather")
+    let transport = SkyAndClockTransport(sky: skyWithAnswers)
+    let model = testModel(
+        connectors: [weatherConnector(over: transport), StubConnector(isAudible: false)],
+        transport: transport,
+        clocks: [kitchen],
+        tiles: [
+            TileRecord(
+                key: key,
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600),
+                config: .weather(WeatherTileConfig(place: aDesk))
+            )
+        ]
+    )
+    let subject = TileSettingsModel(model: model, debounce: 0.01)
+
+    model.openDetail(for: key)
+    #expect(await waitUntil { subject.preview != nil })
+
+    var drawn: [Data] = []
+    for layout in [WeatherTileConfig.Layout.pages, .anchor, .hybrid] {
+        let before = subject.preview
+        subject.setLayout(layout)
+        #expect(subject.draft?.layout == layout)
+        #expect(await waitUntil { subject.preview != nil && subject.preview != before })
+        #expect(model.storedTile(key)?.config?.weatherConfig?.layout == layout)
+        drawn.append(subject.preview ?? Data())
+    }
+    // Three layouts, three pictures: two that draw the same thing would make
+    // the walk above pass on a control that does nothing.
+    #expect(Set(drawn).count == 3)
+
+    await model.teardown()
+}
+
+// A click does not wait out a debounce.
+//
+// The debounce is there for a control that STREAMS — a drag that would cost a
+// render per pixel. Nothing in this window streams: a segmented picker, a
+// toggle and a submitted field each move once per gesture, and coalescing one
+// move with nothing costs the whole interval before the picture answers. On a
+// TC002 weather tile a render is 127-280 ms measured; the shipped 0.12 s was
+// adding almost half again on top of every one of them, and the suite had been
+// passing `debounce: 0` at nearly every call site to get anything done.
+//
+// Measured as a DIFFERENCE against a window built with a debounce, so the
+// reading does not depend on how loaded the machine running it is: both pay the
+// same render, only one pays the wait.
+@Test @MainActor func aClickRendersWithoutWaitingOutADebounce() async {
+    func timeOneLayoutChange(debounce: TimeInterval?) async -> TimeInterval {
+        let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.7")
+        let key = TileKey(clockId: kitchen.id, connectorId: "weather")
+        let transport = SkyAndClockTransport(sky: skyWithAnswers)
+        let model = testModel(
+            connectors: [weatherConnector(over: transport), StubConnector(isAudible: false)],
+            transport: transport,
+            clocks: [kitchen],
+            tiles: [
+                TileRecord(
+                    key: key,
+                    policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600),
+                    config: .weather(WeatherTileConfig(place: aDesk))
+                )
+            ]
+        )
+        // No argument is the SHIPPED construction, as the window makes it.
+        let subject = debounce.map { TileSettingsModel(model: model, debounce: $0) }
+            ?? TileSettingsModel(model: model)
+        model.openDetail(for: key)
+        _ = await waitUntil { subject.preview != nil }
+        let before = subject.preview
+        let started = Date()
+        subject.setLayout(.pages)
+        _ = await waitUntil({ subject.preview != nil && subject.preview != before }, limit: 5)
+        let took = Date().timeIntervalSince(started)
+        await model.teardown()
+        return took
+    }
+
+    let waited = await timeOneLayoutChange(debounce: 1)
+    let shipped = await timeOneLayoutChange(debounce: nil)
+    // Nearly all of that second must be the window's wait rather than the
+    // renderer's work — a slack under the 0.12 s that used to ship, so a window
+    // that quietly reinstates it fails here.
+    #expect(shipped < waited - 0.91)
+}

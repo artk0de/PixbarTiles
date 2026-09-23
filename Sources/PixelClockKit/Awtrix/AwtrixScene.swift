@@ -123,6 +123,117 @@ public struct AwtrixScene: Sendable, Equatable {
 /// What an AWTRIX face produces and the AWTRIX session delivers.
 public typealias AwtrixDelivery = Delivery<AwtrixScene>
 
+public extension AwtrixScene {
+    /// The AWTRIX panel's size.
+    ///
+    /// 32×8, which is the hardware: `prototype/awtrix/client.py` reads the
+    /// device's own buffer as "256 packed 0xRRGGBB values" and 32 × 8 is what
+    /// 256 is. This was written as 32×16 for one iteration and every preview
+    /// drawn in that time put its progress bar on rows the panel does not
+    /// have and half its text below the glass.
+    static let panelWidth = 32
+    static let panelHeight = 8
+
+    /// The columns an icon costs the text: the device draws 8×8 art from its
+    /// own flash, plus a column of air after it.
+    ///
+    /// The preview cannot draw the art — those pixels live on the clock, and
+    /// a catalogue icon has never been in this process. It keeps the columns
+    /// instead, because where the WORDS sit is the thing a preview is read
+    /// for, and a line centred over the icon's ground is a line that will not
+    /// be there on the clock.
+    static let iconColumns = 9
+
+    /// How far the scroll moves between frames, in columns. Two rather than
+    /// one: the frames are a preview of motion rather than a recording of it,
+    /// and halving them halves the GIF.
+    private static let scrollStep = 2
+
+    /// The most frames a scrolling line is drawn as — a bound on the GIF
+    /// rather than on the sentence.
+    private static let scrollFrameCap = 96
+
+    /// The scene as the preview draws it: one still frame.
+    ///
+    /// The first frame of `canvasFrames()`, which for a line that fits is the
+    /// whole of it, and for a line that scrolls is the line at its start —
+    /// where a reader looks first.
+    func canvas() -> PixelCanvas {
+        canvasFrames()[0]
+    }
+
+    /// The scene as the clock plays it: one frame for a line that fits, and
+    /// the frames of the scroll for one that does not.
+    ///
+    /// The firmware scrolls anything wider than the panel, so a single still
+    /// of the first 32 columns is not what the clock shows — it is the first
+    /// third of a sentence presented as the whole of it. The words are drawn
+    /// in the kit's X11 face; the device has glyphs of its own, and that is
+    /// the one thing this preview approximates rather than reproduces.
+    func canvasFrames() -> [PixelCanvas] {
+        let font = PixelFont.standard
+        let ink = Pixel(colour: UlanziColour(hex: color ?? "#FFFFFF"))
+        // An icon takes the leading columns; a bar takes the last row.
+        let left = icon == nil ? 0 : Self.iconColumns
+        let available = Self.panelWidth - left
+        let textRows = progress == nil ? Self.panelHeight : Self.panelHeight - 1
+        let top = max(0, (textRows - font.height) / 2)
+        let line = font.width(of: text, scale: 1)
+
+        guard line > available else {
+            var canvas = blankPanel()
+            var strip = PixelCanvas(width: available, height: Self.panelHeight)
+            strip.drawText(
+                text, at: PixelPoint(x: (available - line) / 2, y: top), ink: ink, scale: 1,
+                font: font
+            )
+            canvas.draw(strip, at: PixelPoint(x: left, y: 0))
+            paintProgress(onto: &canvas)
+            return [canvas]
+        }
+
+        // The line starts against the left of its own area and walks off it,
+        // which is where a reader's eye starts. The travel ends when the last
+        // glyph has left: one panel's worth past the line's own width.
+        let travel = line + available
+        var frames: [PixelCanvas] = []
+        var offset = 0
+        while offset <= travel, frames.count < Self.scrollFrameCap {
+            var canvas = blankPanel()
+            var strip = PixelCanvas(width: available, height: Self.panelHeight)
+            strip.drawText(
+                text, at: PixelPoint(x: -offset, y: top), ink: ink, scale: 1, font: font
+            )
+            canvas.draw(strip, at: PixelPoint(x: left, y: 0))
+            paintProgress(onto: &canvas)
+            frames.append(canvas)
+            offset += Self.scrollStep
+        }
+        return frames
+    }
+
+    private func blankPanel() -> PixelCanvas {
+        PixelCanvas(width: Self.panelWidth, height: Self.panelHeight)
+    }
+
+    /// The bar the firmware fills under an app's text: the panel's LAST row,
+    /// the track across the whole width and the fill over its left part.
+    private func paintProgress(onto canvas: inout PixelCanvas) {
+        guard let progress else { return }
+        let row = Self.panelHeight - 1
+        canvas.drawRect(
+            PixelRect(x: 0, y: row, width: Self.panelWidth, height: 1),
+            color: Pixel(colour: UlanziColour(hex: progress.track))
+        )
+        canvas.drawRect(
+            PixelRect(
+                x: 0, y: row, width: Self.panelWidth * progress.percent / 100, height: 1
+            ),
+            color: Pixel(colour: UlanziColour(hex: progress.fill))
+        )
+    }
+}
+
 extension Delivery where Scene == AwtrixScene {
     /// Everything an AWTRIX delivery can say, in the labels and the order the
     /// connectors have always used.

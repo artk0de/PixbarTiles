@@ -1,59 +1,7 @@
 import PixelClockKit
 import SwiftUI
 
-/// The selected clock's status: connectivity, address, battery when the clock
-/// reports one, and the discovery line when there is something to say.
-///
-/// Composition over the existing status lines — `DeviceStatusLine`,
-/// `DiscoveryStatusLine` and `BatteryLine`, which stay where they are until
-/// the switch-over moves them beside this block. No new line text is invented
-/// here; the block only decides WHICH of them the clock's inputs earn.
-///
-/// A nil battery is no battery CELL, not a placeholder: the TC002's stock
-/// firmware answers no level over its API, so whatever drew there would be a
-/// guess. Which clock can report one is decided upstream — the block is
-/// handed nil and draws nothing.
-struct ClockStatusBlock: View {
-    let state: DeviceState
-    let address: String
-    let battery: BatteryReading?
-    let discovery: DiscoveryState?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(DeviceStatusLine.colour(for: state))
-                    .frame(width: 8, height: 8)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(DeviceStatusLine.title(for: state))
-                        .font(.headline)
-                    // The address and the battery in one row but two labels:
-                    // only the second of them turns orange, and a single
-                    // string would have taken the address with it.
-                    HStack(spacing: 4) {
-                        Text(address)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if let line = battery.map(BatteryLine.text) ?? nil {
-                            Text("· " + line)
-                                .font(.caption)
-                                .foregroundStyle(BatteryLine.colour(for: battery))
-                        }
-                    }
-                }
-            }
-            if let line = discovery.map(DiscoveryStatusLine.text) ?? nil {
-                Text(line)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-}
-
-// MARK: - The status lines, moved here at the switch-over (D10 — as they were)
+// MARK: - The status lines
 
 /// What the dot and the line above it say about the device.
 ///
@@ -62,30 +10,14 @@ struct ClockStatusBlock: View {
 /// disconnection it had no grounds for. That conflation is the same one
 /// `DeviceState` exists to prevent.
 enum DeviceStatusLine {
-    static func title(for state: DeviceState) -> String {
-        switch state {
+    /// The three words, said from the one vocabulary both firmwares answer
+    /// in — the model's `ClockReachability`, which is what the status dot
+    /// and this line are two renderings of.
+    static func title(for reachability: AppModel.ClockReachability) -> String {
+        switch reachability {
         case .unknown: "Checking…"
-        case .online: "Connected"
-        case .offline: "Disconnected"
-        }
-    }
-
-    /// The same three answers for a health that probes with /getBase: it has
-    /// no stats to carry in a `.online` DeviceState, so its answering state
-    /// is said here, in the words every other clock's row uses.
-    static func title(for answering: UlanziClockHealth.Answering) -> String {
-        switch answering {
-        case .notAsked: "Checking…"
-        case .answering: "Connected"
+        case .reachable: "Connected"
         case .unreachable: "Disconnected"
-        }
-    }
-
-    static func colour(for state: DeviceState) -> Color {
-        switch state {
-        case .unknown: .secondary
-        case .online: .green
-        case .offline: .red
         }
     }
 }
@@ -138,20 +70,36 @@ enum DiscoveryStatusLine {
             + "app talks to"
     }
 }
-/// What the panel says about the battery.
+/// What the panel says about the battery, and how it draws it.
 ///
-/// The panel, and deliberately not the menu bar item: that item is a template
-/// image whose monochrome silhouette and its offline variant are both
-/// load-bearing, and an emoji drawn into it would break each of them.
+/// A drawn battery symbol, the percentage, and the estimate — the user's
+/// call (2026-09-21), replacing the emoji family: an SF Symbol is the same
+/// weight as every other mark on the panel and comes in the urgency colours
+/// an emoji cannot.
 enum BatteryLine {
     /// Where the discharging glyph changes, and the same number the first
     /// warning fires at — one line, so the panel and the dialog cannot disagree
     /// about what "low" means.
     static let low = 20
-    /// Below this the wording and the colour carry the urgency. There is no red
-    /// variant of either battery emoji, and stacking a warning sign beside one
-    /// reads as clutter rather than as escalation.
+    /// Below this the wording and the colour carry the urgency.
     static let critical = 10
+
+    /// The battery as a symbol, by charge and direction. Charging draws the
+    /// plug-and-cell mark; the four rungs are the whole battery vocabulary
+    /// SF Symbols carries.
+    static func symbol(for reading: BatteryReading?) -> String? {
+        guard let reading else { return nil }
+        switch reading.direction {
+        case .charging: return "battery.100percent.bolt"
+        case .unknown: return "hourglass"
+        case .discharging:
+            let percent = reading.percent
+            if percent >= 75 { return "battery.100percent" }
+            if percent >= 50 { return "battery.75percent" }
+            if percent >= 25 { return "battery.50percent" }
+            return "battery.25percent"
+        }
+    }
 
     /// The emoji for the state, or none while there is no state.
     ///
@@ -186,17 +134,18 @@ enum BatteryLine {
         }
     }
 
-    /// The whole line: the glyph, the percentage, and what happens next.
+    /// The line's words: the percentage and what happens next. The SYMBOL
+    /// carries the state — the words no longer repeat it with an emoji, and
+    /// charging says nothing but its percentage, exactly as the plug used to.
     ///
     /// `shownPercent` and not `percent`, and this is the only place the two are
     /// told apart. The reading flickers a percent either way on ADC noise with
     /// nothing changing, and the trajectory holds the displayed figure against
-    /// that; the glyph and the colour below stay on the real one, because they
-    /// are the same line the first warning fires at.
+    /// that; the colour below stays on the real one, because it is the same
+    /// line the first warning fires at.
     static func text(for reading: BatteryReading?) -> String? {
         guard let reading else { return nil }
-        let percent = "\(reading.shownPercent)%"
-        let head = glyph(for: reading).map { "\($0) \(percent)" } ?? percent
+        let head = "\(reading.shownPercent)%"
         guard let tail = trend(for: reading) else { return head }
         return "\(head) · \(tail)"
     }

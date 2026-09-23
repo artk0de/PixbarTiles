@@ -393,7 +393,7 @@ private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
 // The same argument one field over, and the one the final review found still
 // open: the record of the overlay this app borrowed has to outlive the process
 // that borrowed it. `live()` handing `AwtrixClockSession` the in-memory default
-// meant a force quit — or any teardown that outran the quit budget — left the
+// meant a quit — which no longer waits for any teardown at all — leaving the
 // user's own overlay unrecoverable, and nothing in the suite could see it.
 @Test @MainActor func whatAnEarlierLaunchBorrowedIsStillGivenBackInThisOne() async throws {
     let suite = "app-model-\(UUID().uuidString)"
@@ -461,16 +461,12 @@ private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
 // poll answers. Same conflation `DeviceState` exists to prevent, and the same
 // one this task fixed in a test and left in the view.
 @Test func aDeviceNobodyHasAskedYetIsNotReportedAsDisconnected() {
-    #expect(DeviceStatusLine.title(for: .unknown) == "Checking…")
-    #expect(DeviceStatusLine.title(for: .offline("boom")) == "Disconnected")
-    #expect(DeviceStatusLine.colour(for: .unknown) != DeviceStatusLine.colour(for: .offline("boom")))
-}
-
-@Test func aReachableDeviceIsReportedAsConnected() throws {
-    let stats = try JSONDecoder().decode(DeviceStats.self, from: onlineStats)
-
-    #expect(DeviceStatusLine.title(for: .online(stats)) == "Connected")
-    #expect(DeviceStatusLine.colour(for: .online(stats)) == .green)
+    // The words said from the model's own three-valued reachability — the
+    // vocabulary the status dot renders, so a dot and its line cannot
+    // disagree about what the clock has answered.
+    #expect(DeviceStatusLine.title(for: AppModel.ClockReachability.unknown) == "Checking…")
+    #expect(DeviceStatusLine.title(for: .unreachable) == "Disconnected")
+    #expect(DeviceStatusLine.title(for: .reachable) == "Connected")
 }
 
 // MARK: - What the panel says about devices nobody has pointed the app at yet
@@ -565,7 +561,6 @@ private func putsSoundInTheRoom(_ output: AwtrixDelivery) -> Bool {
 
     _ = AppDelegate(
         model: testModel(),
-        budget: QuitBudget(),
         discovery: ClockDiscovery(
             browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
             // A stream that yields nothing and ends: every browse a test arms
@@ -593,7 +588,6 @@ private func launchedForBrowsing(
     poll: Metronome = Metronome(),
     settle: @escaping DeviceBrowser.Sleeping = { _ in },
     notifications: NotificationCenter = NotificationCenter(),
-    budget: QuitBudget = QuitBudget()
 ) -> AppDelegate {
     let delegate = AppDelegate(
         model: testModel(
@@ -602,7 +596,6 @@ private func launchedForBrowsing(
             pollSleep: poll.sleep,
             deviceHost: deviceHost
         ),
-        budget: budget,
         discovery: ClockDiscovery(
             browse: DeviceBrowser(browsing: { browsing }, sleep: settle),
             sightings: { AsyncStream { $0.finish() } }
@@ -780,25 +773,25 @@ private func launchedForBrowsing(
     await delegate.model.teardown()
 }
 
-// The Add-clock sheet is the other thing that makes looking worth doing: the
-// Clocks section is where a clock seen advertising itself becomes a
-// configured one, so a sheet open on an installation whose clock answers
-// perfectly well still needs the list fed. The outage arm is the tests above.
-// The sheet is drawn in the panel's window, so the panel is open first — how
-// the app itself reaches a settings sheet.
-@Test @MainActor func openingTheAddClockSheetLooksEvenWhenTheClockAnswers() async {
+// The Clocks tab is the other thing that makes looking worth doing: it is
+// where a clock seen advertising itself becomes a configured one, so a tab
+// open on an installation whose clock answers perfectly well still needs the
+// list fed. The outage arm is the tests above. The tab is the Settings
+// window's own now, so the arm is told straight to the model, the way the
+// tab's appearances tell it.
+@Test @MainActor func openingTheClocksTabLooksEvenWhenTheClockAnswers() async {
     let browsing = FakeBonjourBrowser()
     let delegate = launchedForBrowsing(browsing)
     #expect(await waitUntil { delegate.model.isDeviceOnline })
     delegate.panelMoved(to: aWindow())
     #expect(browsing.liveBrowses == 0)
 
-    delegate.model.openSettings()
+    delegate.model.clocksSectionVisibilityChanged(true)
     #expect(await waitUntil { browsing.liveBrowses == 1 })
 
-    // And closing the sheet takes the browse back down: the clock answers,
-    // so the sheet was the only reason left to look.
-    delegate.model.closeSettings()
+    // And the tab going away takes the browse back down: the clock answers,
+    // so the tab was the only reason left to look.
+    delegate.model.clocksSectionVisibilityChanged(false)
     #expect(await waitUntil { browsing.liveBrowses == 0 })
     await delegate.model.teardown()
 }
@@ -807,15 +800,14 @@ private func launchedForBrowsing(
 // the browse rule does not ask it as a separate question: nothing configured
 // means nothing answering, so the outage arm holds — a panel open, and with
 // it the Clocks section, is a browse. The panel is opened the way the app
-// opens it (the window takes key), and the sheet adds nothing the zero-clock
+// opens it (the window takes key), and the tab adds nothing the zero-clock
 // state has not already started.
-@Test @MainActor func atZeroClocksAPanelOpenStartsTheBrowseAndTheSheetKeepsIt() async {
+@Test @MainActor func atZeroClocksAPanelOpenStartsTheBrowseAndTheTabKeepsIt() async {
     let browsing = FakeBonjourBrowser()
     let notifications = NotificationCenter()
     let panel = aWindow()
     let delegate = AppDelegate(
         model: testModel(clocks: [], tiles: []),
-        budget: QuitBudget(),
         discovery: ClockDiscovery(
             browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
             sightings: { AsyncStream { $0.finish() } }
@@ -829,72 +821,37 @@ private func launchedForBrowsing(
     takeFocus(panel, through: notifications)
     #expect(await waitUntil { browsing.liveBrowses == 1 })
 
-    delegate.model.openSettings()
+    delegate.model.clocksSectionVisibilityChanged(true)
     await afterTheQueuedObserversHaveRun()
-    // One browse still, not a second: the sheet arm is OR'd onto the
+    // One browse still, not a second: the tab arm is OR'd onto the
     // zero-clock arm, and an OR restarts nothing that already runs.
     #expect(browsing.starts == 1)
     await delegate.model.teardown()
 }
 
-// The sheet arm cannot outlive the panel either: the Clocks section is drawn
-// in the panel's window, so a panel that lost key while the sheet was open
-// has nowhere left to show what a browse found.
-@Test @MainActor func closingThePanelWithTheSheetOpenStopsTheBrowse() async {
+// The tab arm does NOT die with the panel — that was the sheet's rule, when
+// the Clocks section was drawn in the panel's window. The tab lives in the
+// Settings window now, which has somewhere of its own to show what a browse
+// found, so the panel going away leaves the tab's browse standing. It ends
+// when the tab does.
+@Test @MainActor func theClocksTabKeepsItsBrowseWhenThePanelCloses() async {
     let notifications = NotificationCenter()
     let panel = aWindow()
     let browsing = FakeBonjourBrowser()
     let delegate = launchedForBrowsing(browsing, notifications: notifications)
     #expect(await waitUntil { delegate.model.isDeviceOnline })
 
-    delegate.model.openSettings()
+    delegate.model.clocksSectionVisibilityChanged(true)
     delegate.panelMoved(to: panel)
     #expect(await waitUntil { browsing.liveBrowses == 1 })
 
     loseFocus(panel, through: notifications)
-
-    #expect(await waitUntil { browsing.liveBrowses == 0 })
-    await delegate.model.teardown()
-}
-
-@Test @MainActor func quittingStopsTheBrowse() async {
-    let browsing = FakeBonjourBrowser()
-    let delegate = launchedForBrowsing(
-        browsing, clock: SwitchableTransport(answering: false), budget: QuitBudget(seconds: 0.01)
-    )
-    #expect(await waitUntil { isOffline(delegate.model) })
-    delegate.panelMoved(to: aWindow())
+    await afterTheQueuedObserversHaveRun()
     #expect(browsing.liveBrowses == 1)
 
-    _ = delegate.beginTermination { _ in }
-
-    // A browse left running holds an `NWBrowser` on an app whose every other
-    // loop is already cancelled.
-    #expect(browsing.liveBrowses == 0)
-}
-
-// The budget is fifteen seconds for one thing: the dismiss that takes a held
-// banner off the clock. The browse is stopped before the budget is taken, so
-// its settle window is abandoned rather than waited out — three more seconds of
-// a quit that has nothing left to do.
-@Test @MainActor func quitAbandonsTheDiscoveryWindowRatherThanWaitingItOut() async {
-    let window = Metronome()
-    let browsing = FakeBonjourBrowser()
-    let delegate = launchedForBrowsing(
-        browsing,
-        clock: SwitchableTransport(answering: false),
-        settle: window.sleep,
-        budget: QuitBudget(seconds: 0.01)
-    )
-    #expect(await waitUntil { isOffline(delegate.model) })
-    delegate.panelMoved(to: aWindow())
-    // The browse comes up, which is what opens the window in the first place.
-    browsing.emit(.ready)
-    #expect(await waitUntil { window.parked == 1 })
-
-    _ = delegate.beginTermination { _ in }
-
-    #expect(await waitUntil { window.parked == 0 })
+    delegate.model.clocksSectionVisibilityChanged(false)
+    #expect(await waitUntil { browsing.liveBrowses == 0 })
+    await delegate.model.teardown()
 }
 
 // Discovery has a clock of its own and it is the schedule's beat it must not
@@ -910,7 +867,6 @@ private func launchedForBrowsing(
     let host = SpyHost()
     let delegate = AppDelegate(
         model: testModel(host: host, sleep: schedule.sleep, pollSleep: Metronome().sleep),
-        budget: QuitBudget(),
         discovery: ClockDiscovery(
             browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
             sightings: { AsyncStream { $0.finish() } }
@@ -939,7 +895,6 @@ private func launchedForBrowsing(
     let browsing = FakeBonjourBrowser()
     let delegate = AppDelegate(
         model: testModel(defaults: defaults, sleep: Metronome().sleep, pollSleep: Metronome().sleep),
-        budget: QuitBudget(),
         discovery: ClockDiscovery(
             browse: DeviceBrowser(browsing: { browsing }, sleep: { _ in }),
             sightings: { AsyncStream { $0.finish() } }
@@ -1179,4 +1134,18 @@ private func launchedForBrowsing(
     )
     #expect(asked.absoluteString.contains("latitude=52.52"))
     #expect(asked.absoluteString.contains("longitude=13.405"))
+}
+
+// The panel's second statistic, said by the model the panel reads: a clock
+// that has answered reports its charge; a clock that is not answering
+// reports nothing, and a TC002 never does.
+@Test @MainActor func theBatteryLineSaysWhatTheClockReportsAndNothingWhenItCannot() async {
+    let model = testModel(deviceHost: "10.0.0.5")
+    let desk = model.clocks[0]
+
+    #expect(model.batteryLine(of: desk) == nil)
+    model.start()
+    #expect(await waitUntil { model.isDeviceOnline })
+    #expect(model.batteryLine(of: desk)?.contains("77%") == true)
+    await model.teardown()
 }

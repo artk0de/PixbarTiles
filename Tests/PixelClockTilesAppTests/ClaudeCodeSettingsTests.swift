@@ -52,7 +52,7 @@ private struct ClaudeSettingsFixture {
 }
 
 // Under `swift test` there is no bundle, and this guard is the only thing
-// keeping every `SettingsSheet(model:)` in the suite off the real Claude Code
+// keeping every GeneralTab drawn in the suite off the real Claude Code
 // settings of whoever runs it. Asserted, so it is not deleted as noise.
 @Test func theShippedLinkIsNotBuiltOutsideAnAppBundle() {
     #expect(Bundle.main.bundleIdentifier == nil)
@@ -185,9 +185,9 @@ private func drawn(_ view: some View) -> Data? {
     #expect(on != off)
 }
 
-// And they are on the CLAUDE tile's detail, not somewhere generic: the same
-// open detail over two different tiles differs only when the tile's own block
-// is actually drawn.
+// And they are on the CLAUDE tile's settings window, not somewhere generic:
+// the same window opened over two different tiles differs only when the
+// tile's own block is actually drawn.
 @Test @MainActor func theClaudeTilesDetailCarriesTheClaudeSettings() throws {
     let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
     let document = FileManager.default.temporaryDirectory
@@ -211,11 +211,11 @@ private func drawn(_ view: some View) -> Data? {
     )
     func drawnDetail(_ connectorId: String) -> Data? {
         model.openDetail(for: TileKey(clockId: desk.id, connectorId: connectorId))
-        let panel = MenuPanel(
-            model: model, monitor: model.monitor, discovery: inertDiscovery(),
+        let window = TileSettingsWindow(
+            model: model, settings: TileSettingsModel(model: model, debounce: 60),
             claudeCode: ClaudeCodeLinkModel(link: nil)
         )
-        let host = NSHostingView(rootView: panel)
+        let host = NSHostingView(rootView: window)
         host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
         host.layoutSubtreeIfNeeded()
         guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
@@ -241,13 +241,13 @@ private func drawn(_ view: some View) -> Data? {
     defer { fixture.remove() }
     try fixture.link.connect()
 
-    let sheet = drawn(SettingsSheet(model: testModel(), discovery: inertDiscovery()))
+    let sheet = drawn(GeneralTab(model: testModel()))
 
     #expect(sheet != nil)
     // The surface that no longer holds the section is also the surface that
     // no longer takes a link model: what the section said is said on the
     // tile's detail instead (pinned just above).
-    #expect(sheet == drawn(SettingsSheet(model: testModel(), discovery: inertDiscovery())))
+    #expect(sheet == drawn(GeneralTab(model: testModel())))
 }
 
 // The reason reaches the screen too. Deleting the note from the section's body

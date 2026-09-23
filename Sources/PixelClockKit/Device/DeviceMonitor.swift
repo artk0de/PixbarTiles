@@ -96,4 +96,11 @@ public final class DeviceMonitor: ObservableObject {
         guard case .online = state else { return nil }
         return trajectory.reading
     }
+
+    /// The last reading the clock gave, whether or not it is answering now —
+    /// what a statistics panel shows while a clock is briefly away. A clock
+    /// that has never answered has nothing, and that is still the honest nil.
+    public var lastKnownBattery: BatteryReading? {
+        trajectory.reading
+    }
 }

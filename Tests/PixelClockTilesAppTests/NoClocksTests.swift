@@ -39,12 +39,16 @@ import Testing
 // The "Add clock…" answer is the Clocks section — the settings' — and not a
 // surface of its own.
 @Test @MainActor func theAddClockAnswerOpensTheClocksSection() {
-    let subject = testModel(clocks: [], tiles: [])
-    let panel = NoClocksPanel(onAdd: { subject.openSettings() })
+    let model = testModel(clocks: [], tiles: [])
+    let settings = SettingsModel(model: model)
+    // The panel's answer aims the Settings window at the Clocks tab; the
+    // window itself opens through the system action, which a test process
+    // has no run loop to drive. The aiming is what this view owns.
+    let panel = NoClocksPanel(onAdd: { settings.tab = .clocks })
 
     panel.onAdd()
 
-    #expect(subject.settingsAreOpen)
+    #expect(settings.tab == .clocks)
 }
 
 // An installation that already stored a clock is unaffected by any of it.

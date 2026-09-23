@@ -53,6 +53,13 @@ struct TileRowLine: Equatable {
     /// sentence. Each one the app actually meets is named here once; a failure
     /// with no known dialect keeps its raw message, cut to what a row shows,
     /// rather than being flattened into a word that says nothing.
+    /// A failure as the card's line says it — the cause in words, the raw
+    /// NSError dictionary kept behind. What the panel's row did, said now by
+    /// the grid card that replaced it.
+    static func failureWords(_ raw: String) -> String {
+        "failing — \(cause(from: raw))"
+    }
+
     static func cause(from raw: String) -> String {
         let lower = raw.lowercased()
         if lower.contains("timed out") { return "timed out" }
@@ -67,5 +74,19 @@ struct TileRowLine: Equatable {
             return "could not reach the server"
         }
         return String(raw.prefix(60))
+    }
+}
+
+/// The mark each connector's tile wears — on the clock-settings grid's cards
+/// and wherever a tile is named beside its face.
+///
+/// A forwarder now, not a table. It WAS a table, beside the kit's own, and
+/// the two had drifted: z.ai was a bar chart on its store card and the
+/// "unknown app" mark on its clock card, because this copy had no z.ai case.
+/// One tile, two faces, depending on which window was looking. The table
+/// lives in `TilePresentation`, where the store already reads it.
+enum TileRowIcon {
+    static func symbol(forConnectorId connectorId: String) -> String {
+        TilePresentation.of(connectorId: connectorId).icon
     }
 }

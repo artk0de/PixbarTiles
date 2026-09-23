@@ -130,7 +130,8 @@ private func weatherHost(
 ) -> (host: AwtrixClockSession, connector: WeatherConnector) {
     let connector = WeatherConnector(
         source: OpenMeteoSource(transport: transport, now: clock.now),
-        location: { desk }
+        location: { desk },
+        config: { WeatherTileConfig(place: desk) }
     )
     let registry = ConnectorRegistry()
     registry.register(connector)
@@ -164,7 +165,8 @@ private struct PassThroughIcons: IconInstalling {
 @Test func theWeatherIsDrawnInTheClocksOwnLoopRatherThanOverIt() async throws {
     let transport = SkyAndClock(sky: weatherBody(code: 61, temperature: 4.2))
     let connector = WeatherConnector(
-        source: OpenMeteoSource(transport: transport), location: { desk }
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
     )
 
     let output = try await connector.produce()
@@ -188,7 +190,8 @@ private struct PassThroughIcons: IconInstalling {
 @Test func theReadingIsGivenAnHourBeforeTheClockDropsIt() async throws {
     let transport = SkyAndClock(sky: weatherBody(code: 61))
     let connector = WeatherConnector(
-        source: OpenMeteoSource(transport: transport), location: { desk }
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
     )
 
     let output = try await connector.produce()
@@ -203,7 +206,8 @@ private struct PassThroughIcons: IconInstalling {
 @Test func theColourIsChosenFromWhatItFeelsLikeRatherThanFromTheAirTemperature() async throws {
     let transport = SkyAndClock(sky: weatherBody(temperature: 4.2, apparent: -2))
     let connector = WeatherConnector(
-        source: OpenMeteoSource(transport: transport), location: { desk }
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
     )
 
     let output = try await connector.produce()
@@ -223,7 +227,8 @@ private struct PassThroughIcons: IconInstalling {
     for code in [0, 3, 61, 71] {
         let transport = SkyAndClock(sky: weatherBody(code: code, temperature: 25, apparent: 25))
         let connector = WeatherConnector(
-            source: OpenMeteoSource(transport: transport), location: { desk }
+            source: OpenMeteoSource(transport: transport), location: { desk },
+            config: { WeatherTileConfig(place: desk) }
         )
 
         let output = try await connector.produce()
@@ -241,7 +246,8 @@ private struct PassThroughIcons: IconInstalling {
 @Test func aReadingWithoutAnApparentTemperatureIsColouredFromTheAirTemperature() async throws {
     let transport = SkyAndClock(sky: weatherBody(temperature: 27.5, apparent: nil))
     let connector = WeatherConnector(
-        source: OpenMeteoSource(transport: transport), location: { desk }
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
     )
 
     let output = try await connector.produce()
@@ -254,7 +260,8 @@ private struct PassThroughIcons: IconInstalling {
     for (reading, shown) in [(4.2, "4°C"), (4.6, "5°C"), (-3.4, "-3°C"), (-3.6, "-4°C"), (0.2, "0°C")] {
         let transport = SkyAndClock(sky: weatherBody(temperature: reading))
         let connector = WeatherConnector(
-            source: OpenMeteoSource(transport: transport), location: { desk }
+            source: OpenMeteoSource(transport: transport), location: { desk },
+            config: { WeatherTileConfig(place: desk) }
         )
 
         #expect(try await connector.produce().text == shown)
@@ -568,7 +575,8 @@ private struct PassThroughIcons: IconInstalling {
 @Test func theConnectorItselfNeverTalksToTheDevice() async throws {
     let transport = SkyAndClock(sky: weatherBody(code: 61))
     let connector = WeatherConnector(
-        source: OpenMeteoSource(transport: transport), location: { desk }
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
     )
 
     _ = try await connector.produce()
@@ -584,7 +592,8 @@ private struct PassThroughIcons: IconInstalling {
 @Test func theWeatherIsSilentAndSaysSo() async throws {
     let transport = SkyAndClock(sky: weatherBody(code: 61))
     let connector = WeatherConnector(
-        source: OpenMeteoSource(transport: transport), location: { desk }
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
     )
 
     #expect(connector.isAudible == false)
@@ -610,7 +619,8 @@ private struct PassThroughIcons: IconInstalling {
 // is the failure neither number states on its own.
 @Test func theClockIsRefreshedMoreOftenThanTheServiceUpdates() {
     let connector = WeatherConnector(
-        source: OpenMeteoSource(transport: SkyAndClock()), location: { desk }
+        source: OpenMeteoSource(transport: SkyAndClock()), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
     )
 
     #expect(connector.defaultInterval == 600)
@@ -626,7 +636,8 @@ private struct PassThroughIcons: IconInstalling {
 @Test func theSkyIsDrawnAsAnIconBesideTheReading() async throws {
     let transport = SkyAndClock(sky: weatherBody(code: 71))
     let connector = WeatherConnector(
-        source: OpenMeteoSource(transport: transport), location: { desk }
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
     )
 
     let output = try await connector.produce()
@@ -641,7 +652,8 @@ private struct PassThroughIcons: IconInstalling {
     for code in [0, 3, 45, 48, 51, 61, 71, 95, 96, 4_242] {
         let transport = SkyAndClock(sky: weatherBody(code: code))
         let connector = WeatherConnector(
-            source: OpenMeteoSource(transport: transport), location: { desk }
+            source: OpenMeteoSource(transport: transport), location: { desk },
+            config: { WeatherTileConfig(place: desk) }
         )
 
         let output = try await connector.produce()
@@ -672,8 +684,12 @@ private struct PassThroughIcons: IconInstalling {
 
 @Suite struct WeatherTC002FaceTests {
     func makeWeatherConnector() -> WeatherConnector {
+        // The humidity-and-feels band off: these tests pin the DIGITS' raster
+        // — the sign, the rounding, the colour — and the band's own rasters
+        // are pinned by the canvas tests with it on.
         WeatherConnector(
-            source: OpenMeteoSource(transport: SkyAndClock()), location: { desk }
+            source: OpenMeteoSource(transport: SkyAndClock()), location: { desk },
+            config: { WeatherTileConfig(place: desk, showsHumidity: false, showsFeelsLike: false) }
         )
     }
 
@@ -690,21 +706,25 @@ private struct PassThroughIcons: IconInstalling {
         let scene = delivery?.scene
         #expect(scene?.frames.count == 1)
         #expect(scene?.frames[0].draw.count == 1)   // the single db (D2)
-        // And the raster is the reading itself, whole degrees: -12.4 → -12°.
+        // The raster is the reading itself, whole degrees, and the scale is
+        // named: -12.4 → "-12°C" — the letter the picker puts there, so a
+        // bare number is never misread as the other scale.
         let draw = try #require(scene?.frames[0].draw[0])
         #expect(
             goldenASCII(of: draw)
                 == [
-                    "........####....######..####",
-                    "........####....######..####",
-                    "..........##........##..####",
-                    "..........##........##..####",
-                    "######....##....######......",
-                    "######....##....######......",
-                    "..........##....##..........",
-                    "..........##....##..........",
-                    "........######..######......",
-                    "........######..######......",
+                    // The trailing C is re-pinned: its glyph used to be
+                    // mirrored, so the scale it names opened the wrong way.
+                    "........####....######..####......####",
+                    "........####....######..####......####",
+                    "..........##........##..####....##....",
+                    "..........##........##..####....##....",
+                    "######....##....######..........##....",
+                    "######....##....######..........##....",
+                    "..........##....##..............##....",
+                    "..........##....##..............##....",
+                    "........######..######............####",
+                    "........######..######............####",
                 ]
         )
     }
@@ -730,11 +750,16 @@ private struct PassThroughIcons: IconInstalling {
     /// wrong direction on the side of the scale where it matters.
     @Test func halfDegreesRoundAwayFromZeroEitherSideOfZero() throws {
         let face = makeWeatherConnector().ulanziFace
-        // Full first golden row per reading: "4°" and "-4°" respectively.
-        for (celsius, top) in [(4.2, "##..##..####"), (-3.6, "........##..##..####")] {
+        // The "4°" head of the first golden row — the digit's own pattern,
+        // sought rather than prefixed so the minus and the scale letter
+        // beside it stay the test's business, not the layout's.
+        for celsius in [4.2, -3.6] {
             let delivery = try #require(face?.draw(reading(temperatureCelsius: celsius)))
             let rows = goldenASCII(of: try #require(delivery.scene.frames[0].draw.first))
-            #expect(rows.first == top, "\(celsius) → \(rows.first ?? "?")")
+            #expect(
+                rows.first?.contains("##..##..####") == true,
+                "\(celsius) → \(rows.first ?? "?")"
+            )
         }
     }
 }

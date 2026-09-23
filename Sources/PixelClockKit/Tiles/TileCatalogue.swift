@@ -9,23 +9,57 @@ public enum Instancing: Sendable, Equatable {
     case perKey
 }
 
+/// Where a tile belongs on the store's shelves, as the sidebar names them.
+public enum TileCategory: String, CaseIterable, Sendable, Equatable {
+    case weather
+    case system
+    case dev
+    case network
+
+    /// The sidebar's word for the shelf.
+    public var title: String {
+        switch self {
+        case .weather: "Weather"
+        case .system: "System"
+        case .dev: "Dev"
+        case .network: "Network"
+        }
+    }
+}
+
 /// A connector as the Add tile menu needs to see it: no reading, no faces,
-/// just what decides whether it may go on a clock.
-public struct TileCandidate: Equatable, Sendable {
+/// just what decides whether it may go on a clock — and, since the store
+/// became its front door, how it presents there: its shelf, its mark, and
+/// the one line under its name.
+public struct TileCandidate: Hashable, Sendable {
     public let connectorId: String
     /// The models it has a face for — which is the only thing that says what
     /// it supports, so the two cannot disagree.
     public let models: Set<ClockModel>
     public let instancing: Instancing
     public let isAudible: Bool
+    /// The shelf the store files it on.
+    public let category: TileCategory
+    /// The store card's mark, in the app's own dialect of SF Symbols. The
+    /// row's mark reads the same table (the app's `TileRowIcon`), so a tile
+    /// wears one face everywhere and the tables are the price of the kit
+    /// never naming screen marks for the app.
+    public let storeIcon: String
+    /// The one line under the card's name.
+    public let blurb: String
 
     public init(
-        connectorId: String, models: Set<ClockModel>, instancing: Instancing, isAudible: Bool
+        connectorId: String, models: Set<ClockModel>, instancing: Instancing, isAudible: Bool,
+        category: TileCategory? = nil, storeIcon: String? = nil, blurb: String? = nil
     ) {
         self.connectorId = connectorId
         self.models = models
         self.instancing = instancing
         self.isAudible = isAudible
+        let presentation = Self.presentation(for: connectorId)
+        self.category = category ?? presentation.category
+        self.storeIcon = storeIcon ?? presentation.icon
+        self.blurb = blurb ?? presentation.blurb
     }
 
     /// A scene connector. The faces it HAS are the models it supports, and
@@ -47,8 +81,68 @@ public struct TileCandidate: Equatable, Sendable {
     /// The VPN tile: a lamp on an AWTRIX clock, one per watched VPN, silent.
     public init(_ vpn: VPNConnector) {
         self.init(
-            connectorId: vpn.id, models: [.awtrix3], instancing: .perKey, isAudible: false
+            connectorId: vpn.id, models: [.awtrix3], instancing: .perKey, isAudible: false,
+            category: .network, storeIcon: "lock.shield",
+            blurb: "A watched VPN, as a lamp on the clock"
         )
+    }
+
+    static func presentation(for connectorId: String) -> TilePresentation {
+        TilePresentation.of(connectorId: connectorId)
+    }
+}
+
+/// How a tile presents itself, wherever one is drawn: its shelf, its mark and
+/// its line.
+///
+/// ONE table, and it is public because the surfaces that need it are in the
+/// other module. There used to be two — this one, and the app's own
+/// `TileRowIcon` — and they had already drifted: the kit gave z.ai a bar
+/// chart, the app had no z.ai case at all and fell through to the "unknown
+/// app" mark, so one tile wore two faces depending on which window was
+/// looking at it. The doc on `TileCandidate` asserted they were the same
+/// table, which is the sort of claim only a shared definition can keep.
+public struct TilePresentation: Sendable, Equatable {
+    public let category: TileCategory
+    /// The SF Symbol the tile wears — on a store card, on a clock's card,
+    /// beside its name anywhere.
+    public let icon: String
+    /// The one line under the name on a store card.
+    public let blurb: String
+
+    public init(category: TileCategory, icon: String, blurb: String) {
+        self.category = category
+        self.icon = icon
+        self.blurb = blurb
+    }
+
+    /// What a connector looks like, by id. A connector with no entry wears
+    /// the "unknown app" mark rather than nothing, so a tile the table has
+    /// not heard of is still visibly a tile.
+    public static func of(connectorId: String) -> TilePresentation {
+        switch connectorId {
+        case WeatherConnector.appName:
+            TilePresentation(
+                category: .weather, icon: "cloud.sun", blurb: "The sky where the clock is"
+            )
+        case ClaudeUsageConnector.id:
+            TilePresentation(
+                category: .dev, icon: "terminal", blurb: "Claude usage, from the status line"
+            )
+        case ZaiUsageConnector.connectorId:
+            TilePresentation(category: .dev, icon: "chart.bar", blurb: "z.ai usage, week to date")
+        case "anecdotes":
+            TilePresentation(
+                category: .system, icon: "text.bubble", blurb: "The day's anecdotes, spoken"
+            )
+        case VPNConnector.id:
+            TilePresentation(
+                category: .network, icon: "lock.shield",
+                blurb: "A watched VPN, as a lamp on the clock"
+            )
+        default:
+            TilePresentation(category: .dev, icon: "app.dashed", blurb: "")
+        }
     }
 }
 

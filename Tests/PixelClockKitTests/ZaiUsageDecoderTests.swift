@@ -113,6 +113,32 @@ private let modelUsageAnswer = Data("""
         #expect(ZaiUsageDecoder.limits(from: derived).weekly?.percentUsed == 25)
     }
 
+    /// The live answer, verbatim as the pro plan returned it on 2026-09-23:
+    /// the buckets are `CREDIT_LIMIT`, not the `TOKENS_LIMIT` the community
+    /// trackers recorded, and a window with nothing spent carries no reset.
+    /// Reading only the old spelling dropped both windows and the TC002 face
+    /// drew dashes.
+    @Test func theLiveCreditLimitAnswerPlacesBothWindows() {
+        let live = Data("""
+        {"code":200,"msg":"Operation successful","data":{"limits":[
+          {"type":"CREDIT_LIMIT","unit":3,"number":5,"usage":12000,"currentValue":0,
+           "remaining":12000,"percentage":0},
+          {"type":"CREDIT_LIMIT","unit":6,"number":1,"usage":60000,"currentValue":60032,
+           "remaining":0,"percentage":100,"nextResetTime":1790443012983}
+        ],"level":"pro"},"success":true}
+        """.utf8)
+
+        let limits = ZaiUsageDecoder.limits(from: live)
+
+        #expect(limits.level == "pro")
+        #expect(limits.fiveHour?.percentUsed == 0)
+        #expect(limits.fiveHour?.resetsAt == nil)
+        #expect(limits.weekly?.percentUsed == 100)
+        #expect(limits.weekly?.usedTokens == 60032)
+        #expect(limits.weekly?.capTokens == 60000)
+        #expect(limits.weekly?.resetsAt == Date(timeIntervalSince1970: 1_790_443_012.983))
+    }
+
     /// A quota answer that is not JSON, or carries nothing placeable, is an
     /// answer with nothing in it — never a thrown failure. The limits are the
     /// informational half of the reading; a dead route says so by being empty.

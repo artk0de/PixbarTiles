@@ -97,4 +97,19 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# Sign with the local self-signed identity, chosen by SHA-1 (see HANDOFF
+# "Signing"). The linker's ad-hoc signature changes with every build, so every
+# keychain ACL and TCC grant is pinned to one binary's cdhash: the z.ai key
+# saved by one build prompts in the next. A certificate-based designated
+# requirement survives rebuilds. Without the identity the bundle stays ad-hoc,
+# loudly, rather than failing the build.
+SIGN_ID="${PIXELCLOCK_SIGN_ID:-6417A281BC7E103BB9B4A4EA69F831F5211A89A5}"
+if security find-certificate -a -Z | grep -qi "SHA-1 hash: $SIGN_ID"; then
+  codesign --force --deep --sign "$SIGN_ID" "$APP"
+  echo "signed $APP with $SIGN_ID"
+else
+  echo "WARNING: signing identity $SIGN_ID not in the keychain — $APP stays ad-hoc;" >&2
+  echo "         keychain items and TCC grants will prompt again after every rebuild." >&2
+fi
+
 echo "built $APP"

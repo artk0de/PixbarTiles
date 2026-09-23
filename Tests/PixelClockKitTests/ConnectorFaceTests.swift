@@ -32,9 +32,11 @@ private let skyAtFourDegrees = Data("""
 @Test func theWeatherReadsTheSkyAndItsFaceDrawsIt() async throws {
     let transport = RecordingTransport()
     transport.body = skyAtFourDegrees
+    let config = WeatherTileConfig(place: Coordinates(latitude: 55.7558, longitude: 37.6173))
     let connector = WeatherConnector(
         source: OpenMeteoSource(transport: transport),
-        location: { Coordinates(latitude: 55.7558, longitude: 37.6173) }
+        location: { Coordinates(latitude: 55.7558, longitude: 37.6173) },
+        config: { config }
     )
 
     let reading = try await connector.read()
@@ -42,7 +44,7 @@ private let skyAtFourDegrees = Data("""
 
     #expect(reading.code == 61)
     #expect(reading.temperature == 4.2)
-    #expect(drawn == WeatherConnector.output(for: reading))
+    #expect(drawn == WeatherConnector.output(for: reading, config: config))
     #expect(drawn.text == "4°C")
     #expect(drawn.surface == .app(WeatherConnector.appName))
 }

@@ -63,12 +63,25 @@ extension AwtrixDevice {
 }
 
 extension IndicatorSlot {
-    /// What the settings and a lamp refusal call it — top, middle, bottom.
+    /// What a lamp refusal calls it, and what the config writes to disk —
+    /// top, middle, bottom.
     public var lampName: String {
         switch self {
         case .topRight: "top"
         case .middleRight: "middle"
         case .bottomRight: "bottom"
+        }
+    }
+
+    /// What a picker calls it. Beside `lampName` rather than in the app,
+    /// because a second table of the same three things is a second table to
+    /// drift: the picker's own label must round-trip to the case the config
+    /// stores.
+    public var lampTitle: String {
+        switch self {
+        case .topRight: "Top right"
+        case .middleRight: "Middle right"
+        case .bottomRight: "Bottom right"
         }
     }
 }

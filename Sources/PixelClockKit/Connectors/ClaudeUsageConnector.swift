@@ -48,13 +48,23 @@ public struct ClaudeUsageConnector: Connector {
     /// of at the next launch — the reason `WeatherConnector` reads its place
     /// the same way.
     private let metric: @Sendable () -> ClaudeDisplayMetric
+    /// The TC002 face's two settings, read at draw time for the same reason
+    /// the metric is.
+    private let usageFace: @Sendable () -> UsageFaceConfig
+    /// The zone reset times are said in: the Mac's, asked at draw time, so a
+    /// Mac that travels says the new hour at the next poll.
+    private let timeZone: @Sendable () -> TimeZone
 
     public init(
         reporter: any ClaudeUsageReporting,
-        metric: @escaping @Sendable () -> ClaudeDisplayMetric = { .weekly }
+        metric: @escaping @Sendable () -> ClaudeDisplayMetric = { .weekly },
+        usageFace: @escaping @Sendable () -> UsageFaceConfig = { .standard },
+        timeZone: @escaping @Sendable () -> TimeZone = { .current }
     ) {
         self.reporter = reporter
         self.metric = metric
+        self.usageFace = usageFace
+        self.timeZone = timeZone
     }
 
     /// The reporter's reading, or the reason there is none. Whether the tile
@@ -71,7 +81,9 @@ public struct ClaudeUsageConnector: Connector {
     }
 
     public var ulanziFace: UlanziFace<ClaudeUsageReading>? {
-        UlanziFace { Self.ulanziOutput(for: $0) }
+        UlanziFace { [usageFace, timeZone] in
+            Self.ulanziOutput(for: $0, config: usageFace(), timeZone: timeZone())
+        }
     }
 
     public enum Failure: Error, Sendable, Equatable {
@@ -133,7 +145,7 @@ public struct ClaudeUsageConnector: Connector {
             icon: .bundled("ClaudeStar"),
             progress: ProgressBar(
                 percent: percentage,
-                fill: ClaudeUsageBand(utilization: percentage).fillColour,
+                fill: UsageBand(utilization: percentage).fillColour,
                 track: Self.trackColour
             ),
             color: ClaudeUsage.brandColour,
@@ -153,40 +165,22 @@ public struct ClaudeUsageConnector: Connector {
     /// track makes a half-full bar look like a short one.
     static let trackColour = "#303030"
 
-    /// The page's three rows, in the order the tile detail names them: the
-    /// daily limit, the weekly window, the current session. The metric answers
-    /// the AWTRIX page alone — the TC002 draws all three at once, and a window
-    /// the document did not carry is a dash, never a zero.
-    static func rows(for reading: ClaudeUsageReading) -> [UsageRows.Row] {
-        [
-            row("DAY", reading.fiveHour?.utilization),
-            row("WK", reading.utilization),
-            row("SES", reading.contextWindow),
-        ]
-    }
-
-    /// One band from a figure that may not be there: the percent as text,
-    /// inked in its own band's colour — the dash in the track's grey, which is
-    /// what an empty bar is drawn in anyway.
-    private static func row(_ label: String, _ percentage: Int?) -> UsageRows.Row {
-        UsageRows.Row(
-            label: label,
-            value: percentage.map { "\($0)%" } ?? "-",
-            colour: UlanziColour(
-                hex: percentage.map { ClaudeUsageBand(utilization: $0).fillColour } ?? trackColour
-            )
-        )
-    }
-
-    /// What a reading looks like on the TC002's 52×16 panel: the shared
-    /// three-row usage face fed all three windows, not Claude's own layout.
-    static func ulanziOutput(for reading: ClaudeUsageReading) -> UlanziDelivery {
-        UlanziDelivery(
-            scene: UlanziScene(
-                frames: [
-                    UlanziFrame(duration: 5, draw: [UsageRows.drawCommands(rows(for: reading))])
-                ]
-            )
+    /// What a reading looks like on the TC002's 52×16 panel: the shared usage
+    /// face, the five-hour window on the session row and the seven-day figure
+    /// — the reading's own — on the weekly row. The metric answers the AWTRIX
+    /// page alone; the TC002 draws both windows at once, and a window the
+    /// document did not carry is a row with no reading, never a zero.
+    static func ulanziOutput(
+        for reading: ClaudeUsageReading, config: UsageFaceConfig, timeZone: TimeZone
+    ) -> UlanziDelivery {
+        UsageFace.delivery(
+            vendor: .claude,
+            session: reading.fiveHour.map {
+                UsageFace.Window(percent: $0.utilization, resetsAt: $0.resetsAt)
+            },
+            weekly: UsageFace.Window(percent: reading.utilization, resetsAt: reading.resetsAt),
+            config: config,
+            timeZone: timeZone
         )
     }
 }

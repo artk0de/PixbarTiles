@@ -12,10 +12,31 @@ import Testing
         let json = try scene.jsonObject()
         let draw = json["draw"] as? [[String: Any]]
         #expect(draw?.count == 1)
-        let bitmap = draw?[0]["db"] as? [Int]
-        #expect(bitmap?.count == 2 + PixelCanvas.width * PixelCanvas.height)  // [w, h, w*h pixels]
-        #expect(bitmap?[0] == PixelCanvas.width)
-        #expect(bitmap?[1] == PixelCanvas.height)
+        // [x, y, w, h, [w*h pixels]] — position first, pixels NESTED. The flat
+        // [w, h, p0, …] spelling is accepted with 200 and draws a black page
+        // (measured on the TC002, appVer 1.1.1, 2026-09-23).
+        let bitmap = try #require(draw?[0]["db"] as? [Any])
+        #expect(bitmap.count == 5)
+        #expect(bitmap[0] as? Int == 0)
+        #expect(bitmap[1] as? Int == 0)
+        #expect(bitmap[2] as? Int == PixelCanvas.width)
+        #expect(bitmap[3] as? Int == PixelCanvas.height)
+        let pixels = try #require(bitmap[4] as? [Int])
+        #expect(pixels.count == PixelCanvas.width * PixelCanvas.height)
+        #expect(pixels.allSatisfy { $0 == 0xFF_FF_FF })
+    }
+
+    @Test func positionedBitmapEncodesItsPositionFirst() throws {
+        let draw = UlanziDraw.bitmap(
+            width: 2, height: 1, pixels: [0x12_34_56, 0xAB_CD_EF], at: PixelPoint(x: 7, y: 3)
+        )
+        let json = try UlanziScene(frames: [UlanziFrame(duration: 5, draw: [draw])]).jsonObject()
+        let bitmap = try #require((json["draw"] as? [[String: Any]])?[0]["db"] as? [Any])
+        #expect(bitmap[0] as? Int == 7)
+        #expect(bitmap[1] as? Int == 3)
+        #expect(bitmap[2] as? Int == 2)
+        #expect(bitmap[3] as? Int == 1)
+        #expect(bitmap[4] as? [Int] == [0x12_34_56, 0xAB_CD_EF])
     }
 
     @Test func sceneMustBeSingleFrame() {

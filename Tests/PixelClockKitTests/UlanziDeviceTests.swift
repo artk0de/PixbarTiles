@@ -30,7 +30,9 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
         #expect(json["duration"] as? Int == 5)
         #expect((json["draw"] as? [[String: Any]])?.count == 1)
-        #expect(((json["draw"] as? [[String: Any]])?[0]["db"] as? [Int])?.count == 2 + 52 * 16)
+        let bitmap = try #require((json["draw"] as? [[String: Any]])?[0]["db"] as? [Any])
+        #expect(bitmap.count == 5)  // [x, y, w, h, [pixels]]
+        #expect((bitmap[4] as? [Int])?.count == 52 * 16)
     }
 
     @Test func removeAppPostsEmptyBody() async throws {

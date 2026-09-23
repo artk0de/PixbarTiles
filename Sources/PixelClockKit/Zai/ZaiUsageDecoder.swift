@@ -54,8 +54,9 @@ public enum ZaiUsageDecoder {
     }
 
     /// The two buckets a token limit can name. The unit codes and their window
-    /// pair are the community trackers' observation: `unit:3, number:5` is the
-    /// rolling five hours, `unit:6, number:1` the week. Any other pair — and
+    /// pair are the community trackers' observation, confirmed by the live pro
+    /// answer on 2026-09-23: `unit:3, number:5` is the rolling five hours,
+    /// `unit:6, number:1` the week. Any other pair — and
     /// any limit whose pair is missing — is not a window this decoder can name,
     /// so it is dropped rather than guessed at.
     private enum WindowKind {
@@ -69,7 +70,9 @@ public enum ZaiUsageDecoder {
     private static func window(_ raw: [String: Any]) -> (kind: WindowKind, window: ZaiUsageWindow)? {
         let kind: WindowKind
         switch raw["type"] as? String {
-        case "TOKENS_LIMIT":
+        // `CREDIT_LIMIT` is what the live pro plan answers (2026-09-23);
+        // `TOKENS_LIMIT` is the trackers' older spelling of the same bucket.
+        case "TOKENS_LIMIT", "CREDIT_LIMIT":
             switch (whole(raw["unit"]), whole(raw["number"])) {
             case (3?, 5?): kind = .fiveHour
             case (6?, 1?): kind = .weekly
@@ -118,9 +121,9 @@ public enum ZaiUsageDecoder {
         return ZaiUsageModelUsage(id: raw.key, tokens: whole(fields["tokens"]))
     }
 
-    /// When the window turns over. The wire shape is ASSUMED, not observed
-    /// first-hand: the community decoder reads it as an epoch in milliseconds,
-    /// and until a live answer says otherwise that is what is taken here. A
+    /// When the window turns over: an epoch in milliseconds — an absolute
+    /// instant, observed live on 2026-09-23 (`1790443012983`), so no server
+    /// time zone is involved. A window with nothing spent carries none. A
     /// shape that does not fit reads as undated rather than wrong.
     private static func resetsAt(_ value: Any?) -> Date? {
         guard let milliseconds = whole(value) else { return nil }

@@ -80,11 +80,55 @@ private func availability(
     #expect(availability(anecdotes, on: desk, tiles) == .unavailable("not supported on TC002"))
 }
 
-// The VPN is a lamp, not a scene: an AWTRIX clock only, one tile per VPN.
+// The VPN is a lamp, not a scene: an AWTRIX clock only, one tile per VPN —
+// and its card wears the lamp's own shelf, mark and line on the store.
 @Test func theVPNIsOfferedOnAWTRIXClocksOnePerVPN() {
-    #expect(TileCandidate(VPNConnector(isUp: { _ in true })) == TileCandidate(
-        connectorId: "vpn", models: [.awtrix3], instancing: .perKey, isAudible: false
-    ))
+    let candidate = TileCandidate(VPNConnector(isUp: { _ in true }))
+
+    #expect(candidate.connectorId == "vpn")
+    #expect(candidate.models == [.awtrix3])
+    #expect(candidate.instancing == .perKey)
+    #expect(candidate.isAudible == false)
+    #expect(candidate.category == .network)
+    #expect(candidate.storeIcon == "lock.shield")
+    #expect(candidate.blurb == "A watched VPN, as a lamp on the clock")
+}
+
+// The store's presentation is one table keyed by connector id, so a tile
+// wears one shelf, one mark and one line everywhere it is shown. A connector
+// the table does not know defaults onto the Dev shelf, faceless; a candidate
+// that says its presentation outright outranks the table.
+@Test func theStorePresentationComesFromOneTable() {
+    func presentation(_ connectorId: String) -> TileCandidate {
+        TileCandidate(
+            connectorId: connectorId, models: [.awtrix3], instancing: .single, isAudible: false
+        )
+    }
+
+    let weather = presentation(WeatherConnector.appName)
+    #expect(weather.category == .weather)
+    #expect(weather.storeIcon == "cloud.sun")
+    #expect(weather.blurb == "The sky where the clock is")
+
+    let claude = presentation(ClaudeUsageConnector.id)
+    #expect(claude.category == .dev)
+    #expect(claude.storeIcon == "terminal")
+    #expect(claude.blurb == "Claude usage, from the status line")
+
+    #expect(presentation("anecdotes").category == .system)
+
+    let stranger = presentation("custom-thing")
+    #expect(stranger.category == .dev)
+    #expect(stranger.storeIcon == "app.dashed")
+    #expect(stranger.blurb == "")
+
+    let stated = TileCandidate(
+        connectorId: "custom-thing", models: [.awtrix3], instancing: .single, isAudible: false,
+        category: .system, storeIcon: "gauge", blurb: "said outright"
+    )
+    #expect(stated.category == .system)
+    #expect(stated.storeIcon == "gauge")
+    #expect(stated.blurb == "said outright")
 }
 
 // A scene connector supports the models it has faces for, and nothing says so
@@ -113,7 +157,8 @@ private func availability(
 @Test func theShippedFacesDecideTheShippedCandidates() {
     let shippedWeather = TileCandidate(WeatherConnector(
         source: OpenMeteoSource(transport: SilentTransport()),
-        location: { Coordinates(latitude: 55.7, longitude: 37.6) }
+        location: { Coordinates(latitude: 55.7, longitude: 37.6) },
+        config: { WeatherTileConfig(place: Coordinates(latitude: 55.7, longitude: 37.6)) }
     ))
     let shippedClaude = TileCandidate(ClaudeUsageConnector(reporter: SilentReporter()))
 

@@ -16,9 +16,14 @@ struct PixelClockTilesApp: App {
         MenuBarExtra {
             MenuPanel(
                 model: delegate.model,
-                monitor: delegate.model.monitor,
-                discovery: delegate.discovery
+                panel: delegate.panelModel,
+                settings: delegate.settingsModel
             )
+            // The panel's material, laid on by the SCENE rather than the
+            // view: Liquid Glass is the navigation layer's own, and a view
+            // that carried it could not be drawn without it — every pixel
+            // test draws this content straight.
+            .glassPanel()
             // Behind the panel rather than inside `MenuPanel`, because it is
             // not the panel's business which window it is on — it is the
             // delegate's, and this scene is where the two already meet.
@@ -35,6 +40,60 @@ struct PixelClockTilesApp: App {
             MenuBarGlyph(model: delegate.model)
         }
         .menuBarExtraStyle(.window)
+
+        // The real Settings window — ⌘, opens it, the window is restorable,
+        // and the panel's gear and every clock's gear aim it before opening.
+        Settings {
+            SettingsRoot(
+                model: delegate.model,
+                settings: delegate.settingsModel,
+                discovery: delegate.discovery
+            )
+        }
+
+        // The tile settings window: ONE window whose content swaps — the
+        // second row asking re-targets the first's window, because ten open
+        // tile windows is not a state worth supporting.
+        Window("Tile Settings", id: "tile-settings") {
+            TileSettingsWindow(
+                model: delegate.model,
+                settings: delegate.tileSettingsModel
+            )
+        }
+        .windowResizability(.contentSize)
+        // Opened at a size the content is comfortable at rather than at its
+        // floor. Without one, macOS starts every `Window` scene at the
+        // smallest size its content admits to, which for a two-column window
+        // is both columns at their minimum and nothing to spare.
+        .defaultSize(width: 720, height: 420)
+
+        // The tile store: one window, re-aimed by whichever clock's gear
+        // opened it. Choosing a tile is reading — categories and cards, not
+        // a menu row.
+        Window("Tile Store", id: "tile-store") {
+            TileStoreWindow(store: delegate.storeModel)
+        }
+        .windowResizability(.contentSize)
+        // Wide enough for three cards on the adaptive grid: at the floor it
+        // is two, and a store whose shelf shows two things reads as a store
+        // with two things on it.
+        .defaultSize(width: 720, height: 480)
+
+        // One clock's own settings: its tiles as cards, and the clock
+        // itself. The facade carries the aim; a second gear's click
+        // re-targets this one window.
+        Window("Clock Settings", id: "clock-settings") {
+            ClockSettingsWindow(
+                settings: delegate.settingsModel,
+                model: delegate.model,
+                store: delegate.storeModel
+            )
+        }
+        // The same resize rule as its two siblings. It was the one window
+        // without it, so the three windows the app opens from a gear each
+        // behaved differently when dragged.
+        .windowResizability(.contentSize)
+        .defaultSize(width: 560, height: 460)
     }
 }
 
@@ -257,6 +316,22 @@ enum AppGlyph {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: AppModel
+    /// The panel's facade, built once here at the root where the model is
+    /// built, so its subscription lives as long as the model does — the
+    /// panel's scene is transient, and a facade owned there would resubscribe
+    /// on every open.
+    let panelModel: PanelModel
+    /// The Settings window's facade, for the same reason: the window's scene
+    /// is rebuilt freely, and the tab the user left it on belongs to state
+    /// that outlives a rebuild.
+    let settingsModel: SettingsModel
+    /// The tile settings window's facade — the draft and the debounced
+    /// preview — which likewise outlives a scene rebuild, and whose
+    /// subscription is what follows the tile the panel aimed it at.
+    let tileSettingsModel: TileSettingsModel
+    /// The store's facade, aimed by the clock gears. One store, one aim at
+    /// a time: the cards answer about the clock that asked.
+    let storeModel: StoreModel
     /// Which clocks are advertising themselves on the network — both models:
     /// the AWTRIX browse merged with the TC002 broadcasts.
     ///
@@ -267,7 +342,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// it to wait for, and the schedule cannot be disturbed by a device
     /// appearing on the network because there is nothing between them.
     let discovery: ClockDiscovery
-    private let budget: QuitBudget
     /// Where the window's comings and goings are heard.
     ///
     /// Injected for the reason every other collaborator here is: a test that
@@ -278,8 +352,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowWatchers: [any NSObjectProtocol] = []
     /// The subscription that hears whether the clock is answering.
     private var reachability: AnyCancellable?
-    /// The subscription that hears the Add clock sheet open and close.
-    private var sheetWatch: AnyCancellable?
+    /// The subscription that hears the Clocks tab come and go.
+    private var clocksSectionWatch: AnyCancellable?
     /// Whether the panel is on screen.
     ///
     /// Kept here rather than asked of AppKit, because the question is "has this
@@ -295,7 +369,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// at `panelDidOpen` time is current, because that call is not inside a
     /// publisher's delivery.
     private var clockIsAnswering = false
-    private var addClockSheetIsOpen = false
+    /// Whether the Settings window's Clocks tab is on screen — the fact the
+    /// model now publishes, mirrored here the same way the answer is.
+    private var clocksSectionVisible = false
     /// Whether a browse has been asked for.
     ///
     /// What this delegate INTENDED, not what the browser is doing — the browser
@@ -322,8 +398,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             through: .standard
         )
         self.model = .live()
+        self.panelModel = PanelModel(model: model)
+        self.settingsModel = SettingsModel(model: model)
+        self.tileSettingsModel = TileSettingsModel(model: model)
+        self.storeModel = StoreModel(model: model)
         self.discovery = ClockDiscovery(browse: DeviceBrowser())
-        self.budget = QuitBudget()
         self.notifications = .default
         super.init()
     }
@@ -335,13 +414,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// afterwards is not.
     init(
         model: AppModel,
-        budget: QuitBudget,
         discovery: ClockDiscovery,
         notifications: NotificationCenter = .default
     ) {
         self.model = model
+        self.panelModel = PanelModel(model: model)
+        self.settingsModel = SettingsModel(model: model)
+        self.tileSettingsModel = TileSettingsModel(model: model)
+        self.storeModel = StoreModel(model: model)
         self.discovery = discovery
-        self.budget = budget
         self.notifications = notifications
         super.init()
     }
@@ -382,11 +463,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// running.
     ///
     /// **What starts a browse:** the panel opening while the clock is not
-    /// answering, or the Add clock sheet opening — the Clocks section is
-    /// where a clock seen advertising itself becomes a configured one, and a
-    /// sheet open on an installation whose clock answers perfectly well still
+    /// answering, or the Clocks tab coming on screen — the tab is where a
+    /// clock seen advertising itself becomes a configured one, and a tab
+    /// open on an installation whose clock answers perfectly well still
     /// needs the list fed. **What stops one:** the panel closing, the clock
-    /// answering, or the sheet closing. There is no state in which a browse
+    /// answering, or the tab going away. There is no state in which a browse
     /// outlives every reason for it, which is what keeps an `NWBrowser` off
     /// the network for the whole of a working installation's life. Nothing
     /// else is a bound worth having: an unreachable-for-N-polls timer was the
@@ -401,10 +482,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A separate check would be a second way to say the same thing, with its
     /// own way of being wrong.
     private func reconsiderBrowsing() {
-        // A panel that is not on screen has nowhere to show what a browse
-        // found: the discovery row and the Clocks section are both drawn
-        // there and nowhere else.
-        let wanted = panelIsOpen && (addClockSheetIsOpen || clockIsAnswering == false)
+        // A Clocks tab on screen is a reason of its own — the window holds
+        // the list, whatever the panel is doing. The panel arm is the outage
+        // arm: open, and the clock not answering, is when the user is
+        // looking at a panel that wants the list.
+        let wanted = clocksSectionVisible || (panelIsOpen && clockIsAnswering == false)
         guard wanted != isBrowsing else { return }
         isBrowsing = wanted
         if wanted { discovery.start() } else { discovery.stop() }
@@ -428,9 +510,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.reconsiderBrowsing()
             }
         }
-        sheetWatch = model.$settingsAreOpen.sink { [weak self] open in
+        clocksSectionWatch = model.$clocksSectionVisible.sink { [weak self] visible in
             MainActor.assumeIsolated {
-                self?.addClockSheetIsOpen = open
+                self?.clocksSectionVisible = visible
                 self?.reconsiderBrowsing()
             }
         }
@@ -476,13 +558,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `reconsiderBrowsing` compares against what it has already asked for.
     func panelMoved(to window: NSWindow?) {
         guard let window else { return }
-        // Deliberately no touch of the window's layer setup here. A runtime
+        // Deliberately no touch of the window's LAYER here. A runtime
         // `wantsLayer` on the panel's contentView took the whole window's
         // buttons dead — Quit, the gear, every row control — because the
         // SwiftUI host owns its layer and event routing through it, and an
         // AppKit-forced layer under a `MenuBarExtra` window desynchronizes
         // the two. The ghost defenses live in `panelDidOpen` instead: a full
         // repaint per open, which changes no view structure at all.
+        //
+        // The window's BACKGROUND is another matter, and it is what makes
+        // Liquid Glass glass: the `glassEffect` on the panel's content
+        // refracts whatever is behind the window, and behind an opaque
+        // window background there is nothing — the material rendered as a
+        // dark slab. Clear background, once; it is the window's own and the
+        // host does not fight AppKit over it.
+        window.clearBackgroundForGlass()
         panelWindow = window
         panelDidOpen()
     }
@@ -562,48 +652,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        beginTermination { sender.reply(toApplicationShouldTerminate: $0) }
-    }
-
-    /// Asks macOS to wait, tears down, and answers when it has settled.
-    ///
-    /// Split from `applicationShouldTerminate` so the waiting is testable
-    /// without an `NSApplication` to reply to; what is left above is the one
-    /// line that names the real replier.
-    ///
-    /// The answer is always yes, including when the budget expired. A no would
-    /// cancel the quit and leave an app running with its schedules already
-    /// cancelled and its monitor stopped — a worse state than the one the user
-    /// asked for.
-    func beginTermination(
-        reply: @escaping @MainActor (Bool) -> Void
-    ) -> NSApplication.TerminateReply {
-        // Stopped before the budget is taken, never inside it. Cancelling a
-        // browse is synchronous, puts nothing on the network and has nothing in
-        // flight; the budget exists for one collaborator — the dismiss that
-        // takes a held banner off the clock — and a settle window landing
-        // inside it would be three more seconds of a quit with nothing left to
-        // do.
-        //
-        // Unconditional, rather than routed through `reconsiderBrowsing`: quit
-        // is the one moment that does not care what this delegate believes it
-        // asked for.
-        discovery.stop()
-        panelIsOpen = false
-        isBrowsing = false
-        clockIsAnswering = false
-        addClockSheetIsOpen = false
-        // Both wires cut, for the same reason: what is left of this app is a
-        // teardown, and neither a window taking key nor a last reading landing
-        // is a reason to put a browse back on the network during it.
-        for watcher in windowWatchers { notifications.removeObserver(watcher) }
-        windowWatchers = []
-        reachability = nil
-        sheetWatch = nil
-        Task {
-            _ = await budget.settle { await self.model.teardown() }
-            reply(true)
-        }
-        return .terminateLater
+        // Instant, by the user's call (2026-09-21). The teardown wait it
+        // replaced spent up to the transport's own fifteen seconds seeing a
+        // held banner's dismiss through — against a clock that cannot answer,
+        // fifteen seconds of a panel reading as broken. What an instant exit
+        // costs is left to what already carries it: a banner outlives the
+        // process on the clock that was showing it, and a borrowed device
+        // state waits for the next launch to give it back — the durable
+        // borrow record and launch-time restore are exactly that machinery.
+        // `AppModel.teardown` stays what the tests use to stop the loops; a
+        // quit no longer waits on it.
+        .terminateNow
     }
 }

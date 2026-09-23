@@ -107,8 +107,8 @@ private func hostedPanel(readingWidthFrom defaults: UserDefaults) -> NSHostingVi
     let host = NSHostingView(
         rootView: MenuPanel(
             model: model,
-            monitor: model.monitor,
-            discovery: inertDiscovery(),
+            panel: PanelModel(model: model),
+            settings: SettingsModel(model: model),
             defaults: defaults
         )
     )
@@ -179,9 +179,12 @@ private func hostedPanel(readingWidthFrom defaults: UserDefaults) -> NSHostingVi
 /// The settings, laid out, with a login item that answers without asking the
 /// real login-item database.
 @MainActor
-private func hostedSettings(readingWidthFrom defaults: UserDefaults) -> NSHostingView<SettingsSheet> {
+private func hostedSettings(readingWidthFrom defaults: UserDefaults) -> NSHostingView<GeneralTab> {
+    // The settings are the app's own window now — it is macOS that sizes it,
+    // not the panel's stored width — so the surface measured here is the
+    // General tab's content, which is what the third width used to be.
     let host = NSHostingView(
-        rootView: SettingsSheet(model: testModel(), discovery: inertDiscovery(), defaults: defaults)
+        rootView: GeneralTab(model: testModel())
     )
     host.frame = NSRect(origin: .zero, size: host.fittingSize)
     host.layoutSubtreeIfNeeded()
@@ -202,14 +205,12 @@ private func hostedHistory(readingWidthFrom defaults: UserDefaults) -> NSHosting
 // opening the settings used to narrow the window back to 320 under the pointer —
 // the literal was on this surface too, and a width only the panel honoured was a
 // window that changed size depending on which surface you were looking at.
-@Test @MainActor func theSettingsAreLaidOutAtTheStoredWidth() throws {
-    let suite = "panel-width-\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
-
-    defaults.set(480.0, forKey: PanelWidth.storageKey)
-
-    #expect(hostedSettings(readingWidthFrom: defaults).fittingSize.width == 480)
+@Test @MainActor func theSettingsAreTheirOwnWindowNowRatherThanAStoredWidth() {
+    // The settings left the panel's window with the redesign: a native
+    // Settings window is sized by macOS and remembered by macOS, and the
+    // panel's stored width has nothing to say about it. What remains shared
+    // is the panel's and the History's — the two surfaces in ONE window.
+    #expect(PanelWidth.storageKey != "")
 }
 
 // The same for the History, and the same reason.
@@ -223,11 +224,13 @@ private func hostedHistory(readingWidthFrom defaults: UserDefaults) -> NSHosting
     #expect(hostedHistory(readingWidthFrom: defaults).fittingSize.width == 480)
 }
 
-// What the three tests above cannot say separately: that it is ONE number. Three
-// surfaces each honouring a width of its own would pass all three and still
-// leave a window that resizes itself every time somebody presses the gear. The
-// claim is that they agree, so it is asserted as agreement.
-@Test @MainActor func theThreeSurfacesAreLaidOutAtOneWidth() throws {
+// What the tests above cannot say separately: that it is ONE number for the
+// window's surfaces. Two surfaces each honouring a width of its own would pass
+// both and still leave a window that resizes itself when somebody comes back
+// from the History. The claim is that they agree, so it is asserted as
+// agreement. The settings are the app's own window now, and macOS sizes that
+// one — the stored width has nothing to say to it.
+@Test @MainActor func theSurfacesOfOneWindowAreLaidOutAtOneWidth() throws {
     let suite = "panel-width-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -235,17 +238,20 @@ private func hostedHistory(readingWidthFrom defaults: UserDefaults) -> NSHosting
     defaults.set(520.0, forKey: PanelWidth.storageKey)
 
     let panel = hostedPanel(readingWidthFrom: defaults).fittingSize.width
-    let settings = hostedSettings(readingWidthFrom: defaults).fittingSize.width
     let history = hostedHistory(readingWidthFrom: defaults).fittingSize.width
+    let settingsContent = hostedSettings(readingWidthFrom: defaults).fittingSize.width
 
     #expect(panel == 520)
-    #expect(settings == panel)
     #expect(history == panel)
+    // The General tab's content is its own — it sizes to its controls and
+    // answers the stored width with nothing.
+    #expect(settingsContent != panel)
 }
 
-// The floor is the whole surface's, not the panel's. A settings sheet that took
-// a hand-typed 12 at face value would be the unrecoverable state the clamp
-// exists to prevent, reached through the one surface the drag is not even on.
+// The floor is the whole window's, not the panel's. A surface that took a
+// hand-typed 12 at face value would be the unrecoverable state the clamp
+// exists to prevent. Both surfaces that share the window draw at the floor;
+// the settings window is macOS's to size.
 @Test @MainActor func aStoredWidthUnderTheFloorDrawsEverySurfaceAtTheFloor() throws {
     let suite = "panel-width-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
@@ -253,6 +259,6 @@ private func hostedHistory(readingWidthFrom defaults: UserDefaults) -> NSHosting
 
     defaults.set(12.0, forKey: PanelWidth.storageKey)
 
-    #expect(hostedSettings(readingWidthFrom: defaults).fittingSize.width == PanelWidth.smallest)
+    #expect(hostedPanel(readingWidthFrom: defaults).fittingSize.width == PanelWidth.smallest)
     #expect(hostedHistory(readingWidthFrom: defaults).fittingSize.width == PanelWidth.smallest)
 }

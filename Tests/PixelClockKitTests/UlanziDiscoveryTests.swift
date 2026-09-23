@@ -61,6 +61,11 @@ import Testing
         _ payload: String, capacity: Int = 2048
     ) -> UnsafeMutableRawBufferPointer {
         let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: capacity, alignment: 1)
+        // Zeroed first: the handoff test's count reaches one byte past the
+        // payload, and an uninitialised byte there is heap garbage — invalid
+        // UTF-8 whenever the allocator hands back a dirty block, which a full
+        // serial run does.
+        buffer.initializeMemory(as: UInt8.self, repeating: 0)
         let bytes = Array(payload.utf8)
         bytes.withUnsafeBytes { buffer.copyBytes(from: $0) }
         return buffer

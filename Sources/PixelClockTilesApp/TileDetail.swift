@@ -1,3 +1,4 @@
+import AppKit
 import PixelClockKit
 import SwiftUI
 
@@ -6,38 +7,12 @@ import SwiftUI
 // here decides when a tile runs — the kit types from phase 4a carry the rules,
 // and the editor only edits `TilePolicy` values through its binding.
 
-/// A tile's detail surface, opened for one tile on one clock.
-///
-/// A surface like the settings and the History: it opens in the panel's
-/// window, which stays one window with one width (D4). The connector's block
-/// is any view — the surface does not know which connector it serves, the way
-/// the editor does not know which connector's policy it edits.
-struct TileDetail: View {
-    let tileName: String
-    let clockName: String
-    let policy: TilePolicy
-    let connector: AnyView
-    let onPolicy: (TilePolicy) -> Void
-    let onBack: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button(action: onBack) {
-                Text("← \(tileName) · \(clockName)")
-                    .font(.headline)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("Back")
-            TilePolicyEditor(policy: Binding(
-                get: { policy },
-                set: { onPolicy($0) }
-            ))
-            connector
-            Spacer()
-        }
-        .padding(12)
-    }
-}
+// `TileDetail` stood here: a tile's whole behaviour on one surface, opened
+// inside the panel's own window with a Back chevron at the top. It has been
+// superseded by `TileSettingsWindow` — a real window, with the same policy
+// editor, the same per-connector blocks, and a live preview of the face
+// beside them — and nothing in the app has built one since. The blocks below
+// are what it was made of, and they all moved across.
 
 /// The policy editor every tile shares: when it runs, and why it would not.
 ///
@@ -233,13 +208,21 @@ struct WeatherTileBlock: View {
         _typed = State(initialValue: LocationField.text(for: place))
     }
 
+    private func save() {
+        guard typed != LocationField.text(for: place) else { return }
+        onSave(typed)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Location").font(.caption).foregroundStyle(.secondary)
             HStack {
                 TextField("55.7558, 37.6173", text: $typed)
                     .textFieldStyle(.roundedBorder)
-                Button("Save") { onSave(typed) }
+                    // A pair of coordinates typed out and then Return is what
+                    // a person does with a box like this one.
+                    .onSubmit { save() }
+                Button("Save") { save() }
                     .disabled(typed == LocationField.text(for: place))
             }
         }
@@ -263,8 +246,9 @@ struct AnecdoteTileBlock: View {
 /// limit, the weekly window, or the current session.
 ///
 /// Values in, closures out, like every block here. On the TC001 the choice
-/// picks one of the connector's three faces; on the TC002 the face draws all
-/// three at once and the choice answers only the AWTRIX page.
+/// picks one of the connector's three faces; on the TC002 the shared usage
+/// face draws the session and the week at once, and the choice answers only
+/// the AWTRIX page.
 struct ClaudeTileBlock: View {
     let metric: ClaudeDisplayMetric
     let onMetric: (ClaudeDisplayMetric) -> Void
@@ -277,6 +261,59 @@ struct ClaudeTileBlock: View {
                 Text(candidate.displayName).tag(candidate)
             }
         }
+    }
+}
+
+/// The shared usage face's block, on the Claude tile and the z.ai tile alike:
+/// how long the percentages stand before a hot row shows its reset, and from
+/// what percentage a row is hot.
+///
+/// Values in, closures out: the block hands back the whole config with one
+/// field moved, and whoever owns the record keeps what else it says.
+struct UsageFaceBlock: View {
+    let config: UsageFaceConfig
+    let onChange: (UsageFaceConfig) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("On the TC002").font(.caption).foregroundStyle(.secondary)
+            Picker("Show reset every", selection: Binding(
+                get: { config.resetEvery },
+                set: { onChange(UsageFaceConfig(resetEvery: $0, resetAfter: config.resetAfter)) }
+            )) {
+                ForEach(everySteps, id: \.self) { Text(Self.everyCaption($0)).tag($0) }
+            }
+            Picker("Show reset after", selection: Binding(
+                get: { config.resetAfter },
+                set: { onChange(UsageFaceConfig(resetEvery: config.resetEvery, resetAfter: $0)) }
+            )) {
+                ForEach(afterSteps, id: \.self) { Text(Self.afterCaption($0)).tag($0) }
+            }
+        }
+    }
+
+    /// The steps, plus the stored value when a record carries one the design
+    /// does not offer — a picker whose selection matches no tag draws blank,
+    /// which reads as a setting lost.
+    private var everySteps: [TimeInterval] {
+        UsageFaceConfig.resetEverySteps.contains(config.resetEvery)
+            ? UsageFaceConfig.resetEverySteps
+            : (UsageFaceConfig.resetEverySteps + [config.resetEvery]).sorted()
+    }
+
+    private var afterSteps: [Int] {
+        UsageFaceConfig.resetAfterSteps.contains(config.resetAfter)
+            ? UsageFaceConfig.resetAfterSteps
+            : (UsageFaceConfig.resetAfterSteps + [config.resetAfter]).sorted()
+    }
+
+    /// Seconds as the picker says them: `10 s` under a minute, `2 min` from.
+    nonisolated static func everyCaption(_ seconds: TimeInterval) -> String {
+        seconds < 60 ? "\(Int(seconds)) s" : "\(Int(seconds / 60)) min"
+    }
+
+    nonisolated static func afterCaption(_ percent: Int) -> String {
+        "\(percent)%"
     }
 }
 
@@ -385,6 +422,11 @@ enum VPNTilePalette {
         ("Solar Yellow", "#FFE600"),
         ("Alarm Red", "#FF1744"),
     ].map { Entry(name: $0.0, hex: $0.1, colour: Color(hex: $0.1)) }
+
+    /// What a lamp blinks when its tunnel drops, unless the user picks
+    /// otherwise: the palette's own red, so the down colour is from the same
+    /// eight as the up one.
+    static let alarm = "#FF1744"
 }
 
 extension Color {
@@ -397,6 +439,22 @@ extension Color {
             red: Double((rgb >> 16) & 0xFF) / 255,
             green: Double((rgb >> 8) & 0xFF) / 255,
             blue: Double(rgb & 0xFF) / 255
+        )
+    }
+
+    /// Back to `#RRGGBB`, which is the only colour the config stores and the
+    /// only one the firmware is told.
+    ///
+    /// Through sRGB on purpose: a `ColorPicker` hands back whatever space the
+    /// system picker was in, and asking a display-P3 colour for its red
+    /// component without converting first is how a picked colour and a lit
+    /// lamp stop matching.
+    var hexString: String {
+        let srgb = NSColor(self).usingColorSpace(.sRGB) ?? NSColor(self)
+        let byte = { (channel: CGFloat) in Int((channel * 255).rounded()) }
+        return String(
+            format: "#%02X%02X%02X",
+            byte(srgb.redComponent), byte(srgb.greenComponent), byte(srgb.blueComponent)
         )
     }
 }

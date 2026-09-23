@@ -14,10 +14,14 @@ adapter, `TileCatalogue` — stays as it is, apart from the presentation metadat
 
 Restated from the request, as the requirements the design must satisfy:
 
-1. Clicking the menu bar icon shows **tiles with the status** of every added
-   clock.
+1. Clicking the menu bar icon shows **every added clock's own status** —
+   its connection and its battery. (Corrected by the user, 2026-09-21, after
+   the first landing read "tiles with the status" as tile rows: the panel
+   carries statistics only, and no tiles.)
 2. The panel carries **one general gear**: add a clock, set default parameters.
-3. Every clock carries **its own gear**: add tiles, change their order.
+3. Every clock carries **its own gear**: it opens the clock's own settings
+   window — a Tiles tab where tiles are added, removed and moved as cards,
+   and a General tab for the clock itself.
 4. **Clock order** is changed in settings.
 5. Adding a tile happens in a **store window** — a form with categories, each
    tile with its own icon.
@@ -64,6 +68,11 @@ Four surfaces, each with one job:
 | **Store** | `Window` | a clock's gear → Add tile | categories and tile cards |
 | **Tile settings** | `Window` | a tile row, or after adding | that tile's controls + preview |
 
+A fourth window, **Clock Settings**, is the per-clock surface the gear opens:
+its Tiles tab lays the clock's tiles out as a grid of cards — add, remove,
+move — and its General tab names the clock and says what it is. One window,
+re-aimed by whichever gear asked.
+
 The tile-settings window is **one window whose content swaps**, not one window
 per tile. Opening settings for a second tile re-targets the existing window.
 Ten open tile windows is not a state worth supporting, and `openWindow` with a
@@ -76,16 +85,18 @@ value-typed identity gives the re-targeting for free.
 │ PixelClockTiles           ⚙  │   ← title + general gear
 ├──────────────────────────────┤
 │ ● Kitchen (TC002)         ⚙  │   ← clock header, status dot, clock gear
-│     Weather        ▶  ⋯  ✕   │
-│     Claude usage   ▶  ⋯  ✕   │
-│ ● Desk (TC001)            ⚙  │
-│     VPN: work      ▶  ⋯  ✕   │
+│   Connected                  │   ← the statistics line
+│ ● Desk (AWTRIX 3)         ⚙  │
+│   Disconnected · 🔋 83%      │
 └──────────────────────────────┘
 ```
 
-Tiles are **grouped under the clock they sit on**, which is the change that
-makes the panel answer the brief's first requirement. Today they are one flat
-list and the clock is a detail inside the row.
+The panel carries **statistics only** — the connection each clock's session
+has earned, and the battery when the clock has one to report. No tiles live
+here: the first landing drew tile rows under each clock and the user's
+correction (2026-09-21) took them out — the panel is a glance at the clocks,
+and the tiles are the clock-settings window's business. A clock's gear opens
+that window (Tiles / General); Add tile… aims the store at the clock.
 
 The status dot is three-valued, driven by the clock's session state:
 

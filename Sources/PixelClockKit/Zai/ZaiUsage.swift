@@ -36,8 +36,8 @@ extension ZaiUsage {
 extension ZaiUsageReading {
     /// The windows the answer gave, in the order the plan names them: the
     /// rolling five hours, the week, the MCP month. This list is the payload
-    /// the shared three-row usage face draws — a window the quota route did
-    /// not name leaves a row out rather than standing in for one, and an
+    /// the AWTRIX page's one line draws — a window the quota route did not
+    /// name leaves a figure out rather than standing in for one, and an
     /// answer with no windows at all carries none.
     public var usageRows: [ZaiUsageWindow] {
         [fiveHour, weekly, mcpMonthly].compactMap { $0 }

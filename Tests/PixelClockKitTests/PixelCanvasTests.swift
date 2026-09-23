@@ -76,11 +76,21 @@ import Testing
         }
     }
 
-    @Test func aCharacterOutsideTheSetIsNil() {
-        #expect(PixelFont.glyph(for: ":") == nil)   // a time face adds it when one exists
-        #expect(PixelFont.glyph(for: "B") == nil)   // a letter no face draws — the usage
-                                                    // rows' seven arrived the same way
-        #expect(PixelFont.glyph(for: "é") == nil)
+    // Was `aCharacterOutsideTheSetIsNil`, and it pinned the defect: a mark the
+    // table did not carry answered nil, `drawText` skipped it and advanced
+    // anyway, so the panel drew a HOLE where a letter belonged. Every
+    // printable mark now has a shape, and one that still does not — a mark
+    // from an alphabet neither face carries — draws the substitute, which a
+    // reader can see.
+    @Test func everyPrintableMarkHasAShapeAndTheRestDrawTheSubstitute() {
+        #expect(PixelFont.glyph(for: ":") != nil)
+        #expect(PixelFont.glyph(for: "B") != nil)
+        #expect(PixelFont.tiny.covers("B"))
+
+        // Outside both tables: answered, but with the substitute rather than
+        // with a shape of its own.
+        #expect(PixelFont.tiny.covers("é") == false)
+        #expect(PixelFont.glyph(for: "é") == PixelFont.glyph(for: PixelFont.substitute))
     }
 
     @Test func fivePinsItsFullBitmap() {
@@ -130,9 +140,21 @@ import Testing
         #expect(PixelFont.glyph(for: "K") == [0b101, 0b011, 0b001, 0b011, 0b101])
     }
 
+    // Re-pinned: the shape here was mirrored — written as if bit 2 were the
+    // left column, it drew a thin Z. Six glyphs were wrong the same way
+    // (3 4 6 9 C S), and `3` was byte-identical to `E`, so a percentage on the
+    // clock could not be read. The bytes below are the S as it now draws.
     @Test func sPinsItsFullBitmap() {
-        // ##. / ..# / .#. / #.. / .##
-        #expect(PixelFont.glyph(for: "S") == [0b011, 0b100, 0b010, 0b001, 0b110])
+        // .## / #.. / .#. / ..# / ##.
+        #expect(PixelFont.glyph(for: "S") == [0b110, 0b001, 0b010, 0b100, 0b011])
+    }
+
+    // The two digits that were each other. Pinned apart so the swap cannot
+    // come back unnoticed.
+    @Test func sixAndNineAreNotEachOther() {
+        #expect(PixelFont.glyph(for: "6") == [0b111, 0b001, 0b111, 0b101, 0b111])
+        #expect(PixelFont.glyph(for: "9") == [0b111, 0b101, 0b111, 0b100, 0b111])
+        #expect(PixelFont.glyph(for: "3") != PixelFont.glyph(for: "E"))
     }
 
     @Test func wPinsItsFullBitmap() {

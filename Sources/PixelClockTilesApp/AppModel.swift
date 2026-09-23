@@ -245,7 +245,26 @@ final class AppModel: ObservableObject {
     /// reaches no field and no validation, so a `http://10.0.0.5` typed into a
     /// terminal has to be dealt with where the URL is built.
     @Published private(set) var deviceHost: String
+    /// The app-level registry: what the menus and the catalogue read.
+    ///
+    /// Its instances are wired for NAMING a connector, not for running one —
+    /// the z.ai copy is built with `key: { nil }`, the weather copy with the
+    /// first clock's place, the Claude copy with no chosen metric. Nothing
+    /// produces through it. Anything that needs a connector's real OUTPUT
+    /// asks `connector(for:)` instead.
     let registry: ConnectorRegistry
+    /// How a clock's own registry is built — the one its session pushes
+    /// through, closed over that clock's place, its tile's metric and its
+    /// key in the keychain.
+    ///
+    /// Optional because a test wiring a model by hand names its connectors
+    /// directly and has no per-clock story; those fall back to `registry`,
+    /// which is what they were reading before this existed.
+    private let makeClockRegistry: (@MainActor (ClockRecord) -> ConnectorRegistry)?
+    /// Built once per clock and kept: a registry's connectors read their
+    /// stores on every call, so one instance stays current, and rebuilding it
+    /// per preview would re-read the keychain on every keystroke.
+    private var clockRegistries: [UUID: ConnectorRegistry] = [:]
     /// The selected clock's health, which is what the glyph is about.
     var monitor: DeviceMonitor {
         let id = selectedClockId ?? clock?.id
@@ -311,6 +330,33 @@ final class AppModel: ObservableObject {
     var lastMaintenanceFailure: [String: String] { projected(tileLastMaintenanceFailure) }
 
     private func session(for key: TileKey) -> (any ConnectorRunning)? { sessions[key.clockId] }
+
+    /// The connector a tile's OWN clock runs — the instance whose output that
+    /// clock would receive.
+    ///
+    /// The one a preview has to ask. Reading `registry` instead was the defect
+    /// the tile settings window shipped with: that copy exists to NAME
+    /// connectors for the menus, and its instances are deliberately inert —
+    /// z.ai's is built with `key: { nil }`, so the preview of a tile with a
+    /// key saved still reported "check its key"; Claude's carries no metric,
+    /// so a tile set to the day previewed the week; the weather's is closed
+    /// over the FIRST clock's place, so a tile on the second clock previewed
+    /// another city. Every one of those is the preview lying about the clock
+    /// it claims to be showing.
+    ///
+    /// Falls back to the app-level registry for a clock this model has no
+    /// factory for, which is every hand-wired test and the VPN tile — the
+    /// latter is not a `Connector` at all and answers nil from both.
+    func connector(for key: TileKey) -> (any Connector)? {
+        guard let makeClockRegistry,
+            let clock = clocks.first(where: { $0.id == key.clockId })
+        else {
+            return registry.connector(id: key.connectorId)
+        }
+        let own = clockRegistries[clock.id] ?? makeClockRegistry(clock)
+        clockRegistries[clock.id] = own
+        return own.connector(id: key.connectorId) ?? registry.connector(id: key.connectorId)
+    }
 
     /// The selected clock's tile of this connector, which is what the panel's
     /// rows are about until Phase 5 draws tiles.
@@ -383,8 +429,17 @@ final class AppModel: ObservableObject {
         didSet { locationNote = LocationField.save(typedLocation, to: location) }
     }
     @Published private(set) var locationNote: String?
-    /// Whether the settings are showing instead of the panel.
-    @Published private(set) var settingsAreOpen = false
+    /// Whether the Settings window's Clocks tab is on screen. The second
+    /// reason a browse runs — the list a clock seen advertising itself joins
+    /// is drawn there — and it replaces the old sheet flag, which answered
+    /// about a surface that no longer exists.
+    @Published private(set) var clocksSectionVisible = false
+
+    /// Told by the Clocks tab's own appearances, which is what makes the
+    /// flag honest: a window closed without the view going away would leave
+    /// a browse running for the life of the process.
+    func clocksSectionVisibilityChanged(_ visible: Bool) { clocksSectionVisible = visible }
+
     /// Whether the History is showing instead of the panel.
     @Published private(set) var historyIsOpen = false
     /// What has played recently, newest first, as of the last read — and nil
@@ -615,6 +670,11 @@ final class AppModel: ObservableObject {
         // clock is away.
         relocate: RelocatingHost? = nil,
         registry: ConnectorRegistry,
+        // How a clock's own registry is built. `live()` hands over the very
+        // factory the sessions are built from, so a preview and a push ask
+        // the same instance; a test that names its connectors directly leaves
+        // it nil and reads the app-level registry as before.
+        makeClockRegistry: (@MainActor (ClockRecord) -> ConnectorRegistry)? = nil,
         // The device a TC002 clock's health probes — the same one its own
         // slot pushes through. Nil for a caller that drives no TC002 clock,
         // which is what every AWTRIX-only wiring answers.
@@ -656,6 +716,7 @@ final class AppModel: ObservableObject {
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.registry = registry
+        self.makeClockRegistry = makeClockRegistry
         self.makeUlanziDevice = makeUlanziDevice
         self.probe = probe
         self.installer = installer
@@ -750,7 +811,14 @@ final class AppModel: ObservableObject {
         // each clock's session builds its own, closed over that clock's place.
         let firstPlace = StoredLocation(defaults: defaults, clockId: first?.id ?? UUID())
         registry.register(
-            WeatherConnector(source: OpenMeteoSource(transport: transport), location: { firstPlace.current })
+            WeatherConnector(
+                source: OpenMeteoSource(transport: transport),
+                location: { firstPlace.current },
+                // No clock produces through this instance — its faces never
+                // run, so the config it would draw with is named only for the
+                // type's sake.
+                config: { WeatherTileConfig(place: firstPlace.current) }
+            )
         )
         // The figure is whatever Claude Code's status line last left in this
         // app's folder. Until Claude Code is connected in the settings and has
@@ -802,7 +870,26 @@ final class AppModel: ObservableObject {
             let registry = ConnectorRegistry()
             registry.register(anecdotes.connector)
             let place = StoredLocation(defaults: defaults, clockId: clock.id)
-            registry.register(WeatherConnector(source: weather, location: { place.current }))
+            let tiles = TileStore(defaults: defaults)
+            // The weather tile's own settings, read on every draw off the
+            // record that holds them — a change in the tile's window reaches
+            // the next poll, exactly the way the place does. The place stays
+            // what a config without one falls back to.
+            registry.register(
+                WeatherConnector(
+                    source: weather,
+                    location: { place.current },
+                    config: {
+                        tiles.all()
+                            .first {
+                                $0.key.clockId == clock.id
+                                    && $0.key.connectorId == WeatherConnector.appName
+                            }?
+                            .config?.weatherConfig
+                            ?? WeatherTileConfig(place: place.current)
+                    }
+                )
+            )
             // The Claude tile's own metric, read from its config on every run —
             // so a choice made in the detail takes effect at the next poll,
             // exactly the way the weather's place does. A tile with no choice
@@ -819,6 +906,16 @@ final class AppModel: ObservableObject {
                                     && $0.key.connectorId == ClaudeUsageConnector.id
                             }
                             .flatMap(\.config)?.claude ?? .weekly
+                    },
+                    // The TC002 face's two settings, off the same record at
+                    // the same moment: a picker moved reaches the next poll.
+                    usageFace: {
+                        storedTiles.all()
+                            .first {
+                                $0.key.clockId == clock.id
+                                    && $0.key.connectorId == ClaudeUsageConnector.id
+                            }
+                            .flatMap(\.config)?.usageFace ?? .standard
                     }
                 )
             )
@@ -834,7 +931,17 @@ final class AppModel: ObservableObject {
                                 clockId: clock.id, connectorId: ZaiUsageConnector.connectorId
                             )))
                         }
-                    )
+                    ),
+                    // The TC002 face's two settings, read off the tile's
+                    // record at every draw, the way the Claude tile's are.
+                    usageFace: {
+                        storedTiles.all()
+                            .first {
+                                $0.key.clockId == clock.id
+                                    && $0.key.connectorId == ZaiUsageConnector.connectorId
+                            }
+                            .flatMap(\.config)?.usageFace ?? .standard
+                    }
                 )
             )
             return registry
@@ -928,6 +1035,9 @@ final class AppModel: ObservableObject {
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
+            // The very factory the sessions are built from, so a preview and
+            // a push ask the same connector instance about the same clock.
+            makeClockRegistry: makeRegistry,
             makeUlanziDevice: { clock in
                 UlanziDevice(host: clock.address, transport: transport)
             },
@@ -989,7 +1099,9 @@ final class AppModel: ObservableObject {
     // MARK: - What the user chose
 
     /// The selected clock's tile of this connector, as stored.
-    private func storedTile(_ key: TileKey) -> TileRecord? {
+    /// The tile's stored record, said for the surfaces that read the config
+    /// it carries.
+    func storedTile(_ key: TileKey) -> TileRecord? {
         tiles.all().first { $0.key == key }
     }
 
@@ -1070,7 +1182,7 @@ final class AppModel: ObservableObject {
     /// What the Add tile menu shows for a connector on a clock.
     func availability(of connectorId: String, on clockId: UUID) -> TileAvailability {
         guard let clock = clocks.first(where: { $0.id == clockId }),
-            let candidate = candidate(connectorId)
+            let candidate = candidate(for: connectorId)
         else { return .notListed }
         return TileCatalogue.availability(of: candidate, on: clock, tiles: tiles.all(), clocks: clocks)
     }
@@ -1078,6 +1190,22 @@ final class AppModel: ObservableObject {
     func addTile(
         _ connectorId: String, to clockId: UUID, instance: String = "", config: TileConfig? = nil
     ) -> TileSaveOutcome {
+        // A lamp tile's key carries its VPN, and a store card has no VPN to
+        // give — it knows a connector. Left empty, every press landed on the
+        // same key and the second one was refused as a duplicate, which is
+        // why a clock could never carry more than one lamp however many VPNs
+        // the catalogue held.
+        if connectorId == VPNConnector.id, instance.isEmpty {
+            guard let free = freeLampVPN(on: clockId) else {
+                return .refused(
+                    "every VPN already has a tile on \(clocks.first { $0.id == clockId }?.name ?? "this clock")"
+                )
+            }
+            return addTile(
+                connectorId, to: clockId, instance: free.id,
+                config: config ?? .vpn(startingLamp(for: free, on: clockId))
+            )
+        }
         let key = TileKey(clockId: clockId, connectorId: connectorId, instance: instance)
         switch availability(of: connectorId, on: clockId) {
         case let .unavailable(reason):
@@ -1090,10 +1218,97 @@ final class AppModel: ObservableObject {
         if tiles.all().contains(where: { $0.key == key }) {
             return .refused("already on \(clocks.first { $0.id == clockId }?.name ?? "this clock")")
         }
-        let starting = connectorId == VPNConnector.id
+        var starting = connectorId == VPNConnector.id
             ? TileDefaults.vpn
             : registry.connector(id: connectorId)?.defaultPolicy ?? TileDefaults.weather
+        // The user's Defaults answer, when there is one, sets the pace a new
+        // tile starts at. The lamp keeps its own default — its seconds are
+        // presence, not cadence.
+        if connectorId != VPNConnector.id, let fixed = newTileIntervalSeconds {
+            starting.refreshSeconds = fixed
+        }
+        // The settings a previous tile of this connector on this clock left
+        // with come back here — an explicit `config` argument still wins.
+        var config = config
+        if config == nil,
+            let data = defaults.data(forKey: Self.restoreKey(for: key)),
+            let brought = try? JSONDecoder().decode(TileConfig.self, from: data) {
+            config = brought
+            defaults.removeObject(forKey: Self.restoreKey(for: key))
+        }
         return saveTile(key: key, policy: starting, config: config)
+    }
+
+    /// Where a removed tile's settings wait for its return.
+    private static func restoreKey(for key: TileKey) -> String {
+        "tileConfigRestore.\(key.clockId.uuidString).\(key.connectorId).\(key.instance)"
+    }
+
+    // MARK: - The lamp tiles
+
+    /// The first VPN in the catalogue that no tile on this clock is watching.
+    ///
+    /// Nil is the ceiling: a user cannot describe a bundle and its tunnel
+    /// binaries, so the catalogue is written in code, and a tile per entry is
+    /// as far as a clock goes.
+    func freeLampVPN(on clockId: UUID) -> WatchedVPN? {
+        let watched = Set(
+            tiles.all()
+                .filter { $0.key.clockId == clockId && $0.key.connectorId == VPNConnector.id }
+                .map(\.key.instance)
+        )
+        return WatchedVPN.catalogue.first { !watched.contains($0.id) }
+    }
+
+    /// What a lamp tile starts as: a corner nobody has claimed, a palette
+    /// colour of its own, and dark when its tunnel drops.
+    ///
+    /// A colour per preset rather than one for all, so two lamps added in a
+    /// row are told apart on the clock before either is configured. Dark and
+    /// not blinking, because a lamp added to see whether a VPN is up should
+    /// not be the brightest thing in the room the moment it is not.
+    private func startingLamp(for vpn: WatchedVPN, on clockId: UUID) -> VPNTileConfig {
+        let taken = Set(
+            tiles.all()
+                .filter { $0.key.clockId == clockId && $0.key.connectorId == VPNConnector.id }
+                .compactMap { $0.config?.lamp?.slot }
+        )
+        let index = WatchedVPN.catalogue.firstIndex { $0.id == vpn.id } ?? 0
+        return VPNTileConfig(
+            vpn: vpn.id,
+            slot: IndicatorSlot.allCases.first { !taken.contains($0) } ?? .topRight,
+            upColour: VPNTilePalette.palette[index % VPNTilePalette.palette.count].hex,
+            whenDown: .off
+        )
+    }
+
+    /// Points a lamp tile at another VPN — the block's Preset picker.
+    ///
+    /// A move and not an edit, because the VPN is the tile's identity: it is
+    /// the key's instance, which is what the migration wrote, what the
+    /// restore key reads, and what keeps two lamps on one clock apart. The
+    /// policy, the lamp and the colour come across untouched, and the window
+    /// is re-aimed at the key the tile now lives under.
+    func changeLampVPN(_ key: TileKey, to vpnId: String) -> TileSaveOutcome {
+        guard var lamp = storedTile(key)?.config?.lamp, let policy = storedPolicy(of: key) else {
+            return .refused("this tile is no longer on the clock")
+        }
+        guard key.instance != vpnId else { return .saved }
+        let moved = TileKey(clockId: key.clockId, connectorId: key.connectorId, instance: vpnId)
+        if tiles.all().contains(where: { $0.key == moved }) {
+            let name = WatchedVPN.preset(id: vpnId)?.displayName ?? vpnId
+            let clock = clocks.first { $0.id == key.clockId }?.name ?? "this clock"
+            return .refused("\(name) already has a tile on \(clock)")
+        }
+        lamp.vpn = vpnId
+        // The old record goes first and without `removeTile`: that path files
+        // the config away under the old key for a re-add to find, and this
+        // config is not being put away — it is moving house.
+        timers.removeValue(forKey: key)?.cancel()
+        try? tiles.replaceAll(tiles.all().filter { $0.key != key })
+        let outcome = saveTile(key: moved, policy: policy, config: .vpn(lamp))
+        if case .saved = outcome, detailTileKey == key { openDetail(for: moved) }
+        return outcome
     }
 
     /// Stores what the tile detail says, unless a VPN lamp is claimed by
@@ -1158,11 +1373,16 @@ final class AppModel: ObservableObject {
 
         // The policy stands; only the handle joins the record, derived the
         // same way the connector reads it back. A tile saved before any paste
-        // still gets its config here — there is nothing to read first.
+        // still gets its config here — there is nothing to read first. The
+        // usage face's settings the record already carries stay: a paste is
+        // about the key, not about when the page shows its resets.
         if outcome != .refused, let policy = storedPolicy(of: key) {
             _ = saveTile(
                 key: key, policy: policy,
-                config: .zai(ZaiTileConfig(keyAccount: account))
+                config: .zai(ZaiTileConfig(
+                    keyAccount: account,
+                    usageFace: storedTile(key)?.config?.usageFace ?? .standard
+                ))
             )
         }
         return outcome
@@ -1176,6 +1396,15 @@ final class AppModel: ObservableObject {
 
     func removeTile(_ key: TileKey) {
         timers.removeValue(forKey: key)?.cancel()
+        // The tile's own settings survive its removal: re-adding the same
+        // connector to the same clock brings them back instead of the
+        // shipped defaults — the remove/re-add cycle is a reset button's
+        // opposite, and a person removing a tile to try again does not mean
+        // their weather place.
+        if let config = tiles.all().first(where: { $0.key == key })?.config,
+            let data = try? JSONEncoder().encode(config) {
+            defaults.set(data, forKey: Self.restoreKey(for: key))
+        }
         try? tiles.replaceAll(tiles.all().filter { $0.key != key })
         if key.connectorId == VPNConnector.id {
             refreshLamps()
@@ -1192,7 +1421,9 @@ final class AppModel: ObservableObject {
 
     func storedPolicy(of key: TileKey) -> TilePolicy? { policy(of: key) }
 
-    private func candidate(_ connectorId: String) -> TileCandidate? {
+    /// The connector as the store's cards see it, or nil for an id the
+    /// registry does not hold and the lamp is not.
+    func candidate(for connectorId: String) -> TileCandidate? {
         if connectorId == VPNConnector.id { return TileCandidate(vpn) }
         return registry.connector(id: connectorId).map { TileCandidate($0) }
     }
@@ -1242,7 +1473,7 @@ final class AppModel: ObservableObject {
         WatchedMicrophone.save(watching, to: defaults)
     }
 
-    // MARK: - What the panel draws
+    // MARK: - What the panel's facade asks for
 
     /// The tile whose detail surface is open, or nil while none is. The key it
     /// was opened for travels with the surface, so the editor never has to ask
@@ -1252,40 +1483,95 @@ final class AppModel: ObservableObject {
     func openDetail(for key: TileKey) { detailTileKey = key }
     func closeDetail() { detailTileKey = nil }
 
-    /// One row per tile on the selected clock, in stored order.
-    ///
-    /// The value carries the actions as closures and the wording whole — the
-    /// removal question names the clock, because with more than one clock on
-    /// the tree the row cannot say which one loses the tile.
-    var tileRows: [TileRowValue] {
-        guard let selection = selectedClockId else { return [] }
-        return tiles.all().compactMap { record in
-            guard record.key.clockId == selection else { return nil }
-            return row(for: record)
+    /// Bumped whenever any clock's health has moved: a poll answered, a
+    /// health was built or dropped. The panel's dot hangs off per-clock
+    /// health, which is otherwise silent — a `DeviceMonitor` is a nested
+    /// observable no `objectWillChange` of this model carries, and a TC002's
+    /// answering state is a plain field. The facade subscribes to this and
+    /// rebuilds its sections off it.
+    @Published private(set) var healthRevision = 0
+
+    /// One clock's answer to "are you there", as the panel's status dot asks
+    /// it: the three-valued answer both firmwares give, said in one
+    /// vocabulary. `.unknown` is the state before the first poll — the one
+    /// the panel drew as "Checking…", which is neither connected nor down.
+    enum ClockReachability: Equatable, Sendable {
+        case unknown
+        case reachable
+        case unreachable
+    }
+
+    /// The clock's reachability, from its own health: a TC002 by `/getBase`
+    /// answering, an AWTRIX one by the monitor's stats poll. One answer per
+    /// firmware is what lets one dot stand for either.
+    func reachability(of clockId: UUID) -> ClockReachability {
+        if let ulanzi = ulanziHealths[clockId] {
+            switch ulanzi.answering {
+            case .notAsked: return .unknown
+            case .answering: return .reachable
+            case .unreachable: return .unreachable
+            }
+        }
+        guard let health = healths[clockId] else { return .unknown }
+        switch health.monitor.state {
+        case .unknown: return .unknown
+        case .online: return .reachable
+        case .offline: return .unreachable
         }
     }
 
-    private func row(for record: TileRecord) -> TileRowValue {
-        let key = record.key
-        let isLamp = key.connectorId == VPNConnector.id
-        let name = tileName(of: record)
-        return TileRowValue(
-            key: key,
-            name: name,
-            result: tileLastResults[key],
-            hold: policy(of: key)?.hold(in: currentFocus, atHour: currentHour),
-            // The run's own complaint outranks the restock's: it is the newer
-            // evidence about the same feed.
-            failure: tileLastFailures[key] ?? tileLastMaintenanceFailure[key],
-            // The lamp tile runs itself, off the delivery chain entirely.
-            isAmbient: isLamp || (registry.connector(id: key.connectorId)?.isAmbient ?? false),
-            iconName: TileRowIcon.symbol(forConnectorId: key.connectorId),
-            removeQuestion: "Remove \(name) from \(clock(key.clockId)?.name ?? "this clock")?",
-            onRun: { self.runNow(key) },
-            onDetail: { self.openDetail(for: key) },
-            onRemove: { self.removeTile(key) },
-            onReorderTo: { self.moveTile($0, to: key) }
-        )
+    /// A clock's most recent push, as the dot asks it. The run's own
+    /// complaint outranks the restock's — the same precedence the row draws —
+    /// and any failure on any tile outranks an older delivery: the dot says
+    /// the newest evidence about the clock, not the best.
+    enum PushState: Equatable, Sendable {
+        case none
+        case running
+        case delivered
+        case failed
+    }
+
+    func pushState(of clockId: UUID) -> PushState {
+        let onThisClock = tiles.all().map(\.key).filter { $0.clockId == clockId }
+        if onThisClock.contains(where: {
+            tileLastFailures[$0] != nil || tileLastMaintenanceFailure[$0] != nil
+        }) {
+            return .failed
+        }
+        if onThisClock.contains(where: { tileLastResults[$0] == Self.runningWord }) {
+            return .running
+        }
+        if onThisClock.contains(where: { tileLastResults[$0] == Self.deliveredWord }) {
+            return .delivered
+        }
+        return .none
+    }
+
+    /// The row's word for a push under way, and its word for one delivered —
+    /// named once because the dot reads the same words the row draws, and a
+    /// word renamed in one place and not the other would silence the dot
+    /// without anything going red.
+    static let runningWord = "running…"
+    static let deliveredWord = "delivered"
+
+    /// The tiles as they are stored, in stored order — the raw material the
+    /// panel's sections are built from.
+    var tileRecords: [TileRecord] { tiles.all() }
+
+    /// One tile's row inputs, said where they are known.
+    func lastResult(of key: TileKey) -> String? { tileLastResults[key] }
+
+    /// The run's own complaint outranks the restock's: it is the newer
+    /// evidence about the same feed.
+    func lastFailure(of key: TileKey) -> String? {
+        tileLastFailures[key] ?? tileLastMaintenanceFailure[key]
+    }
+
+    /// Why the tile is not running now: its policy read against the room —
+    /// the Focus the machine is in, the hour it is. The quiet rules stay the
+    /// model's; the facade asks rather than recomputes them.
+    func hold(of key: TileKey) -> TileHold? {
+        policy(of: key)?.hold(in: currentFocus, atHour: currentHour)
     }
 
     /// Drag-reorder, as the panel's rows carry it: `source` is the row the
@@ -1316,7 +1602,7 @@ final class AppModel: ObservableObject {
 
     /// A tile's display name: the lamp's VPN for a lamp tile, the connector's
     /// own name for every other.
-    private func tileName(of record: TileRecord) -> String {
+    func tileName(of record: TileRecord) -> String {
         let key = record.key
         if key.connectorId == VPNConnector.id {
             return record.config?.lamp.map { WatchedVPN.preset(id: $0.vpn)?.displayName ?? $0.vpn }
@@ -1334,54 +1620,29 @@ final class AppModel: ObservableObject {
         return (tileName(of: record), record.config)
     }
 
-    /// A clock's reachability, as the Clocks section's row says it. Each
-    /// clock through its own health: a TC002 by `/getBase` answering, an
-    /// AWTRIX one by the monitor's stats poll — the same three words for
-    /// both, and `.unknown`'s "Checking…" for a health that has not been
-    /// asked yet.
+    /// A clock's reachability, as the Clocks section's row says it. The same
+    /// three words for both firmwares, from the one answer the dot reads.
     func statusLine(of clock: ClockRecord) -> String {
-        switch clock.model {
-        case .ulanziTC002:
-            DeviceStatusLine.title(for: ulanziHealths[clock.id]?.answering ?? .notAsked)
-        case .awtrix3:
-            DeviceStatusLine.title(for: healths[clock.id]?.monitor.state ?? .unknown)
-        }
+        DeviceStatusLine.title(for: reachability(of: clock.id))
     }
 
-    /// One menu entry per connector the registry holds, plus the lamp's —
-    /// it has no face and no session of its own, so it never joined the
-    /// registry, and this is where it is offered — minus the ones a single
-    /// tile already covers on the selected clock, `notListed` meaning not
-    /// listed. The lamp is LAST because it is the connector a full clock can
-    /// still take: the exhausted-clock menu offers it and nothing else.
-    var addTileMenuItems: [AddTileMenuItem] {
-        guard let selection = selectedClockId else { return [] }
-        let offered = registry.all.compactMap { connector in
-            menuEntry(connector.id, named: connector.displayName, on: selection)
-        }
-        return offered + [menuEntry(VPNConnector.id, named: vpn.displayName, on: selection)].compactMap { $0 }
+    /// A clock's battery, as the panel's statistics line says it — or nil,
+    /// which is a TC002 (no cell to read) and a clock that has never
+    /// answered. A clock that went away keeps showing its last known charge:
+    /// the panel is the clocks' glance, and a battery that vanishes every
+    /// time the Wi-Fi blips is a figure nobody plans around.
+    func batteryLine(of clock: ClockRecord) -> String? {
+        BatteryLine.text(for: healths[clock.id]?.monitor.lastKnownBattery)
     }
 
-    /// One menu entry, or nil for a connector the selected clock may not list.
-    private func menuEntry(
-        _ connectorId: String, named title: String, on clockId: UUID
-    ) -> AddTileMenuItem? {
-        switch availability(of: connectorId, on: clockId) {
-        case .notListed:
-            nil
-        case let .unavailable(reason):
-            AddTileMenuItem(
-                title: title,
-                availability: .unavailable(reason: reason),
-                onAdd: { _ = self.addTile(connectorId, to: clockId) }
-            )
-        case .available:
-            AddTileMenuItem(
-                title: title,
-                availability: .available,
-                onAdd: { _ = self.addTile(connectorId, to: clockId) }
-            )
-        }
+    /// Every connector a clock's Add tile menu can offer, in offer order:
+    /// the registry's, then the lamp's — it has no face and no session of
+    /// its own, so it never joined the registry, and this is where it is
+    /// offered. LAST, because it is the connector a full clock can still
+    /// take: the exhausted-clock menu offers it and nothing else.
+    func tileCandidates() -> [(connectorId: String, name: String)] {
+        registry.all.map { (connectorId: $0.id, name: $0.displayName) }
+            + [(connectorId: VPNConnector.id, name: vpn.displayName)]
     }
 
     // MARK: - Clock actions
@@ -1468,7 +1729,7 @@ final class AppModel: ObservableObject {
     /// The view's inline confirmation is what stands in front of this; the
     /// model does it the moment it is asked.
     func removeClock(_ id: UUID) {
-        guard let victim = clock(id) else { return }
+        guard clock(id) != nil else { return }
         // The TC002's pages are the app's own doing: the slot's teardown
         // releases every owned name — the empty-body delete per page. The
         // slot is resolved before the reload below drops it.
@@ -1494,14 +1755,41 @@ final class AppModel: ObservableObject {
 
     // MARK: - Settings
 
-    /// Shows the settings in place of the panel.
-    ///
-    /// A view, not a mode. Nothing is stopped and nothing is paused: the
-    /// schedule, the reachability poll and any run in flight carry on behind it,
-    /// which is why this is a published flag and not a teardown.
-    func openSettings() { settingsAreOpen = true }
+    /// Reorders the clocks — a drag in the Clocks tab: `source` moves to the
+    /// place `destination` holds. The order IS the store's, the one the
+    /// panel's sections follow, and a move that changes nothing (a row
+    /// dropped on itself, a clock that is gone) is not one.
+    func moveClock(_ source: UUID, to destination: UUID) {
+        guard source != destination else { return }
+        var all = clockStore.all()
+        guard let fromIndex = all.firstIndex(where: { $0.id == source }),
+            let destinationRow = all.firstIndex(where: { $0.id == destination })
+        else { return }
+        let moved = all.remove(at: fromIndex)
+        // The destination's ORIGINAL index is where the dragged row lands,
+        // whatever direction the drag ran — the same rule the tile rows move
+        // by.
+        all.insert(moved, at: min(destinationRow, all.count))
+        try? clockStore.replaceAll(all)
+        reloadClocks()
+    }
 
-    func closeSettings() { settingsAreOpen = false }
+    /// The refresh a NEW tile starts with, when the user has fixed one in
+    /// Defaults — nil leaves every connector starting from its own default,
+    /// which is what the migration left and what no opinion means.
+    var newTileIntervalSeconds: Int? {
+        defaults.object(forKey: Self.newTileIntervalKey) as? Int
+    }
+
+    func setNewTileInterval(seconds: Int?) {
+        if let seconds {
+            defaults.set(seconds, forKey: Self.newTileIntervalKey)
+        } else {
+            defaults.removeObject(forKey: Self.newTileIntervalKey)
+        }
+    }
+
+    static let newTileIntervalKey = "newTileIntervalSeconds"
 
     // MARK: - History
 
@@ -1526,6 +1814,18 @@ final class AppModel: ObservableObject {
     /// surface opened right after a run has to show that run.
     func openHistory() {
         historyIsOpen = true
+        loadHistory()
+    }
+
+    /// Asks what has played, without swapping the panel to show it.
+    ///
+    /// The half of `openHistory` that is about the LIST rather than about the
+    /// panel. The anecdote tile's settings window shows the same history in a
+    /// sheet of its own, and its button used to call `openHistory` — which
+    /// flipped a flag nothing in that window reads, so the press did nothing
+    /// visible there and left the menu bar's panel swapped to a surface
+    /// nobody had asked it for.
+    func loadHistory() {
         // Whatever the last replay said goes with the surface it was said on.
         // Opening the History is asking what has played, not asking again about
         // the last thing that was pressed — and an answer kept across the open
@@ -1563,18 +1863,18 @@ final class AppModel: ObservableObject {
 
     /// Puts the menu back on the panel, because the window went away.
     ///
-    /// Both surfaces, not one. They were consistent with each other — each
-    /// outlived the window — which is how clicking away from the History and
-    /// clicking back returned to the History, and consistent is not the same as
-    /// right. A menu bar item is clicked to answer "is the clock alive, and
-    /// what is next"; a list of old jokes answers a question nobody asked.
+    /// The History, and only the History. The settings used to be reset here
+    /// too, back when they were a surface swapped into the panel's window —
+    /// now they are the app's own window, and it closing says nothing about
+    /// the panel. A menu bar item is clicked to answer "is the clock alive,
+    /// and what is next"; a list of old jokes answers a question nobody
+    /// asked.
     ///
     /// Not a teardown. Nothing is stopped and nothing is cancelled — the
     /// schedule, the poll and any replay in flight carry on behind a window
     /// that is not on screen, exactly as they carry on behind a surface that
     /// is.
     func windowDidClose() {
-        settingsAreOpen = false
         historyIsOpen = false
     }
 
@@ -2042,8 +2342,11 @@ final class AppModel: ObservableObject {
             hostNote = nil
         }
         // The session's own device was built at the old address; it is dropped
-        // so `reloadClocks` builds one at the new one.
+        // so `reloadClocks` builds one at the new one. The clock's registry
+        // goes with it, for the same reason: its connectors are closed over
+        // the clock as it was.
         sessions[clockId] = nil
+        clockRegistries[clockId] = nil
         reloadClocks()
     }
 
@@ -2087,6 +2390,7 @@ final class AppModel: ObservableObject {
             let (name, warning) = await task.value
             if warning != nil { crossings.append(Crossing(clock: name, warning: warning)) }
         }
+        healthRevision += 1
         isDeviceOnline = answerForSelectedClock()
         // The clock going down or coming back changes what is holding every
         // schedule, and this is what learns it. Without the refresh the panel
@@ -2246,6 +2550,7 @@ final class AppModel: ObservableObject {
                 self?.restores[restoreKey] = nil
             }
             sessions[id] = nil
+            clockRegistries[id] = nil
         }
         // The healths follow the same list: a clock gone from the store has
         // no answer left to give, and a TC002 new to it probes from the next
@@ -2262,6 +2567,8 @@ final class AppModel: ObservableObject {
                 )
             }
         }
+        // The health list moved, and the panel's dots hang off it.
+        healthRevision += 1
         for clock in stored where sessions[clock.id] == nil {
             sessions[clock.id] = makeSession(clock)
         }
@@ -2710,7 +3017,7 @@ final class AppModel: ObservableObject {
     /// "Run now" reads as a button that does nothing.
     private func markUnderWay(_ key: TileKey) {
         outstanding[key, default: 0] += 1
-        tileLastResults[key] = "running…"
+        tileLastResults[key] = Self.runningWord
     }
 
     /// Shows a result only when it is the last one outstanding.
@@ -2814,7 +3121,7 @@ final class AppModel: ObservableObject {
     /// to the run path, and it is here because the switch is exhaustive.
     private static func words(for result: RunResult) -> String {
         switch result {
-        case .delivered: "delivered"
+        case .delivered: Self.deliveredWord
         case .skipped: "off"
         case .cancelled: "cancelled"
         case let .failed(message): "failed — \(TileRowLine.cause(from: message))"

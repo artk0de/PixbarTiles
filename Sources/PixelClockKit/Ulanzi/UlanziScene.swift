@@ -56,7 +56,8 @@ public enum UlanziDraw: Sendable, Equatable {
     case circle(center: PixelPoint, radius: Int, UlanziColour)      // dc
     case filledCircle(center: PixelPoint, radius: Int, UlanziColour) // dfc
     case text(String, at: PixelPoint, color: UlanziColour, font: UlanziFontHeight) // dt
-    /// `[width, height, width*height packed pixels]` — what PixelCanvas ships as.
+    /// A `width`×`height` block of packed pixels with its top-left at `at` —
+    /// what PixelCanvas ships as. Wire spelling: `[x, y, w, h, [pixels]]`.
     case bitmap(width: Int, height: Int, pixels: [UInt32], at: PixelPoint)   // db
 
     var jsonObject: [String: Any] {
@@ -77,12 +78,14 @@ public enum UlanziDraw: Sendable, Equatable {
             return ["dfc": int(center) + [radius, colour(c)]]
         case let .text(content, at, c, font):
             return ["dt": int(at) + [colour(c), font.rawValue] + [content]]
-        case let .bitmap(width, height, pixels, _):
-            // The phase ships only the full-screen bitmap at the origin, and
-            // that is the one spelling pinned against a real exchange. When a
-            // positioned bitmap ever ships, its first send test pins the
-            // position spelling the same way.
-            return ["db": [width, height] + pixels.map { Int($0) }]
+        case let .bitmap(width, height, pixels, at):
+            // `[x, y, w, h, [pixels]]` — position first, the pixels a NESTED
+            // array. Measured on the TC002 (appVer 1.1.1, 2026-09-23): the
+            // same 52×16 frame pushed both ways, the nested spelling rendered
+            // and the flat `[w, h, p0, p1, …]` one was answered 200 and drew a
+            // black page. The flat spelling was never pinned against the
+            // device — it is why every TC002 face rendered black until then.
+            return ["db": int(at) + [width, height, pixels.map { Int($0) }] as [Any]]
         }
     }
 }

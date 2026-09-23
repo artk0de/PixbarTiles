@@ -91,39 +91,7 @@ struct HistoryMenu: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            // How the last replay went, under the header rather than beside it:
-            // the reason one failed is a sentence, and a row shared with the
-            // title has room for a word. Nothing at all until one has been
-            // asked for — the surface is a list of what has played, and an
-            // empty slot above it would be a question nobody asked.
-            if let outcome = model.replayResult {
-                Text(outcome)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Divider()
-            // Three states and not two, because two of them are not the same
-            // answer. A list nobody has read yet draws NEITHER the entries nor
-            // the sentence: the read is a hop to an actor, and filling that gap
-            // with "Nothing has played yet" is answering a question this surface
-            // has not heard back on — over a connector that may have plenty to
-            // list. Quiet for the fraction of a second it takes, and then the
-            // truth.
-            //
-            // A spinner was the alternative and it is worse: an actor hop is a
-            // frame or two, so it would flash rather than inform, and it would
-            // be the loudest thing on a surface opened to read old jokes.
-            if let played = model.history {
-                if played.isEmpty {
-                    Text("Nothing has played yet")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    entries(played)
-                }
-            }
+            HistoryList(model: model, height: height)
         }
         .padding(14)
         // The width the three surfaces share, on this surface rather than
@@ -166,6 +134,61 @@ struct HistoryMenu: View {
             .buttonStyle(.borderless)
             .accessibilityLabel("Back")
             Text("History").font(.headline)
+        }
+    }
+
+}
+
+/// What has played, without the surface it is played on.
+///
+/// Its own view because the History has two hosts and one list: the panel,
+/// which swaps it in where the clocks were and brings its own chrome — a Back
+/// chevron, the shared width, a draggable bottom edge — and the anecdote
+/// tile's settings window, which is a real window and needs none of that. A
+/// second list written for the second host would be a second set of rules for
+/// what "nothing has played yet" means, and the two would disagree the first
+/// time either moved.
+struct HistoryList: View {
+    @ObservedObject var model: AppModel
+    /// The viewport's height. Exact and not a maximum: a stored height is a
+    /// size somebody chose, honoured whether the list fills it or not.
+    let height: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // How the last replay went, above the list rather than beside the
+            // title: the reason one failed is a sentence, and a row shared
+            // with a heading has room for a word. Nothing at all until one
+            // has been asked for — the surface is a list of what has played,
+            // and an empty slot above it would be a question nobody asked.
+            if let outcome = model.replayResult {
+                Text(outcome)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            // Three states and not two, because two of them are not the same
+            // answer. A list nobody has read yet draws NEITHER the entries nor
+            // the sentence: the read is a hop to an actor, and filling that gap
+            // with "Nothing has played yet" is answering a question this surface
+            // has not heard back on — over a connector that may have plenty to
+            // list. Quiet for the fraction of a second it takes, and then the
+            // truth.
+            //
+            // A spinner was the alternative and it is worse: an actor hop is a
+            // frame or two, so it would flash rather than inform, and it would
+            // be the loudest thing on a surface opened to read old jokes.
+            if let played = model.history {
+                if played.isEmpty {
+                    Text("Nothing has played yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    entries(played)
+                }
+            }
         }
     }
 

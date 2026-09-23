@@ -29,9 +29,21 @@ public struct ZaiUsageConnector: Connector {
     public let isAmbient = true
 
     private let source: any ZaiUsageReporting
+    /// The TC002 face's two settings, read at draw time: a picker moved in
+    /// the tile's window reaches the next poll, not the next launch.
+    private let usageFace: @Sendable () -> UsageFaceConfig
+    /// The zone reset times are said in — the Mac's, never the server's
+    /// Asia/Shanghai — asked at draw time.
+    private let timeZone: @Sendable () -> TimeZone
 
-    public init(source: any ZaiUsageReporting) {
+    public init(
+        source: any ZaiUsageReporting,
+        usageFace: @escaping @Sendable () -> UsageFaceConfig = { .standard },
+        timeZone: @escaping @Sendable () -> TimeZone = { .current }
+    ) {
         self.source = source
+        self.usageFace = usageFace
+        self.timeZone = timeZone
     }
 
     /// The source's reading, or the reason there is none. Whether the tile
@@ -46,7 +58,9 @@ public struct ZaiUsageConnector: Connector {
     }
 
     public var ulanziFace: UlanziFace<ZaiUsageReading>? {
-        UlanziFace { Self.ulanziOutput(for: $0) }
+        UlanziFace { [usageFace, timeZone] in
+            Self.ulanziOutput(for: $0, config: usageFace(), timeZone: timeZone())
+        }
     }
 
     public enum Failure: Error, Sendable, Equatable {
@@ -59,7 +73,7 @@ public struct ZaiUsageConnector: Connector {
 
     /// What a reading looks like on the matrix: the figures in a row, in the
     /// order the plan names them, the windows the quota route did not name
-    /// leaving no figure behind. The shared three-row face has no AWTRIX
+    /// leaving no figure behind. The shared usage face has no AWTRIX
     /// counterpart — its layout is the TC002 panel's — so the AWTRIX page
     /// carries the metrics as one line.
     public static func output(for reading: ZaiUsageReading) -> AwtrixDelivery {
@@ -75,42 +89,25 @@ public struct ZaiUsageConnector: Connector {
         )
     }
 
-    /// What a reading looks like on the TC002's panel: the shared three-row
-    /// usage face fed the plan's windows in the order the plan names them —
-    /// five hours, week, MCP month. A window the quota route did not name is
-    /// a dash, never a zero, and it keeps its band: the page's shape does not
-    /// depend on what the route felt like saying today.
-    static func ulanziOutput(for reading: ZaiUsageReading) -> UlanziDelivery {
-        UlanziDelivery(
-            scene: UlanziScene(
-                frames: [
-                    UlanziFrame(duration: 5, draw: [UsageRows.drawCommands(rows(for: reading))])
-                ]
-            )
+    /// What a reading looks like on the TC002's panel: the shared usage face,
+    /// the five-hour window on the session row and the week on the weekly
+    /// row, each with the reset instant the quota route dated it with. A
+    /// window the route did not name is a row with no reading, never a zero,
+    /// and keeps its place: the page's shape does not depend on what the
+    /// route felt like saying today. The MCP month has no row on this face.
+    static func ulanziOutput(
+        for reading: ZaiUsageReading, config: UsageFaceConfig, timeZone: TimeZone
+    ) -> UlanziDelivery {
+        UsageFace.delivery(
+            vendor: .zai,
+            session: reading.fiveHour.map(Self.window),
+            weekly: reading.weekly.map(Self.window),
+            config: config,
+            timeZone: timeZone
         )
     }
 
-    /// The page's three rows, in the order the plan names them. The values are
-    /// inked in the plan's own blue; the dash a missing window leaves is in
-    /// the layout's dim grey, which is what an absent figure is drawn in
-    /// anywhere on the panel.
-    static func rows(for reading: ZaiUsageReading) -> [UsageRows.Row] {
-        [
-            row("DAY", reading.fiveHour),
-            row("WK", reading.weekly),
-            row("MCP", reading.mcpMonthly),
-        ]
-    }
-
-    /// One band from a window that may not be there: the percent as text, in
-    /// the plan's colour, or the dash in the layout's own grey.
-    private static func row(_ label: String, _ window: ZaiUsageWindow?) -> UsageRows.Row {
-        UsageRows.Row(
-            label: label,
-            value: window.map { "\($0.percentUsed)%" } ?? "-",
-            colour: window != nil
-                ? UlanziColour(hex: ZaiUsage.brandColour)
-                : UsageRows.labelColour
-        )
+    private static func window(_ window: ZaiUsageWindow) -> UsageFace.Window {
+        UsageFace.Window(percent: window.percentUsed, resetsAt: window.resetsAt)
     }
 }

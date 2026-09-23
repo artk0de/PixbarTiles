@@ -316,6 +316,24 @@ public struct AnecdoteConnector: Connector {
         )
     }
 
+    /// What a preview draws, and it spends nothing to draw it.
+    ///
+    /// `produce()` goes through `read()`, which POPS a prepared anecdote and
+    /// RETIRES it — so opening this tile's settings window used to cost the
+    /// user a joke they never heard, and on an empty queue it blocked the
+    /// window on a model load and a minute of synthesis. What the clock shows
+    /// is the banner, which is the same whatever the joke is (the joke is
+    /// heard, not read), so the preview draws the real face from a stand-in
+    /// with no audio attached. The same `output(for:)` the clock is fed, so
+    /// the picture cannot drift from the banner.
+    public func preview() async throws -> AwtrixDelivery {
+        output(
+            for: PreparedAnecdote(
+                id: "", text: "", clips: [], laughter: "", preparedAt: nil, rank: nil
+            )
+        )
+    }
+
     /// What has played recently and can still be heard again, newest first.
     ///
     /// A pass-through to the queue, which owns the record and the window that

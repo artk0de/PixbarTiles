@@ -1242,3 +1242,95 @@ shows the glass unmistakably.
 - **Already-configured clocks stay out of "Found on the network"**, the
   Settings tabs read from the top, the general Settings surface is a
   labelled button in the panel's corner (a third gear was one too many).
+
+## The shared TC002 usage face, and why every TC002 page was black — 2026-09-23
+
+**`db` was the black page.** `UlanziDraw.bitmap` encoded `{"db": [w, h, p0,
+p1, …]}` and a comment called that spelling "pinned against a real exchange".
+It never was. Measured on the TC002 (appVer 1.1.1) on 2026-09-23 by pushing
+the same 52×16 frame both ways: the flat spelling is answered
+`{"code":200,"message":"ok"}` and draws a black page; `{"db": [x, y, w, h,
+[p0, p1, …]]}` — position first, the pixels a NESTED array — renders. Every
+TC002 face that shipped through the encoder (the weather's, the old usage
+rows) was black on the panel for that reason alone. The encoder now writes the
+measured spelling and encodes the `at` point it used to drop. A 200 from this
+clock proves nothing about the pixels; `Sources/PixelClockKit/Ulanzi/CLAUDE.md`
+carries that rule for whoever edits the adapter next.
+
+**The usage face.** Claude and z.ai share one TC002 face, `UsageFace`
+(`Sources/PixelClockKit/Usage/`): the vendor's mark in the corner, a session
+row (`s`, the five-hour window) and a weekly row (`w`), each a figure over a
+one-pixel bar in the shared `UsageBand` colours — each vendor below 80 % in its
+own brand colour, the three warnings common to both. It replaces the
+three-row `UsageRows` face on both connectors; `UsageRows` is deleted. The
+AWTRIX pages are untouched. The design was approved in the browser and on the
+clock through the `tc002-face-mockup` skill, and its `gen.py` is the pixel
+oracle: `Scripts/make_usage_face_oracle.py` records gen.py's timelines for
+fourteen cases (steady, one row hot, both hot, spent past 100 %, 0 % and 3 %,
+no data, partial data, the threshold at 60/70/80/100) into
+`Tests/PixelClockKitTests/Fixtures/usage_face_oracle.json`, and
+`UsageFaceOracleTests` holds the Swift face to it frame for frame and delay for
+delay. A design change starts in gen.py, then the fixture, then Swift — never
+the fixture by hand.
+
+The page is one timeline the panel plays by itself — one full-frame GIF at the
+origin (§6f's `image[]` envelope), each frame with its own delay, which is why
+`FullFrameGif` grew `encode(frames:delays:)` (the one-delay spelling is that
+with the figure repeated, byte-identical). Frame A, the percentages, stands for
+the tile's **Show reset every**; a row at or past **Show reset after** flips to
+its reset — the session's `rst 14:30` still, five seconds when it is the only
+flip; the week's `rst 1 oct 09:00` an edge marquee through its value area, a
+second at the left edge, 100 ms a pixel, a second and a half at the tail. Reset
+times are instants formatted in `TimeZone.current` at draw time — z.ai's
+`nextResetTime` is epoch milliseconds and stays absolute; nothing is ever said
+in Asia/Shanghai's hour. The glyphs are gen.py's own five-row proportional
+table, `PixelFont.proportional`; `PixelFontFace` learnt per-glyph widths, and
+the fixed faces measure and draw exactly as before.
+
+The two settings live on both tiles' records (`UsageFaceConfig`, fields
+`showResetEvery` / `showResetAfter`; 5 s–5 min, default 10 s; 50–100 % in
+fives, default 80 %). While they are the defaults the configs write exactly
+what they wrote before — the Claude tile its bare metric word, the z.ai tile
+its bare key handle — so records from before the settings decode as the
+defaults and nothing rewrites them. The pickers sit under the Claude and z.ai
+blocks in the tile's window; the metric picker and a pasted key keep them. The
+connectors read them off the record at every draw. The TC002 preview of a page
+that ships as one GIF is that GIF's own bytes, and `PixelPreview` now holds
+each frame for its own delay.
+
+Where the Swift face departs from gen.py, deliberately:
+
+- A row past the threshold whose source dated no reset does not flip — gen.py
+  never meets a hot row without a reset string, and inventing one is worse.
+- `PixelFont.proportional` carries a `?` (the tiny face's) that gen.py does
+  not: the substitute rule needs a shape to draw. The face never spells one.
+- The envelope's `duration` stays the kit's constant 5; the demo pushed 10.
+
+What only a person at the hardware can settle:
+
+1. **The weather face, un-blackened.** With the `db` fix, the TC002 weather
+   page should draw. Nobody has looked at it through the app yet.
+2. **The usage face through the app.** The oracle proves the Swift frames
+   equal gen.py's; gen.py's frames were approved live via `tc002_demo.py`,
+   not via this app's push. Confirm the app's page on the panel matches the
+   demo — in particular that the per-frame delays (10 s, 5 s, 1 s, 100 ms,
+   1.5 s) play as timed, and that a five-minute first frame (30 000
+   centiseconds) is honoured.
+3. **A pasted z.ai key and the settings.** Tune the z.ai tile, then paste a
+   key; the pickers keep their values.
+
+What later tasks owe:
+
+- `Sources/PixelClockKit/Ulanzi/CLAUDE.md` and the `.claude/skills/tc002-face-mockup/`
+  skill (gen.py, template.html, tc002_demo.py, SKILL.md) were left untracked in
+  this worktree — they are the oracle's source and the adapter's navigator,
+  and belong in the repository. Until the CLAUDE.md is tracked or excluded,
+  SwiftPM warns about one unhandled file in the kit target.
+- `UlanziHandoffTests` read one heap byte past its payload and failed in a full
+  serial run whenever the allocator handed back a dirty block; the test buffer
+  is zeroed now. The parallel-run timeouts in `UlanziClockSlotTests` named in
+  the redesign section are unchanged — `swift test --no-parallel` stays the
+  arbiter.
+
+Measured at close: 1622 tests (613 app + 1009 kit), serial run green; 1587
+(603 + 984) at the base, `1b068f4`.

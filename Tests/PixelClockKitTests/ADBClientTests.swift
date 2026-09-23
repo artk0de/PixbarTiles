@@ -31,8 +31,13 @@ private func frame(_ cmd: UInt32, _ a0: UInt32, _ a1: UInt32, _ payload: Data = 
 }
 
 private let A_CNXN: UInt32 = 0x4E58_4E43
+private let A_OKAY: UInt32 = 0x5941_4B4F
 private let A_WRTE: UInt32 = 0x4554_5257
 private let A_CLSE: UInt32 = 0x4553_4C43
+
+private func le32(_ v: UInt32) -> Data {
+    withUnsafeBytes(of: v.littleEndian) { Data($0) }
+}
 
 @Test func shellCollectsWriteFramesUntilClose() async throws {
     // Device answers: CNXN (handshake), then two WRTE chunks, then CLSE.
@@ -51,4 +56,26 @@ private let A_CLSE: UInt32 = 0x4553_4C43
     #expect(written.range(of: Data("shell:echo hi\0".utf8)) != nil)
     // And sent a CNXN first (the handshake precedes the OPEN).
     #expect(written.prefix(4) == withUnsafeBytes(of: A_CNXN.littleEndian) { Data($0) })
+}
+
+@Test func pullReassemblesSyncDataChunksByteExactly() async throws {
+    // The battery window contains a 0x0a byte, which the shell PTY would turn
+    // into 0x0d 0x0a. sync RECV must hand it back untouched.
+    let window = Data([1, 0, 0, 0, 10, 0, 0, 0, 0x0A, 0x0C, 0, 0])
+    var sync = Data("DATA".utf8) + le32(UInt32(window.count)) + window
+    sync += Data("DONE".utf8) + le32(0)
+
+    var canned = frame(A_CNXN, 0x0100_0000, 256 * 1024, Data("device::\0".utf8))
+    canned += frame(A_OKAY, 7, 1)                       // sync: opened
+    canned += frame(A_WRTE, 7, 1, sync)
+    canned += frame(A_CLSE, 7, 1)
+    let stream = ScriptedStream(canned)
+    let client = ADBClient(connect: { stream })
+
+    let out = try await client.pull("/tmp/pct-out")
+
+    #expect(out == window)
+    let written = await stream.writtenBytes()
+    #expect(written.range(of: Data("RECV".utf8)) != nil)
+    #expect(written.range(of: Data("/tmp/pct-out".utf8)) != nil)
 }

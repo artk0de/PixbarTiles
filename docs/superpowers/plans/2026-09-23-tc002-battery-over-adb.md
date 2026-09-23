@@ -17,9 +17,9 @@ Every task's requirements implicitly include these — copied verbatim from the 
 - **Read-only on the device.** No memory writes, no register pokes, no config changes, no touching the `usb_device` / `usb_host` / `usb_null` sysfs files. The helper only `open`/`lseek`/`read`/`write(stdout)`/`exit`.
 - **Degrade to no line, never a wrong one.** Every failure branch — port unreachable, unknown `appVer`, pid/base not found, helper push/run fails, values fail the gate — yields `nil`, and the panel shows the last-known charge per the existing rule. A wrong number is worse than none.
 - **No voltage→percent curve for the TC002.** The cell has different characteristics; the firmware's computed percent is the only honest number. We never map millivolts to percent.
-- **`appVer` gating.** Offsets are build-specific. Only firmware `appVer` `1.1.1` has a known offset (`+0x732ef4`); any other version yields `nil`.
+- **`appVer` gating.** Offsets are build-specific. Only firmware `appVer` `1.1.1` has a known offset (`+0x732ee8`); any other version yields `nil`.
 - **Plausibility gate.** Percent in `0...100`, millivolts in `2000...4500`, else no reading.
-- **Field layout (appVer 1.1.1), libzkgui load-relative:** `+0x732ef4` charging/on-USB (`1`/`0`), `+0x732ef8` percent, `+0x732efc` millivolts. Three adjacent little-endian `int32`s; read as a single 12-byte window. Load base = the start address of the `r-xp … libzkgui.so` line in `/proc/<pid>/maps`.
+- **Field layout (appVer 1.1.1), libzkgui load-relative:** `+0x732ee8` charging/on-USB (`1`/`0`), `+0x732eec` percent, `+0x732ef0` millivolts. Three adjacent little-endian `int32`s; read as a single 12-byte window. Load base = the start address of the `r-xp … libzkgui.so` line in `/proc/<pid>/maps`.
 - **Swift 6.2, macOS 26, SwiftPM.** Bundle via `Scripts/bundle.sh [debug|release]`.
 - **Commit messages in English**, each ending with:
 
@@ -692,7 +692,7 @@ private let maps = Data("""
     let sample = await battery.read(appVersion: "1.1.1", at: at)
 
     #expect(sample == UlanziBatterySample(percent: 90, charging: true, millivolts: 3149, at: at))
-    // The request must ask for base(0x43e87000) + 0x732ef4 = 0x445b9ef4, len 12.
+    // The request must ask for base(0x43e87000) + 0x732ee8 = 0x445b9ee8, len 12.
     let req = await adb.pushes().first { $0.path == "/tmp/pct-req" }!.bytes
     #expect(req.prefix(4) == Data([0xF4, 0x9E, 0x5B, 0x44]))        // address LE
     #expect(req[4..<8] == Data([0x0C, 0x00, 0x00, 0x00]))          // length 12 LE
@@ -847,7 +847,7 @@ git add Sources/PixelClockKit/Ulanzi/UlanziBattery.swift Tests/PixelClockKitTest
 git commit -m "feat: UlanziBattery reads the firmware battery from zkgui memory
 
 Resolves the zkgui pid and libzkgui r-xp base over ADB, runs pct-batt
-against base+0x732ef4, and gates the three int32s (0..100 percent,
+against base+0x732ee8, and gates the three int32s (0..100 percent,
 2000..4500 mV). appVer-keyed offsets; any other firmware reads nothing.
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -1294,4 +1294,4 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Placeholder scan:** No TBD/TODO; every code step carries real code; the two on-device steps (Task 2 Step 6, Task 5 Step 11) are explicit manual gates, named as such because host CI cannot execute ARMv7 or reach the device.
 
-**Type consistency:** `ADB`/`ADBStream`/`ADBClient` (Task 1) consumed unchanged in Tasks 3, 5. `UlanziBatterySample` produced in Task 3, consumed in Task 4. `UlanziBatteryTrajectory.reading: BatteryReading?` consumed by `UlanziClockHealth.lastKnownBattery` in Task 5. `UlanziClockHealth.init(clockId:name:device:battery:)` signature matches both AppModel construction sites and the health test. Offset `0x732ef4` and window length `12` consistent across spec, Task 2 request layout, Task 3 arithmetic, and the Task 3 address assertion (`0x445b9ef4`).
+**Type consistency:** `ADB`/`ADBStream`/`ADBClient` (Task 1) consumed unchanged in Tasks 3, 5. `UlanziBatterySample` produced in Task 3, consumed in Task 4. `UlanziBatteryTrajectory.reading: BatteryReading?` consumed by `UlanziClockHealth.lastKnownBattery` in Task 5. `UlanziClockHealth.init(clockId:name:device:battery:)` signature matches both AppModel construction sites and the health test. Offset `0x732ee8` and window length `12` consistent across spec, Task 2 request layout, Task 3 arithmetic, and the Task 3 address assertion (`0x445b9ee8`).

@@ -34,19 +34,26 @@ Every claim here was seen on the device, not inferred.
 
   | Address (this boot) | libzkgui load-relative offset | field | value |
   | --- | --- | --- | --- |
-  | `0x445b9ef4` | `+0x732ef4` | charging / on-USB (1/0) | 1 |
-  | `0x445b9ef8` | `+0x732ef8` | percent | 90 |
-  | `0x445b9efc` | `+0x732efc` | millivolts | 3149 |
+  | `0x445b9ee8` | `+0x732ee8` | charging / on-USB (1/0) | 1 |
+  | `0x445b9eec` | `+0x732eec` | percent | 90 |
+  | `0x445b9ef0` | `+0x732ef0` | millivolts | 3149 |
 
   The load-relative offset is the stable fact; the absolute address depends on
   where the loader mapped the library.
-- The field is **live off-screen**: unplugging USB flipped `+0x732ef4` from 1 to
+- The field is **live off-screen**: unplugging USB flipped `+0x732ee8` from 1 to
   0 while nothing but our reader touched the process. `McuManager` /
   `BatteryMonitor` update it continuously (they drive the low-battery LED and
   auto-sleep, which cannot depend on a tool being on screen). So a background poll
   reads fresh data.
 - `/proc/<pid>/mem` is **readable by root without `PTRACE_ATTACH`** on this
   kernel — a plain `lseek`+`read` returned the pages.
+- The `shell:` service is a **PTY, and it corrupts binary stdout**: every `0x0a`
+  comes back as `0x0d 0x0a`. That is not theoretical for this payload — a
+  percent of 10 or a millivolt value with an `0x0a` byte hits it, and the 12-byte
+  window then parses as garbage. Measured: a read of the window returned 13
+  bytes. So the reader's output is **redirected to a file on the device and
+  pulled back over `sync:` RECV**, which is byte-exact. `/tmp/pct-batt >
+  /tmp/pct-out` was confirmed to write exactly 12 bytes.
 - `/tmp` is a 16 MB tmpfs, wiped on reboot. The `zkgui` pid and the libzkgui load
   address are **not** stable across reboots and must be resolved at run time.
 
@@ -72,6 +79,9 @@ A minimal ADB-over-TCP client — the protocol is already proven in the spike.
   device never asks; if it does, fail cleanly and the feature disables).
 - `shell(_ command:) -> Data` — `OPEN shell:<cmd>`, collect `WRTE` until `CLSE`.
 - `push(_ bytes:to:mode:)` — the `sync:` SEND stream (SEND / DATA / DONE / OKAY).
+- `pull(_ path:) -> Data` — the `sync:` RECV stream (RECV, then DATA chunks
+  until DONE). This is how the reader's bytes come back: `shell:` is a PTY and
+  mangles `0x0a`, so binary never travels over it.
 - Pure framing over an injected byte transport, so tests drive it with a fake
   socket and never touch a device.
 
@@ -104,11 +114,13 @@ The testable brain. Given an `ADBClient`, for one poll:
    match `/bin/zkgui`. (Text work in Swift, not asm.)
 2. Resolve the libzkgui load base: shell `cat /proc/<pid>/maps`, take the
    `r-xp … libzkgui.so` line's start address.
-3. Compute `address = base + 0x732ef4`, `length = 12`.
-4. Ensure `pct-batt` is present (push if a probe run fails — `/tmp` is volatile),
-   then write `/tmp/pct-req` and run it.
-5. Parse the 12 bytes → `charging: Bool`, `percent: Int`, `millivolts: Int`.
-6. **Plausibility gate**: `0…100` percent, `2000…4500` mV, else treat as no
+3. Compute `address = base + 0x732ee8`, `length = 12`.
+4. Push `pct-batt` and `/tmp/pct-req` (`/tmp` is a tmpfs wiped on reboot, so the
+   push is unconditional and idempotent rather than probed).
+5. Run it with its stdout redirected — `/tmp/pct-batt > /tmp/pct-out` — then
+   `pull("/tmp/pct-out")`. The redirect is what keeps the bytes off the PTY.
+6. Parse the 12 bytes → `charging: Bool`, `percent: Int`, `millivolts: Int`.
+7. **Plausibility gate**: `0…100` percent, `2000…4500` mV, else treat as no
    reading. A wrong number is worse than none.
 
 Offsets live in one table keyed by firmware `appVer`; `1.1.1` is the only entry.
@@ -165,9 +177,9 @@ a minimal change confined to that leaf method, out of `AppModel.poll`.
 UlanziClockHealth.poll
   └─ UlanziBattery.read()
        ├─ ADBClient.shell(find pid, read maps)        → pid, libzkgui base
-       ├─ ADBClient.push(pct-batt) [only if missing]
-       ├─ ADBClient.push(/tmp/pct-req = addr,len,path)
-       ├─ ADBClient.shell(/tmp/pct-batt)              → 12 bytes
+       ├─ ADBClient.push(pct-batt), push(/tmp/pct-req = addr,len,path)
+       ├─ ADBClient.shell(/tmp/pct-batt > /tmp/pct-out)
+       ├─ ADBClient.pull(/tmp/pct-out)                → 12 bytes (byte-exact)
        └─ parse + plausibility gate                    → UlanziBatterySample?
   └─ UlanziBatteryTrajectory.accept(sample)
        └─ reading  (direction from flag, ETA from percent-slope fit) → BatteryReading?

@@ -17,6 +17,10 @@ public protocol ADBStream: Sendable {
 public protocol ADB: Sendable {
     func shell(_ command: String) async throws -> Data
     func push(_ bytes: Data, to path: String, mode: Int) async throws
+    /// Reads a file off the device byte-exactly. `shell:` is a PTY and turns
+    /// every `0x0a` into `0x0d 0x0a`, so binary never travels over it — the
+    /// reader redirects to a file and it comes back through here.
+    func pull(_ path: String) async throws -> Data
 }
 
 public enum ADBError: Error, Equatable {
@@ -82,6 +86,48 @@ public struct ADBClient: ADB {
         }
         guard status.prefix(4) == Data("OKAY".utf8) else {
             throw ADBError.syncFailed(String(decoding: status, as: UTF8.self))
+        }
+    }
+
+    public func pull(_ path: String) async throws -> Data {
+        let stream = try await connect()
+        defer { Task { await stream.close() } }
+        try await handshake(stream)
+        try await send(stream, Self.open, 1, 0, Data("sync:\0".utf8))
+        let (cmd, remoteId, _, _) = try await recv(stream)
+        guard cmd == Self.okay else { throw ADBError.syncFailed("sync not acked") }
+
+        let p = Data(path.utf8)
+        try await send(stream, Self.wrte, 1, remoteId, Data("RECV".utf8) + encode(UInt32(p.count)) + p)
+
+        // The sync reply is DATA chunks then DONE, and it does not respect WRTE
+        // frame boundaries — so it is buffered and parsed incrementally.
+        var buffer = Data()
+        var out = Data()
+        while true {
+            while buffer.count >= 8 {
+                let tag = Data(buffer.prefix(4))
+                let n = Int(decode(buffer, 4))
+                if tag == Data("DONE".utf8) { return out }
+                if tag == Data("FAIL".utf8) {
+                    guard buffer.count >= 8 + n else { break }
+                    let message = Data(buffer.dropFirst(8).prefix(n))
+                    throw ADBError.syncFailed(String(decoding: message, as: UTF8.self))
+                }
+                guard tag == Data("DATA".utf8) else {
+                    throw ADBError.syncFailed("unexpected sync tag")
+                }
+                guard buffer.count >= 8 + n else { break }
+                out += Data(buffer.dropFirst(8).prefix(n))
+                buffer = Data(buffer.dropFirst(8 + n))
+            }
+            let (c, _, _, payload) = try await recv(stream)
+            if c == Self.wrte {
+                buffer += payload
+                try await send(stream, Self.okay, 1, remoteId)
+            } else if c == Self.clse {
+                return out
+            }
         }
     }
 

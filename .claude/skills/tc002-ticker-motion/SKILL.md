@@ -43,7 +43,10 @@ timeline.
   `EDGE_STEP_MS = 100`), holding 1 s at the start and 1.5 s at the end so both
   ends are readable. 2 px steps read as jerky; a full-width marquee (60 ms,
   entering right, leaving left) is for long free text only.
-- Names and labels do not scroll — make them fit (`tc002-tile-screen`).
+- Names and labels do not scroll — make them fit (`tc002-tile-screen`), except
+  an unbounded external name (a repo name), which edge-marquees its overflow.
+- A marquee longer than its dwell stretches the dwell: the pass always
+  finishes, so the start and the end are both read.
 
 ## Timeline construction
 

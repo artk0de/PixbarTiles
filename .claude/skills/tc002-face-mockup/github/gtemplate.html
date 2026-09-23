@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>TC002 GitHub face — mockups</title>
+<style>
+  body { background:#1b1b1b; color:#ddd; font:14px -apple-system, sans-serif; margin:24px; max-width:1700px }
+  h1 { font-size:20px } h2 { font-size:15px; margin:30px 0 8px; color:#bbb } h3 { font-size:13px; margin:18px 0 6px; font-weight:500 }
+  .spec { background:#111; padding:12px 16px; border-radius:8px; line-height:1.6 }
+  .sw { display:inline-block; width:12px; height:12px; border-radius:2px; vertical-align:middle; margin-right:4px }
+  .controls { margin-top:10px; display:flex; gap:20px; align-items:center; flex-wrap:wrap }
+  button, select { background:#2a2a2a; color:#ddd; border:1px solid #444; border-radius:6px; padding:4px 10px; cursor:pointer }
+  .case { background:#111; padding:10px 12px; border-radius:8px; margin-bottom:10px; display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap }
+  .case .meta { width:280px; color:#aaa; font-size:13px } .case .meta b { color:#ddd; display:block; margin-bottom:4px }
+  .keys { display:flex; gap:8px; flex-wrap:wrap }
+</style>
+<h1>TC002 (52×16) — GitHub-плитка</h1>
+<div class="spec">
+  <b>Ambient</b>: слева анимированный GitHub-mark 16×16 (блик пробегает, пауза 2.4 s) · справа hero — big-звезда и число звёзд
+  (<span class="sw" style="background:#E3B341"></span>#E3B341), точное до 9 999, дальше <code>12k</code>/<code>123k</code> ·
+  строка ticker (ряды 11–15) по кругу, и каждая приносит свою иконку (Hybrid): имя репо + GitHub-mark →
+  число форков + fork-глиф (<span class="sw" style="background:#58A6FF"></span>) → открытые PR + PR-глиф
+  (<span class="sw" style="background:#3FB950"></span>). Строка едет 1 ряд / 60 ms, иконка 3 ряда за тот же шаг — приземляются вместе;
+  dwell = «Change every». Длинное имя — бегущая строка (только хвост). Всё — один 52×16 GIF.<br>
+  <b>Празднование</b> (interruption на M секунд): иконка события (звезда — pop-in и искры; форк/PR — коммит бежит по ветке),
+  hero <code>+N</code>, ticker: что случилось → <code>@логины</code> (до трёх, дальше <code>+K more</code>).
+  Звёзды — на всех наших страницах, форки и PR — только на странице GitHub. Звука на TC002 нет (протокол не даёт audio).
+  <div class="controls">
+    <button id="pp">⏸ пауза</button>
+    <label>Change every <select id="dw"></select></label>
+    <label>Celebration <select id="ce"></select></label>
+  </div>
+</div>
+<div id="root"></div>
+<script>
+const D = /*DATA*/null;
+const CELL = 14, DOT = 11, PAD = 14;
+let dwell = 10000, celebrate = 8000, paused = false;
+function paint(ctx, rows, scale) {
+  const c = CELL * scale, d = DOT * scale, p = PAD * scale;
+  ctx.fillStyle = "#0a0a0a"; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  for (let y = 0; y < D.H; y++) for (let x = 0; x < D.W; x++) {
+    const hex = rows[y].substr(x * 6, 6);
+    ctx.fillStyle = hex === "000000" ? "#161616" : "#" + hex;
+    ctx.beginPath();
+    ctx.roundRect(p + x * c + (c - d) / 2, p + y * c + (c - d) / 2, d, d, 2 * scale);
+    ctx.fill();
+  }
+}
+function canvas(scale) {
+  const cv = document.createElement("canvas");
+  cv.width = (D.W * CELL + 2 * PAD) * scale; cv.height = (D.H * CELL + 2 * PAD) * scale;
+  cv.style.width = cv.width + "px"; return cv;
+}
+const root = document.getElementById("root"), players = [];
+let section = null;
+for (const c of D.cases) {
+  const s = c.kind === "ambient" ? "Ambient-страница" : "Празднования";
+  if (s !== section) { root.insertAdjacentHTML("beforeend", `<h2>${s}</h2>`); section = s; }
+  const box = document.createElement("div"); box.className = "case";
+  box.innerHTML = `<div class="meta"><b>${c.id}</b>${c.desc}</div>`;
+  const live = canvas(1); box.appendChild(live);
+  const keys = document.createElement("div"); keys.className = "keys"; box.appendChild(keys);
+  root.appendChild(box);
+  players.push({ c, ctx: live.getContext("2d"), keys });
+}
+function load(p) {
+  const v = p.c.variants[p.c.kind === "ambient" ? dwell : celebrate];
+  p.v = v; p.i = 0; p.left = v.ms[0];
+  paint(p.ctx, v.frames[0], 1);
+  p.keys.innerHTML = "";
+  for (const k of v.keys) { const kc = canvas(0.42); p.keys.appendChild(kc); paint(kc.getContext("2d"), v.frames[k], 0.42); }
+}
+const dw = document.getElementById("dw"), ce = document.getElementById("ce");
+for (const v of D.dwells) dw.insertAdjacentHTML("beforeend", `<option value="${v}"${v === 10000 ? " selected" : ""}>${v / 1000} s</option>`);
+for (const v of D.celebrates) ce.insertAdjacentHTML("beforeend", `<option value="${v}"${v === 8000 ? " selected" : ""}>${v / 1000} s</option>`);
+dw.onchange = e => { dwell = +e.target.value; players.forEach(load); };
+ce.onchange = e => { celebrate = +e.target.value; players.forEach(load); };
+document.getElementById("pp").onclick = e => { paused = !paused; e.target.textContent = paused ? "▶ играть" : "⏸ пауза"; };
+players.forEach(load);
+let last = performance.now();
+function tick(now) {
+  const dt = now - last; last = now;
+  if (!paused) for (const p of players) {
+    if (p.v.ms.length < 2) continue;
+    p.left -= dt; let moved = false;
+    while (p.left <= 0) { p.i = (p.i + 1) % p.v.ms.length; p.left += p.v.ms[p.i]; moved = true; }
+    if (moved) paint(p.ctx, p.v.frames[p.i], 1);
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>

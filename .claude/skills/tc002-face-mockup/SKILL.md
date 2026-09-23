@@ -32,7 +32,15 @@ frames are the pixel oracle the Swift face is tested against.
    zero, no data, partial data, worst-case width, every tile-parameter effect).
 3. **Render and open**: `python3 gen.py && open tc002-mockup-out/index.html`.
    Look at the key-frame PNGs yourself (Read them) before showing the user —
-   check clipping, glyph collisions, width at the worst case.
+   check clipping, glyph collisions, width at the worst case. The PNGs are
+   YOUR check only; they are never what the user reviews.
+
+   **HTML review is a MANDATORY GATE.** Open the page in the same turn the
+   render finishes, tell the user it is open and what to look at (which cases,
+   which controls), and STOP until they answer. Every later render the user is
+   meant to see is re-opened the same way. Nothing moves past this step — not
+   the next design iteration you would like to try, not the live demo, not a
+   line of Swift — without the user's verdict on the HTML.
 4. **Iterate with the user IN THE BROWSER until the arrangement is settled.**
    Tile parameters (intervals, thresholds) belong in the page as live
    `<select>`s; precompute one timeline per value in `gen.py` rather than

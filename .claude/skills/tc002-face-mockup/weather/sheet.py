@@ -46,4 +46,5 @@ def main():
     png(grid, os.path.join(os.path.dirname(__file__), "sheet.png"))
 
 
-main()
+if __name__ == "__main__":
+    main()

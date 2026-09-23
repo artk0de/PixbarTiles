@@ -65,6 +65,11 @@ The area is 34 columns. Plan every string at its widest value:
   clip. Decide the fallback in the generator, per value, not per locale guess.
 - Two words that cannot share one line become a two-line page, not a
   scrolling line — scrolling is for values that change (resets), not names.
+- Exception: a name the app does not choose and cannot bound — a GitHub repo
+  name — scrolls its overflow as an edge marquee when it does not fit, and a
+  user-set short name stays an optional override (the user's call,
+  2026-09-23). A name the face itself picks (a moon phase, a label) still has
+  to fit.
 
 ## Labels, values, units
 

@@ -641,6 +641,14 @@ one. Sign by its SHA-1 instead:
 codesign --force --deep --sign 6417A281BC7E103BB9B4A4EA69F831F5211A89A5 build/PixelClockTiles.app
 ```
 
+**Since 2026-09-23 `bundle.sh` runs this step itself** whenever the identity is
+in the keychain (override the SHA-1 with `PIXELCLOCK_SIGN_ID`), and warns when
+it is not. The manual step was skipped often enough to cost: a worktree build
+left ad-hoc saved the z.ai key, the key's ACL pinned that build's cdhash, and
+every other build — the properly signed one included — met a keychain prompt
+for `PixelClockTiles tile keys`. One "Always Allow" from a signed build repairs
+an item created that way; after that the certificate carries the grant.
+
 ### Probed again, signed, 2026-08-19 — all three answer
 
 Each was a separate minimal bundle, signed with that identity and launched

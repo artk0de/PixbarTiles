@@ -133,6 +133,23 @@ private let utc = TimeZone(identifier: "UTC")!
         #expect(UsageFace.sessionReset(shanghaiNine, in: utc) == "rst 13:00")
     }
 
+    // End to end on the live pro answer of 2026-09-23: the week's
+    // `nextResetTime` goes through the decoder and comes out in the Mac's
+    // zone — 20:16 in Moscow, not Shanghai's 01:16 on the 27th.
+    @Test func theLiveZaiWeeklyResetIsSaidInTheMacsZone() throws {
+        let live = Data("""
+        {"code":200,"data":{"limits":[
+          {"type":"CREDIT_LIMIT","unit":6,"number":1,"usage":60000,"currentValue":60032,
+           "percentage":100,"nextResetTime":1790443012983}
+        ],"level":"pro"}}
+        """.utf8)
+        let resetsAt = try #require(ZaiUsageDecoder.limits(from: live).weekly?.resetsAt)
+        let shanghai = try #require(TimeZone(identifier: "Asia/Shanghai"))
+
+        #expect(UsageFace.weeklyReset(resetsAt, in: moscow) == "rst 26 sep 20:16")
+        #expect(UsageFace.weeklyReset(resetsAt, in: shanghai) == "rst 27 sep 01:16")
+    }
+
     // MARK: - What flips
 
     // A hot row whose window carries no reset date has nothing to flip to:

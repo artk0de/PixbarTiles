@@ -563,3 +563,95 @@ private func expectSetterLands(
     // that quietly reinstates it fails here.
     #expect(shipped < waited - 0.91)
 }
+
+// MARK: - Choosing a place by name
+
+@MainActor private func aModelOnAWeatherTile() -> (AppModel, TileKey, TileSettingsModel) {
+    let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.7")
+    let key = TileKey(clockId: kitchen.id, connectorId: "weather")
+    let transport = SkyAndClockTransport(sky: skyWithAnswers)
+    let model = testModel(
+        connectors: [weatherConnector(over: transport), StubConnector(isAudible: false)],
+        transport: transport,
+        clocks: [kitchen],
+        tiles: [
+            TileRecord(
+                key: key,
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600),
+                config: .weather(WeatherTileConfig(place: aDesk))
+            )
+        ]
+    )
+    return (model, key, TileSettingsModel(model: model))
+}
+
+// A row picked in the search carries its name across with its coordinates.
+// The name is the whole reason the search is there: a pair of numbers is not
+// a place anybody can check.
+@Test @MainActor func choosingAPlaceKeepsTheNameItWasChosenBy() async {
+    let (model, key, subject) = aModelOnAWeatherTile()
+    model.openDetail(for: key)
+    // The window lands on the tile a tick after the model publishes, and the
+    // draft is loaded there.
+    #expect(await waitUntil { subject.draft != nil })
+
+    subject.choosePlace(PlaceCandidate(
+        id: 524_901, name: "Москва", region: "Москва", country: "Россия",
+        coordinates: Coordinates(latitude: 55.7558, longitude: 37.6173)
+    ))
+
+    #expect(subject.draft?.placeName == "Москва")
+    #expect(subject.draft?.placeCountry == "Россия")
+    #expect(subject.draft?.place.latitude == 55.7558)
+    let stored = model.storedTile(key)?.config?.weatherConfig
+    #expect(stored?.placeName == "Москва")
+    #expect(stored?.place.longitude == 37.6173)
+
+    await model.teardown()
+}
+
+// Typing a pair over a chosen place DROPS the name. A name kept beside
+// coordinates it no longer describes is the one way this surface could say
+// Moscow over a reading from somewhere else entirely.
+@Test @MainActor func typingAPairOverAChosenPlaceForgetsItsName() async {
+    let (model, key, subject) = aModelOnAWeatherTile()
+    model.openDetail(for: key)
+    // The window lands on the tile a tick after the model publishes, and the
+    // draft is loaded there.
+    #expect(await waitUntil { subject.draft != nil })
+    subject.choosePlace(PlaceCandidate(
+        id: 1, name: "Москва", region: nil, country: "Россия",
+        coordinates: Coordinates(latitude: 55.7558, longitude: 37.6173)
+    ))
+
+    #expect(subject.savePlace("51.5074, -0.1278"))
+
+    #expect(subject.draft?.placeName == nil)
+    #expect(subject.draft?.placeCountry == nil)
+    #expect(subject.draft?.place.latitude == 51.5074)
+    #expect(model.storedTile(key)?.config?.weatherConfig?.placeName == nil)
+
+    await model.teardown()
+}
+
+// What the surface says over the box, straight off the draft — so the line and
+// the reading behind it cannot disagree.
+@Test @MainActor func theLineOverTheBoxSaysTheDraftsOwnPlace() async {
+    let (model, key, subject) = aModelOnAWeatherTile()
+    model.openDetail(for: key)
+    // The window lands on the tile a tick after the model publishes, and the
+    // draft is loaded there.
+    #expect(await waitUntil { subject.draft != nil })
+
+    subject.choosePlace(PlaceCandidate(
+        id: 1, name: "London", region: nil, country: "United Kingdom",
+        coordinates: Coordinates(latitude: 51.5074, longitude: -0.1278)
+    ))
+
+    #expect(subject.placeHeadline == "United Kingdom, London (51.5074, -0.1278)")
+
+    #expect(subject.savePlace("55.7558, 37.6173"))
+    #expect(subject.placeHeadline == "55.7558, 37.6173")
+
+    await model.teardown()
+}

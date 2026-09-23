@@ -328,20 +328,41 @@ struct TileRefreshControl: View {
     }
 }
 
-/// The weather tile's block: the place the weather is read from.
+/// The weather tile's block: where the weather is read from, said in words
+/// first and in numbers under them.
 ///
-/// The plain `LocationField` does the reading and the checking; the block only
-/// puts a box and a save around it. The place search stays with the general
-/// settings surface for now — what moves, moves at the switch-over.
+/// The search came back here. It was written, measured and tested against the
+/// live geocoder — `PlaceSearchModel`, and the note it carries about districts
+/// and about a city being one point is measured behaviour — and then the
+/// surface that hosted it went away at the switch-over to this window. What
+/// was left was a box wanting two decimal numbers, on a tile whose whole
+/// subject is a place. The comment that stood here said the search "stays with
+/// the general settings surface for now"; there is no general settings surface
+/// any more.
 struct WeatherTileBlock: View {
+    /// Where the clock is, as `TileSettingsModel.placeHeadline` says it — off
+    /// the draft, so this line cannot disagree with the reading under it.
+    let headline: String
     let place: Coordinates
     let onSave: (String) -> Void
+    let onChoose: (PlaceCandidate) -> Void
 
+    /// One per opening of the window, which is what its own documentation asks
+    /// for: nothing here outlives the surface.
+    @StateObject private var places = PlaceSearchModel()
     @State private var typed: String
+    @State private var name = ""
 
-    init(place: Coordinates, onSave: @escaping (String) -> Void) {
+    init(
+        headline: String,
+        place: Coordinates,
+        onSave: @escaping (String) -> Void,
+        onChoose: @escaping (PlaceCandidate) -> Void
+    ) {
+        self.headline = headline
         self.place = place
         self.onSave = onSave
+        self.onChoose = onChoose
         _typed = State(initialValue: LocationField.text(for: place))
     }
 
@@ -350,9 +371,67 @@ struct WeatherTileBlock: View {
         onSave(typed)
     }
 
+    private var askable: Bool {
+        places.isSearching == false
+            && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private func find() {
+        guard askable else { return }
+        Task { await places.search(for: name) }
+    }
+
+    private func take(_ candidate: PlaceCandidate) {
+        // Through the search model's own `choose`, so the box below follows
+        // the row and the list clears exactly as its tests say it does — and
+        // then the name goes to the draft, which the box cannot carry.
+        places.choose(candidate, into: $typed)
+        onChoose(candidate)
+        name = ""
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Location").font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(headline)
+                .font(.headline)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                TextField("City or town", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(find)
+                Button("Find", action: find).disabled(askable == false)
+            }
+
+            if places.isSearching {
+                ProgressView().controlSize(.small)
+            }
+            ForEach(places.candidates) { candidate in
+                Button { take(candidate) } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(candidate.name)
+                        // What separates the homonyms: "Москва, Россия"
+                        // against "Айдахо, США".
+                        Text(candidate.label).font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerStyle(.link)
+            }
+            if let note = places.note {
+                Text(note).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(PlaceSearchModel.findsSettlementsNotAddresses)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // The numbers under the words, for the pair somebody already has
+            // — and the only way to reach a place the geocoder cannot name.
             HStack {
                 TextField("55.7558, 37.6173", text: $typed)
                     .textFieldStyle(.roundedBorder)

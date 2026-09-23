@@ -164,13 +164,45 @@ final class TileSettingsModel {
         edit { $0.showsHourly = shown }
     }
 
-    /// Saves the draft's place, said in words, through the field's own
+    /// Saves the draft's place, said in numbers, through the field's own
     /// parser.
+    ///
+    /// The name goes with it. A pair typed by hand describes somewhere the
+    /// stored name may know nothing about, and a name left beside coordinates
+    /// it no longer fits is the one way this surface could say Moscow over a
+    /// reading from London.
     @discardableResult
     func savePlace(_ typed: String) -> Bool {
         guard let typed = LocationField.parse(typed) else { return false }
-        edit { $0.place = typed }
+        edit {
+            $0.place = typed
+            $0.placeName = nil
+            $0.placeCountry = nil
+        }
         return true
+    }
+
+    /// Saves a place CHOSEN from the search, name and all.
+    ///
+    /// Through the same `edit` a typed pair goes through, so choosing a row
+    /// costs exactly the render and the save that typing does — this is a
+    /// typing aid, not a second way into the record.
+    func choosePlace(_ candidate: PlaceCandidate) {
+        edit {
+            $0.place = candidate.coordinates
+            $0.placeName = candidate.name
+            $0.placeCountry = candidate.country
+        }
+    }
+
+    /// Where the clock is, as the surface says it over the box: the country,
+    /// the city, and the numbers behind them. Read off the DRAFT, so the line
+    /// and the reading under it cannot disagree.
+    var placeHeadline: String {
+        guard let draft else { return "" }
+        return LocationField.headline(
+            name: draft.placeName, country: draft.placeCountry, place: draft.place
+        )
     }
 
     /// The draft back to the shipped defaults, the place kept — where the

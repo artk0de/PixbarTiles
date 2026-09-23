@@ -11,14 +11,14 @@ against values typed from a screenshot.
 This writes `Tests/PixelClockKitTests/Fixtures/github_face_oracle.json`:
 
 - `glyphs`: the rows ggen ADDS to wgen's tables — `small` (`G`: `j _ + # ☺`)
-  and `big` (`B`: `+ k m ★`) — as strings of `#` / `.`.
+  and `big` (`B`: `+ k m ★ c i`) — as strings of `#` / `.`.
 - `octicons`: `octicons.OCTICONS` as it is, sixteen rows of 32 hex digits per
   icon (one coverage byte per pixel).
 - `cases`: every `ggen.CASES` entry at `dwell=10000, celebrate=8000`, plus
   `a1-steady` at `dwell=5000`. A case carries its input as the Swift side
-  receives it (`kind`; the reading's `repo`/`stars`/`forks`/`prs` or null,
-  `shortName`, `token` for an ambient case; `count`, `who`, `prNumbers` for a
-  celebration) and ggen's timeline as `framesZ`: base64 of the raw DEFLATE
+  receives it (`kind`; the reading's `repo`/`stars`/`forks`/`prs`/`ci` or
+  null, `shortName`, `token` for an ambient case; `count`, `who`, `prNumbers`
+  for a celebration, and `branch` for a `ci` one) and ggen's timeline as `framesZ`: base64 of the raw DEFLATE
   (no zlib header) of the compact JSON `[{"ms", "rows"}]`, every frame as
   sixteen rows of packed `RRGGBB` hex — the weather oracle's format, which
   Foundation's `NSData.decompressed(using: .zlib)` inflates.
@@ -44,7 +44,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DIR = os.path.join(ROOT, ".claude", "skills", "tc002-face-mockup", "github")
 OUT = os.path.join(ROOT, "Tests", "PixelClockKitTests", "Fixtures", "github_face_oracle.json")
 SMALL_ADDED = ["j", "_", "+", "#", "☺"]
-BIG_ADDED = ["+", "k", "m", "★"]
+BIG_ADDED = ["+", "k", "m", "★", "c", "i"]
 
 
 def load(directory):
@@ -72,13 +72,20 @@ def case_json(ggen, c, cid, dwell, celebrate):
     out = {"id": cid, "kind": c["kind"], "dwell": dwell, "celebrate": celebrate}
     if c["kind"] == "ambient":
         r = c["reading"]
-        out["reading"] = None if r is None else {"repo": r.repo, "stars": r.stars, "forks": r.forks, "prs": r.prs}
+        out["reading"] = None if r is None else {"repo": r.repo, "stars": r.stars, "forks": r.forks, "prs": r.prs,
+                                                "ci": r.ci}
         out["shortName"] = c.get("short_name")
         out["token"] = c.get("token", True)
     else:
         out["count"] = c["count"]
         out["who"] = c["who"]
-        out["prNumbers"] = list(c.get("prs", ()))
+        if c["kind"] == "ci":
+            # ggen carries the failing branch in `prs`; the Swift side takes
+            # it as its own field and has no PR numbers to show.
+            out["branch"] = c["prs"][0]
+            out["prNumbers"] = []
+        else:
+            out["prNumbers"] = list(c.get("prs", ()))
     out["frameCount"] = len(frames)
     out["framesZ"] = deflate([{"ms": ms, "rows": hexrows(g)} for g, ms in frames])
     return out, frames

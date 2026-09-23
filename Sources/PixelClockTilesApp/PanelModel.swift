@@ -37,6 +37,20 @@ final class PanelModel {
         /// The battery, when the clock has one to report — a TC002 and a
         /// clock that is not answering both say nothing here.
         let batteryLine: String?
+        /// The reading behind that line, for the card that draws the charge
+        /// as cells rather than saying it.
+        let battery: BatteryReading?
+
+        /// Whether what the card shows is current. A clock that cannot be
+        /// reached shows what it last reported, and the card greys it and says
+        /// "last known" rather than passing it off as now.
+        var isLive: Bool { dot != .red }
+    }
+
+    /// The header's count: how many of the clocks are answering right now.
+    var onlineSummary: String {
+        let online = sections.filter { $0.dot == .green }.count
+        return "\(online) of \(sections.count) online"
     }
 
     private let model: AppModel
@@ -114,7 +128,8 @@ final class PanelModel {
                 push: model.pushState(of: clock.id)
             ),
             statusLine: model.statusLine(of: clock),
-            batteryLine: model.batteryLine(of: clock)
+            batteryLine: model.batteryLine(of: clock),
+            battery: model.battery(of: clock)
         )
     }
 }

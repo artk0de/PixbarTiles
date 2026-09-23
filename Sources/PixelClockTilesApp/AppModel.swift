@@ -1630,10 +1630,14 @@ final class AppModel: ObservableObject {
     /// A clock is in exactly one of the two health maps, so this is a
     /// fall-through rather than a merge.
     func batteryLine(of clock: ClockRecord) -> String? {
-        if let ulanzi = ulanziHealths[clock.id] {
-            return BatteryLine.text(for: ulanzi.lastKnownBattery)
-        }
-        return BatteryLine.text(for: healths[clock.id]?.monitor.lastKnownBattery)
+        BatteryLine.text(for: battery(of: clock))
+    }
+
+    /// The reading behind that line, for a surface that draws the charge
+    /// rather than saying it — the panel's cards.
+    func battery(of clock: ClockRecord) -> BatteryReading? {
+        if let ulanzi = ulanziHealths[clock.id] { return ulanzi.lastKnownBattery }
+        return healths[clock.id]?.monitor.lastKnownBattery
     }
 
     /// Every connector a clock's Add tile menu can offer, in offer order:

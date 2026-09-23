@@ -168,6 +168,24 @@ enum BatteryLine {
         }
     }
 
+    /// The card's words under the cells: what happens next, where the line
+    /// spends them after the percentage — except that charging says so in
+    /// words here, because the card draws its bolt beside the housing rather
+    /// than in place of the figure.
+    ///
+    /// A clock that is not answering is showing a charge it LAST had, and the
+    /// caption says exactly that rather than an estimate the clock is no longer
+    /// feeding.
+    static func caption(for reading: BatteryReading?, live: Bool) -> String? {
+        guard let reading else { return nil }
+        guard live else { return "last known" }
+        switch reading.direction {
+        case .charging: return "Charging"
+        case .unknown: return "estimating…"
+        case .discharging: return trend(for: reading)
+        }
+    }
+
     /// How urgent the line looks.
     ///
     /// Read off the direction as well as the percentage: a clock filling up at

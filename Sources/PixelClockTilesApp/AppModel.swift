@@ -255,7 +255,7 @@ final class AppModel: ObservableObject {
     let registry: ConnectorRegistry
     /// How a clock's own registry is built — the one its session pushes
     /// through, closed over that clock's place, its tile's metric and its
-    /// key in the keychain.
+    /// key in the secret store.
     ///
     /// Optional because a test wiring a model by hand names its connectors
     /// directly and has no per-clock story; those fall back to `registry`,
@@ -263,7 +263,7 @@ final class AppModel: ObservableObject {
     private let makeClockRegistry: (@MainActor (ClockRecord) -> ConnectorRegistry)?
     /// Built once per clock and kept: a registry's connectors read their
     /// stores on every call, so one instance stays current, and rebuilding it
-    /// per preview would re-read the keychain on every keystroke.
+    /// per preview would re-read the secret store on every keystroke.
     private var clockRegistries: [UUID: ConnectorRegistry] = [:]
     /// The selected clock's health, which is what the glyph is about.
     var monitor: DeviceMonitor {
@@ -557,7 +557,7 @@ final class AppModel: ObservableObject {
     private let microphone: MicrophoneGate
     /// Where a tile's API key lives. The record holds the handle, this holds
     /// the secret — the split the z.ai tile's whole config is built around.
-    let keychain: any TileKeyStoring
+    let secrets: any SecretStoring
     private var timers: [TileKey: Task<Void, Never>] = [:]
     private var monitorLoop: Task<Void, Never>?
     /// The one-off reading a panel open asked for, still going.
@@ -700,9 +700,9 @@ final class AppModel: ObservableObject {
         now: @escaping @Sendable () -> Date = Date.init,
         microphone: MicrophoneGate,
         watching: [WatchedMicrophone] = MicrophoneGate.defaultWatchSet,
-        // The login keychain, unless the caller names another store — the
+        // The encrypted file, unless the caller names another store — the
         // suite does, because no test may touch the real one.
-        keychain: any TileKeyStoring = LoginKeychainStore(),
+        secrets: any SecretStoring = EncryptedFileSecretStore.live(),
         sleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         micSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
@@ -735,7 +735,7 @@ final class AppModel: ObservableObject {
         self.now = now
         self.microphone = microphone
         self.watchedMicrophones = watching
-        self.keychain = keychain
+        self.secrets = secrets
         self.scheduleSleep = sleep
         self.pollSleep = pollSleep
         self.micSleep = micSleep
@@ -840,7 +840,7 @@ final class AppModel: ObservableObject {
         // Offered so the Add tile menu can name it; no clock produces through
         // this instance — each clock's session builds its own, closed over
         // that clock's tile's key. The panel copy has no clock, hence no key.
-        let keychain = LoginKeychainStore()
+        let secrets = EncryptedFileSecretStore.live()
         registry.register(
             ZaiUsageConnector(
                 source: ZaiUsageAPI(transport: transport, key: { nil })
@@ -865,6 +865,7 @@ final class AppModel: ObservableObject {
             audible: Set(registry.all.filter(\.isAudible).map(\.id))
         ).run()
         try? VPNTileMigration(defaults: defaults).run()
+        SecretsMigration(defaults: defaults, keychain: LoginKeychainStore(), secrets: secrets).run()
 
         // One shared audio player and one shared weather source; everything
         // else below is per clock.
@@ -926,7 +927,7 @@ final class AppModel: ObservableObject {
                     source: ZaiUsageAPI(
                         transport: transport,
                         key: {
-                            keychain.key(for: ZaiTileConfig.account(for: TileKey(
+                            secrets.secret(for: .tile(TileKey(
                                 clockId: clock.id, connectorId: ZaiUsageConnector.connectorId
                             )))
                         }
@@ -1055,7 +1056,8 @@ final class AppModel: ObservableObject {
             focusStatus: focusStatus,
             vpn: vpn,
             microphone: MicrophoneGate(inputs: SystemAudioInputs()),
-            watching: WatchedMicrophone.stored(in: defaults)
+            watching: WatchedMicrophone.stored(in: defaults),
+            secrets: secrets
         )
     }
 
@@ -1352,8 +1354,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastZaiKeyOutcome: ZaiKeyOutcome?
 
     /// The key a paste put in, taken out of the record's way: it goes to the
-    /// keychain under the tile's own account, and the tile record remembers
-    /// only the handle. A blank paste is the removal, so the one field is how
+    /// secret store under the tile's own account, and the tile record
+    /// remembers only the handle. A blank paste is the removal, so the one field is how
     /// a key is both given and taken back.
     @discardableResult
     func saveZaiKey(_ typed: String, for key: TileKey) -> ZaiKeyOutcome {
@@ -1362,10 +1364,10 @@ final class AppModel: ObservableObject {
         let outcome: ZaiKeyOutcome
         do {
             if pasted.isEmpty {
-                try keychain.removeKey(for: account)
+                try secrets.remove(for: .tile(key))
                 outcome = .removed
             } else {
-                try keychain.save(pasted, for: account)
+                try secrets.save(pasted, for: .tile(key))
                 outcome = .saved
             }
         } catch {
@@ -1393,7 +1395,7 @@ final class AppModel: ObservableObject {
     /// Whether a key stands behind this tile — as the field's presence line
     /// puts it, without ever saying what the key is.
     func hasZaiKey(for key: TileKey) -> Bool {
-        keychain.key(for: ZaiTileConfig.account(for: key)) != nil
+        secrets.secret(for: .tile(key)) != nil
     }
 
     func removeTile(_ key: TileKey) {

@@ -548,8 +548,8 @@ func testModel(
     // Nil: one tile per connector on the first clock, from the connector's own
     // default policy — the installation the migration leaves.
     tiles: [TileRecord]? = nil,
-    // In memory, because no test may touch the login keychain.
-    keychain: any TileKeyStoring = MemoryKeychainStore(),
+    // In memory, because no test may touch the real secrets file.
+    secrets: any SecretStoring = MemorySecretStore(),
     // Nil: `host` for the first clock and a fresh `SpyHost` for any other.
     sessions: [UUID: any ConnectorRunning]? = nil,
     // Nil: the model answers Add by address with a refusal, which is what a
@@ -661,7 +661,7 @@ func testModel(
         now: now,
         microphone: microphone,
         watching: watching,
-        keychain: keychain,
+        secrets: secrets,
         sleep: sleep,
         pollSleep: pollSleep,
         micSleep: micSleep

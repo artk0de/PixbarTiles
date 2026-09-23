@@ -21,9 +21,9 @@ private struct FixedClaude: ClaudeUsageReporting {
 @MainActor
 private func model(
     tiles: [TileRecord], connectors: [any Connector] = [StubConnector()],
-    keychain: any TileKeyStoring = MemoryKeychainStore()
+    secrets: any SecretStoring = MemorySecretStore()
 ) -> AppModel {
-    testModel(connectors: connectors, clocks: [kitchen], tiles: tiles, keychain: keychain)
+    testModel(connectors: connectors, clocks: [kitchen], tiles: tiles, secrets: secrets)
 }
 
 private func tile(_ connectorId: String, config: TileConfig? = nil) -> TileRecord {

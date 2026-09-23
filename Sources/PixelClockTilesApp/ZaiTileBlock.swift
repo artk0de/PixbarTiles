@@ -40,7 +40,7 @@ struct ZaiTileBlock: View {
                 .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             if let outcome, outcome == .refused {
-                Text("The keychain refused the paste — try again.")
+                Text("The key store refused the paste — try again.")
                     .font(.caption)
                     .foregroundStyle(.red)
             }

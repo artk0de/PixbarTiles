@@ -95,7 +95,7 @@ import Testing
     /// is exactly the documented API — verified above as queries — and is
     /// never exercised against the user's own keychain from a test.
     @Test func theLoginStoreAnswersToTheSameContract() {
-        let store: any TileKeyStoring = LoginKeychainStore()
+        let store = LoginKeychainStore()
 
         #expect(store.key(for: "no-such-tile-in-a-fresh-store") == nil)
     }

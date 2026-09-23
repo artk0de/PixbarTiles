@@ -46,7 +46,7 @@ public enum TileConfig: Equatable, Sendable {
     }
 
     /// The z.ai tile's key handle, or nil for any other tile. A handle: the
-    /// key itself lives in the login keychain and is never stored here.
+    /// key itself lives in the secret store and is never stored here.
     public var key: ZaiTileConfig? {
         guard case let .zai(handle) = self else { return nil }
         return handle

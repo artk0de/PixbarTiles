@@ -4,17 +4,19 @@ import Foundation
 /// What the z.ai tile needs that no other tile does: where its key lives.
 ///
 /// A HANDLE, and the distinction is the whole point of the type: the API key
-/// itself is stored in the login keychain under the account this names, so
-/// the tiles JSON in UserDefaults never holds the secret — a defaults dump
-/// cannot leak what it never carried.
+/// itself is stored in the secret store under the tile's own account, so the
+/// tiles JSON in UserDefaults never holds the secret — a defaults dump cannot
+/// leak what it never carried.
 ///
 /// It also carries the shared coding-subscription parameters — the SAME list
 /// the Claude tile offers — beside the handle under their own names. Left out of the JSON while they are the
 /// defaults, so a record written before they existed — the handle alone —
 /// reads as a tile at the defaults and is never rewritten.
 public struct ZaiTileConfig: Equatable, Sendable, Codable {
-    /// The keychain account the tile's key is filed under, as `account(for:)`
-    /// derived it.
+    /// The login-keychain account the tile's key was filed under before the
+    /// encrypted file, as `account(for:)` derived it. Read only by the
+    /// one-time move out of the keychain; the key itself is now filed under
+    /// `SecretAccount.tile` of the tile's key.
     public let keyAccount: String
     public var parameters: CodeUsage.Parameters
 

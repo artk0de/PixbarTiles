@@ -5,18 +5,18 @@ import Testing
 @testable import PixelClockTilesApp
 
 // The paste is the key's whole life above the store: typed into the tile's
-// detail, written to the keychain under the tile's own account, remembered by
-// the record as a HANDLE only. The tiles JSON in UserDefaults must never hold
-// the secret, so every test here reads the stored records back and looks.
+// detail, written to the secret store under the tile's own account, remembered
+// by the record as a HANDLE only. The tiles JSON in UserDefaults must never
+// hold the secret, so every test here reads the stored records back and looks.
 
-/// Refuses every write, the way a locked-down keychain can.
-private final class LockedKeychainStore: TileKeyStoring, @unchecked Sendable {
-    func key(for account: String) -> String? { nil }
-    func save(_ key: String, for account: String) throws {
-        throw TileKeyError(status: errSecAuthFailed)
+/// Refuses every write, the way a store with no hardware identity does.
+private final class LockedSecretStore: SecretStoring, @unchecked Sendable {
+    func secret(for account: SecretAccount) -> String? { nil }
+    func save(_ secret: String, for account: SecretAccount) throws {
+        throw SecretStoreError(reason: "locked")
     }
-    func removeKey(for account: String) throws {
-        throw TileKeyError(status: errSecAuthFailed)
+    func remove(for account: SecretAccount) throws {
+        throw SecretStoreError(reason: "locked")
     }
 }
 
@@ -29,11 +29,11 @@ private final class LockedKeychainStore: TileKeyStoring, @unchecked Sendable {
     }
 
     private func makeModel(
-        _ keychain: any TileKeyStoring = MemoryKeychainStore()
+        _ secrets: any SecretStoring = MemorySecretStore()
     ) -> (model: AppModel, defaults: UserDefaults) {
         let defaults = UserDefaults(suiteName: "zai-wiring-\(UUID().uuidString)")!
         let model = testModel(
-            defaults: defaults, clocks: [clock], tiles: zaiTile, keychain: keychain
+            defaults: defaults, clocks: [clock], tiles: zaiTile, secrets: secrets
         )
         return (model, defaults)
     }
@@ -45,12 +45,12 @@ private final class LockedKeychainStore: TileKeyStoring, @unchecked Sendable {
     }
 
     @Test func aPasteLandsInTheStoreUnderTheTilesOwnAccount() {
-        let keychain = MemoryKeychainStore()
-        let (model, _) = makeModel(keychain)
+        let secrets = MemorySecretStore()
+        let (model, _) = makeModel(secrets)
 
         model.saveZaiKey("sk-paste", for: key)
 
-        #expect(keychain.key(for: ZaiTileConfig.account(for: key)) == "sk-paste")
+        #expect(secrets.secret(for: .tile(key)) == "sk-paste")
         #expect(model.hasZaiKey(for: key))
     }
 
@@ -74,20 +74,20 @@ private final class LockedKeychainStore: TileKeyStoring, @unchecked Sendable {
     /// A blank paste is a removal, not a save of nothing: the field is how a
     /// key is taken back, and clearing it leaves the tile keyless.
     @Test func aBlankPasteTakesTheKeyAway() {
-        let keychain = MemoryKeychainStore()
-        let (model, _) = makeModel(keychain)
+        let secrets = MemorySecretStore()
+        let (model, _) = makeModel(secrets)
         model.saveZaiKey("sk-paste", for: key)
 
         model.saveZaiKey("   ", for: key)
 
-        #expect(keychain.key(for: ZaiTileConfig.account(for: key)) == nil)
+        #expect(secrets.secret(for: .tile(key)) == nil)
         #expect(model.hasZaiKey(for: key) == false)
     }
 
     /// A store that refuses is said out loud: a paste the user believes was
     /// taken must not quietly never have been.
     @Test func aRefusedPasteIsSaidNotSwallowed() {
-        let (model, _) = makeModel(LockedKeychainStore())
+        let (model, _) = makeModel(LockedSecretStore())
 
         #expect(model.saveZaiKey("sk-paste", for: key) == .refused)
         #expect(model.hasZaiKey(for: key) == false)

@@ -75,35 +75,17 @@ public final class MemorySecretStore: SecretStoring, @unchecked Sendable {
     }
 }
 
-/// Where a tile's API key lives: one secret per tile, out of the tile record.
-///
-/// A protocol rather than the keychain itself, so everything above it — the
-/// paste field, the connector's reads, every test in the suite — runs against
-/// a store it names, and no test ever reaches the user's login keychain.
-///
-/// Nothing here caches. A look is always a real look, for the same reason the
-/// Claude reader's was: a key pasted into the tile's detail must be on its way
-/// to the service at the next poll, not at the next launch.
-public protocol TileKeyStoring: Sendable {
-    /// The key stored under this account, or nil when there is none. A failed
-    /// read reads as no key: the item is ours, so a failure means it is not
-    /// there, and there is nothing honest to say beyond that.
-    func key(for account: String) -> String?
-    /// Stores a key under this account, replacing any key already there.
-    /// Throws when the store refuses — a paste the store did not take is a
-    /// paste the user has to be told about, not one that silently never was.
-    func save(_ key: String, for account: String) throws
-    /// Takes a key away. Removing one that is not there is fine: the wanted
-    /// end state is "no key", and that is what exists after.
-    func removeKey(for account: String) throws
-}
-
 /// The login keychain, under this app's own service name.
 ///
 /// These items are the app's own — written by `save`, read by `key` — so,
 /// unlike the Claude credential this app used to read, looking at them raises
 /// no prompt about another program's secrets.
-public struct LoginKeychainStore: TileKeyStoring {
+///
+/// Legacy: z.ai keys lived here until the encrypted file replaced it, because
+/// an ad-hoc-signed app is asked for the password after every re-sign. Kept
+/// only so the app's one-time migration can read the old items and delete
+/// them; nothing new is written here.
+public struct LoginKeychainStore: Sendable {
     /// The service every one of this app's items is filed under. Namespaced to
     /// the app because the login keychain is shared with every other program's
     /// items: an unadorned account name would be a collision waiting for a
@@ -197,41 +179,5 @@ public struct TileKeyError: Error, Sendable, Equatable {
 
     public init(status: OSStatus) {
         self.status = status
-    }
-}
-
-/// A keychain in memory, for the suite.
-///
-/// The fixture every test may stand on instead of the user's login keychain,
-/// which no test may ever touch. It answers to exactly the contract above —
-/// same round-trip, same replace, same silent success on removing what is not
-/// there — because it is also the shape any future store has to match.
-///
-/// A class so the state it holds is the state everyone holding it sees: a
-/// store that forked on assignment would hand back a key nobody saved. The
-/// lock is what makes the unchecked `Sendable` a true sentence — every touch
-/// of the items goes through it.
-public final class MemoryKeychainStore: TileKeyStoring, @unchecked Sendable {
-    private let lock = NSLock()
-    private var items: [String: String] = [:]
-
-    public init() {}
-
-    public func key(for account: String) -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return items[account]
-    }
-
-    public func save(_ key: String, for account: String) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        items[account] = key
-    }
-
-    public func removeKey(for account: String) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        items.removeValue(forKey: account)
     }
 }

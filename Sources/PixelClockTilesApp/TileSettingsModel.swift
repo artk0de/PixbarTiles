@@ -7,7 +7,7 @@ import PixelClockKit
 /// draft its controls edit, and the preview those controls flip.
 ///
 /// The preview is THE FACE, not a drawing of it: the connector reads the sky
-/// and the same `canvas(for:config:)` the device push draws encodes to a GIF
+/// and the same `WeatherFace` timeline the device push ships encodes to a GIF
 /// through the kit's own writer, so the pixels on screen are the pixels a
 /// poll would send. What makes that affordable is the debounce — every
 /// control change costs a render — and what makes it honest is that the
@@ -99,6 +99,49 @@ final class TileSettingsModel {
 
     func setShowFeelsLike(_ shown: Bool) {
         edit { $0.showsFeelsLike = shown }
+    }
+
+    // The TC002 face's settings — the same edit as the scale: the draft
+    // moves, the preview follows, the record is written.
+
+    func setLayout(_ layout: WeatherTileConfig.Layout) {
+        edit { $0.layout = layout }
+    }
+
+    func setChangeEvery(_ seconds: TimeInterval) {
+        edit { $0.changeEvery = seconds }
+    }
+
+    func setFeelsLikeColour(_ felt: Bool) {
+        edit { $0.feelsLikeColour = felt }
+    }
+
+    func setShowsWind(_ shown: Bool) {
+        edit { $0.showsWind = shown }
+    }
+
+    func setWindUnit(_ unit: WindUnit) {
+        edit { $0.windUnit = unit }
+    }
+
+    func setShowsHiLo(_ shown: Bool) {
+        edit { $0.showsHiLo = shown }
+    }
+
+    func setShowsRainChance(_ shown: Bool) {
+        edit { $0.showsRainChance = shown }
+    }
+
+    func setShowsUV(_ shown: Bool) {
+        edit { $0.showsUV = shown }
+    }
+
+    func setShowsSunEvents(_ shown: Bool) {
+        edit { $0.showsSunEvents = shown }
+    }
+
+    func setShowsHourly(_ shown: Bool) {
+        edit { $0.showsHourly = shown }
     }
 
     /// Saves the draft's place, said in words, through the field's own
@@ -296,10 +339,15 @@ final class TileSettingsModel {
         let note: String?
 
         static func picture(_ frames: [PixelCanvas], delay: TimeInterval) -> Rendered {
+            picture(frames, delays: Array(repeating: delay, count: frames.count))
+        }
+
+        /// A timeline whose frames each carry their own delay.
+        static func picture(_ frames: [PixelCanvas], delays: [TimeInterval]) -> Rendered {
             guard frames.isEmpty == false else {
                 return Rendered(gif: nil, note: "This tile draws nothing on this clock.")
             }
-            guard let gif = try? FullFrameGif.encode(frames: frames, delay: delay) else {
+            guard let gif = try? FullFrameGif.encode(frames: frames, delays: delays) else {
                 return Rendered(gif: nil, note: "The face could not be encoded.")
             }
             return Rendered(gif: gif, note: nil)
@@ -344,8 +392,15 @@ final class TileSettingsModel {
             }
             switch clockModel {
             case .ulanziTC002:
+                // The face the clock is sent, as one sequence — Anchor's two
+                // loops merged — every frame at its own delay, played the way
+                // the usage face's GIF is.
+                let frames = WeatherFace.preview(
+                    reading: reading, config: draft, now: Date(), timeZone: .current
+                )
                 return .picture(
-                    [WeatherConnector.canvas(for: reading, config: draft)], delay: stillFrameDelay
+                    frames.map(\.canvas),
+                    delays: frames.map { TimeInterval($0.milliseconds) / 1000 }
                 )
             case .awtrix3:
                 return frames(

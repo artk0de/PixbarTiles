@@ -323,3 +323,99 @@ private func weatherTile(on clock: ClockRecord) -> TileRecord {
     #expect(subject.lastRefusal == nil)
     await model.teardown()
 }
+
+// MARK: - The TC002 face's settings
+
+// Every one of the face's settings is a control like the scale: the draft
+// moves, and the record is written without a save button. Each test moves
+// its setting OFF the shipped default, so a setter that wrote nothing — or
+// wrote the default back — cannot pass.
+@MainActor
+private func expectSetterLands(
+    _ apply: (TileSettingsModel) -> Void,
+    _ read: @escaping (WeatherTileConfig) -> Bool
+) async {
+    let (model, _) = weatherModel(tiles: [weatherTile(on: desk)])
+    let subject = TileSettingsModel(model: model, debounce: 0)
+    let key = TileKey(clockId: desk.id, connectorId: "weather")
+    model.openDetail(for: key)
+    #expect(await waitUntil { subject.key == key })
+    #expect(subject.draft.map(read) == false)
+
+    apply(subject)
+
+    #expect(subject.draft.map(read) == true)
+    #expect(await waitUntil { model.storedTile(key)?.config?.weatherConfig.map(read) == true })
+    await model.teardown()
+}
+
+@Test @MainActor func settingTheLayoutIsWritten() async {
+    await expectSetterLands({ $0.setLayout(.pages) }, { $0.layout == .pages })
+}
+
+@Test @MainActor func settingTheChangeIntervalIsWritten() async {
+    await expectSetterLands({ $0.setChangeEvery(5) }, { $0.changeEvery == 5 })
+}
+
+@Test @MainActor func settingTheFeelsLikeColourIsWritten() async {
+    await expectSetterLands({ $0.setFeelsLikeColour(false) }, { $0.feelsLikeColour == false })
+}
+
+@Test @MainActor func settingTheWindLineIsWritten() async {
+    await expectSetterLands({ $0.setShowsWind(false) }, { $0.showsWind == false })
+}
+
+@Test @MainActor func settingTheWindUnitIsWritten() async {
+    await expectSetterLands({ $0.setWindUnit(.milesPerHour) }, { $0.windUnit == .milesPerHour })
+}
+
+@Test @MainActor func settingTheHiLoLineIsWritten() async {
+    await expectSetterLands({ $0.setShowsHiLo(false) }, { $0.showsHiLo == false })
+}
+
+@Test @MainActor func settingTheRainChanceLineIsWritten() async {
+    await expectSetterLands({ $0.setShowsRainChance(false) }, { $0.showsRainChance == false })
+}
+
+@Test @MainActor func settingTheUVLineIsWritten() async {
+    await expectSetterLands({ $0.setShowsUV(true) }, { $0.showsUV == true })
+}
+
+@Test @MainActor func settingTheSunEventsLineIsWritten() async {
+    await expectSetterLands({ $0.setShowsSunEvents(true) }, { $0.showsSunEvents == true })
+}
+
+@Test @MainActor func settingTheHourlyChartIsWritten() async {
+    await expectSetterLands({ $0.setShowsHourly(false) }, { $0.showsHourly == false })
+}
+
+// A TC002 weather tile previews the face it is sent — `WeatherFace.preview`,
+// every frame at its own delay — not the still raster the clock used to get.
+// A still is one frame; the face is an animation on a 52×16 panel.
+@Test @MainActor func aTC002WeatherTilePreviewsTheAnimatedFace() async {
+    let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.7")
+    let transport = SkyAndClockTransport(sky: skyWithAnswers)
+    let key = TileKey(clockId: kitchen.id, connectorId: "weather")
+    let model = testModel(
+        connectors: [weatherConnector(over: transport), StubConnector(isAudible: false)],
+        transport: transport,
+        clocks: [kitchen],
+        tiles: [
+            TileRecord(
+                key: key,
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600),
+                config: .weather(WeatherTileConfig(place: aDesk))
+            )
+        ]
+    )
+    let subject = TileSettingsModel(model: model, debounce: 0)
+
+    model.openDetail(for: key)
+    #expect(await waitUntil { subject.preview != nil })
+
+    let played = subject.preview.flatMap(PixelPreviewFrames.init(gif:))
+    #expect((played?.images.count ?? 0) > 1)
+    #expect(played?.images.first?.width == PixelCanvas.width)
+    #expect(played?.images.first?.height == PixelCanvas.height)
+    await model.teardown()
+}

@@ -124,10 +124,9 @@ public struct WeatherConnector: Connector {
     /// Separated from `read()` so the drawing can be tested against a reading
     /// rather than against a network, as `ClaudeUsageConnector.output(for:)`
     /// already is.
-    /// Public for the same reason `canvas(for:config:)` is: the preview IS a
-    /// caller, and it draws the DRAFT rather than the stored config — through
-    /// this very function, so what it shows cannot be a different drawing
-    /// from what a poll sends.
+    /// Public because the preview IS a caller, and it draws the DRAFT rather
+    /// than the stored config — through this very function, so what it shows
+    /// cannot be a different drawing from what a poll sends.
     public static func output(
         for reading: WeatherReading, config: WeatherTileConfig
     ) -> AwtrixDelivery {
@@ -187,10 +186,10 @@ public struct WeatherConnector: Connector {
     }
 
     /// The TC002's former still raster — the temperature at scale 2 over a
-    /// humidity and feels-like band. The clock no longer receives it
-    /// (`ulanziOutput` ships `WeatherFace`); it stays public because the
-    /// tile settings window's preview still renders it until that preview
-    /// plays `WeatherFace.preview`.
+    /// humidity and feels-like band. Nothing in the app draws it any more:
+    /// the clock receives `WeatherFace.delivery` and the settings preview
+    /// plays `WeatherFace.preview`. Only the tests that pin its raster still
+    /// call it.
     public static func canvas(
         for reading: WeatherReading, config: WeatherTileConfig
     ) -> PixelCanvas {

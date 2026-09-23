@@ -27,9 +27,8 @@ public struct GitHubReading: Sendable, Equatable {
 /// How a GitHub reading is drawn on each clock model.
 ///
 /// The TC002 face is `GitHubFace` — the `ggen.py` port, with a celebration
-/// interruption per kind of arrival. The AWTRIX side is still a PLACEHOLDER
-/// until Task 10: the counts as plain text, with no celebration; the TC001
-/// app and its jingled notification replace it.
+/// interruption per kind of arrival. The AWTRIX face is `GitHubAwtrixFace`:
+/// an app in the loop, and a notification with a jingle per kind of arrival.
 public struct GitHubFaces: Sendable {
     /// The reading and the tile's wire name, which is the AWTRIX app's name.
     public var awtrix: @Sendable (GitHubReading, String) -> AwtrixDelivery
@@ -43,22 +42,8 @@ public struct GitHubFaces: Sendable {
         self.ulanzi = ulanzi
     }
 
-    /// The AWTRIX closure is replaced by Task 10; see the type's note.
     public static let standard = GitHubFaces(
-        awtrix: { reading, appName in
-            let name = reading.config.shortName ?? reading.config.repo
-            let text = switch reading.content {
-            case .noToken: "\(name) no token"
-            case .noData: "\(name) no data"
-            case let .state(state): "\(name) \(state.stars)"
-            }
-            return AwtrixDelivery(
-                text: text, color: "#FFD84A", surface: .app(appName),
-                // Half an hour, as the z.ai app: the page clears itself off
-                // the loop when the Mac stops feeding it.
-                lifetime: 1_800
-            )
-        },
+        awtrix: { GitHubAwtrixFace.draw($0, appName: $1) },
         ulanzi: { GitHubFace.delivery(for: $0) }
     )
 }

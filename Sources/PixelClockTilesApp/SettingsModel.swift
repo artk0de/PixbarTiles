@@ -76,6 +76,27 @@ final class SettingsModel {
 
     func statusLine(of clock: ClockRecord) -> String { model.statusLine(of: clock) }
 
+    /// The clocks as the Clocks tab lists them, in stored order.
+    ///
+    /// Built here rather than in the view: the dot is the same computation the
+    /// panel's sections run, and a projection nothing can reach is a projection
+    /// nothing can check.
+    var clockEntries: [ClockListEntry] {
+        model.clocks.map { clock in
+            ClockListEntry(
+                id: clock.id,
+                name: clock.name,
+                device: clock.model,
+                address: clock.address,
+                status: model.statusLine(of: clock),
+                dot: PanelModel.dot(
+                    reachability: model.reachability(of: clock.id),
+                    push: model.pushState(of: clock.id)
+                )
+            )
+        }
+    }
+
     func renameClock(_ id: UUID, to name: String) { model.renameClock(id, to: name) }
     func removeClock(_ id: UUID) { model.removeClock(id) }
 

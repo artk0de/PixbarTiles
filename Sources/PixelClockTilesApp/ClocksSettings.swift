@@ -2,12 +2,19 @@ import PixelClockKit
 import SwiftUI
 
 /// One configured clock, as the Clocks section lists it.
+///
+/// The device is the model itself rather than its spoken name, and the dot
+/// comes over with it. The list and the panel are two views of the same clocks,
+/// and they used to describe them in two vocabularies — the panel drawing the
+/// device and reading its dot, the list writing a grey "TC002 · … · Connected".
+/// A reader cannot hold one surface against the other that way.
 struct ClockListEntry: Identifiable {
     let id: UUID
     let name: String
-    let model: String
+    let device: ClockModel
     let address: String
     let status: String
+    let dot: PanelModel.ClockDot
 }
 
 // `DiscoveredClock` — a clock the discovery has seen advertising itself, not
@@ -133,7 +140,12 @@ struct ClocksSettings: View {
                     }
                 }
             }
-            Section {
+            // Headed, because a grouped form reads a text field's placeholder
+            // as the row's LEADING LABEL: "Add by address — 10.0.0.5" was
+            // being drawn at label size down the left of the row, with an
+            // unexplained empty box beside it. The instruction belongs in the
+            // header, and the placeholder is left to do its own job.
+            Section("Add by address") {
                 AddByAddressRow(onAdd: onAddByAddress)
                 // Under the section rather than beside either button: both paths
                 // answer here, so the reader of one refusal is the reader of both.
@@ -181,10 +193,30 @@ private struct ClockEntryRow: View {
     let onRename: (String) -> Void
     let onRemove: () -> Void
 
+    @Environment(\.colorScheme) private var scheme
     @State private var renaming = false
 
+    private var dark: Bool { scheme == .dark }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .top, spacing: 10) {
+            // The clock itself, drawn the way the panel's cards draw it — the
+            // one mark that says which of the two this row is without being
+            // read.
+            PixelArt(
+                map: PanelGlyph.map(for: entry.device),
+                palette: PanelGlyph.devicePalette(
+                    for: entry.device, dark: dark, live: entry.dot != .red
+                )
+            )
+            .frame(width: 42, height: 36, alignment: .top)
+            details
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 3) {
             HStack {
                 if renaming {
                     InlineRenameField(
@@ -233,9 +265,29 @@ private struct ClockEntryRow: View {
                     .help("Remove \(entry.name)")
                 }
             }
-            Text("\(entry.model) · \(entry.address) · \(entry.status)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text("\(entry.device.spokenName) · \(entry.address)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                // The connection said the way the panel says it: the lamp
+                // carries the urgency and the word carries the detail, so the
+                // two surfaces cannot disagree about what "down" looks like.
+                PixelArt(map: PanelGlyph.led, palette: PanelGlyph.ledPalette(for: entry.dot))
+                Text(entry.status)
+                    .font(.caption)
+                    .foregroundStyle(Color(hex: Self.tint(of: entry.dot)))
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(entry.name), \(entry.device.spokenName), \(entry.address), \(entry.status)")
+    }
+
+    private static func tint(of dot: PanelModel.ClockDot) -> UInt32 {
+        switch dot {
+        case .green: PanelGlyph.onlineTint
+        case .yellow: PanelGlyph.checkingTint
+        case .red: PanelGlyph.offlineTint
         }
     }
 }
@@ -254,8 +306,9 @@ private struct AddByAddressRow: View {
 
     var body: some View {
         HStack {
-            TextField("Add by address — 10.0.0.5", text: $address)
+            TextField("10.0.0.5", text: $address)
                 .textFieldStyle(.roundedBorder)
+                .labelsHidden()
                 // Typing an address and pressing Return is what a person
                 // does; reaching for the button beside it afterwards was the
                 // step this field made them take.

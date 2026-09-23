@@ -20,11 +20,12 @@ private func drawn(_ view: some View, height: CGFloat = 300) -> Data? {
 }
 
 private func entry(
-    name: String = "Kitchen", model: String = "TC002",
-    address: String = "192.168.1.72", status: String = "Connected"
+    name: String = "Kitchen", device: ClockModel = .ulanziTC002,
+    address: String = "192.168.1.72", status: String = "Connected",
+    dot: PanelModel.ClockDot = .green
 ) -> ClockListEntry {
-    ClockListEntry(id: UUID(), name: name, model: model,
-                   address: address, status: status)
+    ClockListEntry(id: UUID(), name: name, device: device,
+                   address: address, status: status, dot: dot)
 }
 
 @Suite struct ClocksSettingsValueTests {
@@ -57,7 +58,7 @@ private func entry(
         let base = drawn(section())
         #expect(base != nil)
         #expect(base != drawn(section(entries: [entry(name: "Desk")])))
-        #expect(base != drawn(section(entries: [entry(model: "TC001")])))
+        #expect(base != drawn(section(entries: [entry(device: .awtrix3)])))
         #expect(base != drawn(section(entries: [entry(address: "10.0.0.5")])))
         #expect(base != drawn(section(entries: [entry(status: "Disconnected")])))
     }
@@ -71,7 +72,7 @@ private func entry(
         #expect(confirming != nil)
         #expect(confirming != drawn(section()))
         #expect(confirming == drawn(
-            section(entries: [entry(model: "TC001", address: "10.0.0.5",
+            section(entries: [entry(device: .awtrix3, address: "10.0.0.5",
                                    status: "Disconnected")], confirming: true)
         ))
         #expect(confirming != drawn(
@@ -128,5 +129,43 @@ private func entry(
             drawn(section(outcome: "Added Kitchen."))
                 != drawn(section(outcome: "already configured at 192.168.1.72"))
         )
+    }
+}
+
+// The settings list and the panel are two views of the same two clocks, and
+// they used to describe them in two vocabularies: the panel draws the device
+// and reads its dot, the list wrote "TC002 · … · Connected" in grey. The row
+// carries the same two facts now, so one surface cannot be read against the
+// other.
+
+@MainActor @Suite struct ClockEntryProjectionTests {
+    @Test func anEntryCarriesTheDeviceItIsAndTheDotItHasEarned() throws {
+        let model = testModel(clocks: [
+            ClockRecord(name: "Desk", model: .ulanziTC002, address: "192.168.1.72")
+        ])
+
+        let entry = try #require(SettingsModel(model: model).clockEntries.first)
+        let record = try #require(model.clocks.first)
+
+        #expect(entry.name == "Desk")
+        #expect(entry.device == .ulanziTC002)
+        // The record's own address, whatever a relocation has since made it —
+        // the projection copies, it does not decide.
+        #expect(entry.address == record.address)
+        // Nothing has answered and nothing has been pushed, which is the dot's
+        // middle answer — not a clock that is down.
+        #expect(entry.dot == .yellow)
+    }
+
+    @Test func eachClockIsProjectedInTheStoredOrder() {
+        let model = testModel(clocks: [
+            ClockRecord(name: "Desk", model: .ulanziTC002, address: "192.168.1.72"),
+            ClockRecord(name: "Shelf", model: .awtrix3, address: "10.0.0.5"),
+        ])
+
+        let entries = SettingsModel(model: model).clockEntries
+
+        #expect(entries.map(\.name) == ["Desk", "Shelf"])
+        #expect(entries.map(\.device) == [.ulanziTC002, .awtrix3])
     }
 }

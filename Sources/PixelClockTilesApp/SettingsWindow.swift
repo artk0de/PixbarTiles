@@ -65,17 +65,8 @@ private struct ClocksTab: View {
     @State private var addOutcome: String?
 
     var body: some View {
-        ScrollView {
         ClocksSettings(
-            entries: settings.clocks.map { clock in
-                ClockListEntry(
-                    id: clock.id,
-                    name: clock.name,
-                    model: clock.model.spokenName,
-                    address: clock.address,
-                    status: settings.statusLine(of: clock)
-                )
-            },
+            entries: settings.clockEntries,
             // A clock already configured is not a find: its address is in
             // the store, and offering it again is offering a duplicate.
             discovered: discovery.found.filter { found in
@@ -97,8 +88,10 @@ private struct ClocksTab: View {
                 }
             }
         )
-        }
-        .padding(20)
+        // No ScrollView and no padding around it: a grouped Form IS a scroll
+        // view with its own insets, and nesting one inside another gave the
+        // tab two sets of margins and a list that could not reach the window's
+        // edges — the dead band the Clocks tab was read as.
         .onAppear { settings.clocksSectionVisibilityChanged(true) }
         .onDisappear { settings.clocksSectionVisibilityChanged(false) }
     }

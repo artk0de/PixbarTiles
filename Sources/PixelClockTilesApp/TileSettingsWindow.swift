@@ -17,7 +17,11 @@ struct TileSettingsWindow: View {
     private let claudeCode: () -> ClaudeCodeLinkModel
     /// Which half of the settings is showing: what makes THIS tile special,
     /// or the rules every tile shares.
-    @State private var section: Section = .tile
+    ///
+    /// `Half` rather than `Section`, which is what it used to be called: a
+    /// nested `Section` SHADOWS `SwiftUI.Section` throughout this type, and
+    /// the controls column is a grouped form made of them now.
+    @State private var half: Half = .tile
     /// Whether the anecdote history is up over this window.
     ///
     /// A sheet here and a panel swap there, over one `HistoryList`. The
@@ -26,7 +30,7 @@ struct TileSettingsWindow: View {
     /// else: this is an ordinary window, and a sheet on it stays up.
     @State private var showingHistory = false
 
-    enum Section: String, CaseIterable, Identifiable {
+    enum Half: String, CaseIterable, Identifiable {
         case tile
         case common
 
@@ -55,50 +59,24 @@ struct TileSettingsWindow: View {
             let value = model.detailValue(for: key),
             let stored = model.storedPolicy(of: key)
         {
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("\(value.name) · \(clockName(of: key))").font(.headline)
-                    Picker("Section", selection: $section) {
-                        ForEach(Section.allCases) { tab in
-                            Text(tab.title).tag(tab)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    switch section {
-                    case .tile:
-                        connectorBlock(for: key, value: value)
-                    case .common:
-                        TilePolicyEditor(policy: Binding(
-                            get: { stored },
-                            set: { settings.save(policy: $0, config: value.config) }
-                        ))
-                    }
-                    // What the model said no to, under the controls that
-                    // asked. Two lamp tiles claiming one corner at the same
-                    // moment is the refusal a person actually meets, and it
-                    // used to be discarded: the picker sprang back and the
-                    // window said nothing at all.
-                    if let refusal = settings.lastRefusal {
-                        Label(refusal, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                }
-                .frame(width: 250, alignment: .leading)
+            HStack(spacing: 0) {
+                controlsColumn(for: key, value: value, stored: stored)
                 Divider()
                 previewColumn
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            // A floor, as the other three windows have. This branch had
-            // none: the controls column is a fixed 250 and the preview is a
-            // fixed panel, so dragging the window narrower clipped one of
-            // them off rather than laying them out smaller. The number is
-            // what the two columns, the divider and the padding come to.
-            .frame(minWidth: 560, minHeight: 320)
+            // The tile and its clock are the WINDOW's name now, not a
+            // headline inside it. `glassWindow()` hands the material to the
+            // window and hides the toolbar band, so content is drawn under
+            // the titlebar — and the headline that used to be the first thing
+            // in this column was drawn under the title and the traffic
+            // lights, on top of each other.
+            .navigationTitle(value.name)
+            .navigationSubtitle(clockName(of: key))
+            // A floor that fits what is actually in here. The old 560×320 was
+            // smaller than the controls, so the window could be dragged to a
+            // size where the last toggles, the reset and half the preview
+            // were simply cut off — with nothing scrolling to reach them.
+            .frame(minWidth: 620, minHeight: 460)
             .glassWindow()
             .sheet(isPresented: $showingHistory) { historySheet }
             // The window going away is the detail closing: the panel's
@@ -145,6 +123,69 @@ struct TileSettingsWindow: View {
     }
 
     // MARK: - The controls column
+
+    /// The half-picker in a band of its own, then the controls as a grouped
+    /// form.
+    ///
+    /// A form, and that is the fix rather than a finish: the column was a
+    /// plain `VStack` at a fixed 250, so a window dragged smaller CLIPPED the
+    /// bottom of it — the last toggles and the reset went off the edge with
+    /// no way to reach them. A grouped form is a scroll view, and it aligns
+    /// every label to one gutter, which nine toggles under four pickers need
+    /// more than any other surface in the app.
+    ///
+    /// The band's own padding is what clears the titlebar. `glassWindow()`
+    /// hides the toolbar background so the material reads under the title,
+    /// which also means the first control sits under it unless something
+    /// stands it off — the 16 that used to be here was less than the
+    /// titlebar is tall.
+    @ViewBuilder
+    private func controlsColumn(
+        for key: TileKey, value: (name: String, config: TileConfig?), stored: TilePolicy
+    ) -> some View {
+        VStack(spacing: 0) {
+            Picker("Half", selection: $half) {
+                ForEach(Half.allCases) { tab in
+                    Text(tab.title).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 16)
+            .padding(.top, 28)
+            .padding(.bottom, 10)
+            Form {
+                switch half {
+                case .tile:
+                    connectorBlock(for: key, value: value)
+                case .common:
+                    TilePolicyEditor(policy: Binding(
+                        get: { stored },
+                        set: { settings.save(policy: $0, config: value.config) }
+                    ))
+                }
+                // What the model said no to, under the controls that asked.
+                // Two lamp tiles claiming one corner at the same moment is
+                // the refusal a person actually meets, and it used to be
+                // discarded: the picker sprang back and the window said
+                // nothing at all.
+                if let refusal = settings.lastRefusal {
+                    Label(refusal, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .formStyle(.grouped)
+            // A grouped form paints an opaque scroll background over the
+            // material behind it, as the Clocks tab did before this line.
+            .scrollContentBackground(.hidden)
+        }
+        // A range, not a number. The fixed 250 could neither grow with a
+        // window dragged wider nor shrink with one dragged narrower, so the
+        // labels were cut off at the left edge instead of laying out smaller.
+        .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
+    }
 
     /// The tile's own block beside the shared policy editor: what this
     /// connector has that no other does. A connector with nothing of its own
@@ -271,7 +312,7 @@ struct TileSettingsWindow: View {
     // MARK: - The preview column
 
     private var previewColumn: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: 8) {
             Text("On the clock").font(.caption).foregroundStyle(.secondary)
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
@@ -302,8 +343,13 @@ struct TileSettingsWindow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Spacer()
         }
+        // Centred in the half it has, rather than pinned to the top with a
+        // `Spacer` under it. The panel is a small fixed picture and this
+        // column is most of the window: pinned, the window read as a picture
+        // with a large empty area below it.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(16)
     }
 
     /// One clock pixel drawn as this many points. Six is what the design
@@ -349,9 +395,16 @@ struct WeatherTileControls: View {
 
     var body: some View {
         if let draft = settings.draft {
-            VStack(alignment: .leading, spacing: 10) {
+            // Four sections, because nine toggles under four pickers in one
+            // undifferentiated run is a list a reader has to search rather
+            // than scan — and the run was long enough to fall off the bottom
+            // of the window. The grouping is the face's own: where it looks,
+            // how it moves, what it counts in, what it draws.
+            Section("Place") {
                 WeatherTileBlock(place: draft.place, onSave: { settings.savePlace($0) })
-                Picker("Layout", selection: Binding(
+            }
+            Section("Layout") {
+                Picker("Arrangement", selection: Binding(
                     get: { draft.layout },
                     set: { settings.setLayout($0) }
                 )) {
@@ -368,14 +421,16 @@ struct WeatherTileControls: View {
                         Text(UsageFaceBlock.everyCaption($0)).tag($0)
                     }
                 }
-                Picker("Units", selection: Binding(
+            }
+            Section("Units") {
+                Picker("Temperature", selection: Binding(
                     get: { draft.units },
                     set: { settings.setUnits($0) }
                 )) {
                     Text("°C — Celsius").tag(WeatherTileConfig.Units.celsius)
                     Text("°F — Fahrenheit").tag(WeatherTileConfig.Units.fahrenheit)
                 }
-                Picker("Wind unit", selection: Binding(
+                Picker("Wind", selection: Binding(
                     get: { draft.windUnit },
                     set: { settings.setWindUnit($0) }
                 )) {
@@ -386,48 +441,51 @@ struct WeatherTileControls: View {
                 // The unit of a line the face does not show is a setting
                 // with nothing to act on.
                 .disabled(draft.showsWind == false)
+            }
+            Section("What's shown") {
                 Toggle("Colour by feels-like", isOn: Binding(
                     get: { draft.feelsLikeColour },
                     set: { settings.setFeelsLikeColour($0) }
                 ))
-                Toggle("Show feels-like", isOn: Binding(
+                Toggle("Feels-like", isOn: Binding(
                     get: { draft.showsFeelsLike },
                     set: { settings.setShowFeelsLike($0) }
                 ))
-                Toggle("Show humidity", isOn: Binding(
+                Toggle("Humidity", isOn: Binding(
                     get: { draft.showsHumidity },
                     set: { settings.setShowHumidity($0) }
                 ))
-                Toggle("Show wind", isOn: Binding(
+                Toggle("Wind", isOn: Binding(
                     get: { draft.showsWind },
                     set: { settings.setShowsWind($0) }
                 ))
-                Toggle("Show today's high and low", isOn: Binding(
+                Toggle("Today's high and low", isOn: Binding(
                     get: { draft.showsHiLo },
                     set: { settings.setShowsHiLo($0) }
                 ))
-                Toggle("Show rain chance", isOn: Binding(
+                Toggle("Rain chance", isOn: Binding(
                     get: { draft.showsRainChance },
                     set: { settings.setShowsRainChance($0) }
                 ))
-                Toggle("Show UV index", isOn: Binding(
+                Toggle("UV index", isOn: Binding(
                     get: { draft.showsUV },
                     set: { settings.setShowsUV($0) }
                 ))
-                Toggle("Show sunrise and sunset", isOn: Binding(
+                Toggle("Sunrise and sunset", isOn: Binding(
                     get: { draft.showsSunEvents },
                     set: { settings.setShowsSunEvents($0) }
                 ))
-                Toggle("Show hourly chart", isOn: Binding(
+                Toggle("Hourly chart", isOn: Binding(
                     get: { draft.showsHourly },
                     set: { settings.setShowsHourly($0) }
                 ))
-                // No "Save settings" beside it any more. Every control here
-                // writes as it is touched, like every other tile's, so a
-                // button offering to save what is already saved is a button
-                // that teaches the opposite of what the window does.
+            }
+            // Its own section, at the end. No "Save settings" beside it any
+            // more: every control here writes as it is touched, like every
+            // other tile's, so a button offering to save what is already
+            // saved teaches the opposite of what the window does.
+            Section {
                 Button("Reset to defaults") { settings.resetToDefaults() }
-                    .controlSize(.small)
             }
         } else {
             EmptyView()

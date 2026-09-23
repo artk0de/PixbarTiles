@@ -38,15 +38,14 @@ private struct GlassWindowModifier: ViewModifier {
             // content is where a content-shaped material shows its seams.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .containerBackground(.regularMaterial, for: .window)
-            // The titlebar is the window's too. `containerBackground` paints
-            // the content, and the titlebar kept an opaque band of its own
-            // over it — a dark strip across the top of a material window.
-            // Only the window can be told to drop it, so the view asks the
-            // window it lands on.
-            .background(
-                WindowReader { $0?.adoptGlassTitlebar() }
-                    .allowsHitTesting(false)
-            )
+            // The titlebar is the window's too. The dark band across the top
+            // of a material window is the SCENE's toolbar background, which
+            // SwiftUI draws over the titlebar whether or not the window has a
+            // toolbar. Hidden, the container background shows through it —
+            // Apple's own recipe for a material window (WWDC24, "Tailor macOS
+            // windows with SwiftUI"). An AppKit `titlebarAppearsTransparent`
+            // was tried first and changed nothing: the band is not AppKit's.
+            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
 }
 
@@ -76,16 +75,5 @@ extension NSWindow {
         guard isOpaque else { return }
         isOpaque = false
         backgroundColor = .clear
-    }
-
-    /// Lets the window's material show through its titlebar.
-    ///
-    /// Transparent, so the titlebar stops painting its own band; full-size
-    /// content, so there is material under it to show. The traffic lights and
-    /// the title stay where they are, and SwiftUI's safe area keeps the
-    /// content's controls out from under them.
-    func adoptGlassTitlebar() {
-        titlebarAppearsTransparent = true
-        styleMask.insert(.fullSizeContentView)
     }
 }

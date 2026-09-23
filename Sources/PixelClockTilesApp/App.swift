@@ -33,7 +33,7 @@ struct PixelClockTilesApp: App {
             // no click, so anywhere the panel does not draw a control it would
             // be what the click reached.
             .background(
-                WindowReader { delegate.panelMoved(to: $0) }
+                PanelWindowReader { delegate.panelMoved(to: $0) }
                     .allowsHitTesting(false)
             )
         } label: {
@@ -97,8 +97,7 @@ struct PixelClockTilesApp: App {
     }
 }
 
-/// Reports the window a view was put on — the panel's, and every
-/// `glassWindow()`'s, which is how each tells its own titlebar to go clear.
+/// Reports the window the panel was put on.
 ///
 /// A view, because a view is the only thing that can answer: `MenuBarExtra` in
 /// `.window` style builds the panel's window itself, on the first open, and
@@ -109,7 +108,7 @@ struct PixelClockTilesApp: App {
 /// Internal rather than private so a test can put one in a window of its own:
 /// the mechanism is what the whole filter rests on, and a menu bar extra cannot
 /// be opened from a test.
-struct WindowReader: NSViewRepresentable {
+struct PanelWindowReader: NSViewRepresentable {
     /// Called with the window on every move, `nil` included. What a nil means is
     /// the reader's caller's business, not the reader's.
     let report: (NSWindow?) -> Void
@@ -121,7 +120,7 @@ struct WindowReader: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {}
 }
 
-/// The AppKit half of `WindowReader`.
+/// The AppKit half of `PanelWindowReader`.
 private final class WindowReportingView: NSView {
     private let report: (NSWindow?) -> Void
 
@@ -543,7 +542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Learned rather than held from the start, because there is nothing to hold
     /// at launch: `MenuBarExtra` in `.window` style builds the window on the
     /// first open and hands it to nobody. A view inside the panel is the one
-    /// thing that can see it, which is what `WindowReader` is for.
+    /// thing that can see it, which is what `PanelWindowReader` is for.
     ///
     /// A nil is not recorded, deliberately. Being taken off its window is part
     /// of how the panel goes away, and the resign that says so is already in

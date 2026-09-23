@@ -991,7 +991,7 @@ private final class WindowsReported {
     let reported = WindowsReported()
     let panel = aWindow()
     let host = NSHostingView(
-        rootView: Color.clear.background(WindowReader { reported.record($0) })
+        rootView: Color.clear.background(PanelWindowReader { reported.record($0) })
     )
     host.frame = NSRect(x: 0, y: 0, width: 320, height: 700)
 

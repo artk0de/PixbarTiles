@@ -6,7 +6,7 @@
 /// measured with one cell and drew with another is how text walks off the
 /// edge of a panel.
 ///
-/// Rows are top-first, one byte per row, and only the low `width` bits are
+/// Rows are top-first, one word per row, and only the low `width` bits are
 /// read: **bit 0 is the leftmost column**. That is `PixelCanvas.drawText`'s
 /// own convention (`bits & (1 << column)` painted at `cursor + column`), and
 /// both tables are written to it.
@@ -22,7 +22,9 @@ public struct PixelFontFace: Sendable {
     public let height: Int
     /// Columns left blank after each glyph.
     public let gap: Int
-    private let glyphs: [Character: [UInt8]]
+    /// Sixteen bits a row: GitHub's 9-column big star (`ggen.py`'s `★`) is
+    /// the first glyph wider than a byte. The byte tables widen on the way in.
+    private let glyphs: [Character: [UInt16]]
     private let glyphWidths: [Character: Int]
 
     /// What one character costs the cursor in a fixed face: the cell plus its
@@ -30,7 +32,7 @@ public struct PixelFontFace: Sendable {
     public var advance: Int { width + gap }
 
     init(
-        width: Int, height: Int, gap: Int, glyphs: [Character: [UInt8]],
+        width: Int, height: Int, gap: Int, glyphs: [Character: [UInt16]],
         glyphWidths: [Character: Int] = [:]
     ) {
         self.width = width
@@ -67,7 +69,7 @@ public struct PixelFontFace: Sendable {
     /// lost every letter. A face that cannot spell a mark now says so with the
     /// substitute, which a reader can see and a test can assert. A gap on the
     /// panel means a space and nothing else.
-    public func glyph(for character: Character) -> [UInt8]? {
+    public func glyph(for character: Character) -> [UInt16]? {
         glyphs[character] ?? glyphs[PixelFont.substitute]
     }
 
@@ -104,17 +106,17 @@ public enum PixelFont {
     public static let substitute: Character = "?"
 
     /// The 3×5 cell a five-row band is built around.
-    public static let tiny = PixelFontFace(width: 3, height: 5, gap: 1, glyphs: tinyGlyphs)
+    public static let tiny = PixelFontFace(width: 3, height: 5, gap: 1, glyphs: tinyGlyphs.mapValues(widened))
 
     /// The X11 "Misc Fixed" 5×7 face — every printable ASCII mark plus the
     /// Cyrillic alphabet, generated from the BDF by `Scripts/MakeFontTable.py`.
-    public static let standard = PixelFontFace(width: 5, height: 7, gap: 1, glyphs: x11Glyphs)
+    public static let standard = PixelFontFace(width: 5, height: 7, gap: 1, glyphs: x11Glyphs.mapValues(widened))
 
     /// The shared usage face's five-row proportional face — the approved
     /// design's own glyph table, see `ProportionalGlyphs.swift`.
     public static let proportional = PixelFontFace(
         width: 5, height: 5, gap: 1,
-        glyphs: proportionalGlyphs.mapValues(\.rows),
+        glyphs: proportionalGlyphs.mapValues { widened($0.rows) },
         glyphWidths: proportionalGlyphs.mapValues(\.width)
     )
 
@@ -126,9 +128,13 @@ public enum PixelFont {
         glyphWidths: bigGlyphs.mapValues(\.width)
     )
 
+    private static func widened(_ rows: [UInt8]) -> [UInt16] {
+        rows.map(UInt16.init)
+    }
+
     /// The bare spelling every shipped face still calls, kept pointing at the
     /// small cell so no face moved when the second one arrived.
-    public static func glyph(for character: Character) -> [UInt8]? {
+    public static func glyph(for character: Character) -> [UInt16]? {
         tiny.glyph(for: character)
     }
 

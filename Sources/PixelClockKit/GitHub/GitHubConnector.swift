@@ -26,11 +26,10 @@ public struct GitHubReading: Sendable, Equatable {
 
 /// How a GitHub reading is drawn on each clock model.
 ///
-/// PLACEHOLDER until Tasks 9 and 10: `.standard` draws the counts as plain
-/// text on the AWTRIX and the idle dot on the TC002, with no celebration. The
-/// real faces — the `ggen.py` port on the TC002, the TC001 app and its
-/// jingled notification — replace both closures, and the interruptions arrive
-/// with them.
+/// The TC002 face is `GitHubFace` — the `ggen.py` port, with a celebration
+/// interruption per kind of arrival. The AWTRIX side is still a PLACEHOLDER
+/// until Task 10: the counts as plain text, with no celebration; the TC001
+/// app and its jingled notification replace it.
 public struct GitHubFaces: Sendable {
     /// The reading and the tile's wire name, which is the AWTRIX app's name.
     public var awtrix: @Sendable (GitHubReading, String) -> AwtrixDelivery
@@ -44,7 +43,7 @@ public struct GitHubFaces: Sendable {
         self.ulanzi = ulanzi
     }
 
-    /// Replaced by Tasks 9–10; see the type's note.
+    /// The AWTRIX closure is replaced by Task 10; see the type's note.
     public static let standard = GitHubFaces(
         awtrix: { reading, appName in
             let name = reading.config.shortName ?? reading.config.repo
@@ -60,7 +59,7 @@ public struct GitHubFaces: Sendable {
                 lifetime: 1_800
             )
         },
-        ulanzi: { _ in UlanziDelivery(scene: .idle) }
+        ulanzi: { GitHubFace.delivery(for: $0) }
     )
 }
 

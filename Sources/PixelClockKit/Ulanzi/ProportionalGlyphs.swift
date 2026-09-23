@@ -84,5 +84,13 @@ extension PixelFont {
         "⇐": (5, [0b00100, 0b00010, 0b11111, 0b00010, 0b00100]),
         "⇖": (5, [0b00111, 0b00011, 0b00101, 0b01000, 0b10000]),
         "☀": (5, [0b00100, 0b01110, 0b11111, 0b00100, 0b00000]),
+        // The GitHub face's marks (github/ggen.py `G`, held to it by
+        // `GitHubFaceOracleTests`): `j` is the usage face's own, the same rows.
+        "_": (3, [0b000, 0b000, 0b000, 0b000, 0b111]),
+        "+": (3, [0b000, 0b010, 0b111, 0b010, 0b000]),
+        "#": (5, [0b01010, 0b11111, 0b01010, 0b11111, 0b01010]),
+        // A person before a login: `@` does not read at 5 px; this bust was
+        // picked on the panel.
+        "☺": (5, [0b01110, 0b01110, 0b00000, 0b11111, 0b11111]),
     ]
 }

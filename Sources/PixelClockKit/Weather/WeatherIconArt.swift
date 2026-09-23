@@ -26,8 +26,9 @@ import Foundation
     return r != 0 && (r < 0) != (b < 0) ? r + b : r
 }
 
-/// Python `a // b` for ints: floor division.
-@inline(__always) private func floorDiv(_ a: Int, _ b: Int) -> Int {
+/// Python `a // b` for ints: floor division. Module-wide: the GitHub face's
+/// `ggen.py` port divides the same way.
+@inline(__always) func floorDiv(_ a: Int, _ b: Int) -> Int {
     let q = a / b
     return (a % b != 0) && ((a < 0) != (b < 0)) ? q - 1 : q
 }

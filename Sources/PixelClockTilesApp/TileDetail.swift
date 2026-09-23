@@ -24,6 +24,15 @@ import SwiftUI
 /// never a sixth box.
 struct TilePolicyEditor: View {
     @Binding var policy: TilePolicy
+    /// The refresh intervals this tile's connector offers. The connector's
+    /// own, never the general scale by assumption: a tile stored at a step only
+    /// its connector has would otherwise be SHOWN the nearest general one and
+    /// rewritten to it the moment the control was touched.
+    var refreshSteps: [TimeInterval] = RefreshScale.steps
+    /// False when the connector's own block carries the refresh under a name
+    /// of its own — "Fetch weather every" beside the weather's "Change every".
+    /// One stored value gets one control, wherever the reader looks for it.
+    var showsRefresh = true
 
     /// The Focuses the "works in" boxes run over: every case but `.unknown`.
     nonisolated static let worksInBoxes: [MacFocus] = MacFocus.allCases.filter { $0 != .unknown }
@@ -75,6 +84,34 @@ struct TilePolicyEditor: View {
         policy.refreshSeconds = Int(seconds(atPosition: position))
     }
 
+    /// Whether a ladder is shown as a menu rather than as the slider.
+    ///
+    /// A dozen named choices — ten seconds, a minute, four hours — read as a
+    /// menu, where each one is a word rather than a place to drag to. The
+    /// general scale's twenty-seven five-minute steps are a continuum and read
+    /// as a slider; a menu of twenty-seven would be a list to scroll.
+    nonisolated static func picks(from ladder: [TimeInterval]) -> Bool {
+        ladder.count <= 12
+    }
+
+    /// The step a stored value SHOWS as, read on the tile's own ladder.
+    ///
+    /// Read on the general one a ten-second tile would show thirty seconds —
+    /// the number the schedule stopped using the moment the ladder became the
+    /// connector's.
+    nonisolated static func shownRefresh(
+        of policy: TilePolicy, on ladder: [TimeInterval]
+    ) -> TimeInterval {
+        RefreshScale.snapped(TimeInterval(policy.refreshSeconds), on: ladder)
+    }
+
+    /// Writes a picked step. The step itself, never a reading of it: a value
+    /// read back through a scale that cannot show it would be quietly
+    /// rewritten one save later.
+    nonisolated static func set(refresh seconds: TimeInterval, in policy: inout TilePolicy) {
+        policy.refreshSeconds = Int(seconds)
+    }
+
     private func worksIn(_ focus: MacFocus) -> Binding<Bool> {
         Binding(
             get: { Self.isChecked(focus, in: policy) },
@@ -92,18 +129,10 @@ struct TilePolicyEditor: View {
                 get: { policy.isPaused },
                 set: { policy.isPaused = $0 }
             ))
-            HStack {
-                Text("Refresh")
-                Slider(value: Binding(
-                    get: { Self.position(forSeconds: TimeInterval(policy.refreshSeconds)) },
-                    set: { Self.set(secondsAtPosition: $0, in: &policy) }
-                ), in: 0...Double(RefreshScale.steps.count - 1))
-                Text(Self.refreshLabel(Self.seconds(
-                    atPosition: Self.position(forSeconds: TimeInterval(policy.refreshSeconds))
-                )))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+            if showsRefresh {
+                TileRefreshControl(
+                    label: "Refresh", ladder: refreshSteps, policy: $policy
+                )
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Works in").font(.caption).foregroundStyle(.secondary)
@@ -181,12 +210,47 @@ struct TilePolicyEditor: View {
         HourWindow.clockFace(hour)
     }
 
-    /// Seconds as the slider's caption says them.
-    private static func refreshLabel(_ seconds: TimeInterval) -> String {
-        switch seconds {
-        case 30: "30 s"
-        case 60..<3600: "\(Int(seconds / 60)) min"
-        default: "\(Int(seconds / 3600)) h"
+}
+
+/// How often a tile runs, on the ladder its connector offers.
+///
+/// A menu when the ladder is a dozen named choices, a slider when it is the
+/// general scale's twenty-seven five-minute steps — see
+/// `TilePolicyEditor.picks(from:)`. The label is the caller's because the same
+/// stored value is "Refresh" on the shared editor and "Fetch weather every"
+/// beside the weather's own "Change every", which is a different setting
+/// entirely and sits two rows above it.
+struct TileRefreshControl: View {
+    let label: String
+    let ladder: [TimeInterval]
+    @Binding var policy: TilePolicy
+
+    var body: some View {
+        if TilePolicyEditor.picks(from: ladder) {
+            Picker(label, selection: Binding(
+                get: { TilePolicyEditor.shownRefresh(of: policy, on: ladder) },
+                set: { TilePolicyEditor.set(refresh: $0, in: &policy) }
+            )) {
+                ForEach(ladder, id: \.self) { step in
+                    Text(RefreshScale.label(step)).tag(step)
+                }
+            }
+        } else {
+            HStack {
+                Text(label)
+                Slider(value: Binding(
+                    get: { TilePolicyEditor.position(forSeconds: TimeInterval(policy.refreshSeconds)) },
+                    set: { TilePolicyEditor.set(secondsAtPosition: $0, in: &policy) }
+                ), in: 0...Double(RefreshScale.steps.count - 1))
+                Text(RefreshScale.label(TilePolicyEditor.seconds(
+                    atPosition: TilePolicyEditor.position(
+                        forSeconds: TimeInterval(policy.refreshSeconds)
+                    )
+                )))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            }
         }
     }
 }

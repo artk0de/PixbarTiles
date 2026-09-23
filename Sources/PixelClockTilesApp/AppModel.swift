@@ -2639,7 +2639,14 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let interval = RefreshScale.snapped(TimeInterval(record.policy.refreshSeconds))
+        // On the CONNECTOR's own ladder. Snapped against the general one, a
+        // tile stored at a step only its connector offers — ten seconds on a
+        // Coding Subscription tile — would run at the general floor instead,
+        // and the picker would be offering a cadence the schedule quietly
+        // refused.
+        let interval = RefreshScale.snapped(
+            TimeInterval(record.policy.refreshSeconds), on: connector.refreshSteps
+        )
         let sleep = self.scheduleSleep
         // An ambient connector is deliberately NOT resumed, and the two halves
         // are one sentence rather than two rules: a launch owes each connector

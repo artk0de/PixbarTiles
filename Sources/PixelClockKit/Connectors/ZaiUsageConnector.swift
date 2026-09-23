@@ -19,11 +19,15 @@ public struct ZaiUsageConnector: Connector {
 
     public let id = ZaiUsageConnector.connectorId
     public let displayName = "z.ai usage"
-    /// Ten minutes, and chosen against `lifetime` rather than on its own: the
-    /// figure moves slowly, but the app must leave the clock soon after a
-    /// Focus does, and the lifetime is the only thing that removes it. Three
-    /// polls inside one lifetime — the same insurance the Claude figure buys.
-    public let defaultInterval: TimeInterval = 600
+    /// One minute, the same cadence the Claude figure watches a plan at and
+    /// for the same reason: a limit someone is spending is read, not glanced
+    /// at. Still inside `lifetime` — the half hour below — many times over,
+    /// so the figure still clears itself off the matrix when the Mac stops
+    /// feeding it.
+    public let defaultInterval: TimeInterval = 60
+
+    /// Ten seconds up to four hours — see `RefreshScale.codingSubscription`.
+    public let refreshSteps = RefreshScale.codingSubscription
     public var defaultPolicy: TilePolicy { TileDefaults.zai }
     public let isAudible = false
     public let isAmbient = true

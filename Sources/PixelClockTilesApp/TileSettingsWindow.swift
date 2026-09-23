@@ -157,12 +157,16 @@ struct TileSettingsWindow: View {
             Form {
                 switch half {
                 case .tile:
-                    connectorBlock(for: key, value: value)
+                    connectorBlock(for: key, value: value, stored: stored)
                 case .common:
-                    TilePolicyEditor(policy: Binding(
-                        get: { stored },
-                        set: { settings.save(policy: $0, config: value.config) }
-                    ))
+                    TilePolicyEditor(
+                        policy: policyBinding(for: key, value: value, stored: stored),
+                        refreshSteps: ladder(for: key),
+                        // The three connectors whose own block carries the
+                        // refresh under a name of its own. One stored value,
+                        // one control, where its reader looks for it.
+                        showsRefresh: namesItsOwnRefresh(key) == false
+                    )
                 }
                 // What the model said no to, under the controls that asked.
                 // Two lamp tiles claiming one corner at the same moment is
@@ -187,18 +191,51 @@ struct TileSettingsWindow: View {
         .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
     }
 
+    /// The one write every control on this surface goes through, so a refusal
+    /// is said once in one place whichever half asked.
+    private func policyBinding(
+        for key: TileKey, value: (name: String, config: TileConfig?), stored: TilePolicy
+    ) -> Binding<TilePolicy> {
+        Binding(
+            get: { stored },
+            set: { settings.save(policy: $0, config: value.config) }
+        )
+    }
+
+    /// The refresh intervals this tile's connector offers — the weather's
+    /// minute-to-four-hours, the usage tiles' ten-seconds-to-four-hours, the
+    /// general scale for everything else.
+    private func ladder(for key: TileKey) -> [TimeInterval] {
+        model.connector(for: key)?.refreshSteps ?? RefreshScale.steps
+    }
+
+    /// Whether this connector's own block carries the refresh itself.
+    ///
+    /// Keyed on the connector id rather than on the running instance, like the
+    /// lamp block below: what a tile's surface looks like is the tile's
+    /// question, not that of whichever instance happens to be in hand.
+    private func namesItsOwnRefresh(_ key: TileKey) -> Bool {
+        [WeatherConnector.appName, ClaudeUsageConnector.id, ZaiUsageConnector.connectorId]
+            .contains(key.connectorId)
+    }
+
     /// The tile's own block beside the shared policy editor: what this
     /// connector has that no other does. A connector with nothing of its own
     /// draws nothing there.
     @ViewBuilder
     private func connectorBlock(
-        for key: TileKey, value: (name: String, config: TileConfig?)
+        for key: TileKey, value: (name: String, config: TileConfig?), stored: TilePolicy
     ) -> some View {
         // The tile's own clock's connector, so the block a tile shows is
         // decided by the instance that actually runs it.
         let connector = model.connector(for: key)
+        let refresh = TileRefreshControl(
+            label: "Fetch weather every",
+            ladder: ladder(for: key),
+            policy: policyBinding(for: key, value: value, stored: stored)
+        )
         if connector is WeatherConnector {
-            WeatherTileControls(settings: settings)
+            WeatherTileControls(settings: settings, fetchEvery: refresh)
         } else if connector is AnecdoteConnector {
             AnecdoteTileBlock(onHistory: {
                 model.loadHistory()
@@ -209,6 +246,11 @@ struct TileSettingsWindow: View {
                 ClaudeTileBlock(
                     metric: value.config?.claude ?? .weekly,
                     onMetric: { settings.setClaudeMetric($0) }
+                )
+                TileRefreshControl(
+                    label: "Refresh every",
+                    ladder: ladder(for: key),
+                    policy: policyBinding(for: key, value: value, stored: stored)
                 )
                 usageFaceBlock
                 // Machine-wide state, one file, not a tile's: whatever tile's
@@ -221,6 +263,11 @@ struct TileSettingsWindow: View {
                     hasKey: model.hasZaiKey(for: key),
                     outcome: model.lastZaiKeyOutcome,
                     onSaveKey: { model.saveZaiKey($0, for: key) }
+                )
+                TileRefreshControl(
+                    label: "Refresh every",
+                    ladder: ladder(for: key),
+                    policy: policyBinding(for: key, value: value, stored: stored)
                 )
                 usageFaceBlock
             }
@@ -392,6 +439,12 @@ struct TileSettingsWindow: View {
 /// shows another.
 struct WeatherTileControls: View {
     let settings: TileSettingsModel
+    /// How often the sky is READ, handed in already bound to the tile's
+    /// policy. Its neighbour "Change every" is a different setting on a
+    /// different scale — three to fifteen seconds of dwell per state, not a
+    /// poll — and the two were worth putting side by side precisely because
+    /// they are so easily read as one.
+    let fetchEvery: TileRefreshControl
 
     var body: some View {
         if let draft = settings.draft {
@@ -413,6 +466,12 @@ struct WeatherTileControls: View {
                     Text("Hybrid").tag(WeatherTileConfig.Layout.hybrid)
                 }
                 .pickerStyle(.segmented)
+            }
+            // The two intervals together and apart from the arrangement,
+            // because they are the pair a reader confuses: one is how long a
+            // state stays on screen, the other how often the sky behind it is
+            // read, and they differ by three orders of magnitude.
+            Section("Timing") {
                 Picker("Change every", selection: Binding(
                     get: { draft.changeEvery },
                     set: { settings.setChangeEvery($0) }
@@ -421,6 +480,7 @@ struct WeatherTileControls: View {
                         Text(UsageFaceBlock.everyCaption($0)).tag($0)
                     }
                 }
+                fetchEvery
             }
             Section("Units") {
                 Picker("Temperature", selection: Binding(

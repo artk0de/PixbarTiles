@@ -93,6 +93,43 @@ import Testing
     await subject.teardown()
 }
 
+// The ladder a tile is snapped to is its CONNECTOR's, not the general one.
+//
+// Ten seconds is a step the Coding Subscription tiles have and the general
+// ladder deliberately does not. Snapped against the general ladder a tile
+// stored at ten seconds runs every thirty — the picker would offer a cadence
+// the schedule then quietly refused, which is a setting that lies rather than
+// a setting that is limited.
+@Test @MainActor func aTileIsSnappedToItsOwnConnectorsLadder() async {
+    let connector = StubConnector(
+        defaultInterval: 10, refreshSteps: RefreshScale.codingSubscription
+    )
+    let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
+    let schedule = Metronome()
+    // Seeded rather than migrated: the legacy settings the migration reads are
+    // positions on the OLD scale, whose first step is five minutes, so a ten
+    // second tile cannot be posed through them.
+    let subject = testModel(
+        connectors: [connector],
+        sleep: schedule.sleep,
+        clocks: [clock],
+        tiles: [
+            TileRecord(
+                key: TileKey(clockId: clock.id, connectorId: connector.id),
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 10)
+            )
+        ]
+    )
+
+    subject.start()
+    await waitUntil { schedule.durations.contains(10) }
+
+    #expect(schedule.durations.contains(10))
+    // The general ladder's floor, which is what it used to be rounded up to.
+    #expect(schedule.durations.contains(30) == false)
+    await subject.teardown()
+}
+
 @Test @MainActor func aScheduleSleepsTheConnectorsOwnInterval() async {
     let connector = StubConnector(defaultInterval: 5 * 60)
     let schedule = Metronome()

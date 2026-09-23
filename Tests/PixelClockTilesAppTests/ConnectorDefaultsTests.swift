@@ -61,3 +61,42 @@ private struct NoZaiReading: ZaiUsageReporting {
 @Test func aSilentConnectorThatNamesNoPolicyIsHeldByNothing() {
     #expect(silentConnector.defaultPolicy == TilePolicy(refreshSeconds: 900))
 }
+
+
+// MARK: - The Coding Subscription's own ladder
+
+// One minute is the cadence a subscription's usage is watched at, and the two
+// tiles that report one say so themselves rather than being named in a table
+// somewhere else.
+@Test @MainActor func theCodingSubscriptionConnectorsRefreshEveryMinuteByDefault() {
+    for (connector, _) in shipped() where connector.refreshSteps == RefreshScale.codingSubscription {
+        #expect(connector.defaultInterval == 60, "\(connector.id)")
+    }
+    #expect(TileDefaults.claude.refreshSeconds == 60)
+    #expect(TileDefaults.zai.refreshSeconds == 60)
+}
+
+// Which connector is offered which ladder, said once and in full. A ladder
+// reaching a connector it was not meant for is the failure that cannot be seen
+// on screen: the picker looks right and the cadence behind it is somebody
+// else's.
+@Test @MainActor func eachConnectorIsOfferedTheLadderItNames() {
+    let expected: [String: [TimeInterval]] = [
+        ClaudeUsageConnector.id: RefreshScale.codingSubscription,
+        ZaiUsageConnector.connectorId: RefreshScale.codingSubscription,
+        WeatherConnector.appName: RefreshScale.weatherFetch,
+    ]
+    for (connector, _) in shipped() {
+        #expect(
+            connector.refreshSteps == expected[connector.id] ?? RefreshScale.steps,
+            "\(connector.id)"
+        )
+    }
+    // Ten seconds is the Coding Subscription's alone: it is the step that asks
+    // a free forecast API for 360 answers an hour.
+    for (connector, _) in shipped() where connector.id != ClaudeUsageConnector.id
+        && connector.id != ZaiUsageConnector.connectorId
+    {
+        #expect(connector.refreshSteps.contains(10) == false, "\(connector.id)")
+    }
+}

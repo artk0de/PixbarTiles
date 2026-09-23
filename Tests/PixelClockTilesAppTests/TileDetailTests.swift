@@ -215,3 +215,35 @@ private func editor(_ policy: TilePolicy) -> some View {
         #expect(UsageFaceBlock.afterCaption(80) == "80%")
     }
 }
+
+// MARK: - The refresh a named ladder offers
+
+// A tile whose connector names its own ladder gets a picker over it rather
+// than the general slider: a dozen named choices read as a menu, and the
+// general scale's twenty-seven five-minute steps read as a slider.
+@Test func aNamedLadderIsShownAsAPickerAndTheGeneralScaleIsNot() {
+    #expect(TilePolicyEditor.picks(from: RefreshScale.codingSubscription))
+    #expect(TilePolicyEditor.picks(from: RefreshScale.steps) == false)
+}
+
+// The step a stored value SHOWS as, read on the tile's own ladder. Read on the
+// general one a ten-second tile would show thirty, which is the number the
+// schedule stopped using.
+@Test func aStoredRefreshShowsAsTheStepOfItsOwnLadder() {
+    var policy = TilePolicy(refreshSeconds: 10)
+    #expect(TilePolicyEditor.shownRefresh(of: policy, on: RefreshScale.codingSubscription) == 10)
+    #expect(TilePolicyEditor.shownRefresh(of: policy, on: RefreshScale.steps) == 30)
+
+    policy.refreshSeconds = 14_400
+    #expect(TilePolicyEditor.shownRefresh(of: policy, on: RefreshScale.codingSubscription) == 14_400)
+}
+
+// Writing is the picked step itself, never a reading of it: a step read back
+// through a scale that cannot show it would be rewritten on the next save.
+@Test func pickingAStepWritesThatStepsSeconds() {
+    var policy = TilePolicy(refreshSeconds: 60)
+    for step in RefreshScale.codingSubscription {
+        TilePolicyEditor.set(refresh: step, in: &policy)
+        #expect(policy.refreshSeconds == Int(step), "\(step)")
+    }
+}

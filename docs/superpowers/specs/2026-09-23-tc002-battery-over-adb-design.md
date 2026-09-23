@@ -62,7 +62,7 @@ Every claim here was seen on the device, not inferred.
 
 ## Architecture
 
-Four units, each independently testable.
+Five units, each independently testable.
 
 ### 1. `ADBClient` (PixelClockKit)
 
@@ -115,29 +115,62 @@ Offsets live in one table keyed by firmware `appVer`; `1.1.1` is the only entry.
 Any other version → no reading (the panel says nothing rather than a lie). The
 `appVer` comes from the existing `/getBase` identity call.
 
-Interface: `read() async -> BatteryReading?` shaped like the AWTRIX path's, so it
-feeds the existing machinery. Depends on: `ADBClient`, the offset table.
+Interface: `read() async -> UlanziBatterySample?` — one poll's raw fact
+(`percent`, `charging`, `millivolts`, `at`), not a rendered reading. It is
+deliberately NOT a `BatteryReading`: the firmware percent is a point sample, and
+a discharge estimate is a function of the SERIES, which is unit 4's job.
+Depends on: `ADBClient`, the offset table.
 
-### 4. Wiring into the existing battery pipeline
+### 4. `UlanziBatteryTrajectory` (PixelClockKit) — series → reading
 
-`UlanziClockHealth` (not `AppModel.poll` — the hotspot god-method) gains the
-battery poll. Its reading flows into the **existing** `BatteryTrajectory` /
-`BatteryReading` / `BatteryLine`, so the panel line, the charging state, the
-warnings and the estimate all come for free and behave exactly as the AWTRIX
-clock's do. `AppModel.batteryLine` stops being nil for a TC002 whose read
-succeeds.
+The AWTRIX `BatteryTrajectory` is **not reused**, and the code is why. It is
+built on the raw ADC: it stores `BatterySample.raw`, maps it with the firmware's
+`map(raw, 475, 665, 0, 100)` (`rawAtEmpty = 475`), and INFERS the direction from
+rise/fall windows — the whole trend machine exists precisely because the AWTRIX
+`/api/stats` carries no charging field. Its `record(_:at:)` takes a `DeviceStats`
+that has no `percent`-native, charging-bearing shape to hand it. Feeding a
+firmware percent in as a raw would corrupt every threshold and the 0% floor.
+
+TC002 has strictly better data — a firmware-computed percent and an EXPLICIT
+charging flag — so it gets a small percent-native trajectory instead:
+
+- `accept(_ sample: UlanziBatterySample)` appends to a bounded, thinned series.
+- `reading -> BatteryReading?` builds the panel's reading:
+  - `direction` = `sample.charging ? .charging : .discharging` — from the flag,
+    no inference, no half-hour lag.
+  - `shownPercent` = `percent` unchanged (the firmware already smooths; there is
+    no ADC ratchet to defend against).
+  - `timeRemaining` = a least-squares percent-slope fit over the trailing
+    discharging run, extrapolated to 0%, or nil until a minimum span is watched.
+    Charging → nil (no countdown for something filling up), exactly as
+    `BatteryLine.trend` already expects.
+
+`BatteryReading` and `BatteryLine` are reused untouched — the reading enters the
+same rendering the AWTRIX line does, so the percentage, the charging glyph and
+the `~N h left` tail all come from the existing code. `AppModel.batteryLine`
+stops being nil for a TC002 whose series has produced a reading.
+
+### 5. Wiring into the panel
+
+`UlanziClockHealth` (not `AppModel.poll` — the hotspot god-method) owns a
+`UlanziBattery` and a `UlanziBatteryTrajectory`. Each poll calls
+`UlanziBattery.read()`, feeds any sample to the trajectory, and holds
+`trajectory.reading`. `AppModel.batteryLine` consults the TC002 health's reading
+for a `.ulanziTC002` clock, falling through to the AWTRIX health otherwise —
+a minimal change confined to that leaf method, out of `AppModel.poll`.
 
 ## Data flow
 
-```
+```text
 UlanziClockHealth.poll
   └─ UlanziBattery.read()
        ├─ ADBClient.shell(find pid, read maps)        → pid, libzkgui base
        ├─ ADBClient.push(pct-batt) [only if missing]
        ├─ ADBClient.push(/tmp/pct-req = addr,len,path)
        ├─ ADBClient.shell(/tmp/pct-batt)              → 12 bytes
-       └─ parse + plausibility gate                    → BatteryReading?
-  └─ BatteryTrajectory.accept(reading)                 → shown %, trend, warnings
+       └─ parse + plausibility gate                    → UlanziBatterySample?
+  └─ UlanziBatteryTrajectory.accept(sample)
+       └─ reading  (direction from flag, ETA from percent-slope fit) → BatteryReading?
   └─ AppModel.batteryLine(clock)                       → panel line
 ```
 
@@ -173,11 +206,15 @@ Every failure degrades to "no battery line", never to a wrong one:
   every degradation branch. The plausibility gate gets its own cases (101%,
   1500 mV, short read).
 - Offset table: `1.1.1` present; an unknown version yields nil.
+- `UlanziBatteryTrajectory`: canned sample series assert direction straight off
+  the flag, `shownPercent` = `percent`, ETA nil under the minimum span, and a
+  known slope yielding a known `~N h left` through `BatteryLine`; a charging
+  series yields nil ETA.
 - `make_pct_batt.py`: a host-side test assembles the ELF and checks the header
   and the three syscall sequences; the machine code itself is pinned by golden
   bytes so an accidental re-encode is caught.
-- The existing `BatteryTrajectory` / `BatteryLine` suites already cover the
-  panel behaviour and are untouched — the TC002 reading enters the same types.
+- The existing `BatteryReading` / `BatteryLine` suites already cover the panel
+  behaviour and are untouched — the TC002 reading enters the same types.
 
 ## Risks
 

@@ -21,11 +21,21 @@ public struct Delivery<Scene: Sendable & Equatable>: Sendable, Equatable {
     /// fixed duration. The producer knows how long it will speak; the host does
     /// not, and guessing a scroll count was worse.
     public var holdUntilAudioEnds: Bool
+    /// Scenes that take the clock over after this one is up, played in order,
+    /// each on its own scope — see `Interruption`. Empty for an ordinary
+    /// reading.
+    public var interruptions: [Interruption<Scene>]
 
-    public init(scene: Scene, localAudio: [SpokenClip] = [], holdUntilAudioEnds: Bool = false) {
+    public init(
+        scene: Scene,
+        localAudio: [SpokenClip] = [],
+        holdUntilAudioEnds: Bool = false,
+        interruptions: [Interruption<Scene>] = []
+    ) {
         self.scene = scene
         self.localAudio = localAudio
         self.holdUntilAudioEnds = holdUntilAudioEnds
+        self.interruptions = interruptions
     }
 
     public subscript<Value>(dynamicMember keyPath: KeyPath<Scene, Value>) -> Value {

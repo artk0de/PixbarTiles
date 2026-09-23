@@ -489,6 +489,63 @@ private func staysFalse(
     #expect(jsonBody(request)["lifetime"] == nil)
 }
 
+// MARK: - Interruptions
+
+// The AWTRIX clock has a surface the TC002 lacks: a notification interrupts
+// whatever app is on screen and goes away by itself. So an interruption is one,
+// after the app it rode in on, with the jingle and duration its own scene says.
+@Test func anInterruptionIsANotificationWithItsJingleAfterTheApp() async throws {
+    var connector = StubConnector()
+    connector.output = AwtrixDelivery(
+        text: "★1234",
+        surface: .app("github.a/x"),
+        interruptions: [
+            Interruption(
+                scene: AwtrixScene(
+                    text: "★ +3 alice", jingle: "coin:d=16,o=6,b=200:e,g", duration: 8,
+                    surface: .notification
+                ),
+                scope: .everyPage, duration: 8
+            )
+        ]
+    )
+    let transport = RecordingTransport()
+    let host = makeHost(connector: connector, transport: transport)
+
+    let result = await host.runOnce(tile: singleTile("stub"))
+
+    #expect(result == .delivered)
+    #expect(paths(transport) == ["/api/custom", "/api/notify"])
+    let notify = try #require(transport.requests.last)
+    let body = jsonBody(notify)
+    #expect(body["text"] as? String == "★ +3 alice")
+    #expect(body["rtttl"] as? String == "coin:d=16,o=6,b=200:e,g")
+    #expect(body["duration"] as? Int == 8)
+}
+
+// Several play in the order the delivery carries them, and scope means nothing
+// here — the device queues notifications itself.
+@Test func interruptionsAreNotifiedInOrderWhateverTheirScope() async throws {
+    var connector = StubConnector()
+    connector.output = AwtrixDelivery(
+        text: "★1234",
+        surface: .app("github.a/x"),
+        interruptions: [
+            Interruption(scene: AwtrixScene(text: "stars"), scope: .everyPage, duration: 8),
+            Interruption(scene: AwtrixScene(text: "fork"), scope: .ownPage, duration: 5),
+        ]
+    )
+    let transport = RecordingTransport()
+    let host = makeHost(connector: connector, transport: transport)
+
+    _ = await host.runOnce(tile: singleTile("stub"))
+
+    let notified = transport.requests
+        .filter { $0.url?.path == "/api/notify" }
+        .map { jsonBody($0)["text"] as? String }
+    #expect(notified == ["stars", "fork"])
+}
+
 // MARK: - Holding the banner for the speech
 
 // The clock cannot decode audio, so the banner is the only thing standing in

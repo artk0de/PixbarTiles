@@ -248,7 +248,8 @@ extension Delivery where Scene == AwtrixScene {
         color: String? = nil,
         surface: DeliverySurface = .notification,
         lifetime: Int? = nil,
-        overlay: DeviceOverlay? = nil
+        overlay: DeviceOverlay? = nil,
+        interruptions: [Interruption<AwtrixScene>] = []
     ) {
         self.init(
             scene: AwtrixScene(
@@ -263,7 +264,8 @@ extension Delivery where Scene == AwtrixScene {
                 overlay: overlay
             ),
             localAudio: localAudio,
-            holdUntilAudioEnds: holdUntilAudioEnds
+            holdUntilAudioEnds: holdUntilAudioEnds,
+            interruptions: interruptions
         )
     }
 }

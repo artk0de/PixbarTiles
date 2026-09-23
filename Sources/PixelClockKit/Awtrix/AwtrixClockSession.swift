@@ -279,6 +279,30 @@ public actor AwtrixClockSession {
                 )
             }
 
+            // After the main scene, in the order the delivery carries them.
+            // Always a notification, and the scope is not read: the device
+            // queues notifications itself and each one covers whatever app is
+            // up, so "every page" and "its own page" are the same thing here.
+            // The jingle and duration are the interruption's own scene's.
+            for interruption in output.interruptions {
+                let scene = interruption.scene
+                var sceneIcon: String?
+                if let icon = scene.icon {
+                    sceneIcon = try await iconInstaller.ensureInstalled(icon)
+                }
+                try await device.notify(
+                    NotifyPayload(
+                        text: scene.text,
+                        icon: sceneIcon,
+                        duration: scene.duration,
+                        color: scene.color,
+                        rtttl: scene.jingle,
+                        hold: nil,
+                        pushIcon: 2
+                    )
+                )
+            }
+
             // Strictly after the banner: the banner is the only thing standing
             // in for the speech on a clock that cannot decode audio, and a
             // voice with nothing on the display has no explanation.

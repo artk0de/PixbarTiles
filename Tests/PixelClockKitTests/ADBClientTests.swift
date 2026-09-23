@@ -35,16 +35,23 @@ private let A_OKAY: UInt32 = 0x5941_4B4F
 private let A_WRTE: UInt32 = 0x4554_5257
 private let A_CLSE: UInt32 = 0x4553_4C43
 
+/// The stream id the client's FIRST operation opens. Ids are monotonic and
+/// never reused, so the device addresses its answers to this one — the device's
+/// frames carry it in arg1, and the client only reads frames that match.
+private let firstStream: UInt32 = 2
+
 private func le32(_ v: UInt32) -> Data {
     withUnsafeBytes(of: v.littleEndian) { Data($0) }
 }
 
+/// The CNXN the device answers the handshake with.
+private let handshake = frame(A_CNXN, 0x0100_0000, 256 * 1024, Data("device::\0".utf8))
+
 @Test func shellCollectsWriteFramesUntilClose() async throws {
-    // Device answers: CNXN (handshake), then two WRTE chunks, then CLSE.
-    var canned = frame(A_CNXN, 0x0100_0000, 256 * 1024, Data("device::\0".utf8))
-    canned += frame(A_WRTE, 1, 1, Data("Battery: ".utf8))
-    canned += frame(A_WRTE, 1, 1, Data("90%\n".utf8))
-    canned += frame(A_CLSE, 1, 1)
+    var canned = handshake
+    canned += frame(A_WRTE, 9, firstStream, Data("Battery: ".utf8))
+    canned += frame(A_WRTE, 9, firstStream, Data("90%\n".utf8))
+    canned += frame(A_CLSE, 9, firstStream)
     let stream = ScriptedStream(canned)
     let client = ADBClient(connect: { stream })
 
@@ -65,10 +72,10 @@ private func le32(_ v: UInt32) -> Data {
     var sync = Data("DATA".utf8) + le32(UInt32(window.count)) + window
     sync += Data("DONE".utf8) + le32(0)
 
-    var canned = frame(A_CNXN, 0x0100_0000, 256 * 1024, Data("device::\0".utf8))
-    canned += frame(A_OKAY, 7, 1)                       // sync: opened
-    canned += frame(A_WRTE, 7, 1, sync)
-    canned += frame(A_CLSE, 7, 1)
+    var canned = handshake
+    canned += frame(A_OKAY, 9, firstStream)                   // sync: opened
+    canned += frame(A_WRTE, 9, firstStream, sync)
+    canned += frame(A_CLSE, 9, firstStream)
     let stream = ScriptedStream(canned)
     let client = ADBClient(connect: { stream })
 
@@ -78,4 +85,58 @@ private func le32(_ v: UInt32) -> Data {
     let written = await stream.writtenBytes()
     #expect(written.range(of: Data("RECV".utf8)) != nil)
     #expect(written.range(of: Data("/tmp/pct-out".utf8)) != nil)
+}
+
+@Test func framesLeftOverFromAFinishedStreamAreNotReadAsThisOnes() async throws {
+    // The device's CLSE for the PREVIOUS operation arrives late, after that
+    // operation stopped reading. Measured against the clock, a client that
+    // took it at face value ended the next operation before it began: a shell
+    // straight after a push answered nothing at all.
+    var canned = handshake
+    canned += frame(A_CLSE, 7, firstStream - 1)               // the last stream's
+    canned += frame(A_OKAY, 7, firstStream - 1)               // and its stray ack
+    canned += frame(A_WRTE, 9, firstStream, Data("real".utf8))
+    canned += frame(A_CLSE, 9, firstStream)
+    let stream = ScriptedStream(canned)
+    let client = ADBClient(connect: { stream })
+
+    let out = try await client.shell("echo real")
+
+    #expect(String(decoding: out, as: UTF8.self) == "real")
+}
+
+@Test func oneConnectionCarriesSeveralOperations() async throws {
+    // The handshake happens ONCE; each operation opens a new stream id on the
+    // same socket. Driving a connection per operation exhausted this adbd.
+    var canned = handshake
+    canned += frame(A_WRTE, 9, firstStream, Data("one".utf8))
+    canned += frame(A_CLSE, 9, firstStream)
+    canned += frame(A_WRTE, 9, firstStream + 1, Data("two".utf8))
+    canned += frame(A_CLSE, 9, firstStream + 1)
+    let stream = ScriptedStream(canned)
+    let client = ADBClient(connect: { stream })
+
+    let first = try await client.shell("echo one")
+    let second = try await client.shell("echo two")
+
+    #expect(String(decoding: first, as: UTF8.self) == "one")
+    #expect(String(decoding: second, as: UTF8.self) == "two")
+    // Exactly one CNXN went out, however many operations ran.
+    let written = await stream.writtenBytes()
+    let cnxnCount = written.ranges(of: le32(A_CNXN)).count
+    #expect(cnxnCount == 1)
+}
+
+extension Data {
+    /// Every range at which `pattern` occurs — used to count handshakes.
+    fileprivate func ranges(of pattern: Data) -> [Range<Index>] {
+        var found: [Range<Index>] = []
+        var searchFrom = startIndex
+        while let r = self[searchFrom...].range(of: pattern) {
+            found.append(r)
+            searchFrom = r.upperBound
+            if searchFrom >= endIndex { break }
+        }
+        return found
+    }
 }

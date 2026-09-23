@@ -17,9 +17,9 @@ private actor StubBatteryADB: ADB {
         self.charging = charging
     }
     func shell(_ command: String) async throws -> Data {
-        if command.contains("cmdline") { return Data("/proc/670\n/bin/zkgui\u{0}\n\n".utf8) }
+        if command.contains("cmdline") { return Data("/proc/670\r\n/bin/zkgui\u{0}\r\n\r\n".utf8) }
         if command.contains("maps") {
-            return Data("43e87000-44571000 r-xp 00000000 1f:03 12 /res/lib/libzkgui.so\n".utf8)
+            return Data("43e87000-44571000 r-xp 00000000 1f:03 12 /res/lib/libzkgui.so\r\n".utf8)
         }
         return Data()
     }

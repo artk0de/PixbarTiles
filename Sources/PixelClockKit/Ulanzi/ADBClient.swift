@@ -29,11 +29,13 @@ public enum ADBError: Error, Equatable {
     case syncFailed(String)
 }
 
-/// A minimal ADB-over-TCP client. One fresh connection per operation: connect,
-/// `CNXN` handshake, one service `OPEN`, drive it, close. This is exactly what
-/// the spike proved against the TC002's open, AUTH-less adbd, and it keeps the
-/// framing a pure function of the byte stream so tests script it.
-public struct ADBClient: ADB {
+/// A minimal ADB-over-TCP client against the TC002's open, AUTH-less adbd.
+///
+/// One connection, handshaken once and kept, with a new stream id per
+/// operation — which is how ADB is meant to be driven, and how this device
+/// insists on being driven. The framing is a pure function of the byte stream,
+/// so tests script it without touching a device.
+public actor ADBClient: ADB {
     private static let cnxn: UInt32 = 0x4E58_4E43   // "CNXN"
     private static let open: UInt32 = 0x4E45_504F   // "OPEN"
     private static let okay: UInt32 = 0x5941_4B4F   // "OKAY"
@@ -43,25 +45,73 @@ public struct ADBClient: ADB {
     private static let maxData: UInt32 = 256 * 1024
 
     private let connect: @Sendable () async throws -> ADBStream
+    /// The one live connection, kept between operations. ADB multiplexes
+    /// streams over a single socket by design, and this device needs it to:
+    /// measured against the clock, a connection per operation exhausted adbd
+    /// after half a dozen and every later one was met with a reset. One poll
+    /// needs six operations, so per-operation connections could not even
+    /// complete a second read.
+    private var live: ADBStream?
+    /// The next stream id to open. Monotonic, never reused, because the device
+    /// answers on the id it was opened with.
+    private var nextLocalId: UInt32 = 1
 
     public init(connect: @escaping @Sendable () async throws -> ADBStream) {
         self.connect = connect
     }
 
+    private func liveStream() async throws -> ADBStream {
+        if let live { return live }
+        let fresh = try await connect()
+        try await handshake(fresh)
+        live = fresh
+        return fresh
+    }
+
+    private func drop() async {
+        if let live { await live.close() }
+        live = nil
+    }
+
+    /// Runs one operation on the shared connection, and retries ONCE on a fresh
+    /// one. The retry is what makes an idle-closed socket invisible: polls are
+    /// minutes apart, and the device is free to hang up in between.
+    private func run<T>(_ body: (ADBStream, UInt32) async throws -> T) async throws -> T {
+        do {
+            let stream = try await liveStream()
+            nextLocalId += 1
+            return try await body(stream, nextLocalId)
+        } catch {
+            await drop()
+            let stream = try await liveStream()
+            nextLocalId += 1
+            do {
+                return try await body(stream, nextLocalId)
+            } catch {
+                await drop()
+                throw error
+            }
+        }
+    }
+
     public func shell(_ command: String) async throws -> Data {
-        let stream = try await connect()
-        defer { Task { await stream.close() } }
-        try await handshake(stream)
-        try await send(stream, Self.open, 1, 0, Data("shell:\(command)\0".utf8))
-        return try await collect(stream)
+        try await run { stream, localId in
+            try await send(stream, Self.open, localId, 0, Data("shell:\(command)\0".utf8))
+            return try await collect(stream, localId)
+        }
     }
 
     public func push(_ bytes: Data, to path: String, mode: Int) async throws {
-        let stream = try await connect()
-        defer { Task { await stream.close() } }
-        try await handshake(stream)
-        try await send(stream, Self.open, 1, 0, Data("sync:\0".utf8))
-        let (cmd, remoteId, _, _) = try await recv(stream)
+        try await run { stream, localId in
+            try await pushing(stream, localId, bytes, to: path, mode: mode)
+        }
+    }
+
+    private func pushing(
+        _ stream: ADBStream, _ localId: UInt32, _ bytes: Data, to path: String, mode: Int
+    ) async throws {
+        try await send(stream, Self.open, localId, 0, Data("sync:\0".utf8))
+        let (cmd, remoteId, _, _) = try await recv(stream, for: localId)
         guard cmd == Self.okay else { throw ADBError.syncFailed("sync not acked") }
 
         var sync = Data()
@@ -71,15 +121,15 @@ public struct ADBClient: ADB {
             sync += Data("DATA".utf8) + encode(UInt32(chunk.count)) + chunk
         }
         sync += Data("DONE".utf8) + encode(UInt32(Date().timeIntervalSince1970))
-        try await send(stream, Self.wrte, 1, remoteId, sync)
+        try await send(stream, Self.wrte, localId, remoteId, sync)
 
         // The sync-layer response arrives as a WRTE frame: "OKAY" or "FAIL".
         var status = Data()
         while status.count < 8 {
-            let (c, _, _, payload) = try await recv(stream)
+            let (c, _, _, payload) = try await recv(stream, for: localId)
             if c == Self.wrte {
                 status += payload
-                try await send(stream, Self.okay, 1, remoteId)
+                try await send(stream, Self.okay, localId, remoteId)
             } else if c == Self.clse {
                 break
             }
@@ -87,18 +137,22 @@ public struct ADBClient: ADB {
         guard status.prefix(4) == Data("OKAY".utf8) else {
             throw ADBError.syncFailed(String(decoding: status, as: UTF8.self))
         }
+        await quitSync(stream, localId, remoteId)
     }
 
     public func pull(_ path: String) async throws -> Data {
-        let stream = try await connect()
-        defer { Task { await stream.close() } }
-        try await handshake(stream)
-        try await send(stream, Self.open, 1, 0, Data("sync:\0".utf8))
-        let (cmd, remoteId, _, _) = try await recv(stream)
+        try await run { stream, localId in
+            try await pulling(stream, localId, path)
+        }
+    }
+
+    private func pulling(_ stream: ADBStream, _ localId: UInt32, _ path: String) async throws -> Data {
+        try await send(stream, Self.open, localId, 0, Data("sync:\0".utf8))
+        let (cmd, remoteId, _, _) = try await recv(stream, for: localId)
         guard cmd == Self.okay else { throw ADBError.syncFailed("sync not acked") }
 
         let p = Data(path.utf8)
-        try await send(stream, Self.wrte, 1, remoteId, Data("RECV".utf8) + encode(UInt32(p.count)) + p)
+        try await send(stream, Self.wrte, localId, remoteId, Data("RECV".utf8) + encode(UInt32(p.count)) + p)
 
         // The sync reply is DATA chunks then DONE, and it does not respect WRTE
         // frame boundaries — so it is buffered and parsed incrementally.
@@ -108,7 +162,10 @@ public struct ADBClient: ADB {
             while buffer.count >= 8 {
                 let tag = Data(buffer.prefix(4))
                 let n = Int(decode(buffer, 4))
-                if tag == Data("DONE".utf8) { return out }
+                if tag == Data("DONE".utf8) {
+                    await quitSync(stream, localId, remoteId)
+                    return out
+                }
                 if tag == Data("FAIL".utf8) {
                     guard buffer.count >= 8 + n else { break }
                     let message = Data(buffer.dropFirst(8).prefix(n))
@@ -121,14 +178,27 @@ public struct ADBClient: ADB {
                 out += Data(buffer.dropFirst(8).prefix(n))
                 buffer = Data(buffer.dropFirst(8 + n))
             }
-            let (c, _, _, payload) = try await recv(stream)
+            let (c, _, _, payload) = try await recv(stream, for: localId)
             if c == Self.wrte {
                 buffer += payload
-                try await send(stream, Self.okay, 1, remoteId)
+                try await send(stream, Self.okay, localId, remoteId)
             } else if c == Self.clse {
+                try? await send(stream, Self.clse, localId, remoteId)
                 return out
             }
         }
+    }
+
+    /// Ends a `sync:` session the way the protocol says to: `QUIT`, then CLSE.
+    ///
+    /// Not optional politeness. Measured against the clock: with the session
+    /// left unterminated, the NEXT connection to this adbd was met with a
+    /// connection reset — shell operations chained fine, but anything after a
+    /// push or a pull failed. Best-effort, because a failure here must not
+    /// lose a read that already succeeded.
+    private func quitSync(_ stream: ADBStream, _ localId: UInt32, _ remoteId: UInt32) async {
+        try? await send(stream, Self.wrte, localId, remoteId, Data("QUIT".utf8) + encode(0))
+        try? await send(stream, Self.clse, localId, remoteId)
     }
 
     // MARK: framing
@@ -141,14 +211,17 @@ public struct ADBClient: ADB {
     }
 
     /// Collects WRTE payloads until CLSE, acking each with the adb-layer OKAY.
-    private func collect(_ stream: ADBStream) async throws -> Data {
+    private func collect(_ stream: ADBStream, _ localId: UInt32) async throws -> Data {
         var out = Data()
         while true {
-            let (cmd, arg0, _, payload) = try await recv(stream)
+            let (cmd, arg0, _, payload) = try await recv(stream, for: localId)
             if cmd == Self.wrte {
                 out += payload
-                try await send(stream, Self.okay, 1, arg0)
+                try await send(stream, Self.okay, localId, arg0)
             } else if cmd == Self.clse {
+                // The device closed its end; answer in kind so the stream is
+                // fully torn down rather than left half-open.
+                try? await send(stream, Self.clse, localId, arg0)
                 return out
             }
         }
@@ -161,6 +234,22 @@ public struct ADBClient: ADB {
         var header = encode(cmd) + encode(a0) + encode(a1)
         header += encode(UInt32(payload.count)) + encode(checksum) + encode(cmd ^ 0xFFFF_FFFF)
         try await stream.write(header + payload)
+    }
+
+    /// The next frame belonging to THIS stream, discarding any that do not.
+    ///
+    /// One socket carries every stream, and a finished one leaves frames
+    /// behind — the device's own CLSE arrives after we have stopped reading.
+    /// Without this filter the next operation read that leftover CLSE as its
+    /// own and returned empty: measured against the clock, a shell straight
+    /// after a push answered nothing at all.
+    private func recv(
+        _ stream: ADBStream, for localId: UInt32
+    ) async throws -> (UInt32, UInt32, UInt32, Data) {
+        while true {
+            let frame = try await recv(stream)
+            if frame.2 == localId { return frame }
+        }
     }
 
     private func recv(_ stream: ADBStream) async throws -> (UInt32, UInt32, UInt32, Data) {

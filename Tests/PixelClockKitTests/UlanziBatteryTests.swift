@@ -32,17 +32,39 @@ private func window(charging: UInt32, percent: UInt32, mv: UInt32) -> Data {
     return d
 }
 
+// Both fixtures carry CRLF line endings, because that is what the device
+// actually sends: `shell:` is a PTY and turns every \n into \r\n. Fixtures
+// written with bare \n hid a real defect — the pid parsed as "670\r", which is
+// not a number, so the read silently produced nothing on the live clock.
+
 /// The real sweep output, as the clock answers it: a /proc/<pid> line, then the
 /// NUL-joined cmdline, then a blank line.
-private let procList = Data("/proc/1\n/init\u{0}\n\n/proc/670\n/bin/zkgui\u{0}\n\n".utf8)
+private let procList = Data(
+    "/proc/1\r\n/init\u{0}\r\n\r\n/proc/670\r\n/bin/zkgui\u{0}\r\n\r\n".utf8
+)
 
-/// The real maps lines for libzkgui, as read off pid 670.
-private let maps = Data("""
-43e87000-44571000 r-xp 00000000 1f:03 12         /res/lib/libzkgui.so
-44571000-44580000 ---p 006ea000 1f:03 12         /res/lib/libzkgui.so
-44580000-445b4000 r--p 006e9000 1f:03 12         /res/lib/libzkgui.so
-445b4000-445ba000 rw-p 0071d000 1f:03 12         /res/lib/libzkgui.so
-""".utf8)
+/// The real maps lines, as read off pid 670 — including what comes BEFORE the
+/// library.
+///
+/// The leading `/bin/zkgui` mappings are the point. The executable is mapped
+/// first, at 0x10000, and a parser that fails to split the output into lines
+/// happily reports THAT as the library's base. The earlier fixture held only
+/// libzkgui lines, so the wrong answer happened to equal the right one and the
+/// defect reached the live clock.
+private let maps = Data(
+    [
+        "00010000-00012000 r-xp 00000000 1f:02 43         /bin/zkgui",
+        "00021000-00022000 r--p 00001000 1f:02 43         /bin/zkgui",
+        "00022000-00023000 rw-p 00002000 1f:02 43         /bin/zkgui",
+        "4053b000-40649000 r-xp 00000000 1f:02 82         /lib/libc-2.30.so",
+        "43687000-43e87000 rw-p 00000000 00:00 0 ",
+        "43e87000-44571000 r-xp 00000000 1f:03 12         /res/lib/libzkgui.so",
+        "44571000-44580000 ---p 006ea000 1f:03 12         /res/lib/libzkgui.so",
+        "44580000-445b4000 r--p 006e9000 1f:03 12         /res/lib/libzkgui.so",
+        "445b4000-445ba000 rw-p 0071d000 1f:03 12         /res/lib/libzkgui.so",
+        "beed9000-beefa000 rw-p 00000000 00:00 0          [stack]",
+    ].joined(separator: "\r\n").utf8
+)
 
 private func fake(_ w: Data) -> FakeADB {
     FakeADB(answers: [("cmdline", procList), ("maps", maps)], window: w)
@@ -85,7 +107,7 @@ private func fake(_ w: Data) -> FakeADB {
 
 @Test func missingProcessYieldsNoReading() async {
     let adb = FakeADB(
-        answers: [("cmdline", Data("/proc/1\n/init\u{0}\n\n".utf8))],
+        answers: [("cmdline", Data("/proc/1\r\n/init\u{0}\r\n\r\n".utf8))],
         window: window(charging: 1, percent: 90, mv: 3149)
     )
     #expect(await UlanziBattery(adb: adb, helper: Data()).read(appVersion: "1.1.1", at: Date()) == nil)
@@ -93,7 +115,10 @@ private func fake(_ w: Data) -> FakeADB {
 
 @Test func missingLibraryMappingYieldsNoReading() async {
     let adb = FakeADB(
-        answers: [("cmdline", procList), ("maps", Data("43e87000-44571000 r-xp 0 1f:03 9 /lib/libc.so\n".utf8))],
+        answers: [
+            ("cmdline", procList),
+            ("maps", Data("43e87000-44571000 r-xp 0 1f:03 9 /lib/libc.so\r\n".utf8)),
+        ],
         window: window(charging: 1, percent: 90, mv: 3149)
     )
     #expect(await UlanziBattery(adb: adb, helper: Data()).read(appVersion: "1.1.1", at: Date()) == nil)

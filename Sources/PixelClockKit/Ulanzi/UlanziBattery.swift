@@ -100,6 +100,10 @@ public struct UlanziBattery: Sendable {
     /// each `/proc/N` path then its NUL-joined cmdline, and the matching is
     /// done here. argv carries no newline, so splitting the raw bytes on 0x0a
     /// keeps each cmdline in one piece.
+    ///
+    /// Every line is trimmed first, because `shell:` is a PTY: it turns each
+    /// `\n` into `\r\n`, so a line arrives as `/proc/670\r` and parsing that
+    /// as a number yields nothing at all.
     private func resolvePid() async throws -> Int? {
         let out = try await adb.shell(
             "for d in /proc/[0-9]*; do echo $d; cat $d/cmdline; echo; done"
@@ -107,6 +111,7 @@ public struct UlanziBattery: Sendable {
         var pid: Int?
         for line in out.split(separator: 0x0A, omittingEmptySubsequences: false) {
             let text = String(decoding: line, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if text.hasPrefix("/proc/") {
                 pid = Int(text.dropFirst("/proc/".count))
             } else if text.contains("zkgui"), let found = pid {
@@ -119,10 +124,25 @@ public struct UlanziBattery: Sendable {
     /// The start address of the `r-xp` libzkgui.so mapping — the load base the
     /// offset is relative to. Read every poll, never baked: the loader's
     /// placement does not survive a reboot.
+    /// Split on the BYTE, not on a `Character`.
+    ///
+    /// `shell:` is a PTY, so lines end `\r\n` — and in Swift `\r\n` is a single
+    /// grapheme cluster, which means `String.split(separator: "\n")` does not
+    /// match it and hands back the whole output as ONE line. Measured against
+    /// the clock, that made the maps parse read the first mapping in the file
+    /// (`/bin/zkgui` at 0x10000) instead of the library's, and every read came
+    /// back empty.
+    private func lines(of data: Data) -> [String] {
+        data.split(separator: 0x0A, omittingEmptySubsequences: false).map {
+            String(decoding: $0, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
     private func resolveBase(pid: Int) async throws -> UInt32? {
         let out = try await adb.shell("cat /proc/\(pid)/maps")
-        for line in String(decoding: out, as: UTF8.self).split(separator: "\n") {
-            guard line.contains("libzkgui.so"), line.contains("r-xp") else { continue }
+        for line in lines(of: out) {
+            guard line.hasSuffix("libzkgui.so"), line.contains("r-xp") else { continue }
             let start = line.split(separator: "-").first.map(String.init) ?? ""
             if let base = UInt32(start, radix: 16) { return base }
         }

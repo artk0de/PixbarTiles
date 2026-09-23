@@ -22,16 +22,6 @@ import Testing
                 let drawn = (0..<rows.count).map { y in
                     String((0..<width).map { canvas[$0, y] == .white ? "#" : "." })
                 }
-                if face == "small", character == "t" {
-                    // wgen.py's `G["t"]` is `#..` over `###`; the usage face's
-                    // approved `t` (gen.py, held by UsageFaceOracleTests) is
-                    // `.#.` over `###`. The shared face cannot be both; the
-                    // usage face's shape stays until the skill reconciles them.
-                    withKnownIssue("wgen.G[t] diverges from the usage face's approved t") {
-                        #expect(drawn == rows, "\(face) \(character)")
-                    }
-                    continue
-                }
                 #expect(drawn == rows, "\(face) \(character)")
             }
         }

@@ -800,7 +800,6 @@ private func sunEvent(_ rise: Bool) -> Frames {
         for x in 0..<S {
             f.put(x, 12, c("horizon"))
         }
-        // (icons.py's `ay` / `for dx, dy …: pass` loop draws nothing.)
         let arrowRows = rise ? [".#.", "###"] : ["###", ".#."]
         sprite(&f, arrowRows, 6, 14, c("ray"))
         f.put(7, rise ? 13 : 15, c("ray_dim"))

@@ -675,9 +675,6 @@ def sun_event(rise):
                         put(f, x, y, C["sun_edge"] if d2 > 3.1 ** 2 else C["sun"])
         for x in range(S):
             put(f, x, 12, C["horizon"])
-        ay = 14
-        for dx, dy in ((0, 0), (0, 1), (-1, 1 if rise else -1), (1, 1 if rise else -1)):
-            pass
         arrow_rows = [".#.", "###"] if rise else ["###", ".#."]
         sprite(f, arrow_rows, 6, 14, C["ray"])
         put(f, 7, 13 if rise else 15, C["ray_dim"])

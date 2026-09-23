@@ -130,13 +130,15 @@ private func editor(_ policy: TilePolicy) -> some View {
     // what the box opens with, and another pair draws differently.
     @Test func theWeatherBlockOpensWithTheStoredPlace() {
         let base = drawn(WeatherTileBlock(
+            headline: "Россия, Москва (55.7558, 37.6173)",
             place: Coordinates(latitude: 55.7558, longitude: 37.6173),
-            onSave: { _ in }
+            onSave: { _ in }, onChoose: { _ in }
         ))
         #expect(base != nil)
         #expect(base != drawn(WeatherTileBlock(
+            headline: "Sverige, Stockholm (59.3293, 18.0686)",
             place: Coordinates(latitude: 59.3293, longitude: 18.0686),
-            onSave: { _ in }
+            onSave: { _ in }, onChoose: { _ in }
         )))
     }
 

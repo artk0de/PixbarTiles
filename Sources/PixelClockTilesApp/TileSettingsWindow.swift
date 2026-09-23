@@ -454,7 +454,12 @@ struct WeatherTileControls: View {
             // of the window. The grouping is the face's own: where it looks,
             // how it moves, what it counts in, what it draws.
             Section("Place") {
-                WeatherTileBlock(place: draft.place, onSave: { settings.savePlace($0) })
+                WeatherTileBlock(
+                    headline: settings.placeHeadline,
+                    place: draft.place,
+                    onSave: { settings.savePlace($0) },
+                    onChoose: { settings.choosePlace($0) }
+                )
             }
             Section("Layout") {
                 Picker("Arrangement", selection: Binding(

@@ -111,24 +111,27 @@ import Testing
         }
     }
 
-    @Test func gifWithFiftyOneFramesThrows() {
-        let atLimit = UlanziImage(base64: "a", isAnimated: true, frameCount: 50, pixelSize: (16, 16))
+    // The two ceilings below are the MEASURED ones (live TC002, 2026-09-23):
+    // one 52x16 GIF of 478 frames / 135 240 bytes of base64 played smoothly
+    // and on time. The documented 50 frames / 60 KB were never measured.
+    @Test func gifOverTheMeasuredFourHundredEightyFramesThrows() {
+        let atLimit = UlanziImage(base64: "a", isAnimated: true, frameCount: 480, pixelSize: (16, 16))
         #expect((try? UlanziScene(frames: [UlanziFrame(duration: 5, image: [atLimit])]).jsonObject()) != nil)
-        let over = UlanziImage(base64: "a", isAnimated: true, frameCount: 51, pixelSize: (16, 16))
+        let over = UlanziImage(base64: "a", isAnimated: true, frameCount: 481, pixelSize: (16, 16))
         #expect(throws: UlanziError.self) {
             try UlanziScene(frames: [UlanziFrame(duration: 5, image: [over])]).jsonObject()
         }
     }
 
-    @Test func base64OverSixtyKilobytesThrows() {
+    @Test func base64OverTheMeasuredHundredThirtySixThousandBytesThrows() {
         let atLimit = UlanziImage(
-            base64: String(repeating: "A", count: 60_000),
-            isAnimated: true, frameCount: 50, pixelSize: (256, 256)
+            base64: String(repeating: "A", count: 136_000),
+            isAnimated: true, frameCount: 480, pixelSize: (256, 256)
         )
         #expect((try? UlanziScene(frames: [UlanziFrame(duration: 5, image: [atLimit])]).jsonObject()) != nil)
         let over = UlanziImage(
-            base64: String(repeating: "A", count: 60_001),
-            isAnimated: true, frameCount: 50, pixelSize: (256, 256)
+            base64: String(repeating: "A", count: 136_001),
+            isAnimated: true, frameCount: 480, pixelSize: (256, 256)
         )
         #expect(throws: UlanziError.self) {
             try UlanziScene(frames: [UlanziFrame(duration: 5, image: [over])]).jsonObject()

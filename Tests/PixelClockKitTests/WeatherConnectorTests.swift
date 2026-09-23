@@ -693,6 +693,15 @@ private struct PassThroughIcons: IconInstalling {
         )
     }
 
+    /// The still raster `canvas(for:config:)` draws — what the settings
+    /// preview still shows until it plays the face's GIFs. The TC002 page
+    /// itself is `WeatherFace.delivery`, pinned by `WeatherFaceDeliveryTests`.
+    func still(_ reading: WeatherReading) -> UlanziDraw {
+        WeatherConnector.canvas(
+            for: reading, config: WeatherTileConfig(place: desk, showsHumidity: false, showsFeelsLike: false)
+        ).drawCommands()
+    }
+
     func reading(temperatureCelsius: Double) -> WeatherReading {
         WeatherReading(
             code: 0, isDay: true, temperature: temperatureCelsius, apparentTemperature: nil,
@@ -701,15 +710,10 @@ private struct PassThroughIcons: IconInstalling {
     }
 
     @Test func negativeTemperatureRendersWithDegreeAndMinus() throws {
-        let face = makeWeatherConnector().ulanziFace
-        let delivery = face?.draw(reading(temperatureCelsius: -12.4))
-        let scene = delivery?.scene
-        #expect(scene?.frames.count == 1)
-        #expect(scene?.frames[0].draw.count == 1)   // the single db (D2)
         // The raster is the reading itself, whole degrees, and the scale is
         // named: -12.4 → "-12°C" — the letter the picker puts there, so a
         // bare number is never misread as the other scale.
-        let draw = try #require(scene?.frames[0].draw[0])
+        let draw = still(reading(temperatureCelsius: -12.4))
         #expect(
             goldenASCII(of: draw)
                 == [
@@ -732,9 +736,7 @@ private struct PassThroughIcons: IconInstalling {
     @Test func themeColourInksTheDigits() throws {
         // A warm reading is drawn in the warm end of the same gradient the
         // AWTRIX face names in hex — red dominant for 30°.
-        let face = makeWeatherConnector().ulanziFace
-        let delivery = try #require(face?.draw(reading(temperatureCelsius: 30)))
-        let draw = try #require(delivery.scene.frames[0].draw.first)
+        let draw = still(reading(temperatureCelsius: 30))
         guard case let .bitmap(_, _, pixels, _) = draw else {
             Issue.record("not a bitmap")
             return
@@ -749,17 +751,29 @@ private struct PassThroughIcons: IconInstalling {
     /// The same rounding rule as the AWTRIX face: -3.6 is -4, not -3 — the
     /// wrong direction on the side of the scale where it matters.
     @Test func halfDegreesRoundAwayFromZeroEitherSideOfZero() throws {
-        let face = makeWeatherConnector().ulanziFace
         // The "4°" head of the first golden row — the digit's own pattern,
         // sought rather than prefixed so the minus and the scale letter
         // beside it stay the test's business, not the layout's.
         for celsius in [4.2, -3.6] {
-            let delivery = try #require(face?.draw(reading(temperatureCelsius: celsius)))
-            let rows = goldenASCII(of: try #require(delivery.scene.frames[0].draw.first))
+            let rows = goldenASCII(of: still(reading(temperatureCelsius: celsius)))
             #expect(
                 rows.first?.contains("##..##..####") == true,
                 "\(celsius) → \(rows.first ?? "?")"
             )
         }
+    }
+
+    /// The TC002 page is the weather face: the connector's `ulanziFace`
+    /// hands the reading to `WeatherFace.delivery` under the tile's config —
+    /// Anchor by default, so two GIFs, the icon and the right area.
+    @Test func theTC002PageIsTheWeatherFace() throws {
+        let face = try #require(makeWeatherConnector().ulanziFace)
+        let delivery = face.draw(reading(temperatureCelsius: 18))
+        let images = delivery.scene.frames[0].image
+        #expect(images.count == 2)
+        #expect(images.map(\.pixelSize.width) == [16, 34])
+        #expect(images.map(\.position.x) == [0, 18])
+        #expect(delivery.scene.frames[0].draw.isEmpty)
+        _ = try delivery.scene.jsonObject()
     }
 }

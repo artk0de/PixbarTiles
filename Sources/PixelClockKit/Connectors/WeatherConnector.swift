@@ -177,32 +177,20 @@ public struct WeatherConnector: Connector {
         }
     }
 
-    /// What a reading looks like on the TC002's 52×16 panel.
-    ///
-    /// The device has no text rendering to hand the reading to, so the face
-    /// rasters it here. The temperature rides the top band at the biggest
-    /// scale the 16 rows carry, in the felt-temperature colour the AWTRIX face
-    /// names in hex; the tile's own answers ride the small band under it —
-    /// humidity at the left, the felt temperature at the right, each present
-    /// only while the tile asks for it and each dropped, with its band, when
-    /// neither does.
+    /// What a reading looks like on the TC002's 52×16 panel: the weather
+    /// face (`WeatherFace`), in the tile's layout, timed from now and told in
+    /// the Mac's time zone. Each poll's push restarts its cycle.
     static func ulanziOutput(
         for reading: WeatherReading, config: WeatherTileConfig
     ) -> UlanziDelivery {
-        UlanziDelivery(
-            scene: UlanziScene(
-                frames: [
-                    UlanziFrame(duration: 5, draw: [Self.raster(reading, config: config)])
-                ]
-            )
-        )
+        WeatherFace.delivery(reading: reading, config: config, now: Date(), timeZone: .current)
     }
 
-    /// The panel the TC002 face shows — built as a canvas, because the
-    /// preview draws the very same pixels the delivery pushes, and a GIF
-    /// wants a canvas where the delivery wants a command. Public because the
-    /// preview IS a caller: the app's tile settings window renders this, the
-    /// same pixels `ulanziOutput` pushes.
+    /// The TC002's former still raster — the temperature at scale 2 over a
+    /// humidity and feels-like band. The clock no longer receives it
+    /// (`ulanziOutput` ships `WeatherFace`); it stays public because the
+    /// tile settings window's preview still renders it until that preview
+    /// plays `WeatherFace.preview`.
     public static func canvas(
         for reading: WeatherReading, config: WeatherTileConfig
     ) -> PixelCanvas {
@@ -268,13 +256,6 @@ public struct WeatherConnector: Connector {
     /// both clocks — where the colour used to follow whether the line showed.
     static func colourTemperature(_ reading: WeatherReading, config: WeatherTileConfig) -> Double {
         config.feelsLikeColour ? reading.apparentTemperature ?? reading.temperature : reading.temperature
-    }
-
-    /// `text` centred on a fresh panel at `scale`, as one full-screen bitmap.
-    private static func raster(
-        _ reading: WeatherReading, config: WeatherTileConfig
-    ) -> UlanziDraw {
-        canvas(for: reading, config: config).drawCommands()
     }
 
     private static func fahrenheit(_ celsius: Double) -> Double {

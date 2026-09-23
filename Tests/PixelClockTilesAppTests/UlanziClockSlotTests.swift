@@ -64,12 +64,14 @@ private func upserts(on transport: UlanziPathTransport) -> [(name: String, empty
 
 /// The page write carrying drawn pixels — an upsert, not the empty delete.
 @MainActor
+/// A page counts as drawn when its upsert carries pixels — `draw[]` commands
+/// or `image[]` GIFs (the weather face ships GIFs since 2026-09-23).
 private func drewPage(named name: String, on transport: UlanziPathTransport) -> Bool {
     transport.requests.contains { request in
-        request.httpMethod == "POST"
-            && request.url?.query == "name=\(name)"
-            && (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())
-                as? [String: Any])?["draw"] != nil
+        guard request.httpMethod == "POST", request.url?.query == "name=\(name)",
+              let body = try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+        else { return false }
+        return body["draw"] != nil || body["image"] != nil
     }
 }
 

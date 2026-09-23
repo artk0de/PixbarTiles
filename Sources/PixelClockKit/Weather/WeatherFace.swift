@@ -72,6 +72,46 @@ public enum WeatherFace {
         }
     }
 
+    // MARK: - The delivery
+
+    /// The face as the one page the TC002 plays by itself (spec §7).
+    ///
+    /// - Anchor: two GIFs in one frame's `image[]` — the icon, 16×16 at the
+    ///   panel's origin, and the right area, 34×16 at (18, 0).
+    /// - Pages / Hybrid: one 52×16 GIF at the origin.
+    ///
+    /// Should a GIF fail to encode — it cannot for these frames: a handful of
+    /// colours, one size per GIF — the page falls back to the first frame as
+    /// the plain bitmap, which says the weather rather than nothing (as
+    /// `UsageFace.delivery` does).
+    public static func delivery(
+        reading: WeatherReading?, config: WeatherTileConfig, now: Date, timeZone: TimeZone
+    ) -> UlanziDelivery {
+        let timeline = timeline(reading: reading, config: config, now: now, timeZone: timeZone)
+        let parts: [(frames: [Frame], at: PixelPoint)] = switch timeline {
+        case let .layered(layered): [(layered.icon, .zero), (layered.area, PixelPoint(x: areaX, y: 0))]
+        case let .single(frames): [(frames, .zero)]
+        }
+        do {
+            let images = try parts.map { part in
+                UlanziImage(
+                    base64: try gif(part.frames).base64EncodedString(),
+                    isAnimated: part.frames.count > 1,
+                    frameCount: part.frames.count,
+                    pixelSize: (width: part.frames[0].canvas.width, height: part.frames[0].canvas.height),
+                    position: (x: part.at.x, y: part.at.y)
+                )
+            }
+            return UlanziDelivery(scene: UlanziScene(frames: [UlanziFrame(duration: 5, image: images)]))
+        } catch {
+            var first = PixelCanvas()
+            for part in parts { first.draw(part.frames[0].canvas, at: part.at) }
+            return UlanziDelivery(scene: UlanziScene(frames: [
+                UlanziFrame(duration: 5, draw: [first.drawCommands()]),
+            ]))
+        }
+    }
+
     // MARK: - The budget
 
     /// Pages / Hybrid with the burst the budget settled on (nil: the icons

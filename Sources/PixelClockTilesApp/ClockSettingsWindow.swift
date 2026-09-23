@@ -61,9 +61,10 @@ struct ClockSettingsWindow: View {
                     ClockGeneralTab(clock: clock, model: model, settings: settings)
                 }
             }
+            // One margin on every side. A leading 48 and a top 20 sat on top
+            // of it, which pushed the tabs off-centre and left a band of
+            // nothing between the titlebar and the picker.
             .padding(16)
-            .padding(.top, 20)
-            .padding(.leading, 48)
             .frame(minWidth: 440, minHeight: 300)
             .glassWindow()
         } else {

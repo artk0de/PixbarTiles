@@ -56,6 +56,23 @@ Every claim here was seen on the device, not inferred.
   /tmp/pct-out` was confirmed to write exactly 12 bytes.
 - `/tmp` is a 16 MB tmpfs, wiped on reboot. The `zkgui` pid and the libzkgui load
   address are **not** stable across reboots and must be resolved at run time.
+- **adbd will not take a connection per operation.** It was exhausted after
+  about six and reset every one after that — and a single poll needs six
+  operations, so a second read could not even start. ADB multiplexes streams
+  over one socket by design, and this device insists on it: handshake once,
+  then a new stream id per operation.
+- **Frames must be filtered by stream id.** A finished stream's `CLSE` arrives
+  after the client has stopped reading it. Taken at face value by the next
+  operation it ends that one immediately — measured, a `shell` straight after a
+  `push` returned empty.
+- **A `sync:` session has to be ended with `QUIT`.** Left unterminated, the next
+  connection was met with a reset.
+- **`shell:` line endings are `\r\n`, and Swift reads `\r\n` as ONE Character.**
+  So `String.split(separator: "\n")` does not split PTY output at all: the
+  12 KB `maps` body came back as a single line, whose first address is the
+  `/bin/zkgui` mapping at `0x10000` rather than the library's. Lines must be
+  split on the BYTE `0x0a` and then trimmed. The same trap makes a pid parse as
+  `"670\r"`, which is not a number.
 
 ## Non-goals
 
@@ -75,8 +92,11 @@ Five units, each independently testable.
 
 A minimal ADB-over-TCP client — the protocol is already proven in the spike.
 
-- `connect(host:)` — TCP to `<host>:5555`, `CNXN` handshake. No AUTH path (the
-  device never asks; if it does, fail cleanly and the feature disables).
+- `connect(host:)` — TCP to `<host>:5555`, `CNXN` handshake, **once**. The
+  connection is kept and every operation opens a new stream id on it; a
+  connection per operation exhausts this adbd. No AUTH path (the device never
+  asks; if it does, fail cleanly and the feature disables). One retry on a
+  fresh connection covers a socket the device closed while idle between polls.
 - `shell(_ command:) -> Data` — `OPEN shell:<cmd>`, collect `WRTE` until `CLSE`.
 - `push(_ bytes:to:mode:)` — the `sync:` SEND stream (SEND / DATA / DONE / OKAY).
 - `pull(_ path:) -> Data` — the `sync:` RECV stream (RECV, then DATA chunks

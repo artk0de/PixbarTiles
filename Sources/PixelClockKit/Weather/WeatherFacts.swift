@@ -32,8 +32,9 @@ public enum WeatherFacts {
     // MARK: - Icon
 
     /// Spec §4.1, first match wins. Wind thresholds are in m/s, unrounded,
-    /// whatever unit the tile prints.
-    public static func icon(for reading: WeatherReading?, at now: Date) -> WeatherIcon {
+    /// whatever unit the tile prints. A clear night is the moon in its phase
+    /// when the tile shows the moon (`showsMoon`), else the plain clear night.
+    public static func icon(for reading: WeatherReading?, at now: Date, showsMoon: Bool = false) -> WeatherIcon {
         guard let reading else { return .nodata }
         let day = reading.isDay
         let air = reading.temperature
@@ -85,7 +86,8 @@ public enum WeatherFacts {
         }
         switch code {
         case 0:
-            return day ? .clearDay : moonIcon(moonPhase(at: now))
+            if day { return .clearDay }
+            return showsMoon ? moonIcon(moonPhase(at: now)) : .clearNight
         case 1:
             return dayOrNight(.mainlyClearDay, .mainlyClearNight)
         case 2:
@@ -95,7 +97,8 @@ public enum WeatherFacts {
         }
     }
 
-    private static func moonIcon(_ phase: Int) -> WeatherIcon {
+    /// The moon drawn in `phase` (0–7, `moonPhase(at:)`).
+    static func moonIcon(_ phase: Int) -> WeatherIcon {
         [.moon0, .moon1, .moon2, .moon3, .moon4, .moon5, .moon6, .moon7][phase]
     }
 

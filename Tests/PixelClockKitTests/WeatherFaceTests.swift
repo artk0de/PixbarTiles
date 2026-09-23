@@ -33,7 +33,7 @@ private func compare(_ label: String, _ drawn: [WeatherFace.Frame], _ approved: 
 @Suite struct WeatherFaceOracleTests {
     @Test func everyCaseReproducesTheApprovedFramesExactly() throws {
         let oracle = try WeatherOracle.load()
-        #expect(oracle.cases.count == 83)
+        #expect(oracle.cases.count == 95)
         for c in oracle.cases {
             let timeline = WeatherFace.timeline(
                 reading: c.reading?.appReading, config: try c.config.tileConfig(),

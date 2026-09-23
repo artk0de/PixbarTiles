@@ -148,11 +148,19 @@ CASES = [
     case("rule-frosty-clear-1-day", code=1, t=-12.3, fl=-18.0, hi=-9.0, lo=-16.0),
     case("rule-cold-clear-night-not-frosty", now=NIGHT, code=1, is_day=False, t=-14.0, fl=-19.0),
     case("rule-clear-day-0", code=0),
-    case("rule-moon-0-night", now=NIGHT, code=0, is_day=False, t=9.0, fl=7.0),
+    case("rule-moon-0-night", now=NIGHT, code=0, is_day=False, t=9.0, fl=7.0),   # moon off: clearNight
     case("rule-moon-new", now=utc(2026, 9, 11, 22, 0), code=0, is_day=False, t=9.0, fl=7.0,
          sunrise=None, sunset=None, hourly=None),   # another day: no daily or hourly data
     case("rule-moon-full", now=utc(2026, 9, 26, 22, 0), code=0, is_day=False, t=9.0, fl=7.0,
          sunrise=None, sunset=None, hourly=None),   # another day: no daily or hourly data
+    # showsMoon on: a clear night is the moon in its phase
+    case("rule-moon-shown-0-night", now=NIGHT, code=0, is_day=False, t=9.0, fl=7.0, items=RULE_ITEMS + ("moon",)),
+    case("rule-moon-shown-new", now=utc(2026, 9, 11, 22, 0), code=0, is_day=False, t=9.0, fl=7.0,
+         sunrise=None, sunset=None, hourly=None, items=RULE_ITEMS + ("moon",)),
+    case("rule-moon-shown-full", now=utc(2026, 9, 26, 22, 0), code=0, is_day=False, t=9.0, fl=7.0,
+         sunrise=None, sunset=None, hourly=None, items=RULE_ITEMS + ("moon",)),
+    case("rule-moon-shown-cloudy-night-unchanged", now=NIGHT, code=2, is_day=False, t=8.0, fl=6.0,
+         items=RULE_ITEMS + ("moon",)),
     case("rule-mainly-clear-day-1", code=1),
     case("rule-mainly-clear-night-1", now=NIGHT, code=1, is_day=False, t=10.0, fl=9.0),
     case("rule-partly-cloudy-day-2", code=2),
@@ -223,6 +231,23 @@ CASES = [
     case("pages-single-page", code=45, t=3.0, fl=1.0, layout="pages", items=("hilo", "rain")),
     case("anchor-no-details", code=2, items=()),
 
+    # ---- the moon (showsMoon): a page, a ticker line, the icon it brings ----
+    case("moon-pages-full-night", now=utc(2026, 9, 26, 22, 0), code=0, is_day=False, t=9.0, fl=7.0,
+         sunrise=None, sunset=None, hourly=None, layout="pages", items=("humidity", "moon")),
+    case("moon-pages-first-quarter-day", now=utc(2026, 9, 18, 12, 0), code=2, t=15.0, fl=14.0,
+         sunrise=None, sunset=None, hourly=None, layout="pages", items=("moon",)),
+    case("moon-pages-waning-crescent", now=utc(2026, 10, 7, 3, 0), code=3, is_day=False, t=6.0, fl=4.0,
+         sunrise=None, sunset=None, hourly=None, layout="pages", items=("feels", "moon")),
+    case("moon-anchor-full-night", now=utc(2026, 9, 26, 22, 0), code=0, is_day=False, t=9.0, fl=7.0,
+         sunrise=None, sunset=None, hourly=None, items=("feels", "moon")),
+    case("moon-anchor-waxing-gibbous-day", code=1, items=("feels", "moon", "hourly")),
+    case("moon-anchor-only-line", now=utc(2026, 10, 3, 2, 0), code=3, is_day=False, t=5.0, fl=3.0,
+         sunrise=None, sunset=None, hourly=None, items=("moon",)),
+    case("moon-hybrid-full-night", now=utc(2026, 9, 26, 22, 0), code=0, is_day=False, t=9.0, fl=7.0,
+         sunrise=None, sunset=None, hourly=None, layout="hybrid", items=("humidity", "moon")),
+    case("moon-hybrid-last-quarter-day", now=utc(2026, 10, 3, 12, 0), code=0, t=18.0, fl=17.0,
+         sunrise=None, sunset=None, hourly=None, layout="hybrid", items=("feels", "wind", "moon")),
+
     # ---- the budget: storm with every detail passes 480 frames → bursts ----
     case("over-budget-storm-all-hybrid", code=95, t=19.0, fl=16.0, hum=90, wind_kmh=kmh(17), wdir=270,
          gust_kmh=kmh(25), hi=21.0, lo=15.0, hourly=hourly(19, 3, pops(95)), layout="hybrid",
@@ -233,7 +258,7 @@ CASES_FRAMES = []   # the decoded frames, for the summary line
 WIND_UNITS = {"m/s": "metresPerSecond", "km/h": "kilometresPerHour", "mph": "milesPerHour"}
 SWITCHES = [("showsFeelsLike", "feels"), ("showsHumidity", "humidity"), ("showsWind", "wind"),
             ("showsHiLo", "hilo"), ("showsRainChance", "rain"), ("showsUV", "uv"),
-            ("showsSunEvents", "sun"), ("showsHourly", "hourly")]
+            ("showsSunEvents", "sun"), ("showsMoon", "moon"), ("showsHourly", "hourly")]
 
 
 def hexrows(grid):

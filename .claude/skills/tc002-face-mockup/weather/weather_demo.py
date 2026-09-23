@@ -9,6 +9,8 @@ scenario, encodes the GIFs and pushes them.
   python3 weather_demo.py --scenario 10         # any case id prefix from wgen.CASES
   python3 weather_demo.py --interval 3          # ticker page every 3 s
   python3 weather_demo.py --items feels,wind    # which ticker lines, in order
+  python3 weather_demo.py --scenario 20 --items feels,moon   # "moon" is the tile's showsMoon:
+                                                # the moon line/page, and the moon on a clear night
   python3 weather_demo.py --no-feels-colour     # colour the temperature by the air, not the felt
   python3 weather_demo.py --mode single         # one full-frame 52x16 GIF instead of two
   python3 weather_demo.py --layout hybrid       # or pages: one 52x16 GIF, with the budget rule

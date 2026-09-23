@@ -35,7 +35,8 @@ private func icon(_ reading: WeatherReading) -> WeatherIcon {
     for c in oracle.cases {
         let r = c.reading.map(\.appReading)
         let facts = c.facts
-        #expect(WeatherFacts.icon(for: r, at: c.now).rawValue == facts.icon, "\(c.id) icon")
+        #expect(WeatherFacts.icon(for: r, at: c.now, showsMoon: c.config.showsMoon).rawValue == facts.icon,
+                "\(c.id) icon")
         #expect(WeatherFacts.moonPhase(at: c.now) == facts.moon, "\(c.id) moon")
         guard let r else {
             #expect(facts.sun == nil && facts.rain == nil && facts.arrow == nil && facts.hours.isEmpty, "\(c.id)")
@@ -130,9 +131,15 @@ private func icon(_ reading: WeatherReading) -> WeatherIcon {
     #expect(icon(reading(code: 2, temperature: 35)) == .partlyCloudyDay)
 }
 
-@Test func aClearNightIsTheMoonOfTheNight() {
+@Test func aClearNightIsTheMoonOfTheNightWhenTheTileShowsTheMoon() {
     let fullMoon = Date(timeIntervalSince1970: 947_182_440 + 14.765 * 86_400)
-    #expect(WeatherFacts.icon(for: reading(code: 0, isDay: false), at: fullMoon) == .moon4)
+    #expect(WeatherFacts.icon(for: reading(code: 0, isDay: false), at: fullMoon, showsMoon: true) == .moon4)
+    // The moon is the tile's setting: without it a clear night is the plain one.
+    #expect(WeatherFacts.icon(for: reading(code: 0, isDay: false), at: fullMoon, showsMoon: false) == .clearNight)
+    #expect(WeatherFacts.icon(for: reading(code: 0, isDay: false), at: fullMoon) == .clearNight)
+    // Only the clear night: every other sky stays what it was.
+    #expect(WeatherFacts.icon(for: reading(code: 0), at: fullMoon, showsMoon: true) == .clearDay)
+    #expect(WeatherFacts.icon(for: reading(code: 1, isDay: false), at: fullMoon, showsMoon: true) == .mainlyClearNight)
 }
 
 @Test func theRestSplitByCloudAndDaylight() {

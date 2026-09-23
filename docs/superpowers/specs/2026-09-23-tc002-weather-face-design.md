@@ -88,6 +88,7 @@ label/value rule. All glyphs are 5 px tall.
 | `rain` | `rain 90%` | `#4DA6FF` from 30 %, grey below | umbrella |
 | `uv` | `uv 7` | WHO scale, §3.4 | sun with violet rays |
 | `sun` | `set 19:42` or `rise 6:48` | `#FFB52E` | sunset or sunrise |
+| `moon` | the phase noun: `gibbous`, §4.4 | `#F4EBB8` | the moon in its phase |
 | `hourly` | 11 bars, §3.3 | TemperatureColour per bar | weather |
 
 Order on screen is the table's order, filtered by the tile's switches.
@@ -131,6 +132,7 @@ cap pixel row above its bar. An hour without a probability gets no cap.
 | `feels` | thermometer | felt temperature + scale | `feels` |
 | `humidity` | drop | `85%` | `humidity` |
 | `wind` | wind | speed, unit in grey beside it | arrow, and `g 25` with gusts |
+| `moon` | the moon in its phase | none: the phase name on two lines, §4.4 | — |
 
 The other detail keys have no page in this layout.
 
@@ -164,13 +166,13 @@ Wind thresholds are in m/s. `hot` = air ≥ 30 °C, `frosty` = air ≤ −10 °C
 7. 0–3 and every other code (the existing clear fallback):
    - windy → `windyDay` / `windyNight` for 0–2, `cloudWindy` for 3;
    - 0, 1 by day → `hot` or `frostyClear` when those hold;
-   - 0 → `clearDay`, at night `moon0…moon7` (§4.2);
+   - 0 → `clearDay`; at night `moon0…moon7` (§4.2) when the tile shows the
+     moon (§4.4), else `clearNight`;
    - 1 → `mainlyClearDay` / `mainlyClearNight`;
    - 2 → `partlyCloudyDay` / `partlyCloudyNight`;
    - 3 → `cloudDay` / `cloudNight`.
 
-`clearNight` and `frost` stay in the catalogue without a rule of their own:
-`clearNight` is the art a moon phase falls back to, `frost` is approved art
+`frost` stays in the catalogue without a rule of its own: it is approved art
 kept for a frost warning. The catalogue is the approved art; the rules decide
 what shows.
 
@@ -185,6 +187,25 @@ month 29.530588853 days, as a fraction of it; phase index =
 
 `feelsWarm`, `feelsCold`, `humidity`, `wind`, `umbrella`, `uv`, `sunrise`,
 `sunset`.
+
+### 4.4 The moon item
+
+The **Moon phase** setting (`showsMoon`, off by default) owns everything the
+moon does on the face. Off, a clear night is `clearNight` and the moon never
+shows. On, a clear night is the moon in its phase, and a `moon` detail exists
+by day and by night alike: the phase is a fact of the date, not of the sky.
+
+The detail is drawn in the moon colour `#F4EBB8`, 5 px glyphs, no numbers:
+
+- Pages: its own page after the others, icon `moon<phase>`. The phase name
+  on two lines, left-aligned at x = 0, the first at y = 2 and the second at
+  y = 9: new/moon, waxing/crescent, first/quarter, waxing/gibbous, full/moon,
+  waning/gibbous, last/quarter, waning/crescent (phase index 0…7).
+- Anchor and Hybrid: one ticker line, the phase noun alone — new, crescent,
+  quarter, gibbous, full, gibbous, quarter, crescent. In Hybrid the line
+  brings the moon in its phase as its icon.
+
+`quarter` needed a `q` in the small face: `.##`, `#.#`, `.##`, `..#`, `..#`.
 
 ## 5. Data
 
@@ -222,6 +243,7 @@ decodes:
 | Rain chance | on / off | on |
 | UV | on / off | off |
 | Sunrise/sunset | on / off | off |
+| Moon phase | on / off | off |
 | Hourly chart | on / off | on |
 
 The existing Units, Show humidity and Show feels-like stay; Show feels-like

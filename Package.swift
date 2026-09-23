@@ -8,7 +8,7 @@ let package = Package(
         // The resources are icon art for skies the LaMetric catalogue has
         // nothing for. They ship here rather than being fetched, so a clock
         // that has never run this app still draws them.
-        .target(name: "PixelClockKit", exclude: ["Ulanzi/CLAUDE.md"], resources: [.process("Resources")]),
+        .target(name: "PixelClockKit", exclude: ["Ulanzi/CLAUDE.md", "Weather/CLAUDE.md"], resources: [.process("Resources")]),
         .testTarget(
             name: "PixelClockKitTests",
             dependencies: ["PixelClockKit"],

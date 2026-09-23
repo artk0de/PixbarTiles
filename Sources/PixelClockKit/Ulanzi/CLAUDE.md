@@ -35,32 +35,25 @@ a black or wrong page:
 3. Delete probes with an EMPTY-body POST to the same name (a `{}` body keeps the
    page in the knob cycle — `UlanziDevice.removeApp`).
 
-`pct-*` pages listed in `GET /api/customList` while the app is not running
-prove nothing about how it exited: `UlanziClockSession.shutdown` is meant to
-delete every page it owns on quit, yet a normal Quit on 2026-09-23 left all
-three `pct-*` pages on the clock. Treat quit-time cleanup as unverified.
+`pct-*` pages stay on the clock after a Quit, by design: the app quits with
+`.terminateNow` (`AppDelegate.applicationShouldTerminate`, the user's call of
+2026-09-21 — a teardown wait against an unreachable clock made the panel read
+as broken), so `UlanziClockSession.shutdown` never runs on Quit. Leftovers are
+cleared at the next launch by `UlanziCustody.sweep(liveTiles:)` (the user chose
+launch-time cleanup over a bounded quit delay, 2026-09-23). `shutdown` still
+runs when a clock is removed in the app.
 
 ## Animation budget
 
 - One page plays a GIF by itself; the Mac never rotates or re-pushes for motion.
 - GIFs must be FULL frames with one global palette (`FullFrameGif`); a
   cropped-frame GIF smears on the panel.
-- Measured on the TC002, 2026-09-23 (the weather face's design, spec §2.1):
-  - **One GIF at 478 frames / 135 240 bytes of base64 plays smoothly and on
-    time.** `UlanziScene` enforces ≤ 480 frames and ≤ 136 000 bytes; the
-    documented 50 frames / 60 KB were never measurements and are wrong here.
-  - **Two GIFs on one page drift.** Each plays its own delays, but the panel
-    pays a per-frame cost, so a 321-frame GIF falls behind a 36-frame one. Use
-    two GIFs only where nothing has to line up.
-  - **A Mac re-push is not frame-accurate.** Pushes once per state left on
-    time (±80 ms) and the picture still missed; anything that must stay in
-    step belongs inside ONE GIF.
-  - **What must change with a page must slide with it.** Swapping an icon
-    halfway through a slide reads as early, swapping it on landing reads as
-    late; only a shared slide reads as right.
-- Delay is per frame (centiseconds): a dwell is ONE frame with a long delay,
-  never repeated frames. A marquee scrolls only its overflow, 1 px per frame
-  (~100 ms reads as smooth); a 2 px step reads as jerky.
+- `UlanziScene` enforces the MEASURED ceiling — ≤ 480 frames, ≤ 136 000 bytes
+  of base64 (2026-09-23); the documented 50 frames / 60 KB are wrong here. Do
+  not lower it to "be safe": the weather face ships 478-frame GIFs.
+- Anything that must stay in step belongs inside ONE GIF — two GIFs on a page
+  drift and a Mac re-push is not frame-accurate. The measurements, slide
+  constants and marquee timing are owned by the `tc002-ticker-motion` skill.
 
 ## Faces
 
@@ -68,7 +61,9 @@ three `pct-*` pages on the clock. Treat quit-time cleanup as unverified.
   `tc002-face-mockup` skill (`.claude/skills/tc002-face-mockup/`). Its `gen.py`
   frames are the pixel oracle for the Swift face — change the design there,
   then the fixture, then Swift.
-- Letters on the 52×16 panel are 5 px tall with canonical lowercase shapes; the
-  skill's SKILL.md holds the glyph rules.
+- Which `PixelFont` face draws what (proportional for text, `big` for the one
+  hero figure, `standard` only for Cyrillic), the 34 px fitting rules and the
+  glyph shapes are owned by the `tc002-tile-screen` skill. Every table here is
+  a copy of a Python oracle table — add a glyph there first.
 - Dates are formatted in `TimeZone.current` from absolute `Date`s, whatever
   zone the vendor's server lives in (z.ai's is Asia/Shanghai).

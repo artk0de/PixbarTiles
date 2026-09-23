@@ -62,6 +62,10 @@ Live demo: `TC002_HOST=<ip> python3 weather/weather_demo.py [flags]`.
   boundaries (an experiment in keeping two GIFs in step); the default is `layered`,
   and `single` for Pages;
 - `--items feels,humidity,…` — which detail lines rotate, in the spec's order;
+  `moon` is the tile's **Moon phase** setting (`showsMoon`, off by default):
+  it adds the moon line (Anchor/Hybrid) or page (Pages), and makes a clear
+  night the moon in its phase instead of `clearNight` — e.g.
+  `--scenario 20 --items feels,moon --layout pages`;
 - `--interval <s>` — seconds per state (the tile's "Change every");
 - `--burst <ms>` — Pages/Hybrid: icon motion after each change, then rest
   (0 loops the icons through every dwell);
@@ -84,13 +88,9 @@ pixel for pixel and delay for delay. A design change starts in `wgen.py` /
 | `draw[].db` is `[x, y, w, h, [pixels]]` | the flat `[w, h, …]` spelling renders black (measured 2026-09-23) |
 | `switchDiyApp` is POST-only | GET answers 404 |
 
-## Glyph rules learnt the hard way
+## Related skills
 
-- All letters 5 px tall — 4 px lowercase next to 5 px digits reads as broken.
-- Canonical lowercase shapes: `e` has a bowl, a crossbar and an open tail;
-  `a` is two-storey; `j` has its dot; `g` has a descender. A box-shaped letter
-  reads as a digit.
-- `:` `.` and space are 1 px wide; `w` and `m` are 5 px wide.
-- Leave ≥ 4 px between a label and a scrolling value, or the two read as one word.
-- Dates on the panel are always in the Mac's `TimeZone.current`, whatever zone
-  the vendor's server lives in.
+- `tc002-tile-screen` — what a screen must obey: zones, fonts, colours, fitting
+  34 px, labels and units, missing data, icon drawing.
+- `tc002-ticker-motion` — tickers, slides, marquees, one-GIF sync, budget.
+- `Sources/PixelClockKit/Ulanzi/CLAUDE.md` — wire facts (black pages, probes).

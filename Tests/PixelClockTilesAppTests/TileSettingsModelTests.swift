@@ -385,6 +385,10 @@ private func expectSetterLands(
     await expectSetterLands({ $0.setShowsSunEvents(true) }, { $0.showsSunEvents == true })
 }
 
+@Test @MainActor func settingTheMoonPhaseIsWritten() async {
+    await expectSetterLands({ $0.setShowsMoon(true) }, { $0.showsMoon == true })
+}
+
 @Test @MainActor func settingTheHourlyChartIsWritten() async {
     await expectSetterLands({ $0.setShowsHourly(false) }, { $0.showsHourly == false })
 }

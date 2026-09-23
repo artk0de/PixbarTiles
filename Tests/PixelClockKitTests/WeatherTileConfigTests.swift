@@ -55,6 +55,7 @@ private func reading(
         #expect(decoded.showsRainChance)
         #expect(decoded.showsUV == false)
         #expect(decoded.showsSunEvents == false)
+        #expect(decoded.showsMoon == false)
         #expect(decoded.showsHourly)
         #expect(decoded == WeatherTileConfig(place: Coordinates(latitude: 55.7, longitude: 37.6)))
     }
@@ -71,6 +72,7 @@ private func reading(
     config.showsRainChance = false
     config.showsUV = true
     config.showsSunEvents = true
+    config.showsMoon = true
     config.showsHourly = false
 
     let roundTripped = try JSONDecoder().decode(
@@ -92,18 +94,20 @@ private func reading(
 
     config.showsUV = true
     config.showsSunEvents = true
+    config.showsMoon = true
     #expect(config.details == WeatherTileConfig.Detail.allCases)
-    #expect(WeatherTileConfig.Detail.allCases == [.feels, .humidity, .wind, .hilo, .rain, .uv, .sun, .hourly])
+    #expect(WeatherTileConfig.Detail.allCases == [.feels, .humidity, .wind, .hilo, .rain, .uv, .sun, .moon, .hourly])
 
     config.showsFeelsLike = false
     config.showsHumidity = false
     config.showsWind = false
     config.showsHiLo = false
-    #expect(config.details == [.rain, .uv, .sun, .hourly])
+    #expect(config.details == [.rain, .uv, .sun, .moon, .hourly])
 
     config.showsRainChance = false
     config.showsUV = false
     config.showsSunEvents = false
+    config.showsMoon = false
     config.showsHourly = false
     #expect(config.details.isEmpty)
 }
@@ -305,6 +309,7 @@ extension WeatherOracle.Config {
         config.showsRainChance = showsRainChance
         config.showsUV = showsUV
         config.showsSunEvents = showsSunEvents
+        config.showsMoon = showsMoon
         config.showsHourly = showsHourly
         return config
     }

@@ -714,7 +714,7 @@ private func instancedHost(
 // running.
 @Test func anInstanceIsSkippedByItsOwnSettings() async {
     let store = InMemorySettingsStore()
-    store.save(ConnectorSettings(isEnabled: false, intervalPosition: 0), for: "github.b")
+    store.save(ConnectorSettings(isEnabled: false, intervalPosition: 0), for: githubTile("b").key.tileId)
     let transport = RecordingTransport()
     let host = instancedHost(transport: transport, store: store)
 

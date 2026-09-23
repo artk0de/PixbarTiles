@@ -18,10 +18,39 @@ public struct TileKey: Codable, Sendable, Hashable {
 
     /// The key's name on the wire and in custody: the connector id alone for
     /// a single tile — every page already on a clock keeps the name it was
-    /// delivered under — else "<connectorId>.<instance>". Unique on one clock,
-    /// because two keys on it differ in connector or in instance.
+    /// delivered under — else "<connectorId>-<slug>-<hash>". Both clocks put
+    /// the name into `/api/custom?name=` unencoded (`AwtrixDevice`,
+    /// `UlanziDevice`) and a repository key carries '/' and '.', so an
+    /// instanced name is built from [a-z0-9-] only: the slug keeps it readable
+    /// in a device's page list, the hash of the whole instance keeps two
+    /// instances that slug alike ("a.b", "a-b") apart on one clock.
     public var tileId: String {
-        instance.isEmpty ? connectorId : "\(connectorId).\(instance)"
+        guard !instance.isEmpty else { return connectorId }
+        let hash = String(format: "%06x", Self.fnv1a(instance) & 0xFF_FFFF)
+        let slug = Self.slug(instance)
+        return slug.isEmpty ? "\(connectorId)-\(hash)" : "\(connectorId)-\(slug)-\(hash)"
+    }
+
+    /// Lowercased, every run outside [a-z0-9] collapsed to one '-', trimmed of
+    /// '-' at both ends, at most 24 characters.
+    private static func slug(_ text: String) -> String {
+        var slug = ""
+        for scalar in text.lowercased().unicodeScalars {
+            if ("a"..."z").contains(scalar) || ("0"..."9").contains(scalar) {
+                slug.unicodeScalars.append(scalar)
+            } else if !slug.isEmpty, !slug.hasSuffix("-") {
+                slug.append("-")
+            }
+        }
+        return String(slug.prefix(24)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    /// 32-bit FNV-1a over the UTF-8 bytes: stable across launches and
+    /// platforms, which `Hasher` is not.
+    private static func fnv1a(_ text: String) -> UInt32 {
+        text.utf8.reduce(0x811C_9DC5 as UInt32) { hash, byte in
+            (hash ^ UInt32(byte)) &* 0x0100_0193
+        }
     }
 }
 

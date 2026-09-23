@@ -141,6 +141,11 @@ private func instanced(
     )
 }
 
+/// The name the session keys a repository tile by on the desk clock.
+private func repoTileId(_ instance: String) -> String {
+    TileKey(clockId: desk, connectorId: "github", instance: instance).tileId
+}
+
 // A record written before tiles could be instanced has an empty instance, and
 // its tile id is the connector id it was always read under — so its settings
 // still load, by id and by key. The bytes are written by hand, as an older
@@ -175,8 +180,8 @@ private func instanced(
     ])
     let store = TileSettingsStore(defaults: defaults, clockId: desk)
 
-    #expect(store.storedSettings(for: "github.a/x")?.isEnabled == false)
-    #expect(store.storedSettings(for: "github.b/y")?.isEnabled == true)
+    #expect(store.storedSettings(for: repoTileId("a/x"))?.isEnabled == false)
+    #expect(store.storedSettings(for: repoTileId("b/y"))?.isEnabled == true)
     #expect(
         store.storedSettings(for: TileKey(clockId: desk, connectorId: "github", instance: "b/y"))?
             .intervalPosition == 1
@@ -194,10 +199,10 @@ private func instanced(
         instanced("github", "a/x", every: 600), instanced("github", "b/y", every: 600),
     ])
     let store = TileSettingsStore(defaults: defaults, clockId: desk)
-    var settings = try #require(store.storedSettings(for: "github.a/x"))
+    var settings = try #require(store.storedSettings(for: repoTileId("a/x")))
 
     settings.lastDeliveredAt = delivered
-    store.save(settings, for: "github.a/x")
+    store.save(settings, for: repoTileId("a/x"))
 
     let tiles = TileStore(defaults: defaults).all()
     #expect(tiles.count == 2)

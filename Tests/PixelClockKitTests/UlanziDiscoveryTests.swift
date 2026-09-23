@@ -61,6 +61,12 @@ import Testing
         _ payload: String, capacity: Int = 2048
     ) -> UnsafeMutableRawBufferPointer {
         let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: capacity, alignment: 1)
+        // The listener reuses one buffer, so past the datagram lies whatever
+        // the last one left there — never zeros. Poisoning the tail with a byte
+        // no UTF-8 sequence can hold makes a count that overshoots the payload
+        // fail every run, not only under parallel load when the allocator
+        // happens to hand back dirty memory.
+        buffer.initializeMemory(as: UInt8.self, repeating: 0xFF)
         let bytes = Array(payload.utf8)
         bytes.withUnsafeBytes { buffer.copyBytes(from: $0) }
         return buffer
@@ -73,7 +79,7 @@ import Testing
         defer { buffer.deallocate() }
 
         let sighting = UlanziBroadcastListener.sighting(
-            from: UnsafeRawBufferPointer(buffer), count: 55, host: "192.168.1.72"
+            from: UnsafeRawBufferPointer(buffer), count: 54, host: "192.168.1.72"
         )
         #expect(sighting?.announcement.mac == "ccc4b2779b9a")
         #expect(sighting?.host == "192.168.1.72")
@@ -128,7 +134,7 @@ import Testing
 
         #expect(
             UlanziBroadcastListener.sighting(
-                from: UnsafeRawBufferPointer(buffer), count: 55, host: nil
+                from: UnsafeRawBufferPointer(buffer), count: 54, host: nil
             ) == nil
         )
     }

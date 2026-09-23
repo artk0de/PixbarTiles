@@ -130,6 +130,44 @@ private func state(
         #expect(snap.openPRs == [42])
     }
 
+    @Test func anOlderPRSlidingIntoThePageIsNotNew() {
+        // More than 20 open: the page is the newest 20. #49 merged, so #29 —
+        // open all along — slides into the page without being new.
+        let (events, snap) = GitHubEventDetector.detect(
+            state(prs: (29...48).map { ($0, "u\($0)") }),
+            since: GitHubSnapshot(
+                lastStarAt: nil, lastForkAt: nil, openPRs: Set(30...49), lastPRNumber: 49
+            )
+        )
+        #expect(events.newPRs.isEmpty)
+        #expect(events.isEmpty)
+        #expect(snap.lastPRNumber == 49)
+    }
+
+    @Test func aPROpenedWhileAnotherSlidesInIsTheOnlyNewOne() {
+        let (events, snap) = GitHubEventDetector.detect(
+            state(prs: ([29] + Array(31...48) + [50]).map { ($0, "u\($0)") }),
+            since: GitHubSnapshot(
+                lastStarAt: nil, lastForkAt: nil, openPRs: Set(30...49), lastPRNumber: 49
+            )
+        )
+        #expect(events.newPRs == [OpenPR(number: 50, author: "u50")])
+        #expect(snap.lastPRNumber == 50)
+    }
+
+    @Test func aSnapshotWithoutLastPRNumberFallsBackToTheSet() throws {
+        // A snapshot encoded before the highest number was remembered.
+        let old = Data(#"{"openPRs":[41]}"#.utf8)
+        let snapshot = try JSONDecoder().decode(GitHubSnapshot.self, from: old)
+        #expect(snapshot.lastPRNumber == nil)
+
+        let (events, snap) = GitHubEventDetector.detect(
+            state(prs: [(40, "x"), (42, "y")]), since: snapshot
+        )
+        #expect(events.newPRs.map(\.number) == [42, 40])
+        #expect(snap.lastPRNumber == 42)
+    }
+
     @Test func forksByCreatedAt() {
         let (events, snap) = GitHubEventDetector.detect(
             state(forks: [("x", t0), ("y", t1), ("z", t2)]),

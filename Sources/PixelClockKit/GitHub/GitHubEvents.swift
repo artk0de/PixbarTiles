@@ -13,6 +13,12 @@ public struct GitHubSnapshot: Codable, Sendable, Equatable {
     public var lastForkAt: Date?
     /// The open PR numbers at the last read. A PR is new by being absent here.
     public var openPRs: Set<Int>
+    /// The highest PR number ever seen. Numbers are monotonic per repository,
+    /// so a freshly opened PR is always above it — which is what tells it
+    /// apart from an older open PR sliding into the query's `last: 20` page
+    /// when a newer one closes. Optional so an older snapshot still decodes;
+    /// the detector then falls back to the set for one read.
+    public var lastPRNumber: Int?
     /// The totals at the last read. They exist for one case the timestamps
     /// cannot see: more stars (or forks) arriving between two reads than the
     /// query's `last: 20` page holds. Optional so a snapshot encoded before
@@ -23,11 +29,12 @@ public struct GitHubSnapshot: Codable, Sendable, Equatable {
 
     public init(
         lastStarAt: Date?, lastForkAt: Date?, openPRs: Set<Int>,
-        stars: Int? = nil, forks: Int? = nil
+        stars: Int? = nil, forks: Int? = nil, lastPRNumber: Int? = nil
     ) {
         self.lastStarAt = lastStarAt
         self.lastForkAt = lastForkAt
         self.openPRs = openPRs
+        self.lastPRNumber = lastPRNumber
         self.stars = stars
         self.forks = forks
     }
@@ -76,13 +83,14 @@ public enum GitHubEventDetector {
         let newestStar = state.stargazers.map(\.starredAt).max()
         let newestFork = state.forkEvents.map(\.createdAt).max()
         let current = Set(state.openPRNumbers.map(\.number))
+        let highestPR = current.max()
 
         guard let snapshot else {
             return (
                 GitHubEvents(),
                 GitHubSnapshot(
                     lastStarAt: newestStar, lastForkAt: newestFork, openPRs: current,
-                    stars: state.stars, forks: state.forks
+                    stars: state.stars, forks: state.forks, lastPRNumber: highestPR
                 )
             )
         }
@@ -98,7 +106,7 @@ public enum GitHubEventDetector {
         events.newStars = stars.map(\.login)
         events.newForks = forks.map(\.login)
         events.newPRs = state.openPRNumbers
-            .filter { !snapshot.openPRs.contains($0.number) }
+            .filter { isNewPR($0.number, in: snapshot) }
             .sorted { $0.number > $1.number }
         events.newStarCount = count(pageNew: stars.count, total: state.stars, previous: snapshot.stars)
         events.newForkCount = count(pageNew: forks.count, total: state.forks, previous: snapshot.forks)
@@ -110,7 +118,8 @@ public enum GitHubEventDetector {
             lastStarAt: latest(snapshot.lastStarAt, newestStar),
             lastForkAt: latest(snapshot.lastForkAt, newestFork),
             openPRs: current,
-            stars: state.stars, forks: state.forks
+            stars: state.stars, forks: state.forks,
+            lastPRNumber: [snapshot.lastPRNumber, highestPR].compactMap { $0 }.max()
         )
         return (events, next)
     }
@@ -127,6 +136,17 @@ public enum GitHubEventDetector {
     static func count(pageNew: Int, total: Int, previous: Int?) -> Int {
         guard let previous else { return pageNew }
         return max(pageNew, total - previous, 0)
+    }
+
+    /// Not in the last read's set, AND above the highest number ever seen.
+    /// The set alone misfires past 20 open PRs: the page is the newest 20, so
+    /// merging a recent one slides an older, long-open PR into it, absent
+    /// from the set yet not new. Numbers only grow, so the bound rules it out.
+    /// Without a recorded bound (an older snapshot) the set is all there is.
+    private static func isNewPR(_ number: Int, in snapshot: GitHubSnapshot) -> Bool {
+        guard !snapshot.openPRs.contains(number) else { return false }
+        guard let highest = snapshot.lastPRNumber else { return true }
+        return number > highest
     }
 
     /// Strictly newer: an equal timestamp is the one already seen.

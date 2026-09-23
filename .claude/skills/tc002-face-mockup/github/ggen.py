@@ -38,7 +38,10 @@ G.update({
     "_": ["...", "...", "...", "...", "###"],
     "+": ["...", ".#.", "###", ".#.", "..."],
     "#": [".#.#.", "#####", ".#.#.", "#####", ".#.#."],
-    "@": [".###.", "#...#", "#.###", "#.##.", ".#..."],
+    # A person, before a login: `@` does not read at 5 px (two shapes tried on
+    # the panel); this bust was picked there, in grey so it cannot be taken
+    # for an event's own colour (2026-09-23).
+    "☺": [".###.", ".###.", ".....", "#####", "#####"],
 })
 
 B = dict(wgen.B)
@@ -56,11 +59,14 @@ def width(s, font=G):
 
 
 # ---- colours (GitHub's own: star gold, fork blue, open-PR green) --------------
-STAR = hexrgb("#E3B341")
-STAR_CORE = hexrgb("#FFD33D")
+# Gold as the panel shows it: GitHub's #E3B341 read orange on the LEDs, whose
+# red channel dominates; #FFD84A was picked on the clock (2026-09-23).
+STAR = hexrgb("#FFD84A")
+STAR_CORE = STAR
 FORK = hexrgb("#58A6FF")
 PR = hexrgb("#3FB950")
 WHITE = hexrgb("#E8E8E8")
+PERSON = hexrgb("#909090")
 MARK = hexrgb("#B8B8B8")
 SHINE = hexrgb("#FFFFFF")
 
@@ -232,12 +238,21 @@ def line_area(parts):
     a = Area(AREA_W, 5)
     x = 0
     for s, c in parts:
-        x = a.text(s, x, 0, c, G) - 1 + (3 if c == LABEL else 2)
+        x = a.text(s, x, 0, c, G) - 1 + gap_after(s, c)
     return a
 
 
+MARKS = {"☺"}
+
+
+def gap_after(s, c):
+    """tc002-tile-screen: 3 px after a grey word label, 1 px after a mark,
+    2 px after a value."""
+    return 1 if s in MARKS else (3 if c == LABEL else 2)
+
+
 def parts_width(parts):
-    return sum(width(s) for s, _ in parts) + sum(3 if c == LABEL else 2 for s, c in parts[:-1])
+    return sum(width(s) for s, _ in parts) + sum(gap_after(s, c) for s, c in parts[:-1])
 
 
 ICON_STEP = wgen.ICON_STEP        # Hybrid: the icon slides 3 rows per ticker step
@@ -364,7 +379,7 @@ def edge_marquee(parts, dwell_ms):
     full = Area(parts_width(parts) + 1, 5)
     x = 0
     for s, c in parts:
-        x = full.text(s, x, 0, c, G) - 1 + (3 if c == LABEL else 2)
+        x = full.text(s, x, 0, c, G) - 1 + gap_after(s, c)
     over = full.w - 1 - AREA_W
     out = []
     for off in range(over + 1):
@@ -400,7 +415,7 @@ def celebration(kind, count, who, cfg, pr_numbers=()):
             # 6 px that push a short login past 34.
             lines.append([(f"#{pr_numbers[i]}", PR), (login.lower(), WHITE)])
         else:
-            lines.append([(f"@{login.lower()}", WHITE)])
+            lines.append([("☺", PERSON), (login.lower(), WHITE)])
     if len(who) > MAX_LOGINS:
         lines.append([(f"+{len(who) - MAX_LOGINS}", colour), ("more", LABEL)])
 

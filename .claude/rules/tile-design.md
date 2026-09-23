@@ -13,6 +13,9 @@ every candidate as LED dots in its self-contained `index.html`.
 - The mockup skill owns the tooling; `tc002-tile-screen` owns what a screen
   must obey (zones, fonts, 34 px fitting, icons); `tc002-ticker-motion` owns
   how it moves. Load both alongside it.
+- A colour, glyph shape or icon variant the eye must judge is settled on the
+  clock with `tc002-calibrate` — candidates side by side, picked by letter —
+  and you may run it without being asked.
 
 Why: a clock screen is judged by eye at LED scale. Clipping, glyph collisions,
 worst-case widths and GIF timing are invisible in prose and in a green suite,

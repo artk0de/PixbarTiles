@@ -136,4 +136,6 @@ pixel for pixel and delay for delay. A design change starts in `wgen.py` /
 - `tc002-tile-screen` — what a screen must obey: zones, fonts, colours, fitting
   34 px, labels and units, missing data, icon drawing.
 - `tc002-ticker-motion` — tickers, slides, marquees, one-GIF sync, budget.
+- `tc002-calibrate` — when a colour or a small shape is the question, push the
+  candidates side by side on the clock and let the user pick by letter.
 - `Sources/PixelClockKit/Ulanzi/CLAUDE.md` — wire facts (black pages, probes).

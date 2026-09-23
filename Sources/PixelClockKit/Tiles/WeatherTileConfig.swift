@@ -37,6 +37,16 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
     public static let changeEverySteps: [TimeInterval] = [3, 5, 8, 10, 15]
 
     public var place: Coordinates
+    /// The city the place was CHOSEN by, when it was chosen rather than typed.
+    ///
+    /// A pair of coordinates is not a place anybody recognises, and the search
+    /// already knows the answer at the moment a row is picked — so it is kept
+    /// rather than thrown away and asked for again. Nil for a pair typed by
+    /// hand: a name kept beside coordinates it no longer describes is the one
+    /// way this surface could say Moscow over a reading from somewhere else.
+    public var placeName: String?
+    /// The country beside it, for the same reason and with the same rule.
+    public var placeCountry: String?
     public var units: Units
     /// The `humidity` line and page.
     public var showsHumidity: Bool
@@ -64,7 +74,8 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
     public var showsHourly: Bool
 
     public init(
-        place: Coordinates, units: Units = .celsius,
+        place: Coordinates, placeName: String? = nil, placeCountry: String? = nil,
+        units: Units = .celsius,
         showsHumidity: Bool = true, showsFeelsLike: Bool = true,
         layout: Layout = .anchor, changeEvery: TimeInterval = 10, feelsLikeColour: Bool = true,
         showsWind: Bool = true, windUnit: WindUnit = .metresPerSecond, showsHiLo: Bool = true,
@@ -72,6 +83,8 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
         showsMoon: Bool = false, showsHourly: Bool = true
     ) {
         self.place = place
+        self.placeName = placeName
+        self.placeCountry = placeCountry
         self.units = units
         self.showsHumidity = showsHumidity
         self.showsFeelsLike = showsFeelsLike
@@ -107,7 +120,8 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case latitude, longitude, units, showsHumidity, showsFeelsLike
+        case latitude, longitude, placeName, placeCountry
+        case units, showsHumidity, showsFeelsLike
         case layout, changeEvery, feelsLikeColour, showsWind, windUnit, showsHiLo
         case showsRainChance, showsUV, showsSunEvents, showsMoon, showsHourly
     }
@@ -124,6 +138,8 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Value.self, forKey: key) ?? fallback
         }
         place = defaults.place
+        placeName = try container.decodeIfPresent(String.self, forKey: .placeName)
+        placeCountry = try container.decodeIfPresent(String.self, forKey: .placeCountry)
         units = try read(.units, defaults.units)
         showsHumidity = try read(.showsHumidity, defaults.showsHumidity)
         showsFeelsLike = try read(.showsFeelsLike, defaults.showsFeelsLike)
@@ -144,6 +160,8 @@ public struct WeatherTileConfig: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(place.latitude, forKey: .latitude)
         try container.encode(place.longitude, forKey: .longitude)
+        try container.encodeIfPresent(placeName, forKey: .placeName)
+        try container.encodeIfPresent(placeCountry, forKey: .placeCountry)
         try container.encode(units, forKey: .units)
         try container.encode(showsHumidity, forKey: .showsHumidity)
         try container.encode(showsFeelsLike, forKey: .showsFeelsLike)

@@ -169,6 +169,10 @@ struct MenuPanel: View {
                 .foregroundStyle(.secondary)
                 .contentTransition(.numericText())
         }
+        // The header is the grab bar, as it is on any window: dragging it
+        // moves the panel, and moving the panel is what pins it (the delegate
+        // hears the move). SoundSource's own pin flips the same way.
+        .gesture(WindowDragGesture())
     }
 
     /// The pin, at the corner SoundSource puts its own.

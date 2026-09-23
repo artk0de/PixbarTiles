@@ -658,7 +658,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 delegate.model.windowDidClose()
                 delegate.panelDidClose()
             },
+            whenThePanelsWindow(NSWindow.didMoveNotification) { $0.panelWasDragged() },
         ]
+    }
+
+    /// The panel's window moved. If a mouse button is DOWN it was the user
+    /// dragging it, and a panel dragged off the menu bar is a panel pinned —
+    /// the way SoundSource's own pin flips.
+    ///
+    /// The held button is the whole discriminator, and it is not a heuristic:
+    /// macOS places this window under the menu bar item on every open, and
+    /// that placement posts the same notification with no button down. Without
+    /// the guard the panel would pin itself the first time it was ever shown.
+    private func panelWasDragged() {
+        guard panelPin.isPinned == false, NSEvent.pressedMouseButtons != 0 else { return }
+        guard let frame = panelWindow?.frame else { return }
+        panelPin.detach(at: CGPoint(x: frame.minX, y: frame.maxY))
     }
 
     /// One observer of `name`, deaf to every window that is not the panel's.

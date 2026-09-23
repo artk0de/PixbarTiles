@@ -28,6 +28,26 @@ final class PanelPin {
         self.isPinned = defaults.bool(forKey: Self.key)
     }
 
+    /// Where the popover was when the user dragged it, or nil once that has
+    /// been used. Not persisted: it describes one gesture, and a gesture does
+    /// not outlive the launch it happened in. The pin does.
+    private var detachedOrigin: CGPoint?
+
+    /// The panel was dragged off the menu bar: pin it, and remember where it
+    /// was let go. A window that pins itself and then opens in the middle of
+    /// the screen is a move the user has to make twice.
+    func detach(at origin: CGPoint) {
+        detachedOrigin = origin
+        set(true)
+    }
+
+    /// The detach origin, once. Left behind, the next pin would drag the
+    /// window back to wherever the last detach happened to land.
+    func takeDetachedOrigin() -> CGPoint? {
+        defer { detachedOrigin = nil }
+        return detachedOrigin
+    }
+
     func toggle() { set(isPinned == false) }
 
     func set(_ pinned: Bool) {

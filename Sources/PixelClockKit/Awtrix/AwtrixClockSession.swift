@@ -28,7 +28,7 @@ public actor AwtrixClockSession {
     public nonisolated let indicators: IndicatorCustody?
 
     /// Deliveries one at a time, and how the last runs went. Runs and replays
-    /// both take their turn in it — see `runOnce(connectorId:)` for why they
+    /// both take their turn in it — see `runOnce(tile:)` for why they
     /// must.
     private let chain: DeliveryChain
 
@@ -59,7 +59,7 @@ public actor AwtrixClockSession {
 
     /// Puts back the device-wide state this app borrowed.
     ///
-    /// - Parameter connectorId: only what this connector took, or nil for
+    /// - Parameter tileId: only what this tile took, or nil for
     ///   everything outstanding — which is what a quit wants.
     ///
     /// Deliberately NOT on the delivery chain. It is what a quit runs after
@@ -71,8 +71,8 @@ public actor AwtrixClockSession {
     /// there is nobody left to tell, and on a connector switched off the row
     /// already says so. A failure is not swallowed either — `DeviceCustody`
     /// keeps what it could not give back, so the next restore still knows.
-    public func restoreDeviceState(borrowedBy connectorId: String?) async {
-        try? await custody.restore(borrowedBy: connectorId)
+    public func restoreDeviceState(borrowedBy tileId: String?) async {
+        try? await custody.restore(borrowedBy: tileId)
     }
 
     /// How many deliveries this connector has failed in a row.
@@ -83,36 +83,12 @@ public actor AwtrixClockSession {
     /// How long to wait before the next attempt. Answered by the chain,
     /// because the chain is what watched the last runs — see
     /// `DeliveryChain.nextDelay(connectorId:interval:)`.
-    public func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval {
-        await nextDelay(tile: singleTile(connectorId), interval: interval)
-    }
-
+    ///
     /// The tile's own backoff: two tiles of one connector are two feeds, and
     /// one failing says nothing about the other.
     public func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval {
         await chain.nextDelay(connectorId: tile.key.tileId, interval: interval)
     }
-
-    /// The single tile of a connector, for the entry points that still name a
-    /// connector rather than a tile.
-    ///
-    /// Its clock id is a placeholder, and honestly so: this session drives one
-    /// clock and never reads the key's clock. Its policy is what the store
-    /// holds for the id — informational, since enablement is read from the
-    /// store again when the run is asked for. Goes when the app hands every
-    /// call a tile.
-    private func singleTile(_ connectorId: String) -> TileRecord {
-        let settings = store.settings(for: connectorId)
-        return TileRecord(
-            key: TileKey(clockId: Self.unplacedClock, connectorId: connectorId),
-            policy: TilePolicyRecord(
-                isPaused: !settings.isEnabled, refreshSeconds: Int(settings.interval)
-            ),
-            lastDeliveredAt: settings.lastDeliveredAt
-        )
-    }
-
-    private static let unplacedClock = UUID(uuid: UUID_NULL)
 
     /// Produces, delivers and speaks, one delivery at a time.
     ///
@@ -129,10 +105,7 @@ public actor AwtrixClockSession {
     /// The background pass is deliberately NOT on this chain: it can be a
     /// minute long, and making the banner wait behind it is the trade the queue
     /// exists to avoid.
-    public func runOnce(connectorId: String) async -> RunResult {
-        await runOnce(tile: singleTile(connectorId))
-    }
-
+    ///
     /// Runs one tile: its own connector, its own settings, its own place in
     /// the backoff — all keyed by `tile.key.tileId`, which for a single tile
     /// is the connector id every one of them was keyed by before.
@@ -190,11 +163,7 @@ public actor AwtrixClockSession {
     /// Its own entry point rather than a tail on `runOnce`, so the app can put
     /// it on its own schedule: the pass is where the synthesis bill is paid,
     /// and the point of paying it here is that no banner is waiting on it.
-    public func maintain(connectorId: String) async -> MaintenanceResult {
-        await maintain(tile: singleTile(connectorId))
-    }
-
-    /// The background pass of one tile's own connector.
+    /// The pass is the tile's own connector's.
     public func maintain(tile: TileRecord) async -> MaintenanceResult {
         let tileId = tile.key.tileId
         guard let connector = registry.connector(for: tile) else {

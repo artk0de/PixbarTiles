@@ -514,11 +514,11 @@ private func inkedColumns(of rep: NSBitmapImageRep, rows: Range<Int>) -> Range<I
 private struct RunReportingHost: ConnectorRunning {
     let run: RunResult
 
-    func maintain(connectorId: String) async -> MaintenanceResult { .completed }
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
-    func runOnce(connectorId: String) async -> RunResult { run }
+    func maintain(tile: TileRecord) async -> MaintenanceResult { .completed }
+    func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval { interval }
+    func runOnce(tile: TileRecord) async -> RunResult { run }
     func deliver(_ output: AwtrixDelivery) async -> RunResult { run }
-    func restoreDeviceState(borrowedBy connectorId: String?) async {}
+    func restoreDeviceState(borrowedBy tileId: String?) async {}
     var indicators: IndicatorCustody? { nil }
 }
 

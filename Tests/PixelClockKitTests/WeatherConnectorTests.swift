@@ -274,7 +274,7 @@ private struct PassThroughIcons: IconInstalling {
     let transport = SkyAndClock(sky: weatherBody(code: 71))
     let (host, _) = weatherHost(transport: transport)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
 
     #expect(transport.overlayWrites == ["snow"])
     #expect(transport.customAppPosts.count == 1)
@@ -293,7 +293,7 @@ private struct PassThroughIcons: IconInstalling {
     let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
     let (host, _) = weatherHost(transport: transport)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     transport.refuseSettingsWrites()
     await host.restoreDeviceState(borrowedBy: nil)
     #expect(transport.currentOverlay == "rain")
@@ -310,12 +310,12 @@ private struct PassThroughIcons: IconInstalling {
     let clock = Clock()
     let (host, _) = weatherHost(transport: transport, clock: clock)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     // Past the source's own interval, so the second run really does fetch and
     // really does decide — a cached reading would make this pass for the wrong
     // reason entirely.
     clock.advance(1_000)
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
 
     #expect(transport.requests.filter { $0.url?.host == "api.open-meteo.com" }.count == 2)
     // One write, not two. The setting is in flash on a device that lives on a
@@ -332,10 +332,10 @@ private struct PassThroughIcons: IconInstalling {
     let clock = Clock()
     let (host, _) = weatherHost(transport: transport, clock: clock)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     transport.changeSky(to: weatherBody(code: 95))
     clock.advance(1_000)
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
 
     #expect(transport.overlayWrites == ["rain", "thunder"])
 }
@@ -344,7 +344,7 @@ private struct PassThroughIcons: IconInstalling {
     let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
     let (host, _) = weatherHost(transport: transport)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     await host.restoreDeviceState(borrowedBy: nil)
 
     // Not `clear`: what is put back is what the device actually had, which the
@@ -359,7 +359,7 @@ private struct PassThroughIcons: IconInstalling {
     let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "aurora")
     let (host, _) = weatherHost(transport: transport)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     await host.restoreDeviceState(borrowedBy: nil)
 
     #expect(transport.overlayWrites == ["rain", "aurora"])
@@ -384,12 +384,12 @@ private struct PassThroughIcons: IconInstalling {
     let borrowed = InMemoryBorrowedOverlayStore()
 
     let first = weatherHost(transport: transport, borrowedOverlays: borrowed)
-    #expect(await first.host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await first.host.runOnce(tile: singleTile("weather")) == .delivered)
     #expect(transport.currentOverlay == "rain")
     // The process dies here. No teardown, no restore — `first` is simply gone.
 
     let second = weatherHost(transport: transport, borrowedOverlays: borrowed)
-    #expect(await second.host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await second.host.runOnce(tile: singleTile("weather")) == .delivered)
     await second.host.restoreDeviceState(borrowedBy: nil)
 
     #expect(transport.currentOverlay == "clear")
@@ -407,13 +407,13 @@ private struct PassThroughIcons: IconInstalling {
     let borrowed = InMemoryBorrowedOverlayStore()
 
     let first = weatherHost(transport: transport, borrowedOverlays: borrowed)
-    #expect(await first.host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await first.host.runOnce(tile: singleTile("weather")) == .delivered)
 
     // Relaunch into weather that has since changed, so the second run really
     // does write and really does decide what it displaced.
     transport.changeSky(to: weatherBody(code: 71))
     let second = weatherHost(transport: transport, borrowedOverlays: borrowed)
-    #expect(await second.host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await second.host.runOnce(tile: singleTile("weather")) == .delivered)
 
     #expect(
         borrowed.borrowedOverlay()
@@ -428,7 +428,7 @@ private struct PassThroughIcons: IconInstalling {
     let borrowed = InMemoryBorrowedOverlayStore()
     let (host, _) = weatherHost(transport: transport, borrowedOverlays: borrowed)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     #expect(borrowed.borrowedOverlay() != nil)
     await host.restoreDeviceState(borrowedBy: nil)
 
@@ -443,7 +443,7 @@ private struct PassThroughIcons: IconInstalling {
     let borrowed = InMemoryBorrowedOverlayStore()
     let (host, _) = weatherHost(transport: transport, borrowedOverlays: borrowed)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     transport.refuseSettingsWrites()
     await host.restoreDeviceState(borrowedBy: nil)
 
@@ -495,7 +495,7 @@ private struct PassThroughIcons: IconInstalling {
     let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
     let (host, _) = weatherHost(transport: transport)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     await host.restoreDeviceState(borrowedBy: nil)
     await host.restoreDeviceState(borrowedBy: nil)
 
@@ -509,7 +509,7 @@ private struct PassThroughIcons: IconInstalling {
     let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
     let (host, _) = weatherHost(transport: transport)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     await host.restoreDeviceState(borrowedBy: "anecdotes")
 
     #expect(transport.overlayWrites == ["rain"])
@@ -522,7 +522,7 @@ private struct PassThroughIcons: IconInstalling {
     let transport = SkyAndClock(sky: weatherBody(code: 61))
     let (host, _) = weatherHost(transport: transport)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     await host.restoreDeviceState(borrowedBy: nil)
 
     let removals = transport.requests.filter {
@@ -537,10 +537,10 @@ private struct PassThroughIcons: IconInstalling {
     let clock = Clock()
     let (host, _) = weatherHost(transport: transport, clock: clock)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     transport.breakTheSky()
     clock.advance(1_000)
-    let result = await host.runOnce(connectorId: "weather")
+    let result = await host.runOnce(tile: singleTile("weather"))
 
     #expect(result == .failed(String(describing: WeatherError.http(status: 503))))
     // Still `snow`, and nothing after it. An outage is not a change in the
@@ -560,7 +560,7 @@ private struct PassThroughIcons: IconInstalling {
     for code in [0, 3, 48, 51, 61, 71, 80, 85, 95, 96, 4_242] {
         transport.changeSky(to: weatherBody(code: code))
         clock.advance(1_000)
-        #expect(await host.runOnce(connectorId: "weather") == .delivered)
+        #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
     }
 
     #expect(transport.overlayWrites.isEmpty == false)
@@ -670,7 +670,7 @@ private struct PassThroughIcons: IconInstalling {
     let transport = SkyAndClock(sky: weatherBody(code: 71))
     let (host, _) = weatherHost(transport: transport)
 
-    #expect(await host.runOnce(connectorId: "weather") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
 
     #expect(transport.customAppPosts.first?["icon"] as? String == "2289")
 }

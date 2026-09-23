@@ -13,16 +13,20 @@ import Foundation
 /// this is the app's view of what it schedules — what to do, and how long to
 /// wait before doing it; no device, no registry. `AwtrixClockSession` satisfies it as
 /// written.
+///
+/// Every call names a whole tile rather than a connector: two tiles of one
+/// connector on one clock are two feeds, each with its own connector, settings
+/// and backoff, all keyed by `tile.key.tileId`.
 protocol ConnectorRunning: Sendable {
-    func maintain(connectorId: String) async -> MaintenanceResult
-    func runOnce(connectorId: String) async -> RunResult
+    func maintain(tile: TileRecord) async -> MaintenanceResult
+    func runOnce(tile: TileRecord) async -> RunResult
     /// Plays something already produced. A replay is this and nothing else: no
     /// produce, so nothing is retired, and no outcome recorded against the
     /// connector, so the backoff is untouched.
     func deliver(_ output: AwtrixDelivery) async -> RunResult
     /// The host owns this rather than the schedule, because the answer is a
     /// function of how the last runs went and the schedule does not watch them.
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval
+    func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval
     /// Puts back the device-wide state this app borrowed — the weather overlay,
     /// and anything it added to the clock's loop.
     ///
@@ -30,9 +34,9 @@ protocol ConnectorRunning: Sendable {
     /// connector never talks to the device and the overlay it borrows is one
     /// global setting rather than a property of any one producer.
     ///
-    /// - Parameter connectorId: only what this connector took, or nil for
-    ///   everything outstanding, which is what a quit wants.
-    func restoreDeviceState(borrowedBy connectorId: String?) async
+    /// - Parameter tileId: only what this tile took, or nil for everything
+    ///   outstanding, which is what a quit wants.
+    func restoreDeviceState(borrowedBy tileId: String?) async
 
     /// The clock's lamp custody, or nil for a clock with no lamps. VPN tiles
     /// write through it, off the delivery chain.
@@ -355,7 +359,9 @@ final class AppModel: ObservableObject {
         }
         let own = clockRegistries[clock.id] ?? makeClockRegistry(clock)
         clockRegistries[clock.id] = own
-        return own.connector(id: key.connectorId) ?? registry.connector(id: key.connectorId)
+        // Built for the tile's stored record, the one its clock would run: a
+        // factory reads the tile's settings off it.
+        return own.connector(for: runningTile(key)) ?? registry.connector(id: key.connectorId)
     }
 
     /// The selected clock's tile of this connector, which is what the panel's
@@ -365,13 +371,21 @@ final class AppModel: ObservableObject {
     }
 
     /// A by-tile map, seen the way the panel still reads it: the selected
-    /// clock's single tiles, by connector.
+    /// clock's tiles, by tile id — which for a single tile is its connector id.
+    ///
+    /// Instances are listed only for a scene connector that is placed once per
+    /// key. The lamp's instances stay out as before: the VPN is not in the
+    /// registry, so it is never scheduled and its keys never reach these maps
+    /// — and if one did, it would not be listed here.
     private func projected<Value>(_ byTile: [TileKey: Value]) -> [String: Value] {
-        var byConnector: [String: Value] = [:]
-        for (key, value) in byTile where key.clockId == selectedClockId && key.instance.isEmpty {
-            byConnector[key.connectorId] = value
+        var byTileId: [String: Value] = [:]
+        for (key, value) in byTile where key.clockId == selectedClockId {
+            guard key.instance.isEmpty
+                || registry.connector(id: key.connectorId)?.instancing == .perKey
+            else { continue }
+            byTileId[key.tileId] = value
         }
-        return byConnector
+        return byTileId
     }
 
     /// The clock record as this launch has it, by id.
@@ -870,73 +884,10 @@ final class AppModel: ObservableObject {
         // One shared audio player and one shared weather source; everything
         // else below is per clock.
         let audio = SequentialAudioPlayer()
-        let weather = OpenMeteoSource(transport: transport)
-        // A registry per clock, so each clock's weather reads its own tile's
-        // place through the one shared source — which caches per place. The
-        // same registry for both models: the connectors are the app's, the
-        // faces are the clock's.
-        let makeRegistry: @MainActor (ClockRecord) -> ConnectorRegistry = { clock in
-            let registry = ConnectorRegistry()
-            registry.register(anecdotes.connector)
-            let place = StoredLocation(defaults: defaults, clockId: clock.id)
-            let tiles = TileStore(defaults: defaults)
-            // The weather tile's own settings, read on every draw off the
-            // record that holds them — a change in the tile's window reaches
-            // the next poll, exactly the way the place does. The place stays
-            // what a config without one falls back to.
-            registry.register(
-                WeatherConnector(
-                    source: weather,
-                    location: { place.current },
-                    config: {
-                        tiles.all()
-                            .first {
-                                $0.key.clockId == clock.id
-                                    && $0.key.connectorId == WeatherConnector.appName
-                            }?
-                            .config?.weatherConfig
-                            ?? WeatherTileConfig(place: place.current)
-                    }
-                )
-            )
-            // Both coding-subscription tiles read their parameters off their
-            // own record at every draw, so a picker moved in the tile's window
-            // reaches the next poll rather than the next launch — exactly the
-            // way the weather's place does.
-            //
-            // One lookup for both, because the tiles take the SAME parameters:
-            // what differs between them is how each reaches its account, and
-            // that is the only place the two registrations diverge below.
-            let storedTiles = TileStore(defaults: defaults)
-            let parameters: @Sendable (String) -> CodeUsage.Parameters = { connectorId in
-                storedTiles.all()
-                    .first { $0.key.clockId == clock.id && $0.key.connectorId == connectorId }
-                    .flatMap(\.config)?.parameters ?? .standard
-            }
-            registry.register(
-                ClaudeUsageConnector(
-                    reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document),
-                    parameters: { parameters(ClaudeUsageConnector.id) }
-                )
-            )
-            // The key is looked up at every read, never held: a key pasted
-            // into the tile's detail is on its way to the service at the next
-            // poll, and one removed from it is gone just as fast.
-            registry.register(
-                ZaiUsageConnector(
-                    source: ZaiUsageAPI(
-                        transport: transport,
-                        key: {
-                            secrets.secret(for: .tile(TileKey(
-                                clockId: clock.id, connectorId: ZaiUsageConnector.connectorId
-                            )))
-                        }
-                    ),
-                    parameters: { parameters(ZaiUsageConnector.connectorId) }
-                )
-            )
-            return registry
-        }
+        let factories = ConnectorFactories(
+            transport: transport, defaults: defaults, secrets: secrets,
+            weather: OpenMeteoSource(transport: transport), anecdotes: anecdotes.connector
+        )
         let buildSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
             // The TC002 branch of the runtime route: the schedule's slot IS
             // the Ulanzi session — the upsert per tile, the re-push-all
@@ -962,12 +913,12 @@ final class AppModel: ObservableObject {
                             clockId: clock.id.uuidString
                         )
                     ),
-                    registry: makeRegistry(clock),
+                    registry: factories.registry(for: clock),
                     store: TileSettingsStore(defaults: defaults, clockId: clock.id),
                     liveTiles: { [slotTiles, clockId = clock.id] in
                         slotTiles.all()
                             .filter { $0.key.clockId == clockId }
-                            .map(\.key.connectorId)
+                            .map(\.key.tileId)
                     }
                 )
             }
@@ -975,7 +926,7 @@ final class AppModel: ObservableObject {
             let device = AwtrixDevice(host: clock.address, transport: transport)
             return AwtrixClockSession(
                 device: device,
-                registry: makeRegistry(clock),
+                registry: factories.registry(for: clock),
                 store: store,
                 audio: audio,
                 iconInstaller: CatalogueIconInstaller(
@@ -1026,9 +977,9 @@ final class AppModel: ObservableObject {
             device: device,
             relocate: { remembered in await relocation.relocatedHost(remembering: remembered) },
             registry: registry,
-            // The very factory the sessions are built from, so a preview and
-            // a push ask the same connector instance about the same clock.
-            makeClockRegistry: makeRegistry,
+            // The very factories the sessions are built from, so a preview and
+            // a push build the same connector for the same tile.
+            makeClockRegistry: factories.registry(for:),
             makeUlanziDevice: { clock in
                 UlanziDevice(host: clock.address, transport: transport)
             },
@@ -1109,6 +1060,16 @@ final class AppModel: ObservableObject {
         tiles.all().first { $0.key == key }
     }
 
+    /// The record a session is handed to run a tile: the stored one, so a
+    /// connector built for it reads the tile's current settings, else the bare
+    /// key — a tile removed while its run was in flight, or one a test names
+    /// without storing. Its policy is informational there: the session reads
+    /// enablement from its own store when the run is asked for.
+    private func runningTile(_ key: TileKey) -> TileRecord {
+        storedTile(key)
+            ?? TileRecord(key: key, policy: TilePolicyRecord(isPaused: false, refreshSeconds: 0))
+    }
+
     /// What this connector is set to, on the selected clock's tile.
     ///
     /// A connector with no tile yet falls back to its own `defaultInterval` —
@@ -1156,7 +1117,7 @@ final class AppModel: ObservableObject {
             // the branch: an AWTRIX session fails the cast, and there the
             // restore above is what answers the pause.
             let tc002 = ulanziSession(for: key.clockId)
-            Task { await tc002?.markIdle(tileId: key.connectorId) }
+            Task { await tc002?.markIdle(tileId: key.tileId) }
         }
     }
 
@@ -1419,7 +1380,7 @@ final class AppModel: ObservableObject {
             // is the measured contract (phase-3 A9). The cast is the model
             // check; an AWTRIX slot has nothing to take back here.
             let tc002 = ulanziSession(for: key.clockId)
-            Task { await tc002?.tileRemoved(key.connectorId) }
+            Task { await tc002?.tileRemoved(key.tileId) }
         }
     }
 
@@ -1445,7 +1406,7 @@ final class AppModel: ObservableObject {
         let restoreKey = nextRestoreKey
         nextRestoreKey += 1
         restores[restoreKey] = Task { [weak self] in
-            await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.connectorId)
+            await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.tileId)
             self?.restores[restoreKey] = nil
         }
     }
@@ -2204,7 +2165,7 @@ final class AppModel: ObservableObject {
         let runKey = nextRunKey
         nextRunKey += 1
         manualRuns[runKey] = Task { [weak self] in
-            await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.connectorId)
+            await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.tileId)
             self?.manualRuns[runKey] = nil
         }
     }
@@ -2740,7 +2701,7 @@ final class AppModel: ObservableObject {
         _ key: TileKey, interval: TimeInterval, resuming: Bool
     ) async -> TimeInterval {
         let wait = await session(for: key)?.nextDelay(
-            connectorId: key.connectorId, interval: interval
+            tile: runningTile(key), interval: interval
         ) ?? interval
         let delay = resuming ? whatIsLeftOf(wait, for: key) : wait
         // Asked even while the clock is unreachable, and the answer is still
@@ -2980,7 +2941,7 @@ final class AppModel: ObservableObject {
         // reason the queue exists.
         await restock(key)
         reportOutcome(
-            await session(for: key)?.runOnce(connectorId: key.connectorId)
+            await session(for: key)?.runOnce(tile: runningTile(key))
                 ?? .failed("no clock \(key.clockId)"),
             for: key
         )
@@ -2996,7 +2957,7 @@ final class AppModel: ObservableObject {
     private func runAndReport(_ key: TileKey) async {
         markUnderWay(key)
         reportOutcome(
-            await session(for: key)?.runOnce(connectorId: key.connectorId)
+            await session(for: key)?.runOnce(tile: runningTile(key))
                 ?? .failed("no clock \(key.clockId)"),
             for: key
         )
@@ -3023,7 +2984,7 @@ final class AppModel: ObservableObject {
     /// switched off.
     private func restock(_ key: TileKey) async {
         note(
-            await session(for: key)?.maintain(connectorId: key.connectorId)
+            await session(for: key)?.maintain(tile: runningTile(key))
                 ?? .failed("no clock \(key.clockId)"),
             for: key
         )

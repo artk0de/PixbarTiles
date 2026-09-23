@@ -75,6 +75,15 @@ private func drewPage(named name: String, on transport: UlanziPathTransport) -> 
     }
 }
 
+/// A connector's single tile, as the schedule hands one to the slot. The
+/// slot reads no clock off the key, so the clock is a placeholder.
+private func slotTile(_ connectorId: String) -> TileRecord {
+    TileRecord(
+        key: TileKey(clockId: UUID(uuid: UUID_NULL), connectorId: connectorId),
+        policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600)
+    )
+}
+
 @MainActor
 @Suite struct UlanziClockSlotTests {
     private let transport = UlanziPathTransport()
@@ -106,9 +115,9 @@ private func drewPage(named name: String, on transport: UlanziPathTransport) -> 
             liveTiles: { [] }
         )
         #expect(host.indicators == nil)
-        #expect(await host.maintain(connectorId: "weather") == .skipped)
+        #expect(await host.maintain(tile: slotTile("weather")) == .skipped)
         #expect(await host.deliver(AwtrixDelivery(text: "hello")) == .skipped)
-        #expect(await host.nextDelay(connectorId: "weather", interval: 600) == 600)
+        #expect(await host.nextDelay(tile: slotTile("weather"), interval: 600) == 600)
         await host.restoreDeviceState(borrowedBy: nil)
         #expect(upserts(on: transport).isEmpty)
     }
@@ -135,8 +144,8 @@ private func drewPage(named name: String, on transport: UlanziPathTransport) -> 
             liveTiles: { ["weather"] }
         )
 
-        #expect(await host.runOnce(connectorId: "weather") == .delivered)
-        #expect(await host.runOnce(connectorId: "weather") == .delivered)
+        #expect(await host.runOnce(tile: slotTile("weather")) == .delivered)
+        #expect(await host.runOnce(tile: slotTile("weather")) == .delivered)
 
         // One customList read for both runs, and the stale page's empty-body
         // delete (D10) beside the live page's upsert.
@@ -166,7 +175,7 @@ private func drewPage(named name: String, on transport: UlanziPathTransport) -> 
             liveTiles: { [] }
         )
 
-        #expect(await host.runOnce(connectorId: "stub") == .skipped)
+        #expect(await host.runOnce(tile: slotTile("stub")) == .skipped)
         #expect(upserts(on: transport).isEmpty)
     }
 
@@ -186,7 +195,7 @@ private func drewPage(named name: String, on transport: UlanziPathTransport) -> 
             liveTiles: { [] }
         )
 
-        if case let .failed(reason) = await host.runOnce(connectorId: "nowhere") {
+        if case let .failed(reason) = await host.runOnce(tile: slotTile("nowhere")) {
             #expect(reason.contains("nowhere"))
         } else {
             Issue.record("an unknown connector answered as anything but a failure")

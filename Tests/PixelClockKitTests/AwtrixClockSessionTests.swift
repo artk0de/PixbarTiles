@@ -374,7 +374,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let host = makeHost(connector: StubConnector(), transport: transport)
 
-    let result = await host.runOnce(connectorId: "stub")
+    let result = await host.runOnce(tile: singleTile("stub"))
 
     #expect(result == .delivered)
     #expect(paths(transport) == ["/api/notify"])
@@ -386,7 +386,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
 
     let request = try #require(transport.requests.first { $0.url?.path == "/api/notify" })
     #expect(jsonBody(request)["icon"] as? String == "9039")
@@ -398,7 +398,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
 
     let request = try #require(transport.requests.first)
     #expect(jsonBody(request)["rtttl"] as? String == "nokia:d=4,o=5,b=225:8e6")
@@ -410,7 +410,7 @@ private func staysFalse(
     let audio = SpyAudio()
     let host = makeHost(connector: connector, audio: audio)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
 
     #expect(audio.played == [[clip()]])
 }
@@ -426,7 +426,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
 
     let request = try #require(transport.requests.first { $0.url?.path == "/api/custom" })
     #expect(jsonBody(request)["lifetime"] as? Int == 3_600)
@@ -449,7 +449,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
 
     let request = try #require(transport.requests.first { $0.url?.path == "/api/custom" })
     let body = jsonBody(request)
@@ -468,7 +468,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
 
     let request = try #require(transport.requests.first { $0.url?.path == "/api/notify" })
     #expect(jsonBody(request)["lifetime"] == nil)
@@ -483,7 +483,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
 
     let request = try #require(transport.requests.first { $0.url?.path == "/api/custom" })
     #expect(jsonBody(request)["lifetime"] == nil)
@@ -504,7 +504,7 @@ private func staysFalse(
     )
     let host = makeHost(connector: connector, transport: transport)
 
-    #expect(await host.runOnce(connectorId: "stub") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("stub")) == .delivered)
 
     let notify = try #require(transport.requests.first)
     #expect(jsonBody(notify)["hold"] as? Bool == true)
@@ -520,7 +520,7 @@ private func staysFalse(
     connector.output = AwtrixDelivery(text: "hi", holdUntilAudioEnds: true)
     let host = makeHost(connector: connector, transport: transport)
 
-    #expect(await host.runOnce(connectorId: "stub") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("stub")) == .delivered)
 
     let notify = try #require(transport.requests.first)
     #expect(jsonBody(notify)["hold"] == nil)
@@ -533,7 +533,7 @@ private func staysFalse(
     connector.output = AwtrixDelivery(text: "hi", localAudio: [clip()])
     let host = makeHost(connector: connector, transport: transport)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
 
     let notify = try #require(transport.requests.first)
     #expect(jsonBody(notify)["hold"] == nil)
@@ -553,7 +553,7 @@ private func staysFalse(
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
 
     #expect(audio.deviceLogAtPlayTime == [["/api/notify"]])
     #expect(paths(transport) == ["/api/notify", "/api/notify/dismiss"])
@@ -567,7 +567,7 @@ private func staysFalse(
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
-    let result = await host.runOnce(connectorId: "stub")
+    let result = await host.runOnce(tile: singleTile("stub"))
 
     guard case .failed = result else {
         Issue.record("expected .failed, got \(result)")
@@ -587,7 +587,7 @@ private func staysFalse(
     let audio = SpyAudio()
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
-    let result = await host.runOnce(connectorId: "stub")
+    let result = await host.runOnce(tile: singleTile("stub"))
 
     guard case .failed = result else {
         Issue.record("expected .failed, got \(result)")
@@ -608,7 +608,7 @@ private func staysFalse(
     let audio = SpyAudio()
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
-    let result = await host.runOnce(connectorId: "stub")
+    let result = await host.runOnce(tile: singleTile("stub"))
 
     guard case .failed = result else {
         Issue.record("expected .failed, got \(result)")
@@ -630,7 +630,7 @@ private func staysFalse(
         iconInstaller: FailingIconInstaller(error: BoomError())
     )
 
-    let result = await host.runOnce(connectorId: "stub")
+    let result = await host.runOnce(tile: singleTile("stub"))
 
     guard case .failed = result else {
         Issue.record("expected .failed, got \(result)")
@@ -645,20 +645,31 @@ private func staysFalse(
     let transport = RecordingTransport()
     let host = makeHost(connector: StubConnector(), transport: transport, store: store)
 
-    #expect(await host.runOnce(connectorId: "stub") == .skipped)
+    #expect(await host.runOnce(tile: singleTile("stub")) == .skipped)
     #expect(transport.requests.isEmpty)
 }
 
 @Test func anUnknownConnectorFailsRatherThanCrashing() async {
     let host = makeHost(connector: StubConnector())
 
-    guard case .failed = await host.runOnce(connectorId: "nope") else {
+    guard case .failed = await host.runOnce(tile: singleTile("nope")) else {
         Issue.record("expected .failed for unknown connector")
         return
     }
 }
 
 // MARK: - Instanced tiles
+
+/// The single tile of a connector — no instance, so its tile id is the
+/// connector id every session test before instancing ran it under. The clock
+/// is a placeholder: a session drives one clock and never reads it. Shared
+/// with the other suites that drive a session.
+func singleTile(_ connectorId: String) -> TileRecord {
+    TileRecord(
+        key: TileKey(clockId: UUID(uuid: UUID_NULL), connectorId: connectorId),
+        policy: TilePolicyRecord(isPaused: false, refreshSeconds: 1800)
+    )
+}
 
 private func githubTile(_ instance: String) -> TileRecord {
     TileRecord(
@@ -723,8 +734,9 @@ private func instancedHost(
     #expect(paths(transport) == ["/api/notify"])
 }
 
-// The id entry points are a tile with no instance, so a caller still naming a
-// connector reaches the same connector, settings and backoff it did before.
+// A single tile is keyed by its connector id whichever record names it, so a
+// tile reaches the same connector, settings and backoff its connector id did
+// before tiles were handed in whole.
 @Test func runningByConnectorIdIsRunningItsSingleTile() async {
     var failing = StubConnector()
     failing.error = BoomError()
@@ -734,13 +746,13 @@ private func instancedHost(
         policy: TilePolicyRecord(isPaused: false, refreshSeconds: 1800)
     )
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
     _ = await host.runOnce(tile: single)
 
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
     #expect(
         await host.nextDelay(tile: single, interval: 1800)
-            == (await host.nextDelay(connectorId: "stub", interval: 1800))
+            == (await host.nextDelay(tile: singleTile("stub"), interval: 1800))
     )
 }
 
@@ -763,7 +775,7 @@ private func instancedHost(
     connector.error = CancellationError()
     let host = makeHost(connector: connector)
 
-    #expect(await host.runOnce(connectorId: "stub") == .cancelled)
+    #expect(await host.runOnce(tile: singleTile("stub")) == .cancelled)
 }
 
 // Cancellation has to reach the connector, not just be recognised once it comes
@@ -776,7 +788,7 @@ private func instancedHost(
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
-    let run = Task { await host.runOnce(connectorId: "blocking") }
+    let run = Task { await host.runOnce(tile: singleTile("blocking")) }
     try await waitUntil { connector.hasStarted }
     #expect(connector.hasStarted)
 
@@ -805,10 +817,10 @@ private func instancedHost(
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
-    let first = Task { await host.runOnce(connectorId: "stub") }
+    let first = Task { await host.runOnce(tile: singleTile("stub")) }
     try await waitUntil { audio.enteredCount == 1 }
 
-    let second = Task { await host.runOnce(connectorId: "stub") }
+    let second = Task { await host.runOnce(tile: singleTile("stub")) }
     // An unserialised second run reaches `/api/notify` before it reaches the
     // gate, so a moment is enough for it to show up.
     #expect(try await staysFalse {
@@ -837,10 +849,10 @@ private func instancedHost(
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
-    let first = Task { await host.runOnce(connectorId: "stub") }
+    let first = Task { await host.runOnce(tile: singleTile("stub")) }
     try await waitUntil { audio.enteredCount == 1 }
 
-    let queued = Task { await host.runOnce(connectorId: "stub") }
+    let queued = Task { await host.runOnce(tile: singleTile("stub")) }
     // Long enough for the queued run to claim its place behind the first.
     // Claiming is a single actor-isolated step with no suspension inside it,
     // and the actor is free while the first run waits on its audio.
@@ -870,11 +882,11 @@ private func instancedHost(
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
-    let playing = Task { await host.runOnce(connectorId: "stub") }
+    let playing = Task { await host.runOnce(tile: singleTile("stub")) }
     try await waitUntil { audio.enteredCount == 1 }
 
     let answer = ResultBox()
-    let probe = Task { answer.record(await host.runOnce(connectorId: "nope")) }
+    let probe = Task { answer.record(await host.runOnce(tile: singleTile("nope"))) }
     try await waitUntil { answer.value != nil }
 
     // Asserted rather than awaited: awaiting would wait out the delivery and
@@ -906,12 +918,12 @@ private func instancedHost(
         connector: connector, transport: transport, store: store, audio: audio
     )
 
-    let playing = Task { await host.runOnce(connectorId: "stub") }
+    let playing = Task { await host.runOnce(tile: singleTile("stub")) }
     try await waitUntil { audio.enteredCount == 1 }
     store.save(ConnectorSettings(isEnabled: false, intervalPosition: 0), for: "stub")
 
     let answer = ResultBox()
-    let probe = Task { answer.record(await host.runOnce(connectorId: "stub")) }
+    let probe = Task { answer.record(await host.runOnce(tile: singleTile("stub"))) }
     try await waitUntil { answer.value != nil }
 
     #expect(answer.value == .skipped)
@@ -937,7 +949,7 @@ private func instancedHost(
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
-    let run = Task { await host.runOnce(connectorId: "stub") }
+    let run = Task { await host.runOnce(tile: singleTile("stub")) }
     try await waitUntil { audio.enteredCount == 1 }
     run.cancel()
     audio.open()
@@ -967,7 +979,7 @@ private func instancedHost(
         audio: audio,
         iconInstaller: StubIconInstaller()
     )
-    for _ in 0..<2 { _ = await host.runOnce(connectorId: "stub") }
+    for _ in 0..<2 { _ = await host.runOnce(tile: singleTile("stub")) }
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
 
     var delivering = StubConnector()
@@ -975,7 +987,7 @@ private func instancedHost(
         text: "hi", localAudio: [clip()], holdUntilAudioEnds: true
     )
     registry.register(delivering)
-    let run = Task { await host.runOnce(connectorId: "stub") }
+    let run = Task { await host.runOnce(tile: singleTile("stub")) }
     try await waitUntil { audio.enteredCount == 1 }
     run.cancel()
     audio.open()
@@ -997,7 +1009,7 @@ private func instancedHost(
     )
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
-    let run = Task { await host.runOnce(connectorId: "stub") }
+    let run = Task { await host.runOnce(tile: singleTile("stub")) }
     try await waitUntil { audio.enteredCount == 1 }
     run.cancel()
     audio.open()
@@ -1022,7 +1034,7 @@ private func instancedHost(
     let connector = GatedConnector()
     let host = makeHost(connector: connector, transport: transport)
 
-    let run = Task { await host.runOnce(connectorId: "gated") }
+    let run = Task { await host.runOnce(tile: singleTile("gated")) }
     try await waitUntil { connector.enteredCount == 1 }
     // Cancelled while producing, so the cancellation is already in force by the
     // time the notify reaches the transport. Nothing throws `CancellationError`
@@ -1039,7 +1051,7 @@ private func instancedHost(
     let connector = SpyMaintainingConnector(failure: URLError(.cancelled))
     let host = makeHost(connector: connector)
 
-    #expect(await host.maintain(connectorId: "maintaining") == .cancelled)
+    #expect(await host.maintain(tile: singleTile("maintaining")) == .cancelled)
 }
 
 // The other half of the same rule, on the path the user actually sees. A
@@ -1053,7 +1065,7 @@ private func instancedHost(
         transport: FaultingTransport(error: URLError(.timedOut))
     )
 
-    guard case .failed = await host.runOnce(connectorId: "stub") else {
+    guard case .failed = await host.runOnce(tile: singleTile("stub")) else {
         Issue.record("a timeout is an outage, not a cancellation")
         return
     }
@@ -1065,7 +1077,7 @@ private func instancedHost(
     let connector = SpyMaintainingConnector(failure: URLError(.timedOut))
     let host = makeHost(connector: connector)
 
-    guard case .failed = await host.maintain(connectorId: "maintaining") else {
+    guard case .failed = await host.maintain(tile: singleTile("maintaining")) else {
         Issue.record("a timeout is an outage, not a cancellation")
         return
     }
@@ -1080,7 +1092,7 @@ private func instancedHost(
     let connector = SpyMaintainingConnector()
     let host = makeHost(connector: connector)
 
-    #expect(await host.runOnce(connectorId: "maintaining") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("maintaining")) == .delivered)
     #expect(connector.maintenanceCount == 0)
 }
 
@@ -1089,7 +1101,7 @@ private func instancedHost(
     let transport = RecordingTransport()
     let host = makeHost(connector: connector, transport: transport)
 
-    #expect(await host.maintain(connectorId: "maintaining") == .completed)
+    #expect(await host.maintain(tile: singleTile("maintaining")) == .completed)
     #expect(connector.maintenanceCount == 1)
     // A background pass is not a delivery: nothing reaches the clock.
     #expect(transport.requests.isEmpty)
@@ -1098,7 +1110,7 @@ private func instancedHost(
 @Test func maintainSkipsAConnectorWithNoBackgroundWork() async {
     let host = makeHost(connector: StubConnector())
 
-    #expect(await host.maintain(connectorId: "stub") == .skipped)
+    #expect(await host.maintain(tile: singleTile("stub")) == .skipped)
 }
 
 // A connector the user switched off must not synthesize a batch in the
@@ -1110,7 +1122,7 @@ private func instancedHost(
     store.save(ConnectorSettings(isEnabled: false, intervalPosition: 0), for: "maintaining")
     let host = makeHost(connector: connector, store: store)
 
-    #expect(await host.maintain(connectorId: "maintaining") == .skipped)
+    #expect(await host.maintain(tile: singleTile("maintaining")) == .skipped)
     #expect(connector.maintenanceCount == 0)
 }
 
@@ -1118,7 +1130,7 @@ private func instancedHost(
     let connector = SpyMaintainingConnector(failure: BoomError())
     let host = makeHost(connector: connector)
 
-    guard case .failed = await host.maintain(connectorId: "maintaining") else {
+    guard case .failed = await host.maintain(tile: singleTile("maintaining")) else {
         Issue.record("expected .failed from a throwing background pass")
         return
     }
@@ -1128,13 +1140,13 @@ private func instancedHost(
     let connector = SpyMaintainingConnector(failure: CancellationError())
     let host = makeHost(connector: connector)
 
-    #expect(await host.maintain(connectorId: "maintaining") == .cancelled)
+    #expect(await host.maintain(tile: singleTile("maintaining")) == .cancelled)
 }
 
 @Test func maintainingAnUnknownConnectorFailsRatherThanCrashing() async {
     let host = makeHost(connector: StubConnector())
 
-    guard case .failed = await host.maintain(connectorId: "nope") else {
+    guard case .failed = await host.maintain(tile: singleTile("nope")) else {
         Issue.record("expected .failed for unknown connector")
         return
     }
@@ -1175,7 +1187,7 @@ private func instancedHost(
     let audio = SpyAudio()
     let host = makeHost(connector: connector, transport: transport, audio: audio)
 
-    #expect(await host.runOnce(connectorId: "stub") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("stub")) == .delivered)
 
     let request = try #require(transport.requests.first)
     #expect(jsonBody(request)["text"] as? String == "produced")
@@ -1200,7 +1212,7 @@ private func instancedHost(
     let host = makeHost(connector: connector, transport: transport, audio: audio)
     let again = AwtrixDelivery(text: "again", localAudio: [clip()], holdUntilAudioEnds: true)
 
-    let run = Task { await host.runOnce(connectorId: "stub") }
+    let run = Task { await host.runOnce(tile: singleTile("stub")) }
     try await waitUntil { audio.enteredCount == 1 }
 
     let first = Task { await host.deliver(again) }
@@ -1234,7 +1246,7 @@ private func instancedHost(
     var failing = StubConnector()
     failing.error = BoomError()
     let host = makeHost(connector: failing)
-    for _ in 0..<2 { _ = await host.runOnce(connectorId: "stub") }
+    for _ in 0..<2 { _ = await host.runOnce(tile: singleTile("stub")) }
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
 
     #expect(await host.deliver(AwtrixDelivery(text: "again")) == .delivered)
@@ -1243,7 +1255,7 @@ private func instancedHost(
     let refusing = makeHost(
         connector: failing, transport: PathFailingTransport(failingPath: "/api/notify")
     )
-    for _ in 0..<2 { _ = await refusing.runOnce(connectorId: "stub") }
+    for _ in 0..<2 { _ = await refusing.runOnce(tile: singleTile("stub")) }
     #expect(await refusing.consecutiveFailures(connectorId: "stub") == 2)
 
     guard case .failed = await refusing.deliver(AwtrixDelivery(text: "again")) else {

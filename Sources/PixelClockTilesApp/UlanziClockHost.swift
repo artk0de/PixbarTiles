@@ -54,17 +54,21 @@ actor UlanziClockHost: ConnectorRunning, UlanziConnectorRunning {
 
     /// Produces the connector's TC002 face and hands it to the session's
     /// upsert, one delivery at a time.
-    func runOnce(connectorId: String) async -> RunResult {
+    ///
+    /// Everything is keyed by `tile.key.tileId`, the page's name: the connector
+    /// built for this tile, its settings, and the page it lands on.
+    func runOnce(tile: TileRecord) async -> RunResult {
         await sweepAtFirstUse()
+        let tileId = tile.key.tileId
         // Both guards are answered before a place in the session's chain is
         // claimed, for the reason `AwtrixClockSession.runOnce` states: neither
         // a registry lookup nor a settings read touches the device, and a
         // "run now" against a switched-off connector must not queue behind a
         // push to hear "it's off".
-        guard let connector = registry.connector(id: connectorId) else {
-            return .failed("unknown connector \(connectorId)")
+        guard let connector = registry.connector(for: tile) else {
+            return .failed("unknown connector \(tileId)")
         }
-        guard store.settings(for: connectorId).isEnabled else { return .skipped }
+        guard store.settings(for: tileId).isEnabled else { return .skipped }
         // A connector with no TC002 face is not on this clock — the catalogue
         // refuses the placement — so the nil here is the belt to the
         // schedule's braces, answered as a skip and not a failure.
@@ -75,11 +79,11 @@ actor UlanziClockHost: ConnectorRunning, UlanziConnectorRunning {
             return DeliveryChain.classify(error)
         }
         guard let delivery else { return .skipped }
-        return await session.deliver(delivery, toTile: connectorId)
+        return await session.deliver(delivery, toTile: tileId)
     }
 
     /// Nothing to restock — see the type comment.
-    func maintain(connectorId: String) async -> MaintenanceResult { .skipped }
+    func maintain(tile: TileRecord) async -> MaintenanceResult { .skipped }
 
     /// Nothing here takes an AWTRIX delivery — see the type comment.
     func deliver(_ output: AwtrixDelivery) async -> RunResult { .skipped }
@@ -87,12 +91,12 @@ actor UlanziClockHost: ConnectorRunning, UlanziConnectorRunning {
     /// The interval back, always: the recovery rule below this slot is the
     /// outage answer, and the cadence adding a backoff on top would be a
     /// second clock shortened for the same failure.
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval {
+    func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval {
         interval
     }
 
     /// Nothing device-wide is ever borrowed — see the type comment.
-    func restoreDeviceState(borrowedBy connectorId: String?) async {}
+    func restoreDeviceState(borrowedBy tileId: String?) async {}
 
     /// The TC002 has no lamps.
     nonisolated var indicators: IndicatorCustody? { nil }

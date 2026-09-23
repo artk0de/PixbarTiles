@@ -21,6 +21,10 @@ struct StubConnector: Connector {
     /// The ladder this one's tiles are offered, defaulted to the general one
     /// the protocol defaults to.
     let refreshSteps: [TimeInterval]
+    /// Whether one clock carries this once or once per key. Defaulted to the
+    /// `.single` the protocol defaults to, so every test written before tiles
+    /// could be instanced poses the connector it posed then.
+    let instancing: Instancing
 
     init(
         id: String = "stub",
@@ -28,7 +32,8 @@ struct StubConnector: Connector {
         defaultInterval: TimeInterval = 5 * 60,
         isAudible: Bool = true,
         isAmbient: Bool = false,
-        refreshSteps: [TimeInterval] = RefreshScale.steps
+        refreshSteps: [TimeInterval] = RefreshScale.steps,
+        instancing: Instancing = .single
     ) {
         self.id = id
         self.displayName = displayName
@@ -36,6 +41,7 @@ struct StubConnector: Connector {
         self.isAudible = isAudible
         self.isAmbient = isAmbient
         self.refreshSteps = refreshSteps
+        self.instancing = instancing
     }
 
     func read() async throws -> AwtrixDelivery { AwtrixDelivery(text: "hello") }
@@ -112,7 +118,8 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     }
 
     /// One entry per call, in call order: `maintain:<id>` / `run:<id>` /
-    /// `deliver:<text>`.
+    /// `deliver:<text>`. The id is the tile's `tileId` — the connector id for
+    /// a single tile, so every entry written before instancing reads the same.
     ///
     /// A replay is keyed by what it put on the clock rather than by a connector
     /// id, because it does not have one: `deliver` takes an output and nothing
@@ -127,14 +134,14 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
     /// How many times the schedule asked how long to wait.
     var delayQueries: Int { lock.withLock { delayCalls } }
 
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval {
+    func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval {
         lock.withLock { delayCalls += 1 }
         await parkInDelay?.enter()
         return delay ?? interval
     }
 
-    func maintain(connectorId: String) async -> MaintenanceResult {
-        lock.withLock { recorded.append("maintain:\(connectorId)") }
+    func maintain(tile: TileRecord) async -> MaintenanceResult {
+        lock.withLock { recorded.append("maintain:\(tile.key.tileId)") }
         // The expensive half in the real host: a refill loads the model and
         // synthesizes a batch. A double that returns instantly cannot show
         // whether the panel says anything during it.
@@ -142,8 +149,8 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
         return .completed
     }
 
-    func runOnce(connectorId: String) async -> RunResult {
-        lock.withLock { recorded.append("run:\(connectorId)") }
+    func runOnce(tile: TileRecord) async -> RunResult {
+        lock.withLock { recorded.append("run:\(tile.key.tileId)") }
         await parkInRun?.enter()
         return .delivered
     }
@@ -156,8 +163,8 @@ final class SpyHost: ConnectorRunning, @unchecked Sendable {
 
     /// Recorded as `restore:<id>` — or `restore:all` for the quit, which is
     /// about no connector in particular.
-    func restoreDeviceState(borrowedBy connectorId: String?) async {
-        lock.withLock { recorded.append("restore:\(connectorId ?? "all")") }
+    func restoreDeviceState(borrowedBy tileId: String?) async {
+        lock.withLock { recorded.append("restore:\(tileId ?? "all")") }
         await parkInRestore?.enter()
     }
 
@@ -622,7 +629,7 @@ func testModel(
                     liveTiles: { [slotTiles, clockId = clock.id] in
                         slotTiles.all()
                             .filter { $0.key.clockId == clockId }
-                            .map(\.key.connectorId)
+                            .map(\.key.tileId)
                     }
                 )
             }
@@ -747,11 +754,11 @@ final class QueueingHost: ConnectorRunning, @unchecked Sendable {
         lock.withLock { gates[index] }.open()
     }
 
-    func maintain(connectorId: String) async -> MaintenanceResult { .completed }
+    func maintain(tile: TileRecord) async -> MaintenanceResult { .completed }
 
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
+    func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval { interval }
 
-    func runOnce(connectorId: String) async -> RunResult {
+    func runOnce(tile: TileRecord) async -> RunResult {
         let gate = Gate()
         lock.withLock { gates.append(gate) }
         await gate.enter()
@@ -763,7 +770,7 @@ final class QueueingHost: ConnectorRunning, @unchecked Sendable {
     /// Nothing was borrowed, so there is nothing to give back. Spelled out
     /// rather than defaulted on the protocol: a default would let the SHIPPED
     /// host stop restoring and still compile.
-    func restoreDeviceState(borrowedBy connectorId: String?) async {}
+    func restoreDeviceState(borrowedBy tileId: String?) async {}
 
     var indicators: IndicatorCustody? { nil }
 }
@@ -775,11 +782,11 @@ final class CancellingHost: ConnectorRunning, @unchecked Sendable {
 
     var entered: Int { lock.withLock { arrived } }
 
-    func maintain(connectorId: String) async -> MaintenanceResult { .completed }
+    func maintain(tile: TileRecord) async -> MaintenanceResult { .completed }
 
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
+    func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval { interval }
 
-    func runOnce(connectorId: String) async -> RunResult {
+    func runOnce(tile: TileRecord) async -> RunResult {
         lock.withLock { arrived += 1 }
         // Sleeps until cancelled, and reports the cancellation rather than
         // throwing it — the shipped host catches `CancellationError` and turns
@@ -792,7 +799,7 @@ final class CancellingHost: ConnectorRunning, @unchecked Sendable {
 
     func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
-    func restoreDeviceState(borrowedBy connectorId: String?) async {}
+    func restoreDeviceState(borrowedBy tileId: String?) async {}
 
     var indicators: IndicatorCustody? { nil }
 }
@@ -878,17 +885,17 @@ final class RestockReportingHost: ConnectorRunning, @unchecked Sendable {
         lock.withLock { self.outcome = outcome }
     }
 
-    func maintain(connectorId: String) async -> MaintenanceResult {
+    func maintain(tile: TileRecord) async -> MaintenanceResult {
         lock.withLock { outcome }
     }
 
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
+    func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval { interval }
 
-    func runOnce(connectorId: String) async -> RunResult { .delivered }
+    func runOnce(tile: TileRecord) async -> RunResult { .delivered }
 
     func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
 
-    func restoreDeviceState(borrowedBy connectorId: String?) async {}
+    func restoreDeviceState(borrowedBy tileId: String?) async {}
 
     var indicators: IndicatorCustody? { nil }
 }
@@ -1384,9 +1391,9 @@ final class LampSession: ConnectorRunning, @unchecked Sendable {
         indicators = IndicatorCustody(lamps: lamps)
     }
 
-    func maintain(connectorId: String) async -> MaintenanceResult { .completed }
-    func runOnce(connectorId: String) async -> RunResult { .delivered }
+    func maintain(tile: TileRecord) async -> MaintenanceResult { .completed }
+    func runOnce(tile: TileRecord) async -> RunResult { .delivered }
     func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
-    func restoreDeviceState(borrowedBy connectorId: String?) async {}
+    func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval { interval }
+    func restoreDeviceState(borrowedBy tileId: String?) async {}
 }

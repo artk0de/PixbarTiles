@@ -42,7 +42,7 @@ private func drive(
     _ host: AwtrixClockSession, toFailureCount count: Int, registry: ConnectorRegistry
 ) async {
     registry.register(failingConnector())
-    for _ in 0..<count { _ = await host.runOnce(connectorId: "stub") }
+    for _ in 0..<count { _ = await host.runOnce(tile: singleTile("stub")) }
     #expect(await host.consecutiveFailures(connectorId: "stub") == count)
 }
 
@@ -88,7 +88,7 @@ private func drive(
     await drive(host, toFailureCount: 2, registry: registry)
 
     registry.register(StubConnector())  // replaces it with a healthy one
-    #expect(await host.runOnce(connectorId: "stub") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("stub")) == .delivered)
 
     #expect(await host.consecutiveFailures(connectorId: "stub") == 0)
 }
@@ -105,7 +105,7 @@ private func drive(
     var cancelling = StubConnector()
     cancelling.error = CancellationError()
     registry.register(cancelling)
-    #expect(await host.runOnce(connectorId: "stub") == .cancelled)
+    #expect(await host.runOnce(tile: singleTile("stub")) == .cancelled)
 
     // Neither advanced nor reset: the run says nothing either way.
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
@@ -122,7 +122,7 @@ private func drive(
     var cancelling = StubConnector()
     cancelling.error = URLError(.cancelled)
     registry.register(cancelling)
-    #expect(await host.runOnce(connectorId: "stub") == .cancelled)
+    #expect(await host.runOnce(tile: singleTile("stub")) == .cancelled)
 
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
 }
@@ -137,7 +137,7 @@ private func drive(
     await drive(host, toFailureCount: 2, registry: registry)
 
     store.save(ConnectorSettings(isEnabled: false), for: "stub")
-    #expect(await host.runOnce(connectorId: "stub") == .skipped)
+    #expect(await host.runOnce(tile: singleTile("stub")) == .skipped)
 
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
 }
@@ -151,11 +151,11 @@ private func drive(
     let host = hostOver(registry)
     await drive(host, toFailureCount: 2, registry: registry)
 
-    guard case .failed = await host.runOnce(connectorId: "ghost") else {
+    guard case .failed = await host.runOnce(tile: singleTile("ghost")) else {
         Issue.record("an unknown connector is still a failed run")
         return
     }
-    _ = await host.runOnce(connectorId: "ghost")
+    _ = await host.runOnce(tile: singleTile("ghost"))
 
     #expect(await host.consecutiveFailures(connectorId: "ghost") == 0)
     #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
@@ -169,16 +169,16 @@ private func drive(
     registry.register(failingConnector())
 
     // Healthy: the cadence the user chose, untouched.
-    #expect(await host.nextDelay(connectorId: "stub", interval: 1800) == 1800)
+    #expect(await host.nextDelay(tile: singleTile("stub"), interval: 1800) == 1800)
 
-    _ = await host.runOnce(connectorId: "stub")
-    #expect(await host.nextDelay(connectorId: "stub", interval: 1800) == 30)
-    _ = await host.runOnce(connectorId: "stub")
-    #expect(await host.nextDelay(connectorId: "stub", interval: 1800) == 60)
+    _ = await host.runOnce(tile: singleTile("stub"))
+    #expect(await host.nextDelay(tile: singleTile("stub"), interval: 1800) == 30)
+    _ = await host.runOnce(tile: singleTile("stub"))
+    #expect(await host.nextDelay(tile: singleTile("stub"), interval: 1800) == 60)
 
     registry.register(StubConnector())
-    _ = await host.runOnce(connectorId: "stub")
-    #expect(await host.nextDelay(connectorId: "stub", interval: 1800) == 1800)
+    _ = await host.runOnce(tile: singleTile("stub"))
+    #expect(await host.nextDelay(tile: singleTile("stub"), interval: 1800) == 1800)
 }
 
 // The cap the spec actually names is the connector's own interval, and the
@@ -194,10 +194,10 @@ private func drive(
     await drive(host, toFailureCount: 4, registry: registry)
     // Still inside the interval, so the backoff is what is waited — this is the
     // half that fails if the interval is simply handed back.
-    #expect(await host.nextDelay(connectorId: "stub", interval: fiveMinutes) == 240)
+    #expect(await host.nextDelay(tile: singleTile("stub"), interval: fiveMinutes) == 240)
 
-    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: singleTile("stub"))
     #expect(await host.consecutiveFailures(connectorId: "stub") == 5)
     // 480 seconds of backoff, clipped to the cadence the user chose.
-    #expect(await host.nextDelay(connectorId: "stub", interval: fiveMinutes) == fiveMinutes)
+    #expect(await host.nextDelay(tile: singleTile("stub"), interval: fiveMinutes) == fiveMinutes)
 }

@@ -671,7 +671,7 @@ private func makeAnecdoteHost(for connector: AnecdoteConnector) -> AwtrixClockSe
 
     // A run first, so what marking one played looks like is on the record here
     // rather than assumed from another test.
-    #expect(await host.runOnce(connectorId: "anecdotes") == .delivered)
+    #expect(await host.runOnce(tile: singleTile("anecdotes")) == .delivered)
     let played = try #require(await queue.history().first).anecdote
     #expect(await queue.hasPlayed(played.id))
     #expect(await queue.ready() == 1)

@@ -24,13 +24,13 @@ private struct SelectiveHost: ConnectorRunning {
 
     init(failing: Set<String> = []) { self.failing = failing }
 
-    func maintain(connectorId: String) async -> MaintenanceResult { .completed }
-    func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval { interval }
-    func runOnce(connectorId: String) async -> RunResult {
-        failing.contains(connectorId) ? .failed("feed is down") : .delivered
+    func maintain(tile: TileRecord) async -> MaintenanceResult { .completed }
+    func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval { interval }
+    func runOnce(tile: TileRecord) async -> RunResult {
+        failing.contains(tile.key.tileId) ? .failed("feed is down") : .delivered
     }
     func deliver(_ output: AwtrixDelivery) async -> RunResult { .delivered }
-    func restoreDeviceState(borrowedBy connectorId: String?) async {}
+    func restoreDeviceState(borrowedBy tileId: String?) async {}
     var indicators: IndicatorCustody? { nil }
 }
 

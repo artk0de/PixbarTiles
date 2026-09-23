@@ -451,6 +451,24 @@ enum PanelGlyph {
         }
     }
 
+    /// A bare question mark, for the marks beside a control whose label
+    /// cannot say what it decides. Seven by seven, which is the smallest a
+    /// "?" stays legible at while its dot still reads as a dot.
+    static let question = [
+        ".GGGG..",
+        "G....G.",
+        ".....G.",
+        "...GG..",
+        "..G....",
+        ".......",
+        "..G....",
+    ]
+
+    /// The green every surface in this app uses for "this one is up" — the
+    /// online LED's. The Add button wears it because adding is the one action
+    /// on that surface, not because green is decorative.
+    static let addTint: UInt32 = 0x30D158
+
     /// A badge: the shelf's colour as the field, the mark knocked out of it in
     /// white. White rather than the card's ink, because the field is a colour
     /// and a mark in grey on it is a mark nobody sees.

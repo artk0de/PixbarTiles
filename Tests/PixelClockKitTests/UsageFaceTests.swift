@@ -271,3 +271,75 @@ private let utc = TimeZone(identifier: "UTC")!
         #expect(UsageBand(utilization: 140).fillColour(brand: ClaudeUsage.brandColour) == "#FF3B30")
     }
 }
+
+// MARK: - What carries which meaning
+
+// The oracle above pins every pixel of the approved design. These pin the two
+// RULES behind it, so a re-recording that quietly changed one of them would
+// still have to be argued for here.
+
+private func facePixel(_ vendor: UsageFace.Vendor, session: Int?, at point: (x: Int, y: Int))
+    -> String
+{
+    let frames = UsageFace.timeline(
+        vendor: vendor,
+        session: session.map { UsageFace.Window(percent: $0, resetsAt: nil) },
+        weekly: UsageFace.Window(percent: 10, resetsAt: nil),
+        config: .standard,
+        timeZone: TimeZone(identifier: "UTC")!
+    )
+    let pixel = frames[0].canvas[point.x, point.y]
+    return String(format: "%02X%02X%02X", pixel.red, pixel.green, pixel.blue)
+}
+
+/// Every colour the session row's figure is drawn in — its five rows, right of
+/// the label and its gap.
+private func figureInk(_ vendor: UsageFace.Vendor, session: Int?) -> Set<String> {
+    var ink: Set<String> = []
+    for x in 14..<PixelCanvas.width {
+        for y in 1..<6 {
+            let hex = facePixel(vendor, session: session, at: (x, y))
+            if hex != "000000" { ink.insert(hex) }
+        }
+    }
+    return ink
+}
+
+// The figure says WHICH ACCOUNT, which is what the mark beside it says. z.ai's
+// mark is near-white where its brand is blue, and blue figures under a white Z
+// read as a second vendor on one page.
+@Test func theFigureIsDrawnInTheVendorsMarkColour() {
+    #expect(figureInk(.zai, session: 17) == ["E8E8E8"])
+    #expect(figureInk(.claude, session: 17) == ["D97757"])
+}
+
+// And it keeps saying it as the window fills. How much is left is the bar's
+// job — in colour and in length — and a figure that changed colour too would
+// leave the page with no fixed point at all.
+@Test func theFigureKeepsItsMarkColourThroughEveryBand() {
+    for percent in [17, 85, 92, 99] {
+        #expect(figureInk(.zai, session: percent) == ["E8E8E8"], "\(percent)%")
+    }
+}
+
+// The bar's unspent part, while nothing is near a limit. At brightness two the
+// old dark track against a 52-pixel row is a line nobody sees.
+@Test func aSteadyBarsUnspentPartIsWhite() {
+    // 17% of 52 columns is filled; column 51 is not.
+    #expect(facePixel(.claude, session: 17, at: (51, 7)) == "FFFFFF")
+    #expect(facePixel(.claude, session: 17, at: (0, 7)) == "D97757")
+}
+
+// Once a warning is showing the track goes dark again: yellow, orange or red
+// against white is a warning fighting its own bar.
+@Test func aWarningBarKeepsTheDarkTrack() {
+    #expect(facePixel(.claude, session: 85, at: (51, 7)) == "303030")
+    #expect(facePixel(.claude, session: 85, at: (0, 7)) == "FFD24A")
+}
+
+// A row with nothing to report keeps the dark track. White there would draw a
+// full empty bar, which reads as nothing spent rather than nothing known.
+@Test func aRowWithNoReadingKeepsTheDarkTrack() {
+    #expect(facePixel(.claude, session: nil, at: (51, 7)) == "303030")
+    #expect(facePixel(.claude, session: nil, at: (0, 7)) == "303030")
+}

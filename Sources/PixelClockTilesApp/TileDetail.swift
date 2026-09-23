@@ -34,6 +34,14 @@ struct TilePolicyEditor: View {
     /// One stored value gets one control, wherever the reader looks for it.
     var showsRefresh = true
 
+    /// Whether the words behind the question mark are up.
+    @State private var showingFocusHint = false
+
+    /// The ink the question mark is drawn in — the panel's secondary, like
+    /// every other mark in this app that is chrome rather than content.
+    @Environment(\.colorScheme) private var scheme
+    private var hintInk: UInt32 { PixelInk.secondary(dark: scheme == .dark) }
+
     /// The Focuses the "works in" boxes run over: every case but `.unknown`.
     nonisolated static let worksInBoxes: [MacFocus] = MacFocus.allCases.filter { $0 != .unknown }
 
@@ -197,10 +205,7 @@ struct TilePolicyEditor: View {
                     Text("Run").tag(FocusRule.WhenUnknown.run)
                     Text("Hold").tag(FocusRule.WhenUnknown.hold)
                 }
-                Image(systemName: "questionmark.circle")
-                    .foregroundStyle(.secondary)
-                    .help(Self.anyOtherFocusHint)
-                    .accessibilityLabel("What is any other Focus?")
+                hintMark
             }
         }
         Section("Hours") {
@@ -219,6 +224,34 @@ struct TilePolicyEditor: View {
             } else if case let .active(window) = policy.window {
                 hourPickers(window: window) { policy.window = .active($0) }
             }
+        }
+    }
+
+    /// The question mark beside "Any other Focus", and what it answers.
+    ///
+    /// A BUTTON with a popover, not a bare image with `.help`. That was the
+    /// first attempt and the hint never appeared: a plain `Image` inside a
+    /// form row is not a hit-testable control, so there is nothing for the
+    /// tooltip to hang off and nothing to hover. A button is hit-testable, it
+    /// shows the tooltip, and a click opens the same words for anybody whose
+    /// pointer never rests long enough for a tooltip at all.
+    ///
+    /// Drawn in the app's own vocabulary rather than SF's: it sits three rows
+    /// under a square of Focus boxes and two above a pixel gear.
+    private var hintMark: some View {
+        Button { showingFocusHint.toggle() } label: {
+            PixelArt(map: PanelGlyph.question, palette: PanelGlyph.inkPalette(hintInk))
+        }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+        .help(Self.anyOtherFocusHint)
+        .accessibilityLabel("What is any other Focus?")
+        .popover(isPresented: $showingFocusHint, arrowEdge: .bottom) {
+            Text(Self.anyOtherFocusHint)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 280)
+                .padding(12)
         }
     }
 

@@ -89,6 +89,28 @@ public enum UsageFace {
     /// The bar's unlit track, and the ink of a figure nobody knows — the same
     /// grey as `ClaudeUsageConnector.trackColour`, and for the same reason.
     static let trackColour = UlanziColour(value: 0x30_30_30)
+
+    /// The unspent part of a bar with nothing near its limit.
+    ///
+    /// White, so the bar reads as a bar at a glance: at brightness two the
+    /// dark track against a 52-pixel row is a line nobody sees, and a reader
+    /// had the filled part alone to judge the proportion from.
+    static let emptyColour = UlanziColour(value: 0xFF_FF_FF)
+
+    /// The bar's unfilled part.
+    ///
+    /// White while the window is steady, and the dark track once a warning
+    /// colour is showing: yellow, orange or red against white is a warning
+    /// fighting its own bar, and what the eye should land on then is the
+    /// warning.
+    ///
+    /// A row with NO reading keeps the dark track too. White there would draw
+    /// a full empty bar, which reads as nothing spent rather than nothing
+    /// known.
+    static func trackColour(for percent: Int?) -> UlanziColour {
+        guard let percent else { return trackColour }
+        return UsageBand(utilization: percent) == .steady ? emptyColour : trackColour
+    }
     private static let logoOrigin = PixelPoint(x: 0, y: 1)
     private static let labelX = 9
     /// Columns between a label and the value area. Fewer, and a scrolling
@@ -262,16 +284,22 @@ public enum UsageFace {
             let area = valueArea(label: label)
             var strip = PixelCanvas(width: area.count, height: font.height)
             let x = value.x ?? PixelCanvas.width - font.width(of: value.text, scale: 1)
+            // The figure in the vendor's MARK colour, not the band's. The mark
+            // and the figures are the tile's identity — which account this is
+            // — while the band is about how much is left, which the bar under
+            // it already says in colour and in length. z.ai's mark is
+            // near-white where its brand is blue, so blue figures under a
+            // white Z read as a second vendor on one page.
             strip.drawText(
                 value.text, at: PixelPoint(x: x - area.lowerBound, y: 0),
-                ink: Pixel(colour: bandInk ?? trackColour), font: font
+                ink: Pixel(colour: window == nil ? trackColour : vendor.logoColour), font: font
             )
             canvas.draw(strip, at: PixelPoint(x: area.lowerBound, y: top))
 
             let barY = top + 6
             canvas.drawRect(
                 PixelRect(x: 0, y: barY, width: PixelCanvas.width, height: 1),
-                color: Pixel(colour: trackColour)
+                color: Pixel(colour: Self.trackColour(for: window?.percent))
             )
             if let window, window.percent > 0, let bandInk {
                 let filled = max(1, (PixelCanvas.width * min(window.percent, 100) + 50) / 100)

@@ -19,6 +19,11 @@ EDGE_STEP_MS = 100       # edge marquee: one pixel per step
 EDGE_HOLD_START_MS = 1000
 EDGE_HOLD_END_MS = 1500
 TRACK = (0x30, 0x30, 0x30)
+# The unspent part of a bar with nothing near its limit. White, so the bar
+# reads as a bar at a glance: at brightness two the old 0x303030 against a
+# 52-pixel row is a line nobody sees, and a reader had the filled part alone to
+# judge the proportion from.
+EMPTY = (0xFF, 0xFF, 0xFF)
 LABEL = (0x60, 0x60, 0x60)
 BANDS = [(80, None), (90, (0xFF, 0xD2, 0x4A)), (95, (0xFF, 0x8C, 0x1A)), (10**9, (0xFF, 0x3B, 0x30))]
 
@@ -119,6 +124,21 @@ def band_colour(pct, brand):
     return BANDS[-1][1]
 
 
+def track_colour(pct):
+    """The bar's unfilled part.
+
+    White while the window is steady, and the dark track once a warning
+    colour is showing: yellow, orange or red against white is a warning
+    fighting its own bar, and what the eye should land on then is the warning.
+
+    A row with NO reading keeps the dark track too. White there would draw a
+    full empty bar, which reads as nothing spent rather than nothing known.
+    """
+    if pct is None:
+        return TRACK
+    return TRACK if pct >= BANDS[0][0] else EMPTY
+
+
 # Layout: logo 8x5 at (0,1); rows at y=1 and y=9 (text 5 rows, gap, 1px bar).
 TEXT_X = 9
 ROWS = (("s", 1), ("w", 9))
@@ -136,10 +156,15 @@ def draw(vendor, pcts, values):
     cv.bitmap(v["logo"], 0, 1, v["logo_colour"])
     for (label, top), pct, (value, x) in zip(ROWS, pcts, values):
         cv.text(label, TEXT_X, top, LABEL)
-        ink = TRACK if pct is None else band_colour(pct, v["brand"])
+        # The figure in the vendor's MARK colour, not the band's. The mark and
+        # the figures are the tile's identity — which account this is — and the
+        # band is about how much is left, which the bar under it already says
+        # in colour and in length. z.ai's mark is near-white while its brand is
+        # blue, and blue figures under a white Z read as a second vendor.
+        ink = TRACK if pct is None else v["logo_colour"]
         cv.text(value, W - text_width(value) if x is None else x, top, ink, value_area(label))
         bar_y = top + 6
-        cv.rect(0, bar_y, W, 1, TRACK)
+        cv.rect(0, bar_y, W, 1, track_colour(pct))
         if pct:
             cv.rect(0, bar_y, max(1, round(W * min(pct, 100) / 100)), 1, band_colour(pct, v["brand"]))
     return cv

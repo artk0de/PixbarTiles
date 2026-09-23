@@ -1,0 +1,202 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>TC002 Better Weather — mockups</title>
+<style>
+  body { background:#1b1b1b; color:#ddd; font:14px -apple-system, sans-serif; margin:24px; max-width:1800px }
+  h1 { font-size:20px } h2 { font-size:15px; margin:26px 0 6px } h3 { font-size:14px; color:#aaa; margin:4px 0 }
+  .row { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start }
+  .cell { background:#111; padding:10px; border-radius:8px }
+  .cell b { display:block; margin-bottom:6px; color:#aaa; font-weight:500 }
+  .spec { background:#111; padding:12px 16px; border-radius:8px; line-height:1.6 }
+  .controls { margin-top:10px; display:flex; gap:18px; align-items:center; flex-wrap:wrap }
+  .controls label { white-space:nowrap }
+  button, select { background:#2a2a2a; color:#ddd; border:1px solid #444; border-radius:6px; padding:4px 10px; cursor:pointer }
+  .gallery { display:flex; gap:14px; flex-wrap:wrap } .gallery div { text-align:center; font-size:11px; color:#888 }
+  .sticky { position:sticky; top:0; z-index:5; background:#1b1b1b; padding-bottom:8px }
+  code { color:#ffcf8a }
+</style>
+<h1>TC002 (52×16) — Better Weather, варианты дизайна</h1>
+<div class="spec">
+  Иконка 16×16 слева, анимирована всегда, независимо от смены страниц. Справа 34 px.
+  Все мелкие глифы 5 px, как в usage-фейсе; температура — крупные цифры 5×9. Цвет температуры — шкала <code>TemperatureColour</code> с TC001.
+  <b>A — «якорь + тикер»</b>: крупная температура не двигается никогда, под ней одна строка деталей, которая раз в N секунд уезжает вверх и сменяется следующей.
+  <b>Hybrid</b> — это A, но строка тикера приносит свою иконку (капля, ветер, термометр, зонтик, UV, восход/закат); строки без своей (hi/lo, график) показывают погоду. Иконка меняется в середине слайда.
+  <b>B — «страницы»</b>: как у оригинального Better Weather — каждая страница целиком своя: своя иконка (капля, ветер, термометр), одна крупная цифра, подпись.
+  Метки серые, значения цветные: ветер по силе (штиль → шторм), UV по шкале ВОЗ, осадки голубым. Стрелка ветра показывает, <i>куда</i> дует.
+</div>
+<div class="sticky"><div class="spec controls">
+  <button id="pp">⏸ пауза</button>
+  <label>Страница каждые <select id="iv">
+    <option value="3000">3 s</option><option value="5000">5 s</option><option value="8000">8 s</option>
+    <option value="10000" selected>10 s</option><option value="15000">15 s</option></select></label>
+  <label><input type="checkbox" data-k="feelsColour" checked> Feels-like colour</label>
+  <label><input type="checkbox" data-k="feels" checked> Feels-like</label>
+  <label><input type="checkbox" data-k="humidity" checked> Humidity</label>
+  <label><input type="checkbox" data-k="wind" checked> Wind</label>
+  <span style="color:#888">| только A:</span>
+  <label><input type="checkbox" data-k="hilo" checked> Hi/Lo</label>
+  <label><input type="checkbox" data-k="rain" checked> Rain chance</label>
+  <label><input type="checkbox" data-k="uv"> UV</label>
+  <label><input type="checkbox" data-k="sun"> Sunrise/set</label>
+  <label><input type="checkbox" data-k="hourly" checked> 12h chart</label>
+</div></div>
+<div id="gallery"></div>
+<div id="root"></div>
+<script>
+const D = /*DATA*/null;
+const CELL = 14, DOT = 11, PAD = 14;
+const opt = { feelsColour:true, feels:true, humidity:true, wind:true, hilo:true, rain:true, uv:false, sun:false, hourly:true };
+const ORDER_A = ["feels", "humidity", "wind", "hilo", "rain", "uv", "sun", "hourly"];
+const STEP_A = 60, STEP_B = 40;
+let interval = 10000, paused = false;
+
+function paint(ctx, fb, w, h, scale) {
+  const c = CELL * scale, d = DOT * scale, p = PAD * scale;
+  ctx.fillStyle = "#0a0a0a"; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const v = fb[y][x];
+    ctx.fillStyle = v === "000000" ? "#161616" : "#" + v;
+    ctx.beginPath(); ctx.roundRect(p + x * c + (c - d) / 2, p + y * c + (c - d) / 2, d, d, 2 * scale); ctx.fill();
+  }
+}
+function mkcanvas(w, h, scale) {
+  const cv = document.createElement("canvas");
+  cv.width = (w * CELL + 2 * PAD) * scale; cv.height = (h * CELL + 2 * PAD) * scale;
+  return cv;
+}
+const px = (rows, x) => rows.substr(x * 6, 6);
+function blit(fb, rows, ox, oy, rowFrom = 0, rowTo = rows.length, clipY0 = 0, clipY1 = 16) {
+  for (let r = rowFrom; r < rowTo; r++) {
+    const y = oy + r - rowFrom; if (y < clipY0 || y >= clipY1) continue;
+    const line = rows[r], n = line.length / 6;
+    for (let x = 0; x < n; x++) fb[y][ox + x] = px(line, x);
+  }
+}
+const blank = () => Array.from({ length: 16 }, () => Array(52).fill("000000"));
+
+// ---- icon players ----
+class IconClock {
+  constructor(name) { this.set(name); }
+  set(name) { if (this.name === name) return; this.name = name; this.ic = D.icons[name]; this.i = 0; this.left = this.ic.ms[0]; }
+  tick(dt) { if (this.ic.frames.length < 2) return; this.left -= dt; while (this.left <= 0) { this.i = (this.i + 1) % this.ic.frames.length; this.left += this.ic.ms[this.i]; } }
+  rows() { return this.ic.frames[this.i]; }
+}
+
+// gallery
+const galRoot = document.getElementById("gallery"), galPlayers = [];
+for (const [title, items] of D.groups) {
+  galRoot.insertAdjacentHTML("beforeend", `<h2>${title}</h2>`);
+  const gal = document.createElement("div"); gal.className = "gallery"; galRoot.appendChild(gal);
+  for (const [name, trig] of items) {
+    const d = document.createElement("div"); d.style.width = "150px";
+    const cv = mkcanvas(16, 16, 0.6); d.appendChild(cv);
+    d.insertAdjacentHTML("beforeend", `<br><b style="color:#ccc">${name}</b><br>${trig}`); gal.appendChild(d);
+    galPlayers.push({ clock: new IconClock(name), ctx: cv.getContext("2d") });
+  }
+}
+
+// ---- face players ----
+function keysA(c) {
+  const it = c.A.items;
+  if (it.nodata) return ["nodata"];
+  return ORDER_A.filter(k => opt[k] && it[k]);
+}
+function pagesA(c) { return keysA(c).map(k => c.A.items[k]); }
+function pagesB(c) {
+  return c.B.pages.filter(p => p.key === "temp" || opt[p.key]);
+}
+class Face {
+  constructor(c, kind, ctx) { this.c = c; this.kind = kind; this.ctx = ctx; this.clock = new IconClock(c.icon); this.reset(); }
+  reset() { this.p = 0; this.left = interval; this.tr = 0; this.trLeft = 0; this.render(); }
+  list() { return this.kind === "B" ? pagesB(this.c) : pagesA(this.c); }
+  tick(dt) {
+    this.clock.tick(dt);
+    const L = this.list();
+    if (L.length > 1) {
+      if (this.tr) {
+        this.trLeft -= dt;
+        while (this.tr && this.trLeft <= 0) {
+          this.tr++; this.trLeft += this.kind !== "B" ? STEP_A : STEP_B;
+          const end = this.kind !== "B" ? 6 : 9;
+          if (this.tr > end) { this.tr = 0; this.p = (this.p + 1) % L.length; this.left = interval; }
+        }
+      } else {
+        this.left -= dt;
+        if (this.left <= 0) { this.tr = 1; this.trLeft = this.kind !== "B" ? STEP_A : STEP_B; }
+      }
+    }
+    this.render();
+  }
+  bRows(page) { return page.rows[opt.feelsColour ? "1" : "0"] || page.rows["1"]; }
+  render() {
+    const fb = blank(), L = this.list(), X = D.areaX;
+    if (this.kind !== "B") {
+      if (this.kind === "H") {
+        // the icon slides up 3 rows per step with the line (1 row per step)
+        const ks = keysA(this.c), n = ks.length || 1;
+        this.clock.set(this.c.A.icons[ks[this.p % n]] || this.c.icon);
+        if (!this.tr) { this.frozen = this.clock.rows(); blit(fb, this.frozen, 0, 0); }
+        else {
+          const nx = D.icons[this.c.A.icons[ks[(this.p + 1) % n]] || this.c.icon].frames[0];
+          const sh = 3 * this.tr;
+          for (let y = 0; y < 16; y++) {
+            const src = y + sh;
+            const row = src < 16 ? this.frozen[src] : (src >= 18 && src - 18 < 16 ? nx[src - 18] : null);
+            if (row) blit(fb, [row], 0, y);
+          }
+        }
+      } else { this.clock.set(this.c.icon); blit(fb, this.clock.rows(), 0, 0); }
+      blit(fb, this.c.A.top[opt.feelsColour ? "true" : "false"], X, 0);
+      if (L.length) {
+        const cur = L[this.p % L.length], nxt = L[(this.p + 1) % L.length], k = this.tr;
+        for (let r = 0; r < 5; r++) {
+          const src = r + k;
+          const line = src < 5 ? cur[src] : (src >= 6 && src - 6 < 5 ? nxt[src - 6] : null);
+          if (line) blit(fb, [line], X, 11 + r);
+        }
+      }
+    } else {
+      // the WHOLE page (icon + figure) slides up together
+      const cur = L[this.p % L.length], nxt = L[(this.p + 1) % L.length], k = this.tr * 2;
+      this.clock.set(cur.icon);
+      if (!k) this.frozen = this.clock.rows();
+      const full = (iconRows, areaRows) => {
+        const f = blank(); blit(f, iconRows, 0, 0); blit(f, areaRows, X, 0); return f;
+      };
+      const cf = full(k ? this.frozen : this.clock.rows(), this.bRows(cur));
+      const nf = full(D.icons[nxt.icon].frames[0], this.bRows(nxt));
+      for (let r = 0; r < 16; r++) {
+        const src = r + k;
+        fb[r] = src < 16 ? cf[src] : (src >= 18 && src - 18 < 16 ? nf[src - 18] : Array(52).fill("000000"));
+      }
+    }
+    paint(this.ctx, fb, 52, 16, this.scale || 0.62);
+  }
+}
+const faces = [];
+const root = document.getElementById("root");
+root.insertAdjacentHTML("beforeend", `<h2>Сценарии: A «якорь + тикер» · Hybrid · B «страницы»</h2>`);
+for (const c of D.cases) {
+  root.insertAdjacentHTML("beforeend", `<h3>${c.id} — ${c.desc}</h3>`);
+  const row = document.createElement("div"); row.className = "row"; root.appendChild(row);
+  for (const kind of ["A", "H", "B"]) {
+    const cell = document.createElement("div"); cell.className = "cell";
+    cell.innerHTML = `<b>${{ A: "Anchor — якорь + тикер", H: "Hybrid — якорь + иконки страниц", B: "Pages — страницы" }[kind]}</b>`;
+    const cv = mkcanvas(52, 16, 0.62); cell.appendChild(cv); row.appendChild(cell);
+    faces.push(new Face(c, kind, cv.getContext("2d")));
+  }
+}
+document.querySelectorAll("input[data-k]").forEach(el => el.onchange = () => { opt[el.dataset.k] = el.checked; faces.forEach(f => f.reset()); });
+document.getElementById("iv").onchange = e => { interval = +e.target.value; faces.forEach(f => f.reset()); };
+document.getElementById("pp").onclick = e => { paused = !paused; e.target.textContent = paused ? "▶ играть" : "⏸ пауза"; };
+let last = performance.now();
+function frame(now) {
+  const dt = now - last; last = now;
+  if (!paused) {
+    for (const g of galPlayers) { g.clock.tick(dt); const fb = Array.from({ length: 16 }, () => Array(16).fill("000000")); blit(fb, g.clock.rows(), 0, 0); paint(g.ctx, fb, 16, 16, 0.6); }
+    for (const f of faces) f.tick(dt);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>

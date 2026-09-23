@@ -157,6 +157,42 @@ private func decodedFrames(_ gif: Data) -> [(size: CGSize, rgba: [UInt8], delay:
         }
     }
 
+    // Per-frame delays: a marquee steps at a tenth of a second and dwells for
+    // seconds at either end, and a dwell is ONE frame with a long delay — so
+    // each frame carries its own figure, as far as the panel's longest page
+    // (five minutes, 30 000 centiseconds, inside the GCE's 16 bits).
+    @Test func eachFrameCarriesItsOwnDelay() throws {
+        let gif = try FullFrameGif.encode(
+            frames: [solid(.black), speckled(.white), speckled(.black), solid(.white)],
+            delays: [1.0, 0.1, 1.5, 300]
+        )
+
+        let delays = decodedFrames(gif).map(\.delay)
+        #expect(delays.count == 4)
+        for (decoded, expected) in zip(delays, [1.0, 0.1, 1.5, 300]) {
+            #expect(abs(decoded - expected) < 0.001)
+        }
+    }
+
+    // One delay for every frame is the per-frame spelling with the figure
+    // repeated — the same bytes, so every face written before per-frame
+    // delays encodes exactly as it did.
+    @Test func oneDelayIsThePerFrameSpellingRepeated() throws {
+        let frames = [solid(.black), speckled(.white)]
+        #expect(
+            try FullFrameGif.encode(frames: frames, delay: 0.12)
+                == FullFrameGif.encode(frames: frames, delays: [0.12, 0.12])
+        )
+    }
+
+    // A delay list that does not match the frames is refused: which frame a
+    // stray figure belongs to would be a guess.
+    @Test func delaysThatDoNotMatchTheFramesAreRefused() {
+        #expect(throws: FullFrameGif.EncodingError.mismatchedDelays) {
+            try FullFrameGif.encode(frames: [solid(.black), solid(.white)], delays: [0.1])
+        }
+    }
+
     // A palette has 256 slots. A frame set that needs more is refused loudly
     // rather than silently re-coloured — a preview that quietly lies about
     // colour is worse than no preview.

@@ -24,17 +24,34 @@ public enum FullFrameGif {
         case paletteOverflow
         /// Frames of more than one canvas size: one GIF plays on one panel.
         case mixedFrameSizes
+        /// A delay list that is not one figure per frame: which frame a stray
+        /// figure belongs to would be a guess.
+        case mismatchedDelays
     }
 
     /// Encodes `frames` as one animated GIF89a, every frame shown for
-    /// `delay` seconds.
+    /// `delay` seconds — the per-frame spelling with the one figure repeated,
+    /// so the bytes are exactly what they were before frames had their own.
+    public static func encode(frames: [PixelCanvas], delay: TimeInterval) throws -> Data {
+        try encode(frames: frames, delays: Array(repeating: delay, count: frames.count))
+    }
+
+    /// Encodes `frames` as one animated GIF89a, frame `i` shown for
+    /// `delays[i]` seconds.
+    ///
+    /// Per frame because a page that moves and then rests is the ordinary
+    /// shape: a marquee steps at a tenth of a second and dwells for seconds
+    /// at either end, and a dwell is ONE frame with a long delay rather than
+    /// the same frame repeated — repeats would spend the panel's fifty-frame
+    /// ceiling on standing still.
     ///
     /// The GIF's size is the FIRST frame's: a preview of a TC002 tile encodes
     /// 52×16 canvases, an AWTRIX tile's 32×16, and the file says which it is.
     /// The frames share one clock's panel, so a later frame of another size is
     /// refused rather than smeared across a screen it does not fit.
-    public static func encode(frames: [PixelCanvas], delay: TimeInterval) throws -> Data {
+    public static func encode(frames: [PixelCanvas], delays: [TimeInterval]) throws -> Data {
         guard frames.isEmpty == false else { throw EncodingError.noFrames }
+        guard delays.count == frames.count else { throw EncodingError.mismatchedDelays }
         let frameWidth = frames[0].width, frameHeight = frames[0].height
         let framePixels = frameWidth * frameHeight
         guard frames.allSatisfy({ $0.width == frameWidth && $0.height == frameHeight }) else {
@@ -92,13 +109,13 @@ public enum FullFrameGif {
         gif.append(contentsOf: Array("NETSCAPE2.0".utf8))
         gif.append(contentsOf: [3, 1, 0, 0, 0])
 
-        // One delay for every frame, in centiseconds — the unit the graphic
-        // control extension speaks.
-        let centiseconds = max(0, min(0xFFFF, Int((delay * 100).rounded())))
+        // Each frame's delay in centiseconds — the unit the graphic control
+        // extension speaks, sixteen bits of it.
         let width = UInt8(frameWidth & 0xFF), height = UInt8(frameHeight & 0xFF)
         var start = 0
         let count = framePixels
-        while start < indexed.count {
+        for delay in delays {
+            let centiseconds = max(0, min(0xFFFF, Int((delay * 100).rounded())))
             // GCE: packed 0x04 (do not dispose), the delay, and the block
             // terminator — then the image descriptor: a FULL frame at (0,0),
             // no local table, no interlace.

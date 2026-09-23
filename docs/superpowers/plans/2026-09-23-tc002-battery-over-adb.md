@@ -74,7 +74,7 @@ The protocol is proven in the spike (`adbsh.py`, `adbpush.py`); this productizes
   - `public enum ADBError: Error, Equatable { case handshakeRefused, remoteClosed, syncFailed(String) }`
 - Consumes: nothing (leaf).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```swift
 import Foundation
@@ -134,12 +134,12 @@ private let A_CLSE: UInt32 = 0x4553_4C43
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `swift test --filter ADBClientTests`
 Expected: FAIL — `ADBClient`, `ADB`, `ADBStream`, `ADBError` are not defined.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```swift
 import Foundation
@@ -285,12 +285,12 @@ extension Data {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter ADBClientTests`
 Expected: PASS.
 
-- [ ] **Step 5: Add the real `NWConnection` stream (integration, not unit-tested)**
+- [x] **Step 5: Add the real `NWConnection` stream (integration, not unit-tested)**
 
 Append to `ADBClient.swift`. This is the only device-touching code in the file; the framing above is what the tests pin.
 
@@ -368,12 +368,12 @@ public actor NWADBStream: ADBStream {
 }
 ```
 
-- [ ] **Step 6: Run the whole kit suite to confirm nothing regressed**
+- [x] **Step 6: Run the whole kit suite to confirm nothing regressed**
 
 Run: `swift test --filter PixelClockKitTests`
 Expected: PASS (the new `NWADBStream` compiles; framing tests still green).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Sources/PixelClockKit/Ulanzi/ADBClient.swift Tests/PixelClockKitTests/ADBClientTests.swift
@@ -409,7 +409,7 @@ offset 4: u32 length    (little-endian, bytes to read; 12 for the battery window
 offset 8: path bytes... NUL-terminated  ("/proc/<pid>/mem")
 ```
 
-- [ ] **Step 1: Write the failing generator test**
+- [x] **Step 1: Write the failing generator test**
 
 ```python
 # Scripts/tests/test_make_pct_batt.py
@@ -459,12 +459,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `python3 -m unittest Scripts.tests.test_make_pct_batt`
 Expected: FAIL — `Scripts/make_pct_batt.py` does not exist.
 
-- [ ] **Step 3: Write the generator**
+- [x] **Step 3: Write the generator**
 
 Port `mkelf_mem.py` (job tmp `adb/mkelf_mem.py`) verbatim for the ELF header, the `mov_imm`/`cmp_imm`/`add_imm`/`movw`/`movt`/`svc` encoders (the bit25 immediate-form fix is already correct there), and the `open`/`lseek`/`read`/`write`/`exit` core. Replace the baked-parameter prologue with a request-file prologue: `open("/tmp/pct-req", O_RDONLY)` → `read` into a bss scratch → load `address` from `[buf]`, `length` from `[buf+4]`, compute the path pointer `buf+8` — then run the identical open/lseek/read/write loop against those registers.
 
@@ -589,17 +589,17 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: Generate the committed artifact**
+- [x] **Step 4: Generate the committed artifact**
 
 Run: `python3 Scripts/make_pct_batt.py Sources/PixelClockKit/Resources/pct-batt`
 Expected: prints `wrote …: NB`; the file exists.
 
-- [ ] **Step 5: Run the generator test to verify it passes**
+- [x] **Step 5: Run the generator test to verify it passes**
 
 Run: `python3 -m unittest Scripts.tests.test_make_pct_batt`
 Expected: PASS (all four cases, including `test_committed_bytes_match_generator`).
 
-- [ ] **Step 6: On-device smoke test (REQUIRED — host CI cannot execute ARMv7)**
+- [x] **Step 6: On-device smoke test (REQUIRED — host CI cannot execute ARMv7)**
 
 This is the acceptance gate for the hand-assembled reader: the golden-byte test proves the generator is stable, but only the device proves the machine code runs. With the TC002 reachable (adb at `192.168.1.72:5555`) and its Battery tool on screen so the fields are populated, from the job's spike tooling:
 
@@ -614,7 +614,7 @@ adbsh.py 192.168.1.72 '/tmp/pct-batt' --raw | xxd
 
 Expected: 12 bytes whose three little-endian `int32`s are a plausible `charging`, `percent` (0–100), `millivolts` (2000–4500), matching the on-screen `Battery: N%, V:Mmv` and flipping the charging word when USB is unplugged. If the bytes are wrong, the machine code — not the Swift — is at fault; fix `make_pct_batt.py`, regenerate, re-run Step 5, and repeat. Record the observed bytes in the commit message.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Scripts/make_pct_batt.py Scripts/tests/test_make_pct_batt.py Sources/PixelClockKit/Resources/pct-batt
@@ -644,7 +644,7 @@ The testable brain. Given an `ADB` and the helper bytes, one poll resolves the p
   - `public struct UlanziBatterySample: Sendable, Equatable { public let percent: Int; public let charging: Bool; public let millivolts: Int; public let at: Date }`
   - `public struct UlanziBattery: Sendable { public init(adb: ADB, helper: Data); public func read(appVersion: String?, at now: Date) async -> UlanziBatterySample? }`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```swift
 import Foundation
@@ -722,12 +722,12 @@ private let maps = Data("""
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `swift test --filter UlanziBatteryTests`
 Expected: FAIL — `UlanziBattery`, `UlanziBatterySample` undefined.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```swift
 import Foundation
@@ -835,12 +835,12 @@ public struct UlanziBattery: Sendable {
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `swift test --filter UlanziBatteryTests`
 Expected: PASS (all four tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PixelClockKit/Ulanzi/UlanziBattery.swift Tests/PixelClockKitTests/UlanziBatteryTests.swift
@@ -868,7 +868,7 @@ The percent-native trajectory. Direction comes straight off the explicit chargin
 - Produces:
   - `public struct UlanziBatteryTrajectory: Sendable { public init(); public mutating func accept(_ sample: UlanziBatterySample); public var reading: BatteryReading? { get } }`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```swift
 import Foundation
@@ -919,12 +919,12 @@ private func sample(_ percent: Int, _ charging: Bool, _ minutes: Double) -> Ulan
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `swift test --filter UlanziBatteryTrajectoryTests`
 Expected: FAIL — `UlanziBatteryTrajectory` undefined.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```swift
 import Foundation
@@ -999,12 +999,12 @@ public struct UlanziBatteryTrajectory: Sendable {
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `swift test --filter UlanziBatteryTrajectoryTests`
 Expected: PASS (all four tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PixelClockKit/Ulanzi/UlanziBatteryTrajectory.swift Tests/PixelClockKitTests/UlanziBatteryTrajectoryTests.swift
@@ -1038,7 +1038,7 @@ The thin wiring, landing last and confined to the seam. `UlanziClockHealth` gain
   - `UlanziClockHealth.lastKnownBattery: BatteryReading?`.
   - `AppModel`'s `makeUlanziBattery: @MainActor (ClockRecord) -> UlanziBattery?` injected factory.
 
-- [ ] **Step 1: Write the failing resource test**
+- [x] **Step 1: Write the failing resource test**
 
 ```swift
 // Tests/PixelClockKitTests/PctBattResourceTests.swift
@@ -1057,19 +1057,19 @@ import Testing
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `swift test --filter PctBattResourceTests`
 Expected: FAIL — the resource is not yet resolvable (or, if `.process` mangled a no-extension binary, the magic assert fails; in that case switch the target to a `.copy("Resources/pct-batt")` rule in `Package.swift` and re-run).
 
-- [ ] **Step 3: Confirm the resource resolves**
+- [x] **Step 3: Confirm the resource resolves**
 
 `Sources/PixelClockKit/Resources/pct-batt` already exists from Task 2 and the target already declares `resources: [.process("Resources")]`. Run the test:
 
 Run: `swift test --filter PctBattResourceTests`
 Expected: PASS. (If it does not, apply the `.copy` fallback noted in Step 2, then re-run.)
 
-- [ ] **Step 4: Write the failing health test**
+- [x] **Step 4: Write the failing health test**
 
 ```swift
 // Tests/PixelClockTilesAppTests/UlanziClockHealthBatteryTests.swift
@@ -1121,12 +1121,12 @@ private actor OneShotADB: ADB {
 }
 ```
 
-- [ ] **Step 5: Run to verify it fails**
+- [x] **Step 5: Run to verify it fails**
 
 Run: `swift test --filter UlanziClockHealthBatteryTests`
 Expected: FAIL — `UlanziClockHealth.init` has no `battery:` and no `lastKnownBattery`.
 
-- [ ] **Step 6: Extend `UlanziClockHealth`**
+- [x] **Step 6: Extend `UlanziClockHealth`**
 
 ```swift
 @MainActor
@@ -1178,7 +1178,7 @@ final class UlanziClockHealth: @unchecked Sendable {
 }
 ```
 
-- [ ] **Step 7: Wire the factory and the panel in `AppModel`**
+- [x] **Step 7: Wire the factory and the panel in `AppModel`**
 
 Add the stored factory beside `makeUlanziDevice` (near line 500):
 
@@ -1236,7 +1236,7 @@ battery line stays nil, exactly today's behaviour, so existing tests are
 unaffected. Grep the app tests for `makeUlanziDevice:` and add
 `makeUlanziBattery:` beside each.
 
-- [ ] **Step 8: Add a `batteryLine`-renders-the-TC002-reading case**
+- [x] **Step 8: Add a `batteryLine`-renders-the-TC002-reading case**
 
 In the existing AppModel suite (beside the current `batteryLine` coverage), assert that a TC002 clock whose health has a reading renders through `BatteryLine`. Construct `AppModel` with `makeUlanziBattery` returning a `UlanziBattery` over the `OneShotADB`-style fake, poll, then:
 
@@ -1246,12 +1246,12 @@ In the existing AppModel suite (beside the current `batteryLine` coverage), asse
 
 (Percent-only tail because a single sample is under the minimum span — the honest transient. The exact string tracks `BatteryLine.text`; if a trend has accrued it reads `"73% · estimating…"`, so drive it with one sample for determinism.)
 
-- [ ] **Step 9: Run the full suite**
+- [x] **Step 9: Run the full suite**
 
 Run: `swift test`
 Expected: PASS — the new tests green, the existing AWTRIX battery / status / reachability suites untouched and still passing.
 
-- [ ] **Step 10: Build the bundle and confirm the helper ships**
+- [x] **Step 10: Build the bundle and confirm the helper ships**
 
 Run: `./Scripts/bundle.sh debug`
 Then: `ls build/PixelClockTiles.app/Contents/Resources/PixelClockTiles_PixelClockKit.bundle/pct-batt`
@@ -1261,7 +1261,7 @@ Expected: the file exists inside the copied kit bundle (no `bundle.sh` change wa
 
 Point the running app at the TC002 (`192.168.1.72`), enable the Battery tool on the clock, and confirm the panel draws a percent and a charging glyph, that unplugging USB flips the glyph within a poll or two, and that a discharge ETA appears once the minimum span has been watched. This is the end-to-end gate the unit tests cannot cover (real ADB, real memory, real firmware).
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add Sources/PixelClockTilesApp/UlanziClockHealth.swift Sources/PixelClockTilesApp/AppModel.swift \

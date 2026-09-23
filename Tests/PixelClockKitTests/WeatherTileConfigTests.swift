@@ -128,3 +128,42 @@ private func reading(
     // But the digits themselves are there.
     #expect(canvas != PixelCanvas())
 }
+
+// The band's two answers stay two. They sit on one 52-pixel row, and the
+// felt temperature used to be spelled "feels 18°" — thirty-five pixels that
+// left one column between it and "H78%", and at "feels -12°" ran straight
+// over the humidity. The widest pair the band can be handed has to read as
+// two groups with clear black between them.
+@Test func theBandsTwoAnswersNeverTouch() {
+    let config = WeatherTileConfig(place: moscow)
+    for (humidity, felt) in [(78.0, 18.0), (100, -12), (100, -40), (5, 104)] {
+        let canvas = WeatherConnector.canvas(
+            for: reading(temperature: felt, apparent: felt, humidity: humidity), config: config
+        )
+        let inked = (0..<PixelCanvas.width).filter { x in
+            (11..<PixelCanvas.height).contains { canvas[x, $0] != .black }
+        }
+        // Runs of inked columns, split wherever three or more columns in a
+        // row are black: a glyph's own spacing, a narrow glyph's blank side
+        // included, never reaches three; a word space always does.
+        var runs: [ClosedRange<Int>] = []
+        for x in inked {
+            if let last = runs.last, x - last.upperBound <= 3 {
+                runs[runs.count - 1] = last.lowerBound...x
+            } else {
+                runs.append(x...x)
+            }
+        }
+        let label = "humidity \(humidity), felt \(felt): \(runs)"
+        // Exactly two: the humidity, then the felt temperature as ONE word.
+        #expect(runs.count == 2, "\(label)")
+        guard runs.count == 2 else { continue }
+        // The first run is the humidity and nothing else — it ends inside the
+        // humidity's own cells, 4 pixels per mark from x = 1.
+        let humidityEnd = 1 + "H\(Int(humidity))%".unicodeScalars.count * 4 - 2
+        #expect(runs[0].upperBound <= humidityEnd, "\(label)")
+        // Clear black between the two, and the right one on the panel.
+        #expect(runs[1].lowerBound - runs[0].upperBound > 3, "\(label)")
+        #expect(runs[1].upperBound < PixelCanvas.width, "\(label)")
+    }
+}

@@ -267,13 +267,11 @@ struct TileSettingsWindow: View {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(.black)
                     .strokeBorder(.separator, lineWidth: 1)
-                if let data = settings.preview {
-                    // An `NSImageView` rather than SwiftUI's `Image`, because a
-                    // scrolling face is an ANIMATED GIF and `Image(nsImage:)`
-                    // draws frame one and stops. What the clock does with a
-                    // line too long for its panel is the thing the preview is
-                    // being read for.
-                    AnimatedPixelImage(gif: data, scale: Self.previewScale)
+                if let data = settings.preview, let frames = PixelPreviewFrames(gif: data) {
+                    // Every frame, played at the GIF's own delay: what the
+                    // clock does with a line too long for its panel is the
+                    // thing the preview is being read for.
+                    PixelPreview(frames: frames, scale: Self.previewScale)
                 } else {
                     // The facade's own sentence — why there is no picture —
                     // rather than a guess. It used to read "This tile draws no
@@ -328,38 +326,6 @@ struct TileSettingsWindow: View {
     private func panelWords(of model: ClockModel) -> String {
         let panel = panelPixels(of: model)
         return "\(Int(panel.width))×\(Int(panel.height))"
-    }
-}
-
-/// A GIF drawn at whole-pixel magnification, animating if it has frames to
-/// animate.
-///
-/// AppKit rather than SwiftUI, for one reason each way round: `NSImageView`
-/// is what plays an animated GIF without a timer of ours, and
-/// `imageScaling = .scaleProportionallyUpOrDown` with the layer's
-/// magnification filter set to nearest keeps a 52×16 face a grid of squares
-/// rather than smoothing it into porridge — which is the one way a true
-/// preview can still lie about what the clock looks like.
-private struct AnimatedPixelImage: NSViewRepresentable {
-    let gif: Data
-    let scale: CGFloat
-
-    func makeNSView(context: Context) -> NSImageView {
-        let view = NSImageView()
-        view.imageScaling = .scaleProportionallyUpOrDown
-        view.animates = true
-        view.wantsLayer = true
-        view.layer?.magnificationFilter = .nearest
-        view.layer?.minificationFilter = .nearest
-        return view
-    }
-
-    func updateNSView(_ view: NSImageView, context: Context) {
-        // Rebuilt rather than mutated: an `NSImage` keeps its animation state,
-        // and handing the same instance back with new bytes leaves the old
-        // frames playing.
-        view.image = NSImage(data: gif)
-        view.animates = true
     }
 }
 

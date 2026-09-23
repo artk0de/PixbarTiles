@@ -248,7 +248,12 @@ public struct WeatherConnector: Connector {
             )
         }
         if config.showsFeelsLike {
-            let line = "feels \(Int(Self.fahrenheitOrCelsius(felt, units: config.units).rounded()))°"
+            // A tilde, not the word. "feels 18°" was thirty-five of the
+            // band's fifty-two pixels: it left one black column beside
+            // "H78%", and at "feels -12°" it drew over the humidity. "~18°"
+            // is fifteen, and a tilde before a temperature already reads as
+            // "about this much" on every weather face that has room for less.
+            let line = "~\(Int(Self.fahrenheitOrCelsius(felt, units: config.units).rounded()))°"
             let width = line.unicodeScalars.count * 4 - 1
             canvas.drawText(
                 line,

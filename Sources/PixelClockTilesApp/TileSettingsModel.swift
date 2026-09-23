@@ -27,6 +27,10 @@ final class TileSettingsModel {
     /// — a cancelled render's answer is dropped, not shown late.
     private var scheduled: Task<Void, Never>?
     private var generation = 0
+    /// What a pair of coordinates is called, when the record does not say.
+    private let naming: any PlaceNaming
+    /// The lookup in flight, so a place that moves twice is asked about once.
+    private var named: Task<Void, Never>?
     /// The look at whether the WINDOW has moved to another tile.
     ///
     /// Its own slot, and that is a fix rather than a tidy. It used to share
@@ -60,9 +64,16 @@ final class TileSettingsModel {
     /// own change, undone by an invisible hand.
     private(set) var lastRefusal: String?
 
-    init(model: AppModel, debounce: TimeInterval = 0) {
+    init(
+        model: AppModel,
+        debounce: TimeInterval = 0,
+        // Named nothing by default, so no test and no surface goes to a
+        // geocoder without saying so. The app passes the real one.
+        naming: any PlaceNaming = NoPlaceNaming()
+    ) {
         self.model = model
         self.debounce = debounce
+        self.naming = naming
         key = model.detailTileKey
         loadDraft()
         pulse = model.objectWillChange.sink { [weak self] _ in
@@ -80,6 +91,36 @@ final class TileSettingsModel {
             return
         }
         draft = stored.config?.weatherConfig ?? WeatherTileConfig(place: .default)
+        nameThePlaceIfItHasNone()
+    }
+
+    /// Asks what the draft's coordinates are CALLED, and keeps the answer.
+    ///
+    /// Only when the record does not already say. The answer is saved onto
+    /// the tile rather than held here, so a tile is named once: Apple's
+    /// geocoder rate-limits per app, and a window opened twice must not cost
+    /// two lookups of a place that has not moved.
+    ///
+    /// Silent on failure by design. A name is an improvement on a surface
+    /// that works without one — the headline falls back to the numbers — and
+    /// a lookup nobody asked for has no business raising anything.
+    private func nameThePlaceIfItHasNone() {
+        guard let draft, draft.placeName == nil, draft.placeCountry == nil else { return }
+        let place = draft.place
+        named?.cancel()
+        named = Task { [weak self] in
+            guard let self else { return }
+            let found = await self.naming.name(of: place)
+            guard found.name != nil || found.country != nil else { return }
+            // The place may have moved while the answer was in the air — a
+            // name written over coordinates it does not describe is the one
+            // failure this whole field exists to avoid.
+            guard self.draft?.place == place else { return }
+            self.edit {
+                $0.placeName = found.name
+                $0.placeCountry = found.country
+            }
+        }
     }
 
     private func tileChangedAfterTheChangeLands() {
@@ -179,6 +220,10 @@ final class TileSettingsModel {
             $0.placeName = nil
             $0.placeCountry = nil
         }
+        // And named again from the new numbers, so the line over the box
+        // describes where the reading is FROM whichever way the place got
+        // there.
+        nameThePlaceIfItHasNone()
         return true
     }
 

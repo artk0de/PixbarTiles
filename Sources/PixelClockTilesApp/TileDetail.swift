@@ -404,23 +404,62 @@ struct WeatherTileBlock: View {
         onSave(typed)
     }
 
-    private var askable: Bool {
-        places.isSearching == false
-            && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-    }
-
-    private func find() {
-        guard askable else { return }
-        Task { await places.search(for: name) }
-    }
-
     private func take(_ candidate: PlaceCandidate) {
         // Through the search model's own `choose`, so the box below follows
         // the row and the list clears exactly as its tests say it does — and
         // then the name goes to the draft, which the box cannot carry.
         places.choose(candidate, into: $typed)
         onChoose(candidate)
+        // Emptying the box fires `onChange`, and `suggest("")` closes the
+        // dropdown rather than opening one for a blank name — so the row that
+        // was just picked does not reappear under the field.
         name = ""
+    }
+
+    /// What the name in the box could mean, under the box.
+    ///
+    /// Drawn in the list's own material with a border around it, so it reads
+    /// as a thing that dropped DOWN from the field rather than as three more
+    /// rows of the form. It is laid out in the flow rather than in a popover:
+    /// a popover on macOS takes key focus, and a suggestion list that steals
+    /// the caret from the field feeding it is a list nobody can type past.
+    @ViewBuilder
+    private var dropdown: some View {
+        if places.candidates.isEmpty == false || places.note != nil {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(places.candidates) { candidate in
+                    Button { take(candidate) } label: {
+                        HStack(spacing: 6) {
+                            Text(candidate.name)
+                            // What separates the homonyms: "Москва, Россия"
+                            // against "Айдахо, США".
+                            Text(candidate.label).font(.caption).foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointerStyle(.link)
+                }
+                if let note = places.note {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                }
+            }
+            .background(.quaternary.opacity(0.4))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1)
+            )
+        }
     }
 
     var body: some View {
@@ -430,34 +469,20 @@ struct WeatherTileBlock: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack {
+            // No Find button. A name box beside a button is a search somebody
+            // has to know to press, and what everybody expects of a place
+            // field is that it offers places while they type. The request is
+            // debounced in `PlaceSearchModel.suggest`, so a word typed at
+            // speed costs one request rather than one per letter.
+            HStack(spacing: 6) {
                 TextField("City or town", text: $name)
                     .textFieldStyle(.roundedBorder)
-                    .onSubmit(find)
-                Button("Find", action: find).disabled(askable == false)
-            }
-
-            if places.isSearching {
-                ProgressView().controlSize(.small)
-            }
-            ForEach(places.candidates) { candidate in
-                Button { take(candidate) } label: {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(candidate.name)
-                        // What separates the homonyms: "Москва, Россия"
-                        // against "Айдахо, США".
-                        Text(candidate.label).font(.caption).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    .onChange(of: name) { _, typed in places.suggest(typed) }
+                if places.isSearching {
+                    ProgressView().controlSize(.small)
                 }
-                .buttonStyle(.plain)
-                .pointerStyle(.link)
             }
-            if let note = places.note {
-                Text(note).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            dropdown
             Text(PlaceSearchModel.findsSettlementsNotAddresses)
                 .font(.caption2)
                 .foregroundStyle(.secondary)

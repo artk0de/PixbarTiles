@@ -189,6 +189,36 @@ final class PlaceSearchModel: ObservableObject {
         self.geocoder = search
     }
 
+    /// The search waiting out the pause between two keystrokes.
+    private var typing: Task<Void, Never>?
+
+    /// What the box has in it now, on its way to becoming a search.
+    ///
+    /// The Find button is gone: a name box beside a button is a search
+    /// somebody has to know to press, and what everybody already expects of a
+    /// place field is that it offers places as they type. So this fires on
+    /// every keystroke and is debounced here rather than at the field —
+    /// "Москва" typed at speed is ONE request, for the whole word, not five
+    /// for four prefixes nobody will ever see an answer to.
+    ///
+    /// An empty box puts the dropdown away rather than leaving the last
+    /// answer hanging under a field that no longer says anything.
+    func suggest(_ name: String, after delay: TimeInterval = 0.35) {
+        typing?.cancel()
+        guard name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            candidates = []
+            note = nil
+            return
+        }
+        typing = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch { return }
+            guard Task.isCancelled == false else { return }
+            await self?.search(for: name)
+        }
+    }
+
     /// Asks the geocoder what `name` could mean, and says why when it is
     /// nothing.
     ///

@@ -432,7 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.model = .live()
         self.panelModel = PanelModel(model: model)
         self.settingsModel = SettingsModel(model: model)
-        self.tileSettingsModel = TileSettingsModel(model: model)
+        self.tileSettingsModel = TileSettingsModel(model: model, naming: CoreLocationPlaceNaming())
         self.storeModel = StoreModel(model: model)
         self.discovery = ClockDiscovery(browse: DeviceBrowser())
         self.notifications = .default
@@ -452,7 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.model = model
         self.panelModel = PanelModel(model: model)
         self.settingsModel = SettingsModel(model: model)
-        self.tileSettingsModel = TileSettingsModel(model: model)
+        self.tileSettingsModel = TileSettingsModel(model: model, naming: CoreLocationPlaceNaming())
         self.storeModel = StoreModel(model: model)
         self.discovery = discovery
         self.notifications = notifications

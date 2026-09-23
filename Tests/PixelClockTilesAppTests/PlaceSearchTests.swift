@@ -167,3 +167,70 @@ private func searching(_ body: Data, status: Int = 200) -> PlaceSearchModel {
     #expect(noCountry == "Москва (1.0, 2.0)")
     #expect(noCity == "Россия (1.0, 2.0)")
 }
+
+// MARK: - The dropdown, as it is typed into
+
+/// Counts what the geocoder was actually asked, so a debounce can be measured
+/// rather than asserted.
+private actor CountingTransport: Transport {
+    private let body: Data
+    private(set) var asked: [URLRequest] = []
+
+    init(body: Data) { self.body = body }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        asked.append(request)
+        return (
+            body,
+            HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+            )!
+        )
+    }
+}
+
+// A field somebody is typing into fires once, not once per keystroke. Five
+// letters of "Москва" at typing speed is five requests to a free service for
+// four answers nobody will ever see.
+@Test @MainActor func typingAWholeNameAsksTheGeocoderOnce() async {
+    let transport = CountingTransport(body: twoMoscows)
+    let places = PlaceSearchModel(
+        search: OpenMeteoPlaceSearch(transport: transport, language: "ru")
+    )
+
+    for prefix in ["М", "Мо", "Мос", "Моск", "Москва"] {
+        places.suggest(prefix, after: 0.05)
+    }
+    #expect(await waitUntil { places.candidates.isEmpty == false })
+
+    #expect(await transport.asked.count == 1)
+    // And it is the LAST thing typed that was asked about, never a prefix the
+    // user has already moved past.
+    let asked = await transport.asked.first?.url?.absoluteString ?? ""
+    #expect(asked.contains("Москва") || asked.contains("%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0"))
+}
+
+// Emptying the box puts the dropdown away rather than leaving the last answer
+// hanging under an empty field.
+@Test @MainActor func clearingTheBoxPutsTheDropdownAway() async {
+    let places = searching(twoMoscows)
+    await places.search(for: "Москва")
+    #expect(places.candidates.isEmpty == false)
+
+    places.suggest("", after: 0.01)
+    #expect(await waitUntil { places.candidates.isEmpty })
+    #expect(places.note == nil)
+}
+
+// A name the geocoder cannot place says so under the box, which is the one
+// thing a dropdown must not do silently: an empty dropdown and a dropdown that
+// has not opened yet look identical.
+@Test @MainActor func aNameThatPlacesNowhereSaysSoUnderTheBox() async {
+    let places = searching(placedNowhere)
+
+    places.suggest("Хамовники", after: 0.01)
+
+    #expect(await waitUntil { places.note != nil })
+    #expect(places.note == PlaceSearchModel.nothingFound)
+    #expect(places.candidates.isEmpty)
+}

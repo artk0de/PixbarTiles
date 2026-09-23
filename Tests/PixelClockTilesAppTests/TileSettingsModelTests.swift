@@ -655,3 +655,121 @@ private func expectSetterLands(
 
     await model.teardown()
 }
+
+// MARK: - Naming a place that arrived as two numbers
+
+/// Answers one fixed name, and counts how many times it was asked.
+private actor FixedNaming: PlaceNaming {
+    let name: String?
+    let country: String?
+    private(set) var asked: [Coordinates] = []
+
+    init(name: String?, country: String?) {
+        self.name = name
+        self.country = country
+    }
+
+    func name(of place: Coordinates) async -> (name: String?, country: String?) {
+        asked.append(place)
+        return (name, country)
+    }
+}
+
+@MainActor private func aModelNamedBy(_ naming: any PlaceNaming, place: Coordinates = aDesk)
+    -> (AppModel, TileKey, TileSettingsModel)
+{
+    let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.7")
+    let key = TileKey(clockId: kitchen.id, connectorId: "weather")
+    let transport = SkyAndClockTransport(sky: skyWithAnswers)
+    let model = testModel(
+        connectors: [weatherConnector(over: transport), StubConnector(isAudible: false)],
+        transport: transport,
+        clocks: [kitchen],
+        tiles: [
+            TileRecord(
+                key: key,
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600),
+                config: .weather(WeatherTileConfig(place: place))
+            )
+        ]
+    )
+    return (model, key, TileSettingsModel(model: model, naming: naming))
+}
+
+// The case the whole headline exists for: a tile stored as two numbers, years
+// before a name was kept beside them. It showed "55.7558, 37.6173" and nothing
+// else — so the name is asked for, and SAVED, rather than shown once.
+@Test @MainActor func aPlaceThatArrivedAsNumbersIsNamedAndTheNameIsKept() async {
+    let naming = FixedNaming(name: "Москва", country: "Россия")
+    let (model, key, subject) = aModelNamedBy(naming)
+    model.openDetail(for: key)
+
+    #expect(await waitUntil { subject.draft?.placeName != nil })
+    #expect(subject.draft?.placeCountry == "Россия")
+    #expect(subject.placeHeadline.hasPrefix("Россия, Москва ("))
+    // Kept on the RECORD, so the next opening costs no lookup at all —
+    // Apple's geocoder rate-limits per app.
+    #expect(model.storedTile(key)?.config?.weatherConfig?.placeName == "Москва")
+
+    await model.teardown()
+}
+
+// A place that already carries a name is not looked up again.
+@Test @MainActor func aPlaceThatKnowsItsNameIsNotLookedUp() async {
+    let naming = FixedNaming(name: "Somewhere else", country: "Elsewhere")
+    let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.7")
+    let key = TileKey(clockId: kitchen.id, connectorId: "weather")
+    let transport = SkyAndClockTransport(sky: skyWithAnswers)
+    let model = testModel(
+        connectors: [weatherConnector(over: transport), StubConnector(isAudible: false)],
+        transport: transport,
+        clocks: [kitchen],
+        tiles: [
+            TileRecord(
+                key: key,
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600),
+                config: .weather(WeatherTileConfig(
+                    place: aDesk, placeName: "London", placeCountry: "United Kingdom"
+                ))
+            )
+        ]
+    )
+    let subject = TileSettingsModel(model: model, naming: naming)
+
+    model.openDetail(for: key)
+    #expect(await waitUntil { subject.draft != nil })
+    // Long enough for a lookup to have happened had one been asked for.
+    try? await Task.sleep(for: .milliseconds(300))
+    #expect(await naming.asked.isEmpty)
+
+    #expect(subject.draft?.placeName == "London")
+    await model.teardown()
+}
+
+// A pair typed into the box drops the name it had and is named again from the
+// new numbers — so the line over the box describes where the reading is FROM,
+// whichever way the place got there.
+@Test @MainActor func aTypedPairIsNamedFromItsOwnNumbers() async {
+    let naming = FixedNaming(name: "London", country: "United Kingdom")
+    let (model, key, subject) = aModelNamedBy(naming)
+    model.openDetail(for: key)
+    #expect(await waitUntil { subject.draft?.placeName != nil })
+
+    #expect(subject.savePlace("51.5074, -0.1278"))
+
+    #expect(await waitUntil { subject.draft?.placeName == "London" })
+    #expect(await naming.asked.contains(Coordinates(latitude: 51.5074, longitude: -0.1278)))
+    await model.teardown()
+}
+
+// Nothing known stays nothing said. A surface that invented a name for a pair
+// its geocoder could not place would be worse than the numbers.
+@Test @MainActor func aPlaceNobodyCanNameKeepsItsNumbers() async {
+    let (model, key, subject) = aModelNamedBy(FixedNaming(name: nil, country: nil))
+    model.openDetail(for: key)
+    #expect(await waitUntil { subject.draft != nil })
+
+    #expect(subject.draft?.placeName == nil)
+    #expect(subject.placeHeadline == LocationField.text(for: aDesk))
+    await model.teardown()
+}

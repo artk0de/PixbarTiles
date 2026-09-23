@@ -203,7 +203,72 @@ extension GitHubFace {
             TickerState(icon: Loop(id: 2, cels: prIcon()),
                         lines: lineState([part("\(state.openPRs)", prInk)], changeMilliseconds)),
         ]
-        return lace(tickerSegments(hero(compact(state.stars), starInk, star: true), states))
+        let frames = lace(tickerSegments(hero(compact(state.stars), starInk, star: true), states))
+        guard let loop = lampLoop(state.ci?.state) else { return frames }
+        return withLamp(frames, loop)
+    }
+
+    // MARK: - The CI lamp
+
+    /// The default branch's checks as a 3×3 badge on the icon's bottom-right
+    /// corner — a status dot on an avatar, picked in the browser over a column
+    /// beside the hero (it touched a fourth digit) and one in the gutter. It
+    /// shows only while something needs a look: success draws nothing, like a
+    /// repo without checks. Colour alone does not read on the dim panel, so
+    /// the two states differ in motion too.
+    static let lampCells = (13..<16).flatMap { y in (13..<16).map { x in PixelPoint(x: x, y: y) } }
+    static let lampMilliseconds = 500
+
+    /// One cel of the lamp: the cells it paints, over whatever is under them.
+    typealias LampCel = (cells: [(PixelPoint, Pixel)], milliseconds: Int)
+
+    /// Failure blinks 500/500 ms; pending fills from a ring to a full square
+    /// and back. Nil when there is nothing to show.
+    static func lampLoop(_ state: GitHubCI.State?) -> [LampCel]? {
+        switch state {
+        case .failure:
+            return [(lampCells.map { ($0, ciFailInk) }, lampMilliseconds), ([], lampMilliseconds)]
+        case .pending:
+            let ring = lampCells.filter { $0 != PixelPoint(x: 14, y: 14) }
+            return [
+                (ring.map { ($0, ciPendingInk) }, lampMilliseconds),
+                (lampCells.map { ($0, ciPendingInk) }, lampMilliseconds),
+            ]
+        // `GitHubCI.State.none` spelled out: a bare `.none` is Optional's nil.
+        case .success?, GitHubCI.State.none?, nil:
+            return nil
+        }
+    }
+
+    /// Paints the lamp over a whole timeline, its phase running on across
+    /// every frame (one GIF, tc002-ticker-motion): a frame that spans a lamp
+    /// change is cut there. No sliver merging, as in ggen's `with_lamp`.
+    static func withLamp(_ frames: [Frame], _ loop: [LampCel]) -> [Frame] {
+        let total = loop.reduce(0) { $0 + $1.milliseconds }
+        var out: [Frame] = [], elapsed = 0
+        for frame in frames {
+            var left = frame.milliseconds
+            while left > 0 {
+                let position = elapsed % total
+                var start = 0, cel = loop[loop.count - 1]
+                for candidate in loop {
+                    if position < start + candidate.milliseconds {
+                        cel = candidate
+                        break
+                    }
+                    start += candidate.milliseconds
+                }
+                let span = min(start + cel.milliseconds - position, left)
+                var canvas = frame.canvas
+                for (point, ink) in cel.cells {
+                    canvas[point.x, point.y] = ink
+                }
+                out.append(Frame(canvas: canvas, milliseconds: span))
+                elapsed += span
+                left -= span
+            }
+        }
+        return out
     }
 
     // MARK: - Celebration
@@ -269,7 +334,26 @@ extension GitHubFace {
         if who.count > maxLogins {
             lines.append([part("+\(who.count - maxLogins)", ink), part("more", WeatherFace.label)])
         }
+        return celebrationTimeline(top, lines, pop: pop, loop: loop, celebrateMilliseconds: celebrateMilliseconds)
+    }
 
+    /// The default branch failing: `ci` holds the hero, the ticker says
+    /// `<branch> fail` (`main failed` is 36 px) and then who pushed the commit.
+    static func celebrateCI(branch: String, author: String?, celebrateMilliseconds: Int) -> [Frame] {
+        var lines = [[part(branch, whiteInk), part("fail", ciFailInk)]]
+        if let author {
+            lines.append([part("☺", personInk), part(author.lowercased(), whiteInk)])
+        }
+        return celebrationTimeline(
+            hero("ci", ciFailInk), lines, pop: [], loop: ciIcon(), celebrateMilliseconds: celebrateMilliseconds
+        )
+    }
+
+    /// ggen's `_celebration_timeline`: the lines share the celebration's
+    /// length, the icon's loop runs across all of them, the pop plays first.
+    static func celebrationTimeline(
+        _ top: PixelCanvas, _ lines: [[WeatherFace.Part]], pop: [Cel], loop: [Cel], celebrateMilliseconds: Int
+    ) -> [Frame] {
         let slides = (lines.count - 1) * (WeatherFace.slideSteps - 1) * WeatherFace.stepMilliseconds
         let dwell = max(1200, floorDiv(celebrateMilliseconds - slides, lines.count))
         // One icon for the whole celebration: every state shares the loop, so

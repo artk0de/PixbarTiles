@@ -46,6 +46,10 @@ public enum GitHubFace {
     static let personInk = WeatherFace.rgb(0x90_90_90)
     static let markInk = WeatherFace.rgb(0xB8_B8_B8)
     static let shineInk = WeatherFace.rgb(0xFF_FF_FF)
+    /// The default branch's CI, in GitHub's own check colours. Success has
+    /// none: the lamp is absent then, like a repo without checks.
+    static let ciFailInk = WeatherFace.rgb(0xF8_51_49)
+    static let ciPendingInk = WeatherFace.rgb(0xD2_99_22)
 
     static let areaWidth = WeatherFace.areaWidth
     static let height = WeatherFace.height
@@ -80,6 +84,13 @@ public enum GitHubFace {
         )
     }
 
+    /// The default branch failing: the failed-check icon, `ci` as the hero,
+    /// then `<branch> fail`, then the head commit's author when the commit
+    /// names one.
+    public static func ciCelebration(branch: String, author: String?, celebrateMilliseconds: Int) -> [Frame] {
+        celebrateCI(branch: branch, author: author, celebrateMilliseconds: celebrateMilliseconds)
+    }
+
     static func arrivals(_ kind: GitHubEventKind, in events: GitHubEvents)
         -> (count: Int, who: [String], prNumbers: [Int])
     {
@@ -108,14 +119,25 @@ public enum GitHubFace {
         case .noData: timeline(ambient: nil, noToken: false, config: reading.config)
         case let .state(state): timeline(ambient: state, noToken: false, config: reading.config)
         }
-        let interruptions = interruptionOrder.compactMap { kind, scope -> Interruption<UlanziScene>? in
-            guard arrivals(kind, in: reading.events).count > 0 else { return nil }
-            let frames = celebration(kind: kind, events: reading.events, config: reading.config)
+        func interruption(_ frames: [Frame], _ scope: Interruption<UlanziScene>.Scope) -> Interruption<UlanziScene> {
             let length = TimeInterval(frames.reduce(0) { $0 + $1.milliseconds }) / 1000
             return Interruption(
                 scene: scene(frames), scope: scope,
                 duration: max(TimeInterval(reading.config.celebrationSeconds), length)
             )
+        }
+        var interruptions = interruptionOrder.compactMap { kind, scope -> Interruption<UlanziScene>? in
+            guard arrivals(kind, in: reading.events).count > 0 else { return nil }
+            return interruption(celebration(kind: kind, events: reading.events, config: reading.config), scope)
+        }
+        // A failing default branch last, on the tile's own page only, like a
+        // fork or a PR.
+        if let failure = reading.events.ciFailure {
+            let frames = ciCelebration(
+                branch: failure.branch, author: failure.author,
+                celebrateMilliseconds: reading.config.celebrationSeconds * 1000
+            )
+            interruptions.append(interruption(frames, .ownPage))
         }
         return UlanziDelivery(scene: scene(ambient), interruptions: interruptions)
     }

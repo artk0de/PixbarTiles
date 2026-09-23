@@ -17,6 +17,8 @@ private struct GitHubOracle: Decodable {
         let stars: Int
         let forks: Int
         let prs: Int
+        /// The default branch's rollup, or nil for a repo without checks.
+        let ci: String?
     }
 
     struct Case: Decodable {
@@ -32,6 +34,8 @@ private struct GitHubOracle: Decodable {
         let count: Int?
         let who: [String]?
         let prNumbers: [Int]?
+        // a `ci` celebration
+        let branch: String?
         let frameCount: Int
         let framesZ: String
 
@@ -53,12 +57,25 @@ private struct GitHubOracle: Decodable {
 /// The Swift face's timeline for an oracle case's input.
 private func drawn(_ c: GitHubOracle.Case) throws -> [GitHubFace.Frame] {
     if c.kind == "ambient" {
-        let state = c.reading.map {
-            GitHubRepoState(nameWithOwner: $0.repo, stars: $0.stars, forks: $0.forks, openPRs: $0.prs)
+        let state = try c.reading.map { reading in
+            GitHubRepoState(
+                nameWithOwner: reading.repo, stars: reading.stars, forks: reading.forks, openPRs: reading.prs,
+                ci: try reading.ci.map {
+                    GitHubCI(
+                        state: try #require(GitHubCI.State(rawValue: $0), "\(c.id) ci"),
+                        branch: "main", headOid: "0", author: nil
+                    )
+                }
+            )
         }
         let config = GitHubTileConfig(repo: c.reading?.repo ?? "", shortName: c.shortName)
         return GitHubFace.timeline(
             ambient: state, noToken: c.token == false, config: config, dwellMilliseconds: c.dwell
+        )
+    }
+    if c.kind == "ci" {
+        return GitHubFace.ciCelebration(
+            branch: try #require(c.branch), author: c.who?.first, celebrateMilliseconds: c.celebrate
         )
     }
     let kind = try #require(GitHubEventKind(rawValue: c.kind), "\(c.id) kind")
@@ -77,7 +94,7 @@ private func gif(_ frames: [GitHubFace.Frame]) throws -> Data {
 @Suite struct GitHubFaceOracleTests {
     @Test func everyCaseReproducesTheApprovedFramesExactly() throws {
         let oracle = try GitHubOracle.load()
-        #expect(oracle.cases.count == 17)
+        #expect(oracle.cases.count == 22)
         for c in oracle.cases {
             let frames = try drawn(c)
             let approved = try c.frames()
@@ -228,6 +245,51 @@ private func gif(_ frames: [GitHubFace.Frame]) throws -> Data {
         let length = TimeInterval(frames.reduce(0) { $0 + $1.milliseconds }) / 1000
         #expect(length > 8)
         #expect(delivery.interruptions.map(\.duration) == [length])
+    }
+
+    /// Success draws no lamp, like a repo without checks: the page is the
+    /// same GIF either way.
+    @Test func aGreenBranchDrawsNoLamp() throws {
+        var green = state
+        green.ci = GitHubCI(state: .success, branch: "main", headOid: "a1", author: "dave")
+        #expect(
+            GitHubFace.delivery(for: GitHubReading(content: .state(green), config: config)).scene
+                == GitHubFace.delivery(for: GitHubReading(content: .state(state), config: config)).scene
+        )
+    }
+
+    @Test func aFailingBranchBlinksTheLampOnTheAmbientPage() throws {
+        var red = state
+        red.ci = GitHubCI(state: .failure, branch: "main", headOid: "a1", author: "dave")
+        let frames = GitHubFace.timeline(
+            ambient: red, noToken: false, config: config,
+            dwellMilliseconds: GitHubFace.ambientDwellMilliseconds
+        )
+        #expect(frames[0].canvas[14, 14] == GitHubFace.ciFailInk)
+        #expect(frames[0].milliseconds <= GitHubFace.lampMilliseconds)
+    }
+
+    /// The failure is one more interruption, on the tile's own page, after
+    /// the stars, forks and PRs; it names the branch and the commit author.
+    @Test func aFailingHeadCommitInterruptsItsOwnPageLast() throws {
+        var events = GitHubEvents()
+        events.newStars = ["alice"]
+        events.newStarCount = 1
+        events.ciFailure = GitHubCIFailure(branch: "main", author: "Dave", oid: "b2")
+        let delivery = GitHubFace.delivery(for: GitHubReading(content: .state(state), events: events, config: config))
+
+        #expect(delivery.interruptions.map(\.scope) == [.everyPage, .ownPage])
+        let ci = GitHubFace.ciCelebration(branch: "main", author: "Dave", celebrateMilliseconds: 8_000)
+        #expect(delivery.interruptions[1].scene == GitHubFace.scene(ci))
+        #expect(delivery.interruptions[1].duration == 8)
+        #expect(ci == GitHubFace.ciCelebration(branch: "main", author: "dave", celebrateMilliseconds: 8_000))
+    }
+
+    @Test func aFailureWithoutAnAuthorNamesOnlyTheBranch() throws {
+        let named = GitHubFace.ciCelebration(branch: "main", author: "dave", celebrateMilliseconds: 8_000)
+        let bare = GitHubFace.ciCelebration(branch: "main", author: nil, celebrateMilliseconds: 8_000)
+        #expect(bare != named)
+        #expect(bare.reduce(0) { $0 + $1.milliseconds } >= 8_000)
     }
 
     @Test func theConnectorsStandardFaceIsThisOne() throws {

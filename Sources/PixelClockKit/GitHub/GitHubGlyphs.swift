@@ -3,7 +3,7 @@ import Foundation
 // The GitHub face's 16×16 icons: GitHub's own octicons as per-pixel coverage,
 // quantised for LEDs, and the loops they play — ports of `ggen.py`'s
 // `coverage`, `sample`, `glyph`, `lit`, `octocat`, `star_icon`, `pulse`,
-// `fork_icon` and `pr_icon`, in that order. Every constant and every float
+// `fork_icon`, `pr_icon` and `ci_icon`, in that order. Every constant and every float
 // expression is ggen's, because the oracle holds these pixels to it.
 
 extension GitHubFace {
@@ -54,6 +54,16 @@ extension GitHubFace {
             "000024ffa103000000000024ffa10300", "0024f2ffff960000000024f2ffff9600",
             "0077ff219ff60000000077ff219ff600", "0059ff9fddd80000000059ff9fddd800",
             "000396f7d838000000000396f7d83800", "00000000000000000000000000000000",
+        ],
+        "ci": [
+            "000000003198dafafad9983100000000", "0000099afefffffffffffffe9b090000",
+            "0009c1ffffffffffffffffffffc20900", "009affffffffffffffffffffffff9b00",
+            "31feffffffd4ffffffffcbfefffffe31", "98ffffffd40071ffff7100cbffffff97",
+            "d9ffffffff710070710071ffffffffd9", "faffffffffff71000071fffffffffff9",
+            "faffffffffff71000070fefffffffff9", "d9ffffffff710071710070ffffffffd9",
+            "97ffffffcb0071ffff7100cbffffff97", "31fefffffecbffffffffcbfefffffe31",
+            "009affffffffffffffffffffffff9a00", "0009c1ffffffffffffffffffffc20900",
+            "0000099afefffffffffffffe9a090000", "000000003197d9f9f9d9973100000000",
         ],
     ]
 
@@ -176,5 +186,26 @@ extension GitHubFace {
     /// A commit runs up the incoming branch and across the arrow into the base.
     static func prIcon() -> [WeatherFace.Cel] {
         pulse("pr", prInk) { $0.x >= 8 ? 15 - $0.y : 99 }
+    }
+
+    /// GitHub's failed-check glyph in red; the disc brightens and settles in
+    /// turn for as long as the event lasts.
+    static func ciIcon() -> [WeatherFace.Cel] {
+        let cov = coverage("ci")
+        func disc(_ ink: Pixel) -> PixelCanvas {
+            // The cross is holes in the disc; at LED scale holes read as a
+            // plain disc, so the holes inside it are lit white.
+            var canvas = glyph("ci", ink)
+            for y in 0..<16 {
+                for x in 0..<16 {
+                    let dx = Double(x) - 7.5, dy = Double(y) - 7.5
+                    if cov[y][x] < edge, dx * dx + dy * dy <= 36 {
+                        canvas[x, y] = whiteInk
+                    }
+                }
+            }
+            return canvas
+        }
+        return [(disc(ciFailInk), 400), (disc(WeatherFace.rgb(0xFF_9A_92)), 400)]
     }
 }

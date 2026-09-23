@@ -2,8 +2,8 @@
 /// `tc002-face-mockup` skill's `weather/wgen.py` (`B`) and held to it pixel
 /// for pixel by `WeatherGlyphTests`. Change the design there, not here.
 ///
-/// Nine rows for every glyph: the digits, `%`, `+`, `k` and `m` are five
-/// columns, `-` and `°` three, the GitHub star `★` nine — hence sixteen-bit
+/// Nine rows for every glyph: the digits, `%`, `+`, `k`, `m` and `c` are five
+/// columns, `-` and `°` three, `i` one, the GitHub star `★` nine — hence sixteen-bit
 /// rows. Same bit convention as the other tables — rows top first,
 /// **bit 0 the leftmost column** — written binary so each literal is the
 /// glyph's own row mirrored.
@@ -31,5 +31,8 @@ extension PixelFont {
             0b000010000, 0b000010000, 0b000111000, 0b111111111, 0b011111110,
             0b001111100, 0b001101100, 0b011000110, 0b010000010,
         ]),
+        // The CI failure's hero `ci`, lowercase at x-height like `m`.
+        "c": (5, [0b00000, 0b00000, 0b00000, 0b01110, 0b10001, 0b00001, 0b00001, 0b10001, 0b01110]),
+        "i": (1, [0b0, 0b1, 0b0, 0b1, 0b1, 0b1, 0b1, 0b1, 0b1]),
     ]
 }

@@ -26,17 +26,30 @@ extension View {
     /// This window's material. The content keeps its own backgrounds where it
     /// has them; the material reads at the edges, behind every gap, and under
     /// the titlebar.
-    func glassWindow() -> some View {
-        modifier(GlassWindowModifier())
+    ///
+    /// `fill` is for windows the user RESIZES — the settings, a tile's — where
+    /// content dragged smaller than its window would otherwise leave the
+    /// material a content-shaped patch. A window sized to its content wants
+    /// the opposite: under `.windowResizability(.contentSize)` a fill to
+    /// infinity IS the content size, and the window opens as wide as the
+    /// screen with the panel laid out at its own width in the corner.
+    func glassWindow(fill: Bool = true) -> some View {
+        modifier(GlassWindowModifier(fill: fill))
     }
 }
 
 private struct GlassWindowModifier: ViewModifier {
+    let fill: Bool
+
     func body(content: Content) -> some View {
         content
             // Fill first: a window the user has dragged bigger than its
             // content is where a content-shaped material shows its seams.
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(
+                maxWidth: fill ? .infinity : nil,
+                maxHeight: fill ? .infinity : nil,
+                alignment: .topLeading
+            )
             .containerBackground(.regularMaterial, for: .window)
             // The titlebar is the window's too. The dark band across the top
             // of a material window is the SCENE's toolbar background, which

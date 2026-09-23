@@ -21,7 +21,20 @@ struct PinnedPanelWindow: View {
 
     var body: some View {
         MenuPanel(model: model, panel: panel, settings: settings, pin: pin)
-            .glassWindow()
+            // Not filled: this window is sized to the panel, so a fill to
+            // infinity would be the size it opened at — the panel laid out at
+            // its own width in the corner of a screen-wide window.
+            .glassWindow(fill: false)
+            // Placed where the drag let it go, when a drag is what opened it.
+            // A window that pins itself and then appears in the middle of the
+            // screen is a move the user has to make twice.
+            .background(
+                PanelWindowReader { window in
+                    guard let window, let origin = pin.takeDetachedOrigin() else { return }
+                    window.setFrameTopLeftPoint(origin)
+                }
+                .allowsHitTesting(false)
+            )
             // The pin comes out when the window is closed by its own red
             // button too. Otherwise the app would remember a pin whose window
             // is gone, and the next launch would open a window nobody asked
@@ -69,5 +82,13 @@ struct PinnedElsewherePanel: View {
         }
         .padding(14)
         .frame(width: 240)
+        // Opening is how a DRAG becomes a window: the pin flips in the
+        // delegate, this content replaces the panel, and there is nowhere
+        // else with an `openWindow` to call. Opening one already open raises
+        // it, which is what a reader clicking the menu bar item wants anyway.
+        .task {
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: PinnedPanelWindow.id)
+        }
     }
 }

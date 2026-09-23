@@ -159,7 +159,43 @@ private func draw(_ reading: GitHubReading) -> AwtrixDelivery {
     // shape is held here: `name:d=N,o=N,b=N:notes`, a name the firmware
     // takes (≤ 10 characters), every note `[duration]pitch[#][.][octave][.]`,
     // and short enough to stay a jingle.
-    @Test(arguments: [GitHubJingle.star, GitHubJingle.fork, GitHubJingle.pr])
+    // A failing default branch rings after the arrivals, in GitHub's failure
+    // red, naming the branch and the commit's author.
+    @Test func aFailingBranchRingsLast() throws {
+        var events = GitHubEvents()
+        events.newStars = ["alice"]
+        events.newStarCount = 1
+        events.ciFailure = GitHubCIFailure(branch: "main", author: "dave", oid: "b2")
+
+        let delivery = draw(reading(events))
+
+        #expect(delivery.interruptions.map(\.scene.text) == ["star +1 @alice", "CI fail main @dave"])
+        let ci = try #require(delivery.interruptions.last)
+        #expect(ci.scene.jingle == GitHubJingle.ciFailure)
+        #expect(ci.scene.color == "#F85149")
+        #expect(ci.scene.icon == .bundled(GitHubAwtrixFace.icon))
+        #expect(ci.scene.surface == .notification)
+        #expect(ci.scene.duration == 10)
+        #expect(ci.duration == 10)
+    }
+
+    @Test func aFailureWithoutAnAuthorNamesOnlyTheBranch() throws {
+        var events = GitHubEvents()
+        events.ciFailure = GitHubCIFailure(branch: "develop", author: nil, oid: "b2")
+
+        #expect(draw(reading(events)).interruptions.map(\.scene.text) == ["CI fail develop"])
+    }
+
+    // The TC001 has no lamp: its app is one text line, and a pending or red
+    // branch leaves it as it is.
+    @Test func noLampOnTheApp() {
+        var red = state
+        red.ci = GitHubCI(state: .failure, branch: "main", headOid: "b2", author: "dave")
+        let delivery = draw(GitHubReading(content: .state(red), config: config))
+        #expect(delivery == draw(reading()))
+    }
+
+    @Test(arguments: [GitHubJingle.star, GitHubJingle.fork, GitHubJingle.pr, GitHubJingle.ciFailure])
     func eachJingleIsWellFormedRTTTL(_ tune: String) throws {
         let sections = tune.split(separator: ":", omittingEmptySubsequences: false)
         try #require(sections.count == 3)

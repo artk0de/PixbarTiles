@@ -14,6 +14,9 @@ public enum GitHubJingle {
     public static let fork = "oneup:d=16,o=6,b=150:e,g,e7,c7,d7,g7"
     /// The power-up's first two arpeggios (the whole of it is eighteen notes).
     public static let pr = "powerup:d=16,o=5,b=200:g,c6,e6,g6,c7,g6,g#,c6,d#6,g#6,c7,g#6"
+    /// A failing default branch: the game-over motif, falling C-G-E then the
+    /// three wavering triplets, twelve notes.
+    public static let ciFailure = "gameover:d=8,o=5,b=120:4c6,4g,4e,a,b,a,g#,a#,g#,g,f,2g"
 }
 
 /// The TC001 GitHub face (spec "The faces — F2 / TC001").
@@ -40,14 +43,16 @@ public enum GitHubAwtrixFace {
     static let starColour = "#FFD84A"
     static let forkColour = "#58A6FF"
     static let prColour = "#3FB950"
+    /// GitHub's failed-check red, the TC002 badge's.
+    static let ciFailColour = "#F85149"
     /// The TC002 labels' grey: `no token` / `no data` are a state, not a
     /// figure, and must not look like one.
     static let quietColour = "#606060"
 
     /// The app, and one notification per kind of arrival — stars, forks, PRs,
-    /// in the TC002's order. Each holds for the tile's celebration length;
-    /// the firmware scrolls a line that does not fit, as it does for every
-    /// other notification this app sends.
+    /// in the TC002's order, then a newly failing default branch. Each holds
+    /// for the tile's celebration length; the firmware scrolls a line that
+    /// does not fit, as it does for every other notification this app sends.
     public static func draw(_ reading: GitHubReading, appName: String) -> AwtrixDelivery {
         let (text, colour) = switch reading.content {
         case .noToken: ("no token", quietColour)
@@ -55,17 +60,25 @@ public enum GitHubAwtrixFace {
         case let .state(state): (GitHubFace.compact(state.stars), starColour)
         }
         let seconds = reading.config.celebrationSeconds
-        let interruptions = GitHubFace.interruptionOrder.compactMap { kind, _ -> Interruption<AwtrixScene>? in
-            guard let line = celebration(kind, in: reading.events) else { return nil }
-            return Interruption(
+        func notification(_ line: String, jingle: String, colour: String) -> Interruption<AwtrixScene> {
+            Interruption(
                 scene: AwtrixScene(
-                    text: line, icon: .bundled(icon), jingle: jingle(kind), duration: seconds,
-                    color: ink(kind), surface: .notification
+                    text: line, icon: .bundled(icon), jingle: jingle, duration: seconds,
+                    color: colour, surface: .notification
                 ),
                 // A notification covers whatever app is on screen, which is
                 // what `everyPage` means; the session ignores scope here.
                 scope: .everyPage, duration: TimeInterval(seconds)
             )
+        }
+        var interruptions = GitHubFace.interruptionOrder.compactMap { kind, _ -> Interruption<AwtrixScene>? in
+            guard let line = celebration(kind, in: reading.events) else { return nil }
+            return notification(line, jingle: jingle(kind), colour: ink(kind))
+        }
+        // A failing default branch rings last, as the TC002 shows it last.
+        // No lamp here: the app is one text line (spec, "TC001").
+        if let failure = reading.events.ciFailure {
+            interruptions.append(notification(ciLine(failure), jingle: GitHubJingle.ciFailure, colour: ciFailColour))
         }
         return AwtrixDelivery(
             text: text, icon: .bundled(icon), color: colour, surface: .app(appName),
@@ -97,6 +110,14 @@ public enum GitHubAwtrixFace {
         guard let first = arrival.who.first else { return head }
         let rest = arrival.who.count - 1
         return rest > 0 ? "\(head) @\(first) +\(rest) more" : "\(head) @\(first)"
+    }
+
+    /// `CI fail main @dave`; the author is left out when the commit is
+    /// linked to no account.
+    static func ciLine(_ failure: GitHubCIFailure) -> String {
+        let head = "CI fail \(failure.branch)"
+        guard let author = failure.author else { return head }
+        return "\(head) @\(author)"
     }
 
     static func jingle(_ kind: GitHubEventKind) -> String {

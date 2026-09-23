@@ -12,23 +12,30 @@ import Testing
 
 // MARK: - Which band a reading falls in
 
-// The bands answer one question: will you run out before the week does. That
-// makes the thresholds late rather than early. A weekly allowance spent evenly
-// passes half by Wednesday midday and three quarters by Friday, so colouring
-// those states leaves the bar shouting through an ordinary week — and a warning
-// that is on half the time is not read at all.
+// The ramp answers one question: will you run out before the window does. That
+// puts its foot late rather than early. A weekly allowance spent evenly passes
+// half by Wednesday midday, so colouring that leaves the bar shouting through
+// an ordinary week — and a warning that is on half the time is not read at all.
 @Test func anOrdinaryWeekLeavesTheBarInItsRestingColour() {
     #expect(UsageBand(utilization: 0) == .steady)
     #expect(UsageBand(utilization: 50) == .steady)
-    #expect(UsageBand(utilization: 79) == .steady)
+    #expect(UsageBand(utilization: 74) == .steady)
 }
 
+// Past three quarters it steps every five points rather than leaping. Three
+// bands left eighty-one and eighty-nine the same colour, so the reader had
+// only the bar's length to tell them apart.
 @Test func eachThresholdOpensItsOwnBand() {
-    #expect(UsageBand(utilization: 80) == .watch)
-    #expect(UsageBand(utilization: 89) == .watch)
+    #expect(UsageBand(utilization: 75) == .watch)
+    #expect(UsageBand(utilization: 79) == .watch)
+    #expect(UsageBand(utilization: 80) == .warm)
+    #expect(UsageBand(utilization: 84) == .warm)
+    #expect(UsageBand(utilization: 85) == .hot)
+    #expect(UsageBand(utilization: 89) == .hot)
     #expect(UsageBand(utilization: 90) == .close)
     #expect(UsageBand(utilization: 94) == .close)
-    #expect(UsageBand(utilization: 95) == .spent)
+    #expect(UsageBand(utilization: 95) == .critical)
+    #expect(UsageBand(utilization: 99) == .critical)
     #expect(UsageBand(utilization: 100) == .spent)
 }
 
@@ -48,6 +55,16 @@ import Testing
     #expect(UsageBand.spent.fillColour != ClaudeUsage.brandColour)
 }
 
+// Only a full window pulses, and it is the one band the ramp cannot shout any
+// louder in colour — `critical` already drives the red channel to 255, so past
+// it the face spends motion instead of hue.
+@Test func onlyTheSpentBandCarriesASecondColourToPulseTo() {
+    #expect(UsageBand.spent.pulseColour == "#A00000")
+    for band in UsageBand.allCases where band != .spent {
+        #expect(band.pulseColour == nil, "\(band)")
+    }
+}
+
 // MARK: - What reaches the device
 
 @Test func theAppDrawsThePercentageInTheBrandColourOverABandedBar() {
@@ -58,7 +75,7 @@ import Testing
     #expect(output.icon == .bundled("ClaudeStar"))
     #expect(output.surface == .app(ClaudeUsageConnector.appName))
     #expect(output.progress?.percent == 83)
-    #expect(output.progress?.fill == UsageBand.watch.fillColour)
+    #expect(output.progress?.fill == UsageBand.warm.fillColour)
 }
 
 // The bar is drawn by the firmware from three fields, and a percentage outside

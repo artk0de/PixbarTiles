@@ -19,13 +19,11 @@ EDGE_STEP_MS = 100       # edge marquee: one pixel per step
 EDGE_HOLD_START_MS = 1000
 EDGE_HOLD_END_MS = 1500
 TRACK = (0x30, 0x30, 0x30)
-# The SPENT part of a bar — the progress itself. Bright white, so what a
-# glance lands on is how much of the window is gone, against the grey of what
-# is left. The warning bands no longer colour this bar — a page that turned
-# red at 95% put the loudest thing on the panel on the tile with the least to
-# say — so they are gone from this design entirely. `UsageBand` in the kit
-# still classifies, and the AWTRIX page still draws its bar in the band's
-# colour; only the TC002 face stopped.
+# The SPENT part of a bar — the progress itself — while the window is steady.
+# Bright white, so what a glance lands on is how much of it is gone against the
+# grey of what is left. White stands where a vendor's brand colour used to: the
+# figure beside the bar already says which account this is, so the bar is free
+# to spend its colour on how much is left.
 PROGRESS = (0xFF, 0xFF, 0xFF)
 LABEL = (0x60, 0x60, 0x60)
 
@@ -33,6 +31,43 @@ LABEL = (0x60, 0x60, 0x60)
 def hexrgb(h):
     h = h.lstrip("#")
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+# Past three quarters the fill takes the warning ramp instead — `UsageBand`'s
+# thresholds and `UsageBand`'s colours, shared with the AWTRIX page, so a
+# colour means the same thing wherever it shows. White alone left a bar at a
+# third and a bar about to run out the same colour, differing only in length,
+# which is the one reading a 52-pixel row is worst at. Five points a step, so
+# the colour says HOW close rather than merely "close".
+BANDS = (
+    (100, hexrgb("#FF0000")),   # spent — the bucket is full
+    (95, hexrgb("#FF3B30")),    # red
+    (90, hexrgb("#FF6321")),    # orange leaning red
+    (85, hexrgb("#FF8C1A")),    # orange
+    (80, hexrgb("#FFAE3A")),    # light orange
+    (75, hexrgb("#FFD24A")),    # yellow
+)
+
+# The other end of the spent pulse. A full bucket is the one state the ramp
+# cannot shout any louder in colour: #FF3B30 already drives the red channel to
+# 255 at 95%, and going brighter at that hue means adding white, which walks
+# the red toward salmon. So past the cap the face spends MOTION instead of hue.
+SPENT_DIM = hexrgb("#A00000")
+PULSE_MS = 420
+# It breathes this many frames and then holds. A pulse that never stops stops
+# being read — the same reason the ramp starts as late as it does — and a long
+# "show reset every" would otherwise spend the panel's whole frame budget on
+# one blinking row.
+PULSE_FRAMES = 24
+
+
+def band_colour(pct, dim=False):
+    if dim and pct >= 100:
+        return SPENT_DIM
+    for threshold, colour in BANDS:
+        if pct >= threshold:
+            return colour
+    return PROGRESS
 
 
 VENDORS = {
@@ -138,25 +173,61 @@ def value_area(label):
     return TEXT_X + text_width(label) + 4, W
 
 
-def draw(vendor, pcts, values):
-    """pcts: [pct|None]*2; values: per row (text, x) — x None = right-aligned."""
+def value_ink(v, pct, dim=False):
+    """The figure's colour: the vendor's MARK while the window is steady, the
+    bar's own warning colour once it is not.
+
+    While nothing is near a limit the figure is identity — WHICH account this
+    is — and the bar alone carries how much is left. Past four fifths that
+    stops being the useful split: the figure and the bar under it are one
+    statement, and a warm figure over a warm bar is the thing the eye lands on
+    first. (z.ai's mark is near-white while its brand is blue, which is why
+    this reads the mark and never the brand.)
+    """
+    if pct is None:
+        return TRACK
+    colour = band_colour(pct, dim)
+    return v["logo_colour"] if colour == PROGRESS else colour
+
+
+def draw(vendor, pcts, values, dim=False):
+    """pcts: [pct|None]*2; values: per row (text, x) — x None = right-aligned.
+
+    `dim` is the low half of the spent pulse; it moves nothing but the colour
+    of a row whose bucket is full.
+    """
     v = VENDORS[vendor]
     cv = Canvas()
     cv.bitmap(v["logo"], 0, 1, v["logo_colour"])
     for (label, top), pct, (value, x) in zip(ROWS, pcts, values):
         cv.text(label, label_x(label), top, LABEL)
-        # The figure in the vendor's MARK colour, not the band's. The mark and
-        # the figures are the tile's identity — which account this is — and the
-        # band is about how much is left, which the bar under it already says
-        # in colour and in length. z.ai's mark is near-white while its brand is
-        # blue, and blue figures under a white Z read as a second vendor.
-        ink = TRACK if pct is None else v["logo_colour"]
+        ink = value_ink(v, pct, dim)
         cv.text(value, W - text_width(value) if x is None else x, top, ink, value_area(label))
         bar_y = top + 6
         cv.rect(0, bar_y, W, 1, TRACK)
         if pct:
-            cv.rect(0, bar_y, max(1, round(W * min(pct, 100) / 100)), 1, PROGRESS)
+            cv.rect(0, bar_y, max(1, round(W * min(pct, 100) / 100)), 1, band_colour(pct, dim))
     return cv
+
+
+def percent_phase(vendor, pcts, values, interval_ms):
+    """Frame A: one still frame, or the spent pulse when a bucket is full.
+
+    The pulse is the percent phase's alone. A row showing its reset is being
+    read as TEXT — the session's still, the week's gliding a pixel a frame —
+    and text that blinks under the eye is text nobody finishes.
+    """
+    if not any(p is not None and p >= 100 for p in pcts):
+        return [(draw(vendor, pcts, values), interval_ms)]
+    bright, dark = draw(vendor, pcts, values), draw(vendor, pcts, values, dim=True)
+    # Floor, so the beats plus the rest come to exactly the interval asked for
+    # rather than overrunning it by part of a beat.
+    beats = min(PULSE_FRAMES, max(2, interval_ms // PULSE_MS))
+    frames = [(bright if i % 2 == 0 else dark, PULSE_MS) for i in range(beats)]
+    rest = interval_ms - PULSE_MS * beats
+    if rest > 0:
+        frames.append((bright, rest))
+    return frames
 
 
 def percent_text(pct):
@@ -171,9 +242,13 @@ def timeline(vendor, s, w, interval_ms=DWELL_MS, step=1, marquee="edge", thresho
     the left; phase B lasts as long as the marquee does.
     """
     pcts = [s["pct"], w["pct"]]
-    hot = [p is not None and p >= threshold for p in pcts]
+    # Hot needs BOTH a reading past the threshold and a reset the source named.
+    # A row that has nothing to flip to keeps its percentage rather than
+    # flipping to the word "rst" with nothing after it.
+    hot = [p is not None and p >= threshold and bool(r["rst"])
+           for p, r in zip(pcts, (s, w))]
     a = [(percent_text(p), None) for p in pcts]
-    frames = [(draw(vendor, pcts, a), interval_ms)]
+    frames = percent_phase(vendor, pcts, a, interval_ms)
     if not any(hot):
         return frames
     s_val = (f"rst {s['rst']}", None) if hot[0] else a[0]

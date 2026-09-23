@@ -77,6 +77,9 @@ CASES = [
      window(88, utc(2026, 10, 1, 9, 0)), 30_000, 80),
     ("spent-cap", "zai", window(104, utc(2026, 9, 23, 23, 59)),
      window(100, utc(2026, 9, 30, 23, 59)), 60_000, 80),
+    # A full bucket whose source named no reset: the pulse with no reset phase
+    # after it, which is the only shape where frame A is the whole page.
+    ("spent-no-reset", "claude", window(100), window(30), 10_000, 80),
     ("zero-and-three", "claude", window(0), window(3), 10_000, 80),
     ("no-data", "zai", window(None), window(None), 10_000, 80),
     ("no-data-claude", "claude", window(None), window(None), 10_000, 80),

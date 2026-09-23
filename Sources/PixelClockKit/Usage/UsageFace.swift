@@ -90,15 +90,45 @@ public enum UsageFace {
     /// grey as `ClaudeUsageConnector.trackColour`, and for the same reason.
     static let trackColour = UlanziColour(value: 0x30_30_30)
 
-    /// The SPENT part of a bar — the progress itself.
+    /// The SPENT part of a bar — the progress itself — while the window is
+    /// steady.
     ///
-    /// Bright white, so what a glance lands on is how much of the window is
-    /// gone, against the grey of what is left. The warning bands no longer
-    /// colour it: a page that turned red at 95% put the loudest thing on the
-    /// panel on the tile with the least to say. `UsageBand` still classifies
-    /// and the AWTRIX page still draws its bar in the band's colour; only
-    /// this face stopped.
-    static let progressColour = UlanziColour(value: 0xFF_FF_FF)
+    /// Bright white, so what a glance lands on is how much of it is gone
+    /// against the grey of what is left. White stands where a vendor's brand
+    /// colour used to: the figure beside the bar already says which account
+    /// this is, so the bar is free to spend its colour on how much is left.
+    static let steadyProgressColour = "#FFFFFF"
+
+    /// What the spent part is drawn in at `percent`, and `dim` on the low half
+    /// of the spent pulse.
+    ///
+    /// White while the window is steady, and `UsageBand`'s ramp past three
+    /// quarters — the same yellow through red the AWTRIX page uses, so a colour
+    /// means the same thing wherever it shows. White alone left a bar at a
+    /// third and a bar about to run out the same colour, differing only in
+    /// length, which is the one reading a 52-pixel row is worst at.
+    static func fillColour(at percent: Int, dim: Bool = false) -> UlanziColour {
+        let band = UsageBand(utilization: percent)
+        if dim, let pulse = band.pulseColour { return UlanziColour(hex: pulse) }
+        return UlanziColour(hex: band.fillColour(brand: steadyProgressColour))
+    }
+
+    /// A figure's ink: the vendor's MARK while the window is steady, the bar's
+    /// own colour once it is not, and the track's grey for a row nobody knows.
+    ///
+    /// While nothing is near a limit the figure is identity — WHICH account
+    /// this is — and the bar alone carries how much is left. Past three
+    /// quarters that split stops paying: the figure and the bar under it are
+    /// one statement, and a warm figure over a warm bar is what the eye lands
+    /// on first. (z.ai's mark is near-white where its brand is blue, which is
+    /// why this reads the mark and never the brand.)
+    static func figureColour(_ vendor: Vendor, at percent: Int?, dim: Bool = false)
+        -> UlanziColour
+    {
+        guard let percent else { return trackColour }
+        guard UsageBand(utilization: percent) != .steady else { return vendor.logoColour }
+        return fillColour(at: percent, dim: dim)
+    }
     private static let logoOrigin = PixelPoint(x: 0, y: 1)
     private static let labelX = 9
     /// The box the two labels are centred in — the wider of them.
@@ -144,11 +174,12 @@ public enum UsageFace {
             return window.percent >= config.resetAfter
         }
         let percents = windows.map { $0.map { percentText($0.percent) } ?? "--" }
-        let first = Frame(
-            canvas: draw(vendor, windows, values: percents.map { (text: $0, x: nil) }),
+        let phase = percentPhase(
+            vendor, windows,
+            values: percents.map { (text: $0, x: nil) },
             milliseconds: Int((config.resetEvery * 1000).rounded())
         )
-        guard hot.contains(true) else { return [first] }
+        guard hot.contains(true) else { return phase }
 
         let sessionValue: (text: String, x: Int?) = if hot[0], let at = session?.resetsAt {
             (sessionReset(at, in: timeZone), nil)
@@ -157,7 +188,7 @@ public enum UsageFace {
         }
         guard hot[1], let weeklyAt = weekly?.resetsAt else {
             let flipped = draw(vendor, windows, values: [sessionValue, (percents[1], nil)])
-            return [first, Frame(canvas: flipped, milliseconds: dwellMilliseconds)]
+            return phase + [Frame(canvas: flipped, milliseconds: dwellMilliseconds)]
         }
 
         // The edge marquee: start readable at the area's left edge, glide one
@@ -166,7 +197,7 @@ public enum UsageFace {
         let area = valueArea(label: rows[1].label)
         let end = min(area.lowerBound, area.upperBound - font.width(of: message, scale: 1))
         let positions = Array(stride(from: area.lowerBound, through: end, by: -1))
-        var frames = [first]
+        var frames = phase
         for (index, x) in positions.enumerated() {
             let milliseconds =
                 index == 0 ? marqueeHoldStart
@@ -177,6 +208,44 @@ public enum UsageFace {
                 milliseconds: milliseconds
             ))
         }
+        return frames
+    }
+
+    /// One beat of the spent pulse.
+    private static let pulseMilliseconds = 420
+    /// How many beats it breathes before it holds.
+    ///
+    /// A pulse that never stops stops being read — the same reason the ramp
+    /// starts as late as it does — and a long "show reset every" would
+    /// otherwise spend the panel's whole frame budget on one blinking row.
+    private static let pulseFrames = 24
+
+    /// Frame A: one still frame, or the spent pulse when a window is full.
+    ///
+    /// The pulse is the percent phase's alone. A row showing its reset is
+    /// being read as TEXT — the session's still, the week's gliding a pixel a
+    /// frame — and text that blinks under the eye is text nobody finishes.
+    private static func percentPhase(
+        _ vendor: Vendor, _ windows: [Window?], values: [(text: String, x: Int?)],
+        milliseconds: Int
+    ) -> [Frame] {
+        let spent = windows.contains { $0.map { UsageBand(utilization: $0.percent) == .spent } ?? false }
+        guard spent else {
+            return [Frame(canvas: draw(vendor, windows, values: values), milliseconds: milliseconds)]
+        }
+        let bright = draw(vendor, windows, values: values)
+        let dark = draw(vendor, windows, values: values, dim: true)
+        // Floor, so the beats plus the rest come to exactly the interval asked
+        // for rather than overrunning it by part of a beat.
+        let beats = min(pulseFrames, max(2, milliseconds / pulseMilliseconds))
+        var frames = (0..<beats).map { beat in
+            Frame(
+                canvas: beat.isMultiple(of: 2) ? bright : dark,
+                milliseconds: pulseMilliseconds
+            )
+        }
+        let rest = milliseconds - pulseMilliseconds * beats
+        if rest > 0 { frames.append(Frame(canvas: bright, milliseconds: rest)) }
         return frames
     }
 
@@ -263,7 +332,8 @@ public enum UsageFace {
     /// when `x` is nil, clipped to the row's value area either way — and its
     /// bar.
     private static func draw(
-        _ vendor: Vendor, _ windows: [Window?], values: [(text: String, x: Int?)]
+        _ vendor: Vendor, _ windows: [Window?], values: [(text: String, x: Int?)],
+        dim: Bool = false
     ) -> PixelCanvas {
         var canvas = PixelCanvas()
         let logoInk = Pixel(colour: vendor.logoColour)
@@ -283,15 +353,9 @@ public enum UsageFace {
             let area = valueArea(label: label)
             var strip = PixelCanvas(width: area.count, height: font.height)
             let x = value.x ?? PixelCanvas.width - font.width(of: value.text, scale: 1)
-            // The figure in the vendor's MARK colour, not the band's. The mark
-            // and the figures are the tile's identity — which account this is
-            // — while the band is about how much is left, which the bar under
-            // it already says in colour and in length. z.ai's mark is
-            // near-white where its brand is blue, so blue figures under a
-            // white Z read as a second vendor on one page.
             strip.drawText(
                 value.text, at: PixelPoint(x: x - area.lowerBound, y: 0),
-                ink: Pixel(colour: window == nil ? trackColour : vendor.logoColour), font: font
+                ink: Pixel(colour: figureColour(vendor, at: window?.percent, dim: dim)), font: font
             )
             canvas.draw(strip, at: PixelPoint(x: area.lowerBound, y: top))
 
@@ -304,7 +368,7 @@ public enum UsageFace {
                 let filled = max(1, (PixelCanvas.width * min(window.percent, 100) + 50) / 100)
                 canvas.drawRect(
                     PixelRect(x: 0, y: barY, width: filled, height: 1),
-                    color: Pixel(colour: progressColour)
+                    color: Pixel(colour: fillColour(at: window.percent, dim: dim))
                 )
             }
         }

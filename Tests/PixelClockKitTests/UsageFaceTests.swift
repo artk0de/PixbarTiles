@@ -260,15 +260,21 @@ private let utc = TimeZone(identifier: "UTC")!
 }
 
 @Suite struct UsageBandTests {
-    // One set of thresholds for both vendors; below the first warning the
-    // figure is in the vendor's own colour, past it in the shared warnings.
-    @Test func bothVendorsShareTheBandsWithTheirOwnBrandBelowThem() {
-        #expect(UsageBand(utilization: 79).fillColour(brand: ZaiUsage.brandColour) == "#3B5BFE")
-        #expect(UsageBand(utilization: 79).fillColour(brand: ClaudeUsage.brandColour) == "#D97757")
-        #expect(UsageBand(utilization: 80).fillColour(brand: ZaiUsage.brandColour) == "#FFD24A")
-        #expect(UsageBand(utilization: 90).fillColour(brand: ZaiUsage.brandColour) == "#FF8C1A")
-        #expect(UsageBand(utilization: 95).fillColour(brand: ZaiUsage.brandColour) == "#FF3B30")
-        #expect(UsageBand(utilization: 140).fillColour(brand: ClaudeUsage.brandColour) == "#FF3B30")
+    // One ramp for both vendors; below the first warning the bar is in the
+    // vendor's own colour, past it in the shared ramp.
+    @Test func bothVendorsShareTheRampWithTheirOwnBrandBelowIt() {
+        #expect(UsageBand(utilization: 74).fillColour(brand: ZaiUsage.brandColour) == "#3B5BFE")
+        #expect(UsageBand(utilization: 74).fillColour(brand: ClaudeUsage.brandColour) == "#D97757")
+
+        let ramp = [75: "#FFD24A", 80: "#FFAE3A", 85: "#FF8C1A",
+                    90: "#FF6321", 95: "#FF3B30", 100: "#FF0000"]
+        for (percent, colour) in ramp {
+            #expect(UsageBand(utilization: percent)
+                .fillColour(brand: ZaiUsage.brandColour) == colour, "\(percent)%")
+        }
+        // Over a hundred is not impossible — an overage channel keeps serving
+        // past the bar — and it must not fall back down the ramp.
+        #expect(UsageBand(utilization: 140).fillColour(brand: ClaudeUsage.brandColour) == "#FF0000")
     }
 }
 
@@ -313,31 +319,128 @@ private func figureInk(_ vendor: UsageFace.Vendor, session: Int?) -> Set<String>
     #expect(figureInk(.claude, session: 17) == ["D97757"])
 }
 
-// And it keeps saying it as the window fills. How much is left is the bar's
-// job — in colour and in length — and a figure that changed colour too would
-// leave the page with no fixed point at all.
-@Test func theFigureKeepsItsMarkColourThroughEveryBand() {
-    for percent in [17, 85, 92, 99] {
-        #expect(figureInk(.zai, session: percent) == ["E8E8E8"], "\(percent)%")
+// It says that only while the window is steady. Past three quarters the figure
+// and the bar under it are one statement — how close this is to running out —
+// and a warm figure over a warm bar is what the eye lands on first.
+@Test func theFigureFollowsTheBarOnceTheWindowIsNoLongerSteady() {
+    let ramp = [75: "FFD24A", 80: "FFAE3A", 85: "FF8C1A",
+                90: "FF6321", 95: "FF3B30", 100: "FF0000"]
+    for (percent, colour) in ramp {
+        #expect(figureInk(.zai, session: percent) == [colour], "zai \(percent)%")
+        #expect(figureInk(.claude, session: percent) == [colour], "claude \(percent)%")
     }
 }
 
-// The progress itself is bright white against the grey of what is left, so
-// what a glance lands on is how much of the window is gone.
-@Test func theSpentPartOfABarIsBrightWhiteAndTheRestIsGrey() {
+// A steady bar fills bright white against the grey of what is left, so what a
+// glance lands on is how much of the window is gone.
+@Test func theSpentPartOfASteadyBarIsBrightWhiteAndTheRestIsGrey() {
     // 17% of 52 columns is filled; column 51 is not.
     #expect(facePixel(.claude, session: 17, at: (0, 7)) == "FFFFFF")
     #expect(facePixel(.claude, session: 17, at: (51, 7)) == "303030")
 }
 
-// And it stays white as the window fills. The warning bands do not colour this
-// bar: a page that turned red at 95% put the loudest thing on the panel on the
-// tile with the least to say.
-@Test func aBarNearItsLimitIsStillWhite() {
-    for percent in [85, 92, 99] {
-        #expect(facePixel(.claude, session: percent, at: (0, 7)) == "FFFFFF", "\(percent)%")
-        #expect(facePixel(.zai, session: percent, at: (0, 7)) == "FFFFFF", "\(percent)%")
+// And it turns as the window runs out, five points a step: yellow at three
+// quarters through red at the cap. White alone left a bar at a third and a bar
+// about to run out the same colour, differing only in length — which is the
+// one reading the panel is worst at.
+//
+// The ramp is `UsageBand`'s, shared with the AWTRIX page. White stands in for
+// the vendor's brand as this face's steady colour: the mark already says which
+// account this is, so the bar is free to spend its colour on how much is left.
+@Test func aBarTakesItsWarningColourAsTheWindowRunsOut() {
+    let ramp = [74: "FFFFFF", 75: "FFD24A", 80: "FFAE3A", 85: "FF8C1A",
+                90: "FF6321", 95: "FF3B30", 100: "FF0000", 140: "FF0000"]
+    for (percent, colour) in ramp {
+        #expect(facePixel(.claude, session: percent, at: (0, 7)) == colour, "claude \(percent)%")
+        #expect(facePixel(.zai, session: percent, at: (0, 7)) == colour, "zai \(percent)%")
     }
+}
+
+// The track stays grey under every one of them. A warning colour against a
+// white rail is a warning fighting its own bar.
+@Test func theTrackStaysGreyUnderAWarning() {
+    for percent in [85, 92, 99] {
+        #expect(facePixel(.claude, session: percent, at: (51, 7)) == "303030", "\(percent)%")
+    }
+}
+
+// MARK: - The spent pulse
+
+private func usageTimeline(
+    session: Int, resetsAt: Date? = nil, config: UsageFaceConfig = .standard
+) -> [UsageFace.Frame] {
+    UsageFace.timeline(
+        vendor: .claude,
+        session: UsageFace.Window(percent: session, resetsAt: resetsAt),
+        weekly: UsageFace.Window(percent: 10, resetsAt: nil),
+        config: config,
+        timeZone: TimeZone(identifier: "UTC")!
+    )
+}
+
+private func barColour(_ frame: UsageFace.Frame) -> String {
+    let pixel = frame.canvas[0, 7]
+    return String(format: "%02X%02X%02X", pixel.red, pixel.green, pixel.blue)
+}
+
+// A full window is the one state the ramp cannot shout any louder in colour:
+// the band below it already drives the red channel to 255, and going brighter
+// at that hue means adding white, which reads as LESS urgent. So past the cap
+// the face spends motion instead — and nothing below the cap moves at all.
+@Test func onlyAFullWindowTurnsThePercentPhaseIntoAPulse() {
+    #expect(usageTimeline(session: 99).count == 1)
+    #expect(usageTimeline(session: 100).count > 1)
+}
+
+// It breathes between the two reds and nothing else moves: same figure, same
+// bar length, same everything but the colour of the row that is full.
+@Test func thePulseAlternatesBetweenTheTwoRedsAndMovesNothingElse() {
+    let frames = usageTimeline(session: 100)
+
+    #expect(frames.map(barColour).prefix(4) == ["FF0000", "A00000", "FF0000", "A00000"])
+    #expect(Set(frames.map(barColour)) == ["FF0000", "A00000"])
+    // The weekly row is steady, so it is white in every frame of the pulse.
+    for frame in frames {
+        let pixel = frame.canvas[0, 15]
+        #expect(String(format: "%02X%02X%02X", pixel.red, pixel.green, pixel.blue) == "FFFFFF")
+    }
+}
+
+// The beats plus the rest come to exactly the interval the tile asked for —
+// a pulse that overran it would drift against "show reset every".
+@Test func thePulseLastsExactlyAsLongAsThePercentPhaseWouldHave() {
+    for seconds in UsageFaceConfig.resetEverySteps {
+        let config = UsageFaceConfig(resetEvery: seconds, resetAfter: 80)
+        let total = usageTimeline(session: 100, config: config).reduce(0) { $0 + $1.milliseconds }
+        #expect(total == Int(seconds * 1000), "\(seconds)s")
+    }
+}
+
+// And it holds after a while rather than breathing forever. A pulse that never
+// stops stops being read — the same reason the ramp starts as late as it does
+// — and a five-minute "show reset every" would otherwise spend the panel's
+// whole frame budget on one blinking row.
+@Test func aLongPercentPhaseBreathesAndThenHolds() {
+    let config = UsageFaceConfig(resetEvery: 300, resetAfter: 80)
+    let frames = usageTimeline(session: 100, config: config)
+
+    #expect(frames.count == 25)
+    #expect(frames.dropLast().allSatisfy { $0.milliseconds == 420 })
+    #expect(frames.last?.milliseconds == 300_000 - 420 * 24)
+    #expect(barColour(frames[frames.count - 1]) == "FF0000")
+}
+
+// The pulse is the percent phase's alone. A row showing its reset is being
+// read as TEXT — the session's still, the week's gliding a pixel a frame —
+// and text that blinks under the eye is text nobody finishes.
+@Test func theResetPhaseHoldsStillEvenWhenTheWindowIsFull() {
+    let resetsAt = Date(timeIntervalSince1970: 1_758_672_000)
+    let frames = usageTimeline(session: 100, resetsAt: resetsAt)
+    let pulse = frames.prefix { $0.milliseconds == 420 }
+    let reset = frames.dropFirst(pulse.count)
+
+    #expect(!reset.isEmpty)
+    #expect(reset.allSatisfy { barColour($0) == "FF0000" })
 }
 
 // A row with nothing to report draws no progress at all — an unlit track from

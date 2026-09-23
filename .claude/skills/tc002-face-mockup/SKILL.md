@@ -39,7 +39,19 @@ frames are the pixel oracle the Swift face is tested against.
 5. **Live demo**: `TC002_HOST=<ip> python3 tc002_demo.py` pushes demo pages
    under their own names (`demo-*`), so the running app never overwrites them,
    and switches the clock to one. `--remove` deletes them afterwards.
-6. After sign-off, implement in the kit with the approved frames as the test
+
+   A colour, a rhythm or a contrast is judged HERE, never in the browser: the
+   LEDs run dim, the dots are round and separated, and a deep red that reads as
+   urgent on a monitor can be the faintest thing on the row at brightness two.
+   Push one page per candidate, mark each with its own letter or digit in a
+   free patch of the face, and show every candidate beside the state below it
+   — a spent colour is only ever read next to the step before it.
+6. **Clear the clock the moment the choice is made.** `--remove` every `demo-*`
+   page you pushed, before writing any Swift. A demo left behind keeps showing
+   invented numbers under the app's own name — a full bar at 104% that nothing
+   in the user's account justifies — and the next thing reported is a bug in
+   the app that is really a leftover page of yours.
+7. After sign-off, implement in the kit with the approved frames as the test
    oracle (render a case in Swift, compare pixels to `gen.py`'s).
 
 ## The weather face

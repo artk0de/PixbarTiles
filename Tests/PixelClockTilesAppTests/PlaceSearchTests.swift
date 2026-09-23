@@ -127,3 +127,43 @@ private func searching(_ body: Data, status: Int = 200) -> PlaceSearchModel {
 // switch-over took off the general settings (D8): the place search's surface
 // is OWED a new home beside the weather tile's own block, and the model tests
 // above are what stays pinned until it lands.
+
+// MARK: - How a place is said
+
+// Country first, then the city, then the numbers in brackets. The numbers stay
+// because they are what the app actually reads the weather at and a city is a
+// single point; the words go first because they are what tells a reader
+// whether the clock is pointed at the right place at all.
+@Test func aChosenPlaceIsSaidAsCountryThenCityThenTheNumbers() {
+    let said = LocationField.headline(
+        name: "Москва", country: "Россия",
+        place: Coordinates(latitude: 55.7558, longitude: 37.6173)
+    )
+
+    #expect(said == "Россия, Москва (55.7558, 37.6173)")
+}
+
+// A pair typed by hand has no name to say, and inventing one would be the
+// surface claiming to know something it does not.
+@Test func aTypedPlaceIsSaidAsItsNumbersAlone() {
+    let said = LocationField.headline(
+        name: nil, country: nil,
+        place: Coordinates(latitude: 55.7558, longitude: 37.6173)
+    )
+
+    #expect(said == "55.7558, 37.6173")
+}
+
+// Half a name is still a name. The geocoder returns places with no country and
+// places with no region, so the line has to hold together missing either.
+@Test func aPlaceWithHalfANameSaysTheHalfItHas() {
+    let noCountry = LocationField.headline(
+        name: "Москва", country: nil, place: Coordinates(latitude: 1, longitude: 2)
+    )
+    let noCity = LocationField.headline(
+        name: nil, country: "Россия", place: Coordinates(latitude: 1, longitude: 2)
+    )
+
+    #expect(noCountry == "Москва (1.0, 2.0)")
+    #expect(noCity == "Россия (1.0, 2.0)")
+}

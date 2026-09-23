@@ -309,3 +309,58 @@ extension WeatherOracle.Config {
         return config
     }
 }
+
+// MARK: - The place's name
+
+// A pair of coordinates is not a place a reader recognises. What the search
+// already knows at the moment somebody picks a row — the city and the country
+// — is kept, so the surface can say where the clock is rather than where it is
+// in degrees.
+@Test func aPlaceKeepsTheNameItWasChosenBy() {
+    let config = WeatherTileConfig(
+        place: Coordinates(latitude: 55.7558, longitude: 37.6173),
+        placeName: "Москва",
+        placeCountry: "Россия"
+    )
+
+    #expect(config.placeName == "Москва")
+    #expect(config.placeCountry == "Россия")
+}
+
+// Typed rather than chosen, which is the case the name must NOT survive: a
+// name kept beside coordinates it no longer describes is the one way this
+// surface could say Moscow over a reading from somewhere else.
+@Test func aPlaceWithNoNameIsTheDefault() {
+    let config = WeatherTileConfig(place: Coordinates(latitude: 0, longitude: 0))
+
+    #expect(config.placeName == nil)
+    #expect(config.placeCountry == nil)
+}
+
+@Test func aNamedPlaceSurvivesARoundTripThroughTheStore() throws {
+    let config = WeatherTileConfig(
+        place: Coordinates(latitude: 51.5074, longitude: -0.1278),
+        placeName: "London",
+        placeCountry: "United Kingdom"
+    )
+
+    let back = try JSONDecoder().decode(
+        WeatherTileConfig.self, from: try JSONEncoder().encode(config)
+    )
+
+    #expect(back == config)
+    #expect(back.placeName == "London")
+    #expect(back.placeCountry == "United Kingdom")
+}
+
+// A record written before the name existed. It decodes to a place with no
+// name, not to a failure — every other field of this type reads the same way.
+@Test func aRecordFromBeforeTheNameDecodesWithoutOne() throws {
+    let old = Data(#"{"latitude": 55.7558, "longitude": 37.6173}"#.utf8)
+
+    let back = try JSONDecoder().decode(WeatherTileConfig.self, from: old)
+
+    #expect(back.placeName == nil)
+    #expect(back.placeCountry == nil)
+    #expect(back.place.latitude == 55.7558)
+}

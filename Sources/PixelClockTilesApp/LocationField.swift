@@ -72,8 +72,27 @@ enum LocationField {
 
     /// What a stored pair looks like in the box, and a string this field
     /// accepts back.
-    static func text(for place: Coordinates) -> String {
+    nonisolated static func text(for place: Coordinates) -> String {
         "\(place.latitude), \(place.longitude)"
+    }
+
+    /// Where the clock is, said the way somebody would say it: the country,
+    /// the city, and the numbers in brackets behind them.
+    ///
+    /// The numbers stay rather than being replaced by the words. They are what
+    /// the app actually reads the weather at, and a city is a single point —
+    /// Moscow is about 40 km across — so a line that said only "Москва" would
+    /// be rounder than the reading under it. The words go FIRST because they
+    /// are what tells a reader whether the clock is pointed at the right place
+    /// at all, which is a question two decimal numbers cannot answer.
+    ///
+    /// Either word may be missing: the geocoder returns places with no
+    /// country, and a pair typed by hand has no name at all. Nothing is
+    /// invented for the gap.
+    nonisolated static func headline(name: String?, country: String?, place: Coordinates) -> String {
+        let said = [country, name].compactMap { $0 }.joined(separator: ", ")
+        guard said.isEmpty == false else { return text(for: place) }
+        return "\(said) (\(text(for: place)))"
     }
 
     /// Two numbers, or nothing.

@@ -148,3 +148,12 @@ private func channels(_ hex: String) -> (red: Int, green: Int, blue: Int) {
     #expect(hot.red == 255)
     #expect(hot.red > hot.blue)
 }
+
+// A channel landing exactly on a half rounds to even, as the weather face's
+// approved design (`wgen.temp_colour`, Python's `round()`) does: at -17 °C the
+// green is 51 + 85 × 0.3 = 76.5, drawn 76, not 77. Both faces read this type,
+// so the TC001 and the TC002 draw one temperature in one colour.
+@Test func aChannelOnAHalfRoundsToEvenAsTheApprovedDesignDoes() {
+    #expect(TemperatureColour(celsius: -17).hex == "#334CFF")
+    #expect(TemperatureColour(celsius: 28.5).hex == "#FF902F")
+}

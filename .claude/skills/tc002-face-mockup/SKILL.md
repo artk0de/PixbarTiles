@@ -42,12 +42,43 @@ frames are the pixel oracle the Swift face is tested against.
 6. After sign-off, implement in the kit with the approved frames as the test
    oracle (render a case in Swift, compare pixels to `gen.py`'s).
 
+## The weather face
+
+The approved TC002 weather face lives in `weather/` and follows the same
+pipeline, with its own files:
+
+| File | Role |
+|---|---|
+| `weather/wgen.py` | The face: layouts, detail lines, transitions, `CASES`, the budget rule |
+| `weather/icons.py` | The 46 animated 16×16 icons and `nodata` |
+| `weather/wtemplate.html`, `weather/sheet.py` | Browser mockup and icon sheet |
+| `weather/weather_demo.py` | Live push to the clock (page `demo-weather`) |
+
+Live demo: `TC002_HOST=<ip> python3 weather/weather_demo.py [flags]`.
+
+- `--layout anchor|pages|hybrid` (default `anchor`);
+- `--mode layered|single|lockstep` — `layered` is two GIFs (icon + area),
+  `single` one 52×16 GIF, `lockstep` two GIFs cut at the same frame
+  boundaries (an experiment in keeping two GIFs in step); the default is `layered`,
+  and `single` for Pages;
+- `--items feels,humidity,…` — which detail lines rotate, in the spec's order;
+- `--interval <s>` — seconds per state (the tile's "Change every");
+- `--burst <ms>` — Pages/Hybrid: icon motion after each change, then rest
+  (0 loops the icons through every dwell);
+- `--remove` — delete the demo page.
+
+The Swift face (`Sources/PixelClockKit/Weather/`) is held to wgen's frames
+pixel for pixel and delay for delay. A design change starts in `wgen.py` /
+`icons.py`; then re-record the fixtures from the repository root with
+`python3 Scripts/make_weather_face_oracle.py`, then change Swift. Never edit
+`weather_icons_oracle.json` or `weather_face_oracle.json` by hand.
+
 ## Hardware facts the generator already obeys
 
 | Fact | Consequence |
 |---|---|
 | Panel 52×16; brightness is low | 1 px bars read fine; hue-only warnings do not |
-| `image[]` GIF: ≤ 50 frames, base64 ≤ 60 KB (documented) | marquees scroll only the overflow (`marquee="edge"`), 1 px/step |
+| `image[]` GIF: ≤ 480 frames, base64 ≤ 136 000 bytes (measured 2026-09-23: 478 frames / 135 240 bytes played on time; the documented 50 frames / 60 KB are wrong for this panel) | marquees scroll only the overflow (`marquee="edge"`), 1 px/step; over budget, icons burst then rest (`--burst`) |
 | GIFs must carry FULL frames, one global palette | the writer in `tc002_demo.py` never crops |
 | GIF delay is per frame (centiseconds) | dwell phases are ONE frame with a long delay, not repeats |
 | `draw[].db` is `[x, y, w, h, [pixels]]` | the flat `[w, h, …]` spelling renders black (measured 2026-09-23) |

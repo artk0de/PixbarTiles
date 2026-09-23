@@ -45,8 +45,19 @@ three `pct-*` pages on the clock. Treat quit-time cleanup as unverified.
 - One page plays a GIF by itself; the Mac never rotates or re-pushes for motion.
 - GIFs must be FULL frames with one global palette (`FullFrameGif`); a
   cropped-frame GIF smears on the panel.
-- Documented ceilings, enforced in `UlanziScene`: ≤ 50 frames, base64 ≤ 60 000.
-  They are documented, not measured — probe before relying on a margin.
+- Measured on the TC002, 2026-09-23 (the weather face's design, spec §2.1):
+  - **One GIF at 478 frames / 135 240 bytes of base64 plays smoothly and on
+    time.** `UlanziScene` enforces ≤ 480 frames and ≤ 136 000 bytes; the
+    documented 50 frames / 60 KB were never measurements and are wrong here.
+  - **Two GIFs on one page drift.** Each plays its own delays, but the panel
+    pays a per-frame cost, so a 321-frame GIF falls behind a 36-frame one. Use
+    two GIFs only where nothing has to line up.
+  - **A Mac re-push is not frame-accurate.** Pushes once per state left on
+    time (±80 ms) and the picture still missed; anything that must stay in
+    step belongs inside ONE GIF.
+  - **What must change with a page must slide with it.** Swapping an icon
+    halfway through a slide reads as early, swapping it on landing reads as
+    late; only a shared slide reads as right.
 - Delay is per frame (centiseconds): a dwell is ONE frame with a long delay,
   never repeated frames. A marquee scrolls only its overflow, 1 px per frame
   (~100 ms reads as smooth); a 2 px step reads as jerky.

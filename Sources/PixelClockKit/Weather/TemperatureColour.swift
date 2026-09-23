@@ -88,10 +88,14 @@ public struct TemperatureColour: Sendable, Equatable {
         rendered(red: stop.red, green: stop.green, blue: stop.blue)
     }
 
+    /// A channel on an exact half rounds to even — the approved weather
+    /// design's arithmetic (`wgen.temp_colour`, Python's `round()`), so the
+    /// TC001 and the TC002 draw one temperature in one colour.
     private static func rendered(red: Double, green: Double, blue: Double) -> String {
         String(
             format: "#%02X%02X%02X",
-            Int(red.rounded()), Int(green.rounded()), Int(blue.rounded())
+            Int(red.rounded(.toNearestOrEven)), Int(green.rounded(.toNearestOrEven)),
+            Int(blue.rounded(.toNearestOrEven))
         )
     }
 }

@@ -124,20 +124,12 @@ public struct WeatherConnector: Connector {
     /// Separated from `read()` so the drawing can be tested against a reading
     /// rather than against a network, as `ClaudeUsageConnector.output(for:)`
     /// already is.
-    /// Public for the same reason `canvas(for:config:)` is: the preview IS a
-    /// caller, and it draws the DRAFT rather than the stored config — through
-    /// this very function, so what it shows cannot be a different drawing
-    /// from what a poll sends.
+    /// Public because the preview IS a caller, and it draws the DRAFT rather
+    /// than the stored config — through this very function, so what it shows
+    /// cannot be a different drawing from what a poll sends.
     public static func output(
         for reading: WeatherReading, config: WeatherTileConfig
     ) -> AwtrixDelivery {
-        // The felt temperature is the tile's own answer now: shown when the
-        // tile says so, and colouring the digits only while it does — the
-        // colour is what that feels like, and digits coloured from a number
-        // they do not show read as broken rather than as informed.
-        let felt = config.showsFeelsLike
-            ? reading.apparentTemperature ?? reading.temperature
-            : reading.temperature
         return AwtrixDelivery(
             text: Self.degrees(reading.temperature, units: config.units),
             // The sky, drawn inside the app rather than over the whole matrix.
@@ -147,7 +139,7 @@ public struct WeatherConnector: Connector {
             // The icon is what distinguishes the eleven, in the eight pixels next
             // to the reading they belong to.
             icon: WeatherTheme(code: reading.code, isDay: reading.isDay).icon,
-            color: TemperatureColour(celsius: felt).hex,
+            color: TemperatureColour(celsius: Self.colourTemperature(reading, config: config)).hex,
             surface: .app(Self.appName),
             // An hour without a fresh reading and the clock drops the app on
             // its own — the only thing that survives this process ending
@@ -184,40 +176,30 @@ public struct WeatherConnector: Connector {
         }
     }
 
-    /// What a reading looks like on the TC002's 52×16 panel.
-    ///
-    /// The device has no text rendering to hand the reading to, so the face
-    /// rasters it here. The temperature rides the top band at the biggest
-    /// scale the 16 rows carry, in the felt-temperature colour the AWTRIX face
-    /// names in hex; the tile's own answers ride the small band under it —
-    /// humidity at the left, the felt temperature at the right, each present
-    /// only while the tile asks for it and each dropped, with its band, when
-    /// neither does.
+    /// What a reading looks like on the TC002's 52×16 panel: the weather
+    /// face (`WeatherFace`), in the tile's layout, timed from now and told in
+    /// the Mac's time zone. Each poll's push restarts its cycle.
     static func ulanziOutput(
         for reading: WeatherReading, config: WeatherTileConfig
     ) -> UlanziDelivery {
-        UlanziDelivery(
-            scene: UlanziScene(
-                frames: [
-                    UlanziFrame(duration: 5, draw: [Self.raster(reading, config: config)])
-                ]
-            )
-        )
+        WeatherFace.delivery(reading: reading, config: config, now: Date(), timeZone: .current)
     }
 
-    /// The panel the TC002 face shows — built as a canvas, because the
-    /// preview draws the very same pixels the delivery pushes, and a GIF
-    /// wants a canvas where the delivery wants a command. Public because the
-    /// preview IS a caller: the app's tile settings window renders this, the
-    /// same pixels `ulanziOutput` pushes.
+    /// The TC002's former still raster — the temperature at scale 2 over a
+    /// humidity and feels-like band. Nothing in the app draws it any more:
+    /// the clock receives `WeatherFace.delivery` and the settings preview
+    /// plays `WeatherFace.preview`. Only the tests that pin its raster still
+    /// call it.
     public static func canvas(
         for reading: WeatherReading, config: WeatherTileConfig
     ) -> PixelCanvas {
         var canvas = PixelCanvas()
-        let felt = config.showsFeelsLike
-            ? reading.apparentTemperature ?? reading.temperature
-            : reading.temperature
-        let ink = Pixel(colour: UlanziColour(hex: TemperatureColour(celsius: felt).hex))
+        let felt = reading.apparentTemperature ?? reading.temperature
+        let ink = Pixel(
+            colour: UlanziColour(
+                hex: TemperatureColour(celsius: Self.colourTemperature(reading, config: config)).hex
+            )
+        )
 
         // The temperature, with its scale named: a picker chooses it now, so
         // a bare number is the reading a person misreads as the other scale.
@@ -264,11 +246,15 @@ public struct WeatherConnector: Connector {
         return canvas
     }
 
-    /// `text` centred on a fresh panel at `scale`, as one full-screen bitmap.
-    private static func raster(
-        _ reading: WeatherReading, config: WeatherTileConfig
-    ) -> UlanziDraw {
-        canvas(for: reading, config: config).drawCommands()
+    /// The temperature the digits are coloured from: what it feels like when
+    /// the tile's Feels-like colour is on (the air when the reading carries
+    /// no felt value), the air when it is off.
+    ///
+    /// Its own setting, apart from the felt LINE's `showsFeelsLike`: the
+    /// TC002 face reads the same switch, so one switch means one thing on
+    /// both clocks — where the colour used to follow whether the line showed.
+    static func colourTemperature(_ reading: WeatherReading, config: WeatherTileConfig) -> Double {
+        config.feelsLikeColour ? reading.apparentTemperature ?? reading.temperature : reading.temperature
     }
 
     private static func fahrenheit(_ celsius: Double) -> Double {

@@ -118,6 +118,14 @@ public enum PixelFont {
         glyphWidths: proportionalGlyphs.mapValues(\.width)
     )
 
+    /// The weather face's 5×9 temperature face — the approved design's own
+    /// table, see `BigDigitGlyphs.swift`.
+    public static let big = PixelFontFace(
+        width: 5, height: 9, gap: 1,
+        glyphs: bigGlyphs.mapValues(\.rows),
+        glyphWidths: bigGlyphs.mapValues(\.width)
+    )
+
     /// The bare spelling every shipped face still calls, kept pointing at the
     /// small cell so no face moved when the second one arrived.
     public static func glyph(for character: Character) -> [UInt8]? {

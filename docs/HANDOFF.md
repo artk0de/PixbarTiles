@@ -1342,3 +1342,38 @@ What later tasks owe:
 
 Measured at close: 1622 tests (613 app + 1009 kit), serial run green; 1587
 (603 + 984) at the base, `1b068f4`.
+
+## The TC002 weather face — 2026-09-23
+
+Spec: `docs/superpowers/specs/2026-09-23-tc002-weather-face-design.md`.
+Plan: `docs/superpowers/plans/2026-09-23-tc002-weather-face.md`.
+
+The TC002 weather page is no longer a still raster. `WeatherFace`
+(`Sources/PixelClockKit/Weather/`) draws a 16×16 animated icon (46 approved
+animations plus `nodata`), the temperature in the 5×9 digits, and a rotating
+detail line — feels-like, humidity, wind, hi/lo, rain chance, UV,
+sunrise/sunset, an hourly chart — in one of three layouts: **Anchor** (two
+GIFs, the icon looping on its own beside a fixed temperature), **Pages** and
+**Hybrid** (one 52×16 GIF each, because there the icon changes with the text).
+Why the deliveries differ, and the measured GIF ceilings behind them, are
+stated once in `Sources/PixelClockKit/Ulanzi/CLAUDE.md`; `UlanziScene` now
+enforces 480 frames / 136 000 bytes of base64.
+
+The pixels come from the `tc002-face-mockup` skill's `weather/wgen.py` and
+`weather/icons.py`. `Scripts/make_weather_face_oracle.py` records them into
+`Tests/PixelClockKitTests/Fixtures/weather_icons_oracle.json` and
+`weather_face_oracle.json`, and the Swift face is tested against those
+fixtures pixel for pixel and delay for delay. A design change starts in the
+Python, then the fixtures are re-recorded, then Swift changes. The skill's
+SKILL.md has the demo flags.
+
+The tile's settings (`WeatherTileConfig`: layout, change interval, wind unit,
+feels-like colour, one switch per detail line) decode from records written
+before them as the shipped defaults. The tile window has a control for each,
+and its TC002 preview plays `WeatherFace.preview` at the face's own frame
+delays. `WeatherConnector.canvas(for:config:)`, the old still raster, has no
+caller left in the app; only the tests that pin its raster still use it.
+
+What only a person at the hardware can settle: Anchor, Pages and Hybrid on a
+live reading, °F, and the no-data face (the place field emptied or the
+network off), pushed by the app rather than by `weather_demo.py`.

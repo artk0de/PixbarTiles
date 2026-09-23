@@ -351,6 +351,23 @@ struct WeatherTileControls: View {
         if let draft = settings.draft {
             VStack(alignment: .leading, spacing: 10) {
                 WeatherTileBlock(place: draft.place, onSave: { settings.savePlace($0) })
+                Picker("Layout", selection: Binding(
+                    get: { draft.layout },
+                    set: { settings.setLayout($0) }
+                )) {
+                    Text("Anchor").tag(WeatherTileConfig.Layout.anchor)
+                    Text("Pages").tag(WeatherTileConfig.Layout.pages)
+                    Text("Hybrid").tag(WeatherTileConfig.Layout.hybrid)
+                }
+                .pickerStyle(.segmented)
+                Picker("Change every", selection: Binding(
+                    get: { draft.changeEvery },
+                    set: { settings.setChangeEvery($0) }
+                )) {
+                    ForEach(Self.changeEverySteps(draft), id: \.self) {
+                        Text(UsageFaceBlock.everyCaption($0)).tag($0)
+                    }
+                }
                 Picker("Units", selection: Binding(
                     get: { draft.units },
                     set: { settings.setUnits($0) }
@@ -358,13 +375,52 @@ struct WeatherTileControls: View {
                     Text("°C — Celsius").tag(WeatherTileConfig.Units.celsius)
                     Text("°F — Fahrenheit").tag(WeatherTileConfig.Units.fahrenheit)
                 }
-                Toggle("Show humidity", isOn: Binding(
-                    get: { draft.showsHumidity },
-                    set: { settings.setShowHumidity($0) }
+                Picker("Wind unit", selection: Binding(
+                    get: { draft.windUnit },
+                    set: { settings.setWindUnit($0) }
+                )) {
+                    Text("m/s").tag(WindUnit.metresPerSecond)
+                    Text("km/h").tag(WindUnit.kilometresPerHour)
+                    Text("mph").tag(WindUnit.milesPerHour)
+                }
+                // The unit of a line the face does not show is a setting
+                // with nothing to act on.
+                .disabled(draft.showsWind == false)
+                Toggle("Colour by feels-like", isOn: Binding(
+                    get: { draft.feelsLikeColour },
+                    set: { settings.setFeelsLikeColour($0) }
                 ))
                 Toggle("Show feels-like", isOn: Binding(
                     get: { draft.showsFeelsLike },
                     set: { settings.setShowFeelsLike($0) }
+                ))
+                Toggle("Show humidity", isOn: Binding(
+                    get: { draft.showsHumidity },
+                    set: { settings.setShowHumidity($0) }
+                ))
+                Toggle("Show wind", isOn: Binding(
+                    get: { draft.showsWind },
+                    set: { settings.setShowsWind($0) }
+                ))
+                Toggle("Show today's high and low", isOn: Binding(
+                    get: { draft.showsHiLo },
+                    set: { settings.setShowsHiLo($0) }
+                ))
+                Toggle("Show rain chance", isOn: Binding(
+                    get: { draft.showsRainChance },
+                    set: { settings.setShowsRainChance($0) }
+                ))
+                Toggle("Show UV index", isOn: Binding(
+                    get: { draft.showsUV },
+                    set: { settings.setShowsUV($0) }
+                ))
+                Toggle("Show sunrise and sunset", isOn: Binding(
+                    get: { draft.showsSunEvents },
+                    set: { settings.setShowsSunEvents($0) }
+                ))
+                Toggle("Show hourly chart", isOn: Binding(
+                    get: { draft.showsHourly },
+                    set: { settings.setShowsHourly($0) }
                 ))
                 // No "Save settings" beside it any more. Every control here
                 // writes as it is touched, like every other tile's, so a
@@ -376,5 +432,13 @@ struct WeatherTileControls: View {
         } else {
             EmptyView()
         }
+    }
+
+    /// The offered intervals, plus the stored one when a record carries a
+    /// value the design does not offer — a picker whose selection matches no
+    /// tag draws blank, which reads as a setting lost (as `UsageFaceBlock`).
+    private static func changeEverySteps(_ draft: WeatherTileConfig) -> [TimeInterval] {
+        let steps = WeatherTileConfig.changeEverySteps
+        return steps.contains(draft.changeEvery) ? steps : (steps + [draft.changeEvery]).sorted()
     }
 }

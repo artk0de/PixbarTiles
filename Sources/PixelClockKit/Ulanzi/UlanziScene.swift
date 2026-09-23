@@ -205,9 +205,15 @@ public struct UlanziScene: Sendable, Equatable {
     static let maxImages = 6
     static let maxAnimatedImages = 3
     static let maxAnimatedSide = 256
-    static let maxAnimatedFrames = 50
+    /// Measured live on the TC002, 2026-09-23: one 52×16 GIF of 478 frames
+    /// and 135 240 bytes of base64 played smoothly and on time. The 50 frames
+    /// and 60 000 bytes this held before were the documented values, never
+    /// measured — and wrong for this panel.
+    static let maxAnimatedFrames = 480
     static let maxStillSide = 512
-    static let maxBase64Bytes = 60_000
+    /// Measured with `maxAnimatedFrames`, 2026-09-23 (478 frames / 135 240
+    /// bytes on time); the documented 60 000 was not a measurement.
+    static let maxBase64Bytes = 136_000
 
     public var frames: [UlanziFrame]
 

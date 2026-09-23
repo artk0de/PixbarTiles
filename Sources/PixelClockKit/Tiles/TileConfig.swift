@@ -12,11 +12,18 @@ import Foundation
 ///   {"vpn":{"slot":"top","upColour":"#90EE90","vpn":"pritunl",
 ///           "whenDown":{"colour":"#FF0000","kind":"blink"}}}
 ///   {"claude":"daily"}
+///   {"claude":{"metric":"daily","showResetAfter":70,"showResetEvery":30}}
 public enum TileConfig: Equatable, Sendable {
     case weather(WeatherTileConfig)
     case vpn(VPNTileConfig)
     case zai(ZaiTileConfig)
-    case claude(ClaudeDisplayMetric)
+    case claude(ClaudeTileConfig)
+
+    /// A Claude tile's config at this metric, its usage-face settings the
+    /// defaults — the form every caller from before those settings means.
+    public static func claude(_ metric: ClaudeDisplayMetric) -> TileConfig {
+        .claude(ClaudeTileConfig(metric: metric))
+    }
 
     /// A weather tile's config in the shipped defaults, at this place — the
     /// form every caller that knows only the place means. Overloading the
@@ -53,8 +60,23 @@ public enum TileConfig: Equatable, Sendable {
 
     /// The Claude tile's display metric, or nil for any other tile.
     public var claude: ClaudeDisplayMetric? {
-        guard case let .claude(metric) = self else { return nil }
-        return metric
+        claudeConfig?.metric
+    }
+
+    /// The Claude tile's whole config, or nil for any other tile.
+    public var claudeConfig: ClaudeTileConfig? {
+        guard case let .claude(config) = self else { return nil }
+        return config
+    }
+
+    /// The shared usage face's settings — the Claude tile's or the z.ai
+    /// tile's — or nil for a tile that does not draw that face.
+    public var usageFace: UsageFaceConfig? {
+        switch self {
+        case let .claude(config): config.usageFace
+        case let .zai(handle): handle.usageFace
+        case .weather, .vpn: nil
+        }
     }
 }
 
@@ -81,7 +103,7 @@ extension TileConfig: Codable {
         case .zai:
             self = .zai(try container.decode(ZaiTileConfig.self, forKey: .zai))
         case .claude:
-            self = .claude(try container.decode(ClaudeDisplayMetric.self, forKey: .claude))
+            self = .claude(try container.decode(ClaudeTileConfig.self, forKey: .claude))
         }
     }
 
@@ -94,8 +116,8 @@ extension TileConfig: Codable {
             try container.encode(lamp, forKey: .vpn)
         case let .zai(handle):
             try container.encode(handle, forKey: .zai)
-        case let .claude(metric):
-            try container.encode(metric, forKey: .claude)
+        case let .claude(config):
+            try container.encode(config, forKey: .claude)
         }
     }
 }

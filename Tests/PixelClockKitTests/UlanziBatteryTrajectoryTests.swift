@@ -75,3 +75,42 @@ private func sample(_ percent: Int, _ charging: Bool, _ minutes: Double) -> Ulan
     // charge would give.
     #expect(abs(remaining - 43 * 3600) < 60 * 60)
 }
+
+private func charged(_ percent: Int, _ charging: Bool, mv: Int) -> UlanziBatterySample {
+    UlanziBatterySample(
+        percent: percent, charging: charging, millivolts: mv,
+        at: Date(timeIntervalSince1970: 0)
+    )
+}
+
+// The firmware's percent scale stops at 90. Measured on appVer 1.1.1: with the
+// charger's LED green — the charge terminated — the monitor read 90 at 4174 mV,
+// and it still read 90 hours later. A panel that only repeats the firmware can
+// therefore never say a charge finished, which is the one thing a glance is for.
+@Test func aFinishedChargeIsShownAsFull() {
+    var t = UlanziBatteryTrajectory()
+    t.accept(charged(90, true, mv: 4174))
+
+    #expect(t.reading?.shownPercent == 100)
+    // The firmware's own figure is kept intact — the correction is about what
+    // the panel draws, not about what the clock said.
+    #expect(t.reading?.percent == 90)
+}
+
+@Test func aChargeStillClimbingIsNotFull() {
+    var t = UlanziBatteryTrajectory()
+    t.accept(charged(90, true, mv: 3900))
+    #expect(t.reading?.shownPercent == 90)
+}
+
+@Test func offTheChargerNothingIsRoundedUp() {
+    var t = UlanziBatteryTrajectory()
+    t.accept(charged(90, false, mv: 4174))
+    #expect(t.reading?.shownPercent == 90)
+}
+
+@Test func aPlateauVoltageBelowTheCeilingIsNotFull() {
+    var t = UlanziBatteryTrajectory()
+    t.accept(charged(80, true, mv: 4174))
+    #expect(t.reading?.shownPercent == 80)
+}

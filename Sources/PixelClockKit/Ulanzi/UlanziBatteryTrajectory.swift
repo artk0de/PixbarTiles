@@ -23,6 +23,24 @@ public struct UlanziBatteryTrajectory: Sendable {
     /// needs before its slope outgrows the quantisation.
     public static let retention: TimeInterval = 24 * 60 * 60
 
+    /// Where the firmware's percent scale stops, and the cell voltage that goes
+    /// with a charge that has finished.
+    ///
+    /// Measured on appVer 1.1.1, 2026-09-23: with the charger's own LED green —
+    /// the charge terminated — `BatteryMonitor` read percent 90 at 4174 mV, and
+    /// it still read 90 hours later. Every field past the millivolts is zero,
+    /// so the firmware carries no "full" flag to copy either. Its scale simply
+    /// stops at 90, which means a panel that only repeats the firmware can
+    /// never say a charge finished — the one thing a glance at a charging clock
+    /// is for.
+    ///
+    /// Both conditions are required, and that is what keeps this from being a
+    /// voltage→percent curve: below the ceiling the firmware's figure is drawn
+    /// untouched, and off the charger nothing is corrected at all. It is one
+    /// saturation point, not a mapping.
+    static let ceilingPercent = 90
+    static let fullMillivolts = 4150
+
     private var samples: [UlanziBatterySample] = []
 
     public init() {}
@@ -39,12 +57,23 @@ public struct UlanziBatteryTrajectory: Sendable {
         let direction: BatteryDirection = latest.charging ? .charging : .discharging
         return BatteryReading(
             percent: latest.percent,
-            // The firmware already smooths; there is no ADC wander to ratchet
-            // against, so the shown figure is the real one.
-            shownPercent: latest.percent,
+            shownPercent: shown(for: latest),
             direction: direction,
             timeRemaining: direction == .discharging ? estimate(to: latest) : nil
         )
+    }
+
+    /// What the panel draws.
+    ///
+    /// The firmware already smooths, and there is no ADC wander to ratchet
+    /// against, so the shown figure is normally the read one. The exception is
+    /// a finished charge, where the firmware's scale runs out before the cell
+    /// does — see `ceilingPercent`.
+    private func shown(for latest: UlanziBatterySample) -> Int {
+        let full = latest.charging
+            && latest.percent >= Self.ceilingPercent
+            && latest.millivolts >= Self.fullMillivolts
+        return full ? 100 : latest.percent
     }
 
     /// Seconds to 0%, from a least-squares fit over the trailing discharging

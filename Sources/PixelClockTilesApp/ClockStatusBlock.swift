@@ -180,7 +180,10 @@ enum BatteryLine {
         guard let reading else { return nil }
         guard live else { return "last known" }
         switch reading.direction {
-        case .charging: return "Charging"
+        // A clock still on the charger at 100% is not charging any more: the
+        // charger's LED has gone green and nothing is going in. The flag says
+        // only that the USB is plugged, so the word has to come off the figure.
+        case .charging: return reading.shownPercent >= 100 ? "Full" : "Charging"
         case .unknown: return "estimating…"
         case .discharging: return trend(for: reading)
         }

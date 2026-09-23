@@ -19,22 +19,6 @@ private func reading(
     )
 }
 
-/// Feeds one plausible charging window, so a poll produces a reading.
-private actor ChargingADB: ADB {
-    func shell(_ command: String) async throws -> Data {
-        if command.contains("cmdline") { return Data("/proc/670\r\n/bin/zkgui\u{0}\r\n\r\n".utf8) }
-        if command.contains("maps") {
-            return Data("43e87000-44571000 r-xp 00000000 1f:03 12 /res/lib/libzkgui.so\r\n".utf8)
-        }
-        return Data()
-    }
-    func push(_ bytes: Data, to path: String, mode: Int) async throws {}
-    func pull(_ path: String) async throws -> Data {
-        var d = Data()
-        for v: UInt32 in [1, 90, 3600] { withUnsafeBytes(of: v.littleEndian) { d.append(Data($0)) } }
-        return d
-    }
-}
 
 /// Answers /getBase with the one firmware whose battery offset is known.
 private struct IdentityTransport: Transport {
@@ -55,7 +39,7 @@ private struct IdentityTransport: Transport {
         pollSleep: polls.sleep,
         deviceHost: "192.0.2.9",
         clocks: [kitchen],
-        ulanziBattery: UlanziBattery(adb: ChargingADB(), helper: Data("ELF".utf8))
+        ulanziBattery: UlanziBattery(adb: FakeBatteryADB(percent: 90, charging: 1), helper: Data("ELF".utf8))
     )
     let subject = PanelModel(model: model)
     #expect(subject.sections[0].battery == nil)
@@ -96,6 +80,14 @@ private struct IdentityTransport: Transport {
     )
     #expect(BatteryLine.caption(for: reading(60, .discharging), live: true) == "estimating…")
     #expect(BatteryLine.caption(for: reading(60, .unknown), live: true) == "estimating…")
+}
+
+// A clock still on the charger at 100% is not charging any more — the charger's
+// own LED has gone green and nothing is going in. "100% · Charging" asks the
+// reader to decide which half to believe.
+@Test func aChargeThatFinishedIsCaptionedFull() {
+    #expect(BatteryLine.caption(for: reading(100, .charging), live: true) == "Full")
+    #expect(BatteryLine.caption(for: reading(99, .charging), live: true) == "Charging")
 }
 
 @Test func aRememberedChargeIsCaptionedAsOne() {

@@ -34,21 +34,45 @@ Every claim here was seen on the device, not inferred.
 
   | Address (this boot) | libzkgui load-relative offset | field | value |
   | --- | --- | --- | --- |
-  | `0x445b9ef4` | `+0x732ef4` | charging / on-USB (1/0) | 1 |
-  | `0x445b9ef8` | `+0x732ef8` | percent | 90 |
-  | `0x445b9efc` | `+0x732efc` | millivolts | 3149 |
+  | `0x445b9ee8` | `+0x732ee8` | charging / on-USB (1/0) | 1 |
+  | `0x445b9eec` | `+0x732eec` | percent | 90 |
+  | `0x445b9ef0` | `+0x732ef0` | millivolts | 3149 |
 
   The load-relative offset is the stable fact; the absolute address depends on
   where the loader mapped the library.
-- The field is **live off-screen**: unplugging USB flipped `+0x732ef4` from 1 to
+- The field is **live off-screen**: unplugging USB flipped `+0x732ee8` from 1 to
   0 while nothing but our reader touched the process. `McuManager` /
   `BatteryMonitor` update it continuously (they drive the low-battery LED and
   auto-sleep, which cannot depend on a tool being on screen). So a background poll
   reads fresh data.
 - `/proc/<pid>/mem` is **readable by root without `PTRACE_ATTACH`** on this
   kernel — a plain `lseek`+`read` returned the pages.
+- The `shell:` service is a **PTY, and it corrupts binary stdout**: every `0x0a`
+  comes back as `0x0d 0x0a`. That is not theoretical for this payload — a
+  percent of 10 or a millivolt value with an `0x0a` byte hits it, and the 12-byte
+  window then parses as garbage. Measured: a read of the window returned 13
+  bytes. So the reader's output is **redirected to a file on the device and
+  pulled back over `sync:` RECV**, which is byte-exact. `/tmp/pct-batt >
+  /tmp/pct-out` was confirmed to write exactly 12 bytes.
 - `/tmp` is a 16 MB tmpfs, wiped on reboot. The `zkgui` pid and the libzkgui load
   address are **not** stable across reboots and must be resolved at run time.
+- **adbd will not take a connection per operation.** It was exhausted after
+  about six and reset every one after that — and a single poll needs six
+  operations, so a second read could not even start. ADB multiplexes streams
+  over one socket by design, and this device insists on it: handshake once,
+  then a new stream id per operation.
+- **Frames must be filtered by stream id.** A finished stream's `CLSE` arrives
+  after the client has stopped reading it. Taken at face value by the next
+  operation it ends that one immediately — measured, a `shell` straight after a
+  `push` returned empty.
+- **A `sync:` session has to be ended with `QUIT`.** Left unterminated, the next
+  connection was met with a reset.
+- **`shell:` line endings are `\r\n`, and Swift reads `\r\n` as ONE Character.**
+  So `String.split(separator: "\n")` does not split PTY output at all: the
+  12 KB `maps` body came back as a single line, whose first address is the
+  `/bin/zkgui` mapping at `0x10000` rather than the library's. Lines must be
+  split on the BYTE `0x0a` and then trimmed. The same trap makes a pid parse as
+  `"670\r"`, which is not a number.
 
 ## Non-goals
 
@@ -62,16 +86,22 @@ Every claim here was seen on the device, not inferred.
 
 ## Architecture
 
-Four units, each independently testable.
+Five units, each independently testable.
 
 ### 1. `ADBClient` (PixelClockKit)
 
 A minimal ADB-over-TCP client — the protocol is already proven in the spike.
 
-- `connect(host:)` — TCP to `<host>:5555`, `CNXN` handshake. No AUTH path (the
-  device never asks; if it does, fail cleanly and the feature disables).
+- `connect(host:)` — TCP to `<host>:5555`, `CNXN` handshake, **once**. The
+  connection is kept and every operation opens a new stream id on it; a
+  connection per operation exhausts this adbd. No AUTH path (the device never
+  asks; if it does, fail cleanly and the feature disables). One retry on a
+  fresh connection covers a socket the device closed while idle between polls.
 - `shell(_ command:) -> Data` — `OPEN shell:<cmd>`, collect `WRTE` until `CLSE`.
 - `push(_ bytes:to:mode:)` — the `sync:` SEND stream (SEND / DATA / DONE / OKAY).
+- `pull(_ path:) -> Data` — the `sync:` RECV stream (RECV, then DATA chunks
+  until DONE). This is how the reader's bytes come back: `shell:` is a PTY and
+  mangles `0x0a`, so binary never travels over it.
 - Pure framing over an injected byte transport, so tests drive it with a fake
   socket and never touch a device.
 
@@ -104,40 +134,75 @@ The testable brain. Given an `ADBClient`, for one poll:
    match `/bin/zkgui`. (Text work in Swift, not asm.)
 2. Resolve the libzkgui load base: shell `cat /proc/<pid>/maps`, take the
    `r-xp … libzkgui.so` line's start address.
-3. Compute `address = base + 0x732ef4`, `length = 12`.
-4. Ensure `pct-batt` is present (push if a probe run fails — `/tmp` is volatile),
-   then write `/tmp/pct-req` and run it.
-5. Parse the 12 bytes → `charging: Bool`, `percent: Int`, `millivolts: Int`.
-6. **Plausibility gate**: `0…100` percent, `2000…4500` mV, else treat as no
+3. Compute `address = base + 0x732ee8`, `length = 12`.
+4. Push `pct-batt` and `/tmp/pct-req` (`/tmp` is a tmpfs wiped on reboot, so the
+   push is unconditional and idempotent rather than probed).
+5. Run it with its stdout redirected — `/tmp/pct-batt > /tmp/pct-out` — then
+   `pull("/tmp/pct-out")`. The redirect is what keeps the bytes off the PTY.
+6. Parse the 12 bytes → `charging: Bool`, `percent: Int`, `millivolts: Int`.
+7. **Plausibility gate**: `0…100` percent, `2000…4500` mV, else treat as no
    reading. A wrong number is worse than none.
 
 Offsets live in one table keyed by firmware `appVer`; `1.1.1` is the only entry.
 Any other version → no reading (the panel says nothing rather than a lie). The
 `appVer` comes from the existing `/getBase` identity call.
 
-Interface: `read() async -> BatteryReading?` shaped like the AWTRIX path's, so it
-feeds the existing machinery. Depends on: `ADBClient`, the offset table.
+Interface: `read() async -> UlanziBatterySample?` — one poll's raw fact
+(`percent`, `charging`, `millivolts`, `at`), not a rendered reading. It is
+deliberately NOT a `BatteryReading`: the firmware percent is a point sample, and
+a discharge estimate is a function of the SERIES, which is unit 4's job.
+Depends on: `ADBClient`, the offset table.
 
-### 4. Wiring into the existing battery pipeline
+### 4. `UlanziBatteryTrajectory` (PixelClockKit) — series → reading
 
-`UlanziClockHealth` (not `AppModel.poll` — the hotspot god-method) gains the
-battery poll. Its reading flows into the **existing** `BatteryTrajectory` /
-`BatteryReading` / `BatteryLine`, so the panel line, the charging state, the
-warnings and the estimate all come for free and behave exactly as the AWTRIX
-clock's do. `AppModel.batteryLine` stops being nil for a TC002 whose read
-succeeds.
+The AWTRIX `BatteryTrajectory` is **not reused**, and the code is why. It is
+built on the raw ADC: it stores `BatterySample.raw`, maps it with the firmware's
+`map(raw, 475, 665, 0, 100)` (`rawAtEmpty = 475`), and INFERS the direction from
+rise/fall windows — the whole trend machine exists precisely because the AWTRIX
+`/api/stats` carries no charging field. Its `record(_:at:)` takes a `DeviceStats`
+that has no `percent`-native, charging-bearing shape to hand it. Feeding a
+firmware percent in as a raw would corrupt every threshold and the 0% floor.
+
+TC002 has strictly better data — a firmware-computed percent and an EXPLICIT
+charging flag — so it gets a small percent-native trajectory instead:
+
+- `accept(_ sample: UlanziBatterySample)` appends to a bounded, thinned series.
+- `reading -> BatteryReading?` builds the panel's reading:
+  - `direction` = `sample.charging ? .charging : .discharging` — from the flag,
+    no inference, no half-hour lag.
+  - `shownPercent` = `percent` unchanged (the firmware already smooths; there is
+    no ADC ratchet to defend against).
+  - `timeRemaining` = a least-squares percent-slope fit over the trailing
+    discharging run, extrapolated to 0%, or nil until a minimum span is watched.
+    Charging → nil (no countdown for something filling up), exactly as
+    `BatteryLine.trend` already expects.
+
+`BatteryReading` and `BatteryLine` are reused untouched — the reading enters the
+same rendering the AWTRIX line does, so the percentage, the charging glyph and
+the `~N h left` tail all come from the existing code. `AppModel.batteryLine`
+stops being nil for a TC002 whose series has produced a reading.
+
+### 5. Wiring into the panel
+
+`UlanziClockHealth` (not `AppModel.poll` — the hotspot god-method) owns a
+`UlanziBattery` and a `UlanziBatteryTrajectory`. Each poll calls
+`UlanziBattery.read()`, feeds any sample to the trajectory, and holds
+`trajectory.reading`. `AppModel.batteryLine` consults the TC002 health's reading
+for a `.ulanziTC002` clock, falling through to the AWTRIX health otherwise —
+a minimal change confined to that leaf method, out of `AppModel.poll`.
 
 ## Data flow
 
-```
+```text
 UlanziClockHealth.poll
   └─ UlanziBattery.read()
        ├─ ADBClient.shell(find pid, read maps)        → pid, libzkgui base
-       ├─ ADBClient.push(pct-batt) [only if missing]
-       ├─ ADBClient.push(/tmp/pct-req = addr,len,path)
-       ├─ ADBClient.shell(/tmp/pct-batt)              → 12 bytes
-       └─ parse + plausibility gate                    → BatteryReading?
-  └─ BatteryTrajectory.accept(reading)                 → shown %, trend, warnings
+       ├─ ADBClient.push(pct-batt), push(/tmp/pct-req = addr,len,path)
+       ├─ ADBClient.shell(/tmp/pct-batt > /tmp/pct-out)
+       ├─ ADBClient.pull(/tmp/pct-out)                → 12 bytes (byte-exact)
+       └─ parse + plausibility gate                    → UlanziBatterySample?
+  └─ UlanziBatteryTrajectory.accept(sample)
+       └─ reading  (direction from flag, ETA from percent-slope fit) → BatteryReading?
   └─ AppModel.batteryLine(clock)                       → panel line
 ```
 
@@ -173,11 +238,15 @@ Every failure degrades to "no battery line", never to a wrong one:
   every degradation branch. The plausibility gate gets its own cases (101%,
   1500 mV, short read).
 - Offset table: `1.1.1` present; an unknown version yields nil.
+- `UlanziBatteryTrajectory`: canned sample series assert direction straight off
+  the flag, `shownPercent` = `percent`, ETA nil under the minimum span, and a
+  known slope yielding a known `~N h left` through `BatteryLine`; a charging
+  series yields nil ETA.
 - `make_pct_batt.py`: a host-side test assembles the ELF and checks the header
   and the three syscall sequences; the machine code itself is pinned by golden
   bytes so an accidental re-encode is caught.
-- The existing `BatteryTrajectory` / `BatteryLine` suites already cover the
-  panel behaviour and are untouched — the TC002 reading enters the same types.
+- The existing `BatteryReading` / `BatteryLine` suites already cover the panel
+  behaviour and are untouched — the TC002 reading enters the same types.
 
 ## Risks
 

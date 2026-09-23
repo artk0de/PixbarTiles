@@ -198,7 +198,8 @@ private func drewPage(named name: String, on transport: UlanziPathTransport) -> 
     @Test func theTC002HealthAnswersThroughGetBaseAndSaysSo() async throws {
         let health = UlanziClockHealth(
             clockId: UUID(), name: "desk",
-            device: UlanziDevice(host: "192.0.2.9", transport: transport)
+            device: UlanziDevice(host: "192.0.2.9", transport: transport),
+            battery: nil
         )
 
         // Not asked yet: unknown, and not online — an answer nobody took is

@@ -498,6 +498,11 @@ final class AppModel: ObservableObject {
     /// same one the clock's own slot pushes through, so a health answer and a
     /// page push cannot disagree about whether the clock is there.
     private let makeUlanziDevice: @MainActor (ClockRecord) -> UlanziDevice?
+    /// The TC002's battery reader, built per clock because it needs that
+    /// clock's address for its own transport — adb on 5555, not the HTTP the
+    /// device actor speaks. Nil where the helper did not ship or the clock is
+    /// not a TC002, and nil is simply "no battery line".
+    private let makeUlanziBattery: @MainActor (ClockRecord) -> UlanziBattery?
 
     /// The TC002 clock's slot for the named clock, or nil when that clock's
     /// slot is an AWTRIX session — the cast is the model check, kept honest by
@@ -679,6 +684,7 @@ final class AppModel: ObservableObject {
         // slot pushes through. Nil for a caller that drives no TC002 clock,
         // which is what every AWTRIX-only wiring answers.
         makeUlanziDevice: @MainActor @escaping (ClockRecord) -> UlanziDevice?,
+        makeUlanziBattery: @MainActor @escaping (ClockRecord) -> UlanziBattery? = { _ in nil },
         // The dual probe an Add by address asks. Nil only in callers that
         // never add by address — `live()` wires the real one, over the same
         // transport every other request takes.
@@ -718,6 +724,7 @@ final class AppModel: ObservableObject {
         self.registry = registry
         self.makeClockRegistry = makeClockRegistry
         self.makeUlanziDevice = makeUlanziDevice
+        self.makeUlanziBattery = makeUlanziBattery
         self.probe = probe
         self.installer = installer
         self.anecdotes = anecdotes
@@ -739,7 +746,8 @@ final class AppModel: ObservableObject {
             guard clock.model == .awtrix3 else {
                 if let device = makeUlanziDevice(clock) {
                     ulanziHealths[clock.id] = UlanziClockHealth(
-                        clockId: clock.id, name: clock.name, device: device
+                        clockId: clock.id, name: clock.name, device: device,
+                        battery: makeUlanziBattery(clock)
                     )
                 }
                 continue
@@ -1040,6 +1048,18 @@ final class AppModel: ObservableObject {
             makeClockRegistry: makeRegistry,
             makeUlanziDevice: { clock in
                 UlanziDevice(host: clock.address, transport: transport)
+            },
+            makeUlanziBattery: { clock in
+                // The helper is a prebuilt ARMv7 ELF shipped in the kit bundle.
+                // No helper, no battery line — never a guessed figure.
+                guard
+                    let helper = UlanziBattery.bundledHelper()
+                else { return nil }
+                let host = clock.address
+                return UlanziBattery(
+                    adb: ADBClient(connect: { try await NWADBStream.connect(host: host) }),
+                    helper: helper
+                )
             },
             probe: { host in await UlanziProbe.detect(host: host, transport: transport) },
             installer: installer,
@@ -1626,13 +1646,23 @@ final class AppModel: ObservableObject {
         DeviceStatusLine.title(for: reachability(of: clock.id))
     }
 
-    /// A clock's battery, as the panel's statistics line says it — or nil,
-    /// which is a TC002 (no cell to read) and a clock that has never
-    /// answered. A clock that went away keeps showing its last known charge:
-    /// the panel is the clocks' glance, and a battery that vanishes every
-    /// time the Wi-Fi blips is a figure nobody plans around.
+    /// A clock's battery, as the panel's statistics line says it — or nil for
+    /// a clock that has never answered, and for a TC002 whose firmware is not
+    /// one the memory read knows. A clock that went away keeps showing its
+    /// last known charge: the panel is the clocks' glance, and a battery that
+    /// vanishes every time the Wi-Fi blips is a figure nobody plans around.
+    ///
+    /// A clock is in exactly one of the two health maps, so this is a
+    /// fall-through rather than a merge.
     func batteryLine(of clock: ClockRecord) -> String? {
-        BatteryLine.text(for: healths[clock.id]?.monitor.lastKnownBattery)
+        BatteryLine.text(for: battery(of: clock))
+    }
+
+    /// The reading behind that line, for a surface that draws the charge
+    /// rather than saying it — the panel's cards.
+    func battery(of clock: ClockRecord) -> BatteryReading? {
+        if let ulanzi = ulanziHealths[clock.id] { return ulanzi.lastKnownBattery }
+        return healths[clock.id]?.monitor.lastKnownBattery
     }
 
     /// Every connector a clock's Add tile menu can offer, in offer order:
@@ -2563,7 +2593,8 @@ final class AppModel: ObservableObject {
         where clock.model == .ulanziTC002 && ulanziHealths[clock.id] == nil {
             if let device = makeUlanziDevice(clock) {
                 ulanziHealths[clock.id] = UlanziClockHealth(
-                    clockId: clock.id, name: clock.name, device: device
+                    clockId: clock.id, name: clock.name, device: device,
+                    battery: makeUlanziBattery(clock)
                 )
             }
         }

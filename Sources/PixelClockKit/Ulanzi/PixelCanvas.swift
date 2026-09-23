@@ -205,7 +205,7 @@ public struct PixelCanvas: Sendable, Equatable {
         for character in text {
             if let glyph = font.glyph(for: character) {
                 for (row, bits) in glyph.enumerated() {
-                    for column in 0..<font.width where bits & (1 << column) != 0 {
+                    for column in 0..<font.columns(of: character) where bits & (1 << column) != 0 {
                         for dy in 0..<scale {
                             for dx in 0..<scale {
                                 paint(
@@ -218,7 +218,7 @@ public struct PixelCanvas: Sendable, Equatable {
                     }
                 }
             }
-            cursor += font.advance * scale
+            cursor += font.advance(for: character) * scale
         }
     }
 

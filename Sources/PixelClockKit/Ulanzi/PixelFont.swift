@@ -10,23 +10,47 @@
 /// read: **bit 0 is the leftmost column**. That is `PixelCanvas.drawText`'s
 /// own convention (`bits & (1 << column)` painted at `cursor + column`), and
 /// both tables are written to it.
+///
+/// A face may be PROPORTIONAL: a glyph listed in `glyphWidths` takes that many
+/// columns instead of the cell's, and the cursor steps past exactly those
+/// columns plus the gap. The fixed faces list none, so everything they measure
+/// and draw is what it was before a face could be narrower than its cell.
 public struct PixelFontFace: Sendable {
-    /// Columns in the cell.
+    /// Columns in the cell — the widest a glyph is unless it names its own.
     public let width: Int
     /// Rows in the cell.
     public let height: Int
     /// Columns left blank after each glyph.
     public let gap: Int
     private let glyphs: [Character: [UInt8]]
+    private let glyphWidths: [Character: Int]
 
-    /// What one character costs the cursor: the cell plus its gap.
+    /// What one character costs the cursor in a fixed face: the cell plus its
+    /// gap. A proportional face answers per character — `advance(for:)`.
     public var advance: Int { width + gap }
 
-    init(width: Int, height: Int, gap: Int, glyphs: [Character: [UInt8]]) {
+    init(
+        width: Int, height: Int, gap: Int, glyphs: [Character: [UInt8]],
+        glyphWidths: [Character: Int] = [:]
+    ) {
         self.width = width
         self.height = height
         self.gap = gap
         self.glyphs = glyphs
+        self.glyphWidths = glyphWidths
+    }
+
+    /// The columns `character` draws in: its own width when the face names
+    /// one, the cell's otherwise — and the SUBSTITUTE's for a mark the face
+    /// cannot spell, because the substitute is what gets drawn there.
+    public func columns(of character: Character) -> Int {
+        let drawn = covers(character) ? character : PixelFont.substitute
+        return glyphWidths[drawn] ?? width
+    }
+
+    /// What `character` costs the cursor: its columns plus the gap.
+    public func advance(for character: Character) -> Int {
+        columns(of: character) + gap
     }
 
     /// Whether this face has a shape of its own for `character` — as opposed
@@ -52,7 +76,7 @@ public struct PixelFontFace: Sendable {
     /// text from the right edge would otherwise sit one gap short.
     public func width(of text: String, scale: Int) -> Int {
         guard text.isEmpty == false else { return 0 }
-        return text.count * advance * scale - gap * scale
+        return text.reduce(0) { $0 + advance(for: $1) } * scale - gap * scale
     }
 }
 
@@ -62,6 +86,7 @@ public extension PixelFontFace {
     /// `PixelFont`'s own, so there is one definition and two spellings of it.
     static var tiny: PixelFontFace { PixelFont.tiny }
     static var standard: PixelFontFace { PixelFont.standard }
+    static var proportional: PixelFontFace { PixelFont.proportional }
 }
 
 /// The faces the kit draws with.
@@ -83,6 +108,14 @@ public enum PixelFont {
     /// The X11 "Misc Fixed" 5×7 face — every printable ASCII mark plus the
     /// Cyrillic alphabet, generated from the BDF by `Scripts/MakeFontTable.py`.
     public static let standard = PixelFontFace(width: 5, height: 7, gap: 1, glyphs: x11Glyphs)
+
+    /// The shared usage face's five-row proportional face — the approved
+    /// design's own glyph table, see `ProportionalGlyphs.swift`.
+    public static let proportional = PixelFontFace(
+        width: 5, height: 5, gap: 1,
+        glyphs: proportionalGlyphs.mapValues(\.rows),
+        glyphWidths: proportionalGlyphs.mapValues(\.width)
+    )
 
     /// The bare spelling every shipped face still calls, kept pointing at the
     /// small cell so no face moved when the second one arrived.

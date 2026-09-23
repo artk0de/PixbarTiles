@@ -14,10 +14,7 @@ OUT = os.environ.get("OUT") or os.path.join(os.getcwd(), "tc002-mockup-out")
 os.makedirs(OUT, exist_ok=True)
 
 DWELL_MS = 5000          # percent phase, and a reset that fits
-SCROLL_STEP_MS = 60      # full marquee: one pixel per step
-EDGE_STEP_MS = 100       # edge marquee: one pixel per step
-EDGE_HOLD_START_MS = 1000
-EDGE_HOLD_END_MS = 1500
+MARQUEE_STEP_MS = 60     # one pixel per frame, the whole pass at one speed
 TRACK = (0x30, 0x30, 0x30)
 # The SPENT part of a bar — the progress itself — while the window is steady.
 # Bright white, so what a glance lands on is how much of it is gone against the
@@ -120,6 +117,8 @@ G = {
     "y": ["#.#", "#.#", ".##", "..#", "##."],
     "r": [".##", "#..", "#..", "#..", "#.."],
     "w": ["#...#", "#...#", "#.#.#", "#.#.#", ".#.#."],
+    "h": ["#..", "#..", "##.", "#.#", "#.#"],
+    "k": ["#..", "#.#", "##.", "#.#", "#.#"],
     "s": [".##", "#..", ".#.", "..#", "##."],
     "t": [".#.", "###", ".#.", ".#.", ".##"],
 }
@@ -155,22 +154,34 @@ class Canvas:
 
 
 # Layout: logo 8x5 at (0,1); rows at y=1 and y=9 (text 5 rows, gap, 1px bar).
-TEXT_X = 9
-ROWS = (("s", 1), ("w", 9))
-# The labels are centred on each other rather than flush left. In the
-# proportional face "s" is three columns wide and "w" is five, so left-aligned
-# they hang off one another by two pixels — one row's mark visibly left of the
-# other's on a panel where the two rows are read as a pair.
-LABEL_BOX = max(len(G[label][0]) for label, _ in ROWS)
+#
+# The rows are named for the PERIOD they measure rather than with one letter
+# each. "s" and "w" were one glyph because the face was built before there was
+# anything else to call them, and a single letter is a legend the panel never
+# prints: "5h" and "week" say what the row is about without one.
+ROWS = (("5h", 1), ("week", 9))
+# The mark is five rows tall and stands on the TOP row alone, so the top label
+# starts after it and the bottom one starts at the panel's edge. Nine columns
+# of the weekly row were being held for a mark that is not there, and they are
+# exactly the columns its long reset was scrolling for.
+LABEL_X = (9, 0)
+LABEL_GAP = 4
 
 
-def label_x(label):
-    return TEXT_X + (LABEL_BOX - len(G[label][0])) // 2
+def label_x(index):
+    return LABEL_X[index]
 
 
-def value_area(label):
-    """Columns right of the label a value may use: label, 4px gap, to the edge."""
-    return TEXT_X + text_width(label) + 4, W
+def value_area(index):
+    """Columns a row's value may use: after its OWN label, plus the gap.
+
+    Per row rather than one box as wide as the widest name. That box was
+    written for one-letter labels, where it kept the two marks from hanging off
+    one another; with two words of different lengths it only takes the shorter
+    row's columns away and gives nothing back.
+    """
+    label, _ = ROWS[index]
+    return LABEL_X[index] + text_width(label) + LABEL_GAP, W
 
 
 def value_ink(v, pct, dim=False):
@@ -199,10 +210,10 @@ def draw(vendor, pcts, values, dim=False):
     v = VENDORS[vendor]
     cv = Canvas()
     cv.bitmap(v["logo"], 0, 1, v["logo_colour"])
-    for (label, top), pct, (value, x) in zip(ROWS, pcts, values):
-        cv.text(label, label_x(label), top, LABEL)
+    for index, ((label, top), pct, (value, x)) in enumerate(zip(ROWS, pcts, values)):
+        cv.text(label, label_x(index), top, LABEL)
         ink = value_ink(v, pct, dim)
-        cv.text(value, W - text_width(value) if x is None else x, top, ink, value_area(label))
+        cv.text(value, W - text_width(value) if x is None else x, top, ink, value_area(index))
         bar_y = top + 6
         cv.rect(0, bar_y, W, 1, TRACK)
         if pct:
@@ -234,12 +245,45 @@ def percent_text(pct):
     return "--" if pct is None else f"{min(pct, 100)}%"
 
 
-def timeline(vendor, s, w, interval_ms=DWELL_MS, step=1, marquee="edge", threshold=80):
-    """[(canvas, ms)] — phase A percents; phase B resets for rows >= 80%.
+def reset_value(index, message):
+    """A reset that fits, centred in the columns its row has left.
 
-    s reset: 'rst HH:mm' (fits, static). w reset: 'rst dd.MM HH:mm' as a
-    marquee through its value area, entering at the right edge and leaving at
-    the left; phase B lasts as long as the marquee does.
+    Centred rather than right-aligned: for those seconds the reset is the whole
+    content of the row, and inheriting the figure's alignment leaves a gap
+    exactly where the eye starts reading.
+    """
+    lo, hi = value_area(index)
+    return message, lo + (hi - lo - text_width(message)) // 2
+
+
+def marquee_frames(vendor, pcts, values, index, message):
+    """A reset too wide for its row: one full pass, a pixel a frame.
+
+    It enters past the RIGHT EDGE OF THE PANEL and runs out past its row's left
+    boundary. Starting at the row's left edge instead — which the first design
+    did, to save frames — makes the line appear in the middle of the panel
+    already half read, and that reads as a cut rather than as motion.
+
+    The phase lasts as long as the pass takes, rather than the pass being
+    decimated to fit a phase. Dropping positions to hit a fixed duration is
+    exactly what makes a marquee stutter, and the panel has frames to spare: a
+    full pass of the longest reset is under a hundred of the 478 it will play.
+    """
+    lo, _ = value_area(index)
+    frames = []
+    for x in range(W, lo - text_width(message) - 1, -1):
+        shown = list(values)
+        shown[index] = (message, x)
+        frames.append((draw(vendor, pcts, shown), MARQUEE_STEP_MS))
+    return frames
+
+
+def timeline(vendor, s, w, interval_ms=DWELL_MS, step=1, marquee="edge", threshold=80):
+    """[(canvas, ms)] — phase A percents; phase B the resets of the hot rows.
+
+    A reset that fits its row stands still and centred; one that does not makes
+    a single pass from off the right edge. `5h`'s `rst HH:mm` always fits;
+    `week`'s `rst d mmm HH:mm` never does.
     """
     pcts = [s["pct"], w["pct"]]
     # Hot needs BOTH a reading past the threshold and a reset the source named.
@@ -251,25 +295,17 @@ def timeline(vendor, s, w, interval_ms=DWELL_MS, step=1, marquee="edge", thresho
     frames = percent_phase(vendor, pcts, a, interval_ms)
     if not any(hot):
         return frames
-    s_val = (f"rst {s['rst']}", None) if hot[0] else a[0]
-    if not hot[1]:
-        frames.append((draw(vendor, pcts, [s_val, a[1]]), DWELL_MS))
+    messages = [f"rst {r['rst']}" for r in (s, w)]
+    fits = [text_width(m) <= value_area(i)[1] - value_area(i)[0] for i, m in enumerate(messages)]
+    # Everything that fits is placed first, so a row that has to scroll scrolls
+    # with the other row's reset already standing beside it.
+    values = [reset_value(i, messages[i]) if hot[i] and fits[i] else a[i] for i in range(2)]
+    scrolling = [i for i in range(2) if hot[i] and not fits[i]]
+    if not scrolling:
+        frames.append((draw(vendor, pcts, values), DWELL_MS))
         return frames
-    msg = f"rst {w['rst']}"
-    lo, hi = value_area("w")
-    if marquee == "full":
-        for x in range(hi, lo - text_width(msg) - 1, -step):
-            frames.append((draw(vendor, pcts, [s_val, (msg, x)]), SCROLL_STEP_MS * step))
-        return frames
-    # "edge": start readable at the zone's left edge, glide 1px at a time until
-    # the tail shows, hold both ends — smooth 1px motion inside ~25 frames.
-    end = min(lo, hi - text_width(msg))
-    xs = list(range(lo, end - 1, -step))
-    if xs[-1] != end:
-        xs.append(end)
-    for i, x in enumerate(xs):
-        ms = EDGE_HOLD_START_MS if i == 0 else EDGE_HOLD_END_MS if i == len(xs) - 1 else EDGE_STEP_MS * step
-        frames.append((draw(vendor, pcts, [s_val, (msg, x)]), ms))
+    for index in scrolling:
+        frames += marquee_frames(vendor, pcts, values, index, messages[index])
     return frames
 
 

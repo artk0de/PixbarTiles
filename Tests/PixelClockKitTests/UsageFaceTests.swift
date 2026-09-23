@@ -219,7 +219,12 @@ private let utc = TimeZone(identifier: "UTC")!
     }
 
     // The worst case the panel can be asked for — both rows hot, the longest
-    // weekly spelling — stays well inside the documented GIF ceilings.
+    // weekly spelling — stays inside the ceilings this panel was MEASURED at.
+    //
+    // 478 frames and 135 240 base64 bytes played on time on 2026-09-23; the
+    // 50 frames and 60 KB the vendor documents are wrong for this hardware and
+    // were never what the pages it plays obey. The bound is here so a design
+    // that quietly doubles the frame count has to argue with a number.
     @Test func theLongestMarqueeStaysInsideTheSceneLimits() throws {
         // 2026-09-30 23:59 UTC: two-digit day, the widest digits.
         let late = Date(timeIntervalSince1970: 1_790_812_740)
@@ -231,8 +236,8 @@ private let utc = TimeZone(identifier: "UTC")!
             timeZone: utc
         )
         let image = delivery.scene.frames[0].image[0]
-        #expect(image.frameCount <= 50)
-        #expect(image.base64.utf8.count <= 60_000)
+        #expect(image.frameCount <= 478)
+        #expect(image.base64.utf8.count <= 135_240)
     }
 }
 
@@ -300,9 +305,13 @@ private func facePixel(_ vendor: UsageFace.Vendor, session: Int?, at point: (x: 
 
 /// Every colour the session row's figure is drawn in — its five rows, right of
 /// the label and its gap.
+///
+/// The row is labelled `5h`, which ends at column 15; the gap puts its value
+/// area at 20. Scanning from any earlier column reads the label's grey as if
+/// it were the figure's ink.
 private func figureInk(_ vendor: UsageFace.Vendor, session: Int?) -> Set<String> {
     var ink: Set<String> = []
-    for x in 14..<PixelCanvas.width {
+    for x in 20..<PixelCanvas.width {
         for y in 1..<6 {
             let hex = facePixel(vendor, session: session, at: (x, y))
             if hex != "000000" { ink.insert(hex) }
@@ -450,13 +459,11 @@ private func barColour(_ frame: UsageFace.Frame) -> String {
     #expect(facePixel(.claude, session: nil, at: (0, 7)) == "303030")
 }
 
-// The two labels are centred on each other rather than flush left. In the
-// proportional face "s" is three columns wide and "w" is five, so left-aligned
-// they hang off one another by two pixels — on a panel where the two rows are
-// read as a pair.
-@Test func theRowLabelsAreCentredOnEachOther() {
-    // "w" starts at the label column; "s", two columns narrower, starts one
-    // to the right of it.
+// Each row's label starts where its own row has room. The mark is five rows
+// tall and stands on the top row alone, so the top label begins after it and
+// the bottom one at the panel's edge — nine columns the weekly row was holding
+// for a mark that is not there, and exactly the columns its long reset needs.
+@Test func eachRowsLabelStartsWhereThatRowHasRoom() {
     let frames = UsageFace.timeline(
         vendor: .claude,
         session: UsageFace.Window(percent: 50, resetsAt: nil),
@@ -467,7 +474,7 @@ private func barColour(_ frame: UsageFace.Frame) -> String {
     let canvas = frames[0].canvas
 
     func firstLitColumn(ofRowAt top: Int) -> Int? {
-        (9..<16).first { x in
+        (0..<20).first { x in
             (top..<(top + 5)).contains { y in
                 let pixel = canvas[x, y]
                 return (pixel.red, pixel.green, pixel.blue) == (0x60, 0x60, 0x60)
@@ -475,6 +482,35 @@ private func barColour(_ frame: UsageFace.Frame) -> String {
         }
     }
 
-    #expect(firstLitColumn(ofRowAt: 9) == 9)
-    #expect(firstLitColumn(ofRowAt: 1) == 10)
+    #expect(firstLitColumn(ofRowAt: 1) == 9)
+    #expect(firstLitColumn(ofRowAt: 9) == 0)
+}
+
+// And the reset a row can hold still is centred in what that row has left, not
+// right-aligned. For those seconds the reset IS the row's content, and the
+// figure's alignment leaves a gap exactly where the eye starts reading.
+@Test func aResetThatFitsIsCentredInItsRow() {
+    // 14:30 UTC: `rst 14:30` is 31 columns against the 5h row's 32.
+    let at = Date(timeIntervalSince1970: 1_790_778_600)
+    let frames = UsageFace.timeline(
+        vendor: .claude,
+        session: UsageFace.Window(percent: 84, resetsAt: at),
+        weekly: UsageFace.Window(percent: 52, resetsAt: nil),
+        config: .standard,
+        timeZone: TimeZone(identifier: "UTC")!
+    )
+    let canvas = frames[frames.count - 1].canvas
+
+    // From past the mark, which lives in these same rows and is not grey.
+    let firstLit = (9..<PixelCanvas.width).first { x in
+        (1..<6).contains { y in
+            let pixel = canvas[x, y]
+            return (pixel.red, pixel.green, pixel.blue) != (0, 0, 0)
+                && (pixel.red, pixel.green, pixel.blue) != (0x60, 0x60, 0x60)
+        }
+    }
+
+    // The area runs 20..<52 and the message is 31 wide, so the spare column
+    // sits on the left: the reset starts at 20, not flush against the edge.
+    #expect(firstLit == 20)
 }

@@ -15,13 +15,13 @@ import Foundation
 /// re-pushes for motion:
 ///
 /// - Frame A, the percentages, stands for "show reset every".
-/// - A hot `s` row flips to `rst HH:mm` — it fits its value area, so it is
-///   still. With only `s` hot, that is one frame of five seconds.
-/// - A hot `w` row's `rst d mmm HH:mm` does not fit, so it glides through its
-///   value area one pixel a frame: readable at the area's left edge for a
-///   second, then 100 ms a step until its tail meets the panel's edge, held a
-///   second and a half. A hot `s` shows its reset in every one of those
-///   frames.
+/// - A hot `5h` row flips to `rst HH:mm` — 31 columns against its 32, so it
+///   stands still, centred in what the row has left. With only `5h` hot, that
+///   is one frame of five seconds.
+/// - A hot `week` row's `rst d mmm HH:mm` is 55 columns against its 31, so it
+///   makes one pass: in past the panel's right edge, out past the row's left
+///   boundary, a pixel every 60 ms. A hot `5h` shows its reset, still, in
+///   every one of those frames.
 ///
 /// Reset times are INSTANTS, said in the zone the face is drawn in — the
 /// Mac's — whatever zone the vendor's server keeps (z.ai's is Asia/Shanghai).
@@ -130,30 +130,27 @@ public enum UsageFace {
         return fillColour(at: percent, dim: dim)
     }
     private static let logoOrigin = PixelPoint(x: 0, y: 1)
-    private static let labelX = 9
-    /// The box the two labels are centred in — the wider of them.
+    /// Where each row's label starts.
     ///
-    /// In the proportional face "s" is three columns wide and "w" is five, so
-    /// flush left they hang off one another by two pixels: one row's mark
-    /// visibly left of the other's, on a panel where the two rows are read as
-    /// a pair.
-    private static var labelBox: Int {
-        rows.map { font.width(of: $0.label, scale: 1) }.max() ?? 0
-    }
-
-    private static func labelX(of label: String) -> Int {
-        labelX + (labelBox - font.width(of: label, scale: 1)) / 2
-    }
+    /// The mark is five rows tall and stands on the TOP row alone, so the top
+    /// label begins after it and the bottom one at the panel's edge. Nine
+    /// columns of the weekly row were being held for a mark that is not there
+    /// — and they are exactly the columns its long reset was scrolling for.
+    private static let labelX = [9, 0]
     /// Columns between a label and the value area. Fewer, and a scrolling
     /// value reads as one word with its label.
     private static let labelGap = 4
-    private static let rows: [(label: String, top: Int)] = [("s", 1), ("w", 9)]
+    /// The rows are named for the PERIOD each measures.
+    ///
+    /// `s` and `w` were one glyph apiece because the face was built before
+    /// there was anything else to call them, and a single letter is a legend
+    /// the panel never prints.
+    private static let rows: [(label: String, top: Int)] = [("5h", 1), ("week", 9)]
 
-    /// How long the session's reset stands when it is the only thing to say.
+    /// How long a reset that fits its row stands.
     private static let dwellMilliseconds = 5_000
-    private static let marqueeHoldStart = 1_000
-    private static let marqueeStep = 100
-    private static let marqueeHoldEnd = 1_500
+    /// One pixel a frame, the whole pass at one speed.
+    private static let marqueeStepMilliseconds = 60
 
     private static let font = PixelFont.proportional
 
@@ -181,32 +178,47 @@ public enum UsageFace {
         )
         guard hot.contains(true) else { return phase }
 
-        let sessionValue: (text: String, x: Int?) = if hot[0], let at = session?.resetsAt {
-            (sessionReset(at, in: timeZone), nil)
-        } else {
-            (percents[0], nil)
+        let messages = [
+            session?.resetsAt.map { sessionReset($0, in: timeZone) },
+            weekly?.resetsAt.map { weeklyReset($0, in: timeZone) },
+        ]
+        let fits = messages.indices.map { index in
+            guard let message = messages[index] else { return false }
+            return font.width(of: message, scale: 1) <= valueArea(index).count
         }
-        guard hot[1], let weeklyAt = weekly?.resetsAt else {
-            let flipped = draw(vendor, windows, values: [sessionValue, (percents[1], nil)])
+
+        // Everything that fits is placed first, CENTRED in what its row has
+        // left — for those seconds the reset is the whole content of the row,
+        // and inheriting the figure's right alignment leaves a gap exactly
+        // where the eye starts reading. A row that must scroll then scrolls
+        // with the other row's reset already standing beside it.
+        let values: [(text: String, x: Int?)] = messages.indices.map { index in
+            guard hot[index], fits[index], let message = messages[index] else {
+                return (percents[index], nil)
+            }
+            let area = valueArea(index)
+            let x = area.lowerBound + (area.count - font.width(of: message, scale: 1)) / 2
+            return (message, x)
+        }
+        let scrolling = messages.indices.filter { hot[$0] && !fits[$0] }
+        guard !scrolling.isEmpty else {
+            let flipped = draw(vendor, windows, values: values)
             return phase + [Frame(canvas: flipped, milliseconds: dwellMilliseconds)]
         }
 
-        // The edge marquee: start readable at the area's left edge, glide one
-        // pixel a frame until the tail shows, hold both ends.
-        let message = weeklyReset(weeklyAt, in: timeZone)
-        let area = valueArea(label: rows[1].label)
-        let end = min(area.lowerBound, area.upperBound - font.width(of: message, scale: 1))
-        let positions = Array(stride(from: area.lowerBound, through: end, by: -1))
         var frames = phase
-        for (index, x) in positions.enumerated() {
-            let milliseconds =
-                index == 0 ? marqueeHoldStart
-                : index == positions.count - 1 ? marqueeHoldEnd
-                : marqueeStep
-            frames.append(Frame(
-                canvas: draw(vendor, windows, values: [sessionValue, (message, x)]),
-                milliseconds: milliseconds
-            ))
+        for index in scrolling {
+            guard let message = messages[index] else { continue }
+            let width = font.width(of: message, scale: 1)
+            let area = valueArea(index)
+            for x in stride(from: PixelCanvas.width, through: area.lowerBound - width, by: -1) {
+                var shown = values
+                shown[index] = (message, x)
+                frames.append(Frame(
+                    canvas: draw(vendor, windows, values: shown),
+                    milliseconds: marqueeStepMilliseconds
+                ))
+            }
         }
         return frames
     }
@@ -322,10 +334,16 @@ public enum UsageFace {
         "\(min(percent, 100))%"
     }
 
-    /// The columns a row's value may use: from the label, plus the gap, to
-    /// the panel's edge.
-    private static func valueArea(label: String) -> Range<Int> {
-        (labelX + font.width(of: label, scale: 1) + labelGap)..<PixelCanvas.width
+    /// The columns a row's value may use: after its OWN label, plus the gap,
+    /// to the panel's edge.
+    ///
+    /// Per row rather than one box as wide as the widest name. That box was
+    /// written for one-letter labels, where it kept the two marks from hanging
+    /// off one another; with two words of different lengths it only takes the
+    /// shorter row's columns away and gives nothing back.
+    private static func valueArea(_ index: Int) -> Range<Int> {
+        let start = labelX[index] + font.width(of: rows[index].label, scale: 1) + labelGap
+        return start..<PixelCanvas.width
     }
 
     /// One frame: the mark, and per row its label, its value — right-aligned
@@ -342,15 +360,17 @@ public enum UsageFace {
                 canvas[logoOrigin.x + dx, logoOrigin.y + dy] = logoInk
             }
         }
-        for ((label, top), (window, value)) in zip(rows, zip(windows, values)) {
+        for (index, ((label, top), (window, value)))
+            in zip(rows, zip(windows, values)).enumerated()
+        {
             canvas.drawText(
-                label, at: PixelPoint(x: labelX(of: label), y: top),
+                label, at: PixelPoint(x: labelX[index], y: top),
                 ink: Pixel(colour: labelColour), font: font
             )
             // The value on a strip as wide as its area, laid on the page: the
             // strip's edge is the clip, so a scrolling reset never reaches
             // the label.
-            let area = valueArea(label: label)
+            let area = valueArea(index)
             var strip = PixelCanvas(width: area.count, height: font.height)
             let x = value.x ?? PixelCanvas.width - font.width(of: value.text, scale: 1)
             strip.drawText(

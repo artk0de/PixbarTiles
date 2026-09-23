@@ -33,19 +33,42 @@ frames are the pixel oracle the Swift face is tested against.
 3. **Render and open**: `python3 gen.py && open tc002-mockup-out/index.html`.
    Look at the key-frame PNGs yourself (Read them) before showing the user —
    check clipping, glyph collisions, width at the worst case.
-4. **Iterate with the user** on the HTML. Tile parameters (intervals,
-   thresholds) belong in the page as live `<select>`s; precompute one
-   timeline per value in `gen.py` rather than re-implementing drawing in JS.
-5. **Live demo**: `TC002_HOST=<ip> python3 tc002_demo.py` pushes demo pages
-   under their own names (`demo-*`), so the running app never overwrites them,
-   and switches the clock to one. `--remove` deletes them afterwards.
+4. **Iterate with the user IN THE BROWSER until the arrangement is settled.**
+   Tile parameters (intervals, thresholds) belong in the page as live
+   `<select>`s; precompute one timeline per value in `gen.py` rather than
+   re-implementing drawing in JS.
 
-   A colour, a rhythm or a contrast is judged HERE, never in the browser: the
-   LEDs run dim, the dots are round and separated, and a deep red that reads as
-   urgent on a monitor can be the faintest thing on the row at brightness two.
-   Push one page per candidate, mark each with its own letter or digit in a
-   free patch of the face, and show every candidate beside the state below it
-   — a spent colour is only ever read next to the step before it.
+   **The mockup MOVES.** Every dwell, flip, marquee, pulse and transition
+   between cards plays in the page, at the delays the clock will use — that is
+   what a timeline of `(canvas, ms)` is for, and `index.html` only has to play
+   it. A grid of still frames is not a mockup of this face: half of what is
+   being judged is timing. Does the eye finish the reset before it slides? Does
+   the pulse read as urgent or as a fault? Is the cut jarring where a push
+   would say which way the list runs? None of that is visible in a PNG. Render
+   the stills for YOURSELF, to catch clipping and collisions before showing;
+   render motion for the user.
+
+   Draw what does NOT exist yet. A candidate already implemented in the kit
+   costs a round trip to show back — check what the tile draws today before
+   deciding what to render, and put the effort into the arrangements nobody
+   has seen. Showing the existing one beside the new ones as a reference is
+   fine; shipping it AS a candidate is not.
+5. **Only after the browser has settled the arrangement, go to the clock.**
+   `TC002_HOST=<ip> python3 tc002_demo.py` pushes demo pages under their own
+   names (`demo-*`), so the running app never overwrites them, and switches
+   the clock to one.
+
+   Never in the same breath as first showing the HTML. The browser is the
+   cheap loop — a re-render is seconds and the user can scroll every case at
+   once; the clock shows one page at a time and has to be cleaned up after.
+   Layout, spacing, clipping and wording are settled in the browser. What the
+   clock is FOR is the judgement a monitor cannot make: colour, brightness,
+   rhythm, contrast. The LEDs run dim, the dots are round and separated, and a
+   deep red that reads as urgent in a browser can be the faintest thing on the
+   row at brightness two. Push one page per candidate, mark each with its own
+   letter or digit in a free patch of the face, and show every candidate
+   beside the state below it — a spent colour is only ever read next to the
+   step before it.
 6. **Clear the clock the moment the choice is made.** `--remove` every `demo-*`
    page you pushed, before writing any Swift. A demo left behind keeps showing
    invented numbers under the app's own name — a full bar at 104% that nothing

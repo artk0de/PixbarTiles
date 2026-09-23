@@ -133,7 +133,7 @@ public struct ClaudeUsageConnector: Connector {
             icon: .bundled("ClaudeStar"),
             progress: ProgressBar(
                 percent: percentage,
-                fill: ClaudeUsageBand(utilization: percentage).fillColour,
+                fill: UsageBand(utilization: percentage).fillColour,
                 track: Self.trackColour
             ),
             color: ClaudeUsage.brandColour,
@@ -173,7 +173,7 @@ public struct ClaudeUsageConnector: Connector {
             label: label,
             value: percentage.map { "\($0)%" } ?? "-",
             colour: UlanziColour(
-                hex: percentage.map { ClaudeUsageBand(utilization: $0).fillColour } ?? trackColour
+                hex: percentage.map { UsageBand(utilization: $0).fillColour } ?? trackColour
             )
         )
     }

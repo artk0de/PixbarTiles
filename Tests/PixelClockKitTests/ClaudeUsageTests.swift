@@ -18,34 +18,34 @@ import Testing
 // those states leaves the bar shouting through an ordinary week — and a warning
 // that is on half the time is not read at all.
 @Test func anOrdinaryWeekLeavesTheBarInItsRestingColour() {
-    #expect(ClaudeUsageBand(utilization: 0) == .steady)
-    #expect(ClaudeUsageBand(utilization: 50) == .steady)
-    #expect(ClaudeUsageBand(utilization: 79) == .steady)
+    #expect(UsageBand(utilization: 0) == .steady)
+    #expect(UsageBand(utilization: 50) == .steady)
+    #expect(UsageBand(utilization: 79) == .steady)
 }
 
 @Test func eachThresholdOpensItsOwnBand() {
-    #expect(ClaudeUsageBand(utilization: 80) == .watch)
-    #expect(ClaudeUsageBand(utilization: 89) == .watch)
-    #expect(ClaudeUsageBand(utilization: 90) == .close)
-    #expect(ClaudeUsageBand(utilization: 94) == .close)
-    #expect(ClaudeUsageBand(utilization: 95) == .spent)
-    #expect(ClaudeUsageBand(utilization: 100) == .spent)
+    #expect(UsageBand(utilization: 80) == .watch)
+    #expect(UsageBand(utilization: 89) == .watch)
+    #expect(UsageBand(utilization: 90) == .close)
+    #expect(UsageBand(utilization: 94) == .close)
+    #expect(UsageBand(utilization: 95) == .spent)
+    #expect(UsageBand(utilization: 100) == .spent)
 }
 
 // Over a hundred is not impossible — an overage channel keeps serving past the
 // bar — and it is the one reading that must not fall back to a calm colour.
 @Test func aReadingPastTheEndOfTheBarStaysInTheLastBand() {
-    #expect(ClaudeUsageBand(utilization: 140) == .spent)
+    #expect(UsageBand(utilization: 140) == .spent)
 }
 
 @Test func everyBandDrawsADistinctColour() {
-    let colours = Set(ClaudeUsageBand.allCases.map(\.fillColour))
+    let colours = Set(UsageBand.allCases.map(\.fillColour))
 
-    #expect(colours.count == ClaudeUsageBand.allCases.count)
+    #expect(colours.count == UsageBand.allCases.count)
     // The resting band is the brand colour, which is what the number is drawn
     // in too: at rest the app reads as one object rather than as a warning.
-    #expect(ClaudeUsageBand.steady.fillColour == ClaudeUsage.brandColour)
-    #expect(ClaudeUsageBand.spent.fillColour != ClaudeUsage.brandColour)
+    #expect(UsageBand.steady.fillColour == ClaudeUsage.brandColour)
+    #expect(UsageBand.spent.fillColour != ClaudeUsage.brandColour)
 }
 
 // MARK: - What reaches the device
@@ -58,7 +58,7 @@ import Testing
     #expect(output.icon == .bundled("ClaudeStar"))
     #expect(output.surface == .app(ClaudeUsageConnector.appName))
     #expect(output.progress?.percent == 83)
-    #expect(output.progress?.fill == ClaudeUsageBand.watch.fillColour)
+    #expect(output.progress?.fill == UsageBand.watch.fillColour)
 }
 
 // The bar is drawn by the firmware from three fields, and a percentage outside

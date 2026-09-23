@@ -54,9 +54,9 @@ import Testing
     @Test func everyValueInksInItsOwnBand() {
         let rows = ClaudeUsageConnector.rows(for: reading)
 
-        #expect(rows[0].colour == UlanziColour(hex: ClaudeUsageBand(utilization: 23).fillColour))
+        #expect(rows[0].colour == UlanziColour(hex: UsageBand(utilization: 23).fillColour))
         #expect(rows[1].colour == UlanziColour(hex: ClaudeUsage.brandColour))
-        #expect(rows[2].colour == UlanziColour(hex: ClaudeUsageBand(utilization: 8).fillColour))
+        #expect(rows[2].colour == UlanziColour(hex: UsageBand(utilization: 8).fillColour))
         #expect(
             ClaudeUsageConnector.rows(for: ClaudeUsageReading(utilization: 41, resetsAt: nil))[0].colour
                 == UlanziColour(hex: ClaudeUsageConnector.trackColour)

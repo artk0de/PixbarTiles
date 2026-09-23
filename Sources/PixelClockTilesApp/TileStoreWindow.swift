@@ -122,15 +122,27 @@ struct TileStoreWindow: View {
 struct TileStoreCardView: View {
     let card: StoreModel.StoreCard
     let onAdd: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    private var nameInk: UInt32 { PixelInk.primary(dark: scheme == .dark) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: card.candidate.storeIcon)
-                    .font(.system(size: 22))
-                    .frame(width: 32, height: 32)
-                    .foregroundStyle(.secondary)
-                Text(card.title).font(.headline)
+                // The same badge the clock's own list wears, drawn from the
+                // same table: a tile has ONE face, and the store is where
+                // somebody meets it first.
+                PixelArt(
+                    map: PanelGlyph.tile(forConnectorId: card.candidate.connectorId),
+                    palette: PanelGlyph.tilePalette(card.candidate.category),
+                    pixel: 2
+                )
+                PixelArt(
+                    map: PanelGlyph.text(card.title, in: PixelFont.standard, lit: "G"),
+                    palette: PanelGlyph.inkPalette(nameInk),
+                    pixel: 2
+                )
+                .accessibilityLabel(card.title)
                 Spacer()
             }
             Text(card.candidate.blurb)

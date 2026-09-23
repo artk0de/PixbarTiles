@@ -152,20 +152,36 @@ private struct TilesGrid: View {
         }
     }
 
-    /// Compact, one row tall: the grid grows by one of its own.
+    /// The way to a new tile, and the biggest thing on the surface.
+    ///
+    /// It was a 40pt strip with an SF `plus` and "Add tile" in the system
+    /// face, and only the strip answered a press — on a list whose one
+    /// remaining action is "add another one". Now it is the width of the
+    /// list, tall enough to aim at without looking, set in the clock's own
+    /// face, and the whole rectangle is the target: `contentShape` rather
+    /// than whatever the label happens to cover.
+    ///
+    /// A square dashed border rather than a rounded one. The dashes ARE the
+    /// pixels — a 2pt stroke broken every 4pt is a row of blocks, which is
+    /// the only way a border that has to resize with a window can be drawn in
+    /// this vocabulary at all.
     private var addCard: some View {
         Button(action: onAdd) {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                Text("Add tile").font(.callout)
-            }
-            .frame(maxWidth: .infinity, minHeight: 40)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4]))
+            PixelArt(
+                map: PanelGlyph.text("ADD TILE", in: PixelFont.standard, lit: "G"),
+                palette: PanelGlyph.inkPalette(0xFFFFFF),
+                pixel: 3
             )
+            .frame(maxWidth: .infinity, minHeight: 64)
+            .background(
+                Rectangle().strokeBorder(
+                    Color.white, style: StrokeStyle(lineWidth: 2, dash: [4, 4])
+                )
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerStyle(.link)
         .accessibilityLabel("Add tile to \(clock.name)")
     }
 
@@ -188,28 +204,48 @@ private struct ClockTileCard: View {
 
     private var key: TileKey { record.key }
     private var name: String { model.tileName(of: record) }
+    /// The shared table: the shelf the tile is filed on, and its one line.
+    private var presentation: TilePresentation {
+        TilePresentation.of(connectorId: key.connectorId)
+    }
+
+    /// The ink a name is set in — the panel's primary, so a name here and a
+    /// name on the panel are the same weight.
+    private var nameInk: UInt32 { PixelInk.primary(dark: scheme == .dark) }
     private var accent: Color { Self.accent(for: key.connectorId) }
 
-    /// One colour per connector, so a grid of cards reads as a set of
-    /// different things rather than a wall of the same grey. The map is the
-    /// panel's own SF Symbol table's sibling — same keys, one hue each.
+    /// One colour per SHELF, so a list of cards reads as a set of things with
+    /// something in common rather than a wall of the same grey.
+    ///
+    /// Per shelf and not per connector, which is what it was: two Dev tiles
+    /// side by side came out orange and green, and nothing on either card
+    /// said what they shared. Through `PanelGlyph.categoryTint`, which is
+    /// also what the badge's field is drawn in — one value, so the card and
+    /// the mark on it cannot disagree.
     static func accent(for connectorId: String) -> Color {
-        switch connectorId {
-        case "weather": .cyan
-        case "claude": .orange
-        case "zai": .green
-        case "anecdotes": .pink
-        case VPNConnector.id: .purple
-        default: .gray
-        }
+        Color(hex: PanelGlyph.categoryTint(TilePresentation.of(connectorId: connectorId).category))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: TileRowIcon.symbol(forConnectorId: key.connectorId))
-                    .foregroundStyle(accent)
-                Text(name).font(.callout).lineLimit(1)
+            HStack(spacing: 8) {
+                // The tile's own mark, in the app's pixel vocabulary rather
+                // than the system's: this list, the panel and the clock's
+                // matrix are one app, and an SF Symbol in `.secondary` beside
+                // a pixel gear was two vocabularies on one card.
+                PixelArt(
+                    map: PanelGlyph.tile(forConnectorId: key.connectorId),
+                    palette: PanelGlyph.tilePalette(presentation.category),
+                    pixel: 2
+                )
+                // The name set in the clock's own face, at twice the pixel —
+                // which is what makes it read bold beside the line under it.
+                PixelArt(
+                    map: PanelGlyph.text(name, in: PixelFont.standard, lit: "G"),
+                    palette: PanelGlyph.inkPalette(nameInk),
+                    pixel: 2
+                )
+                .accessibilityLabel(name)
                 Spacer()
                 if let failure = model.lastFailure(of: key) {
                     // A failed push is THIS tile's error, said where the tile
@@ -232,6 +268,15 @@ private struct ClockTileCard: View {
                 .pointerStyle(.default)
                 .accessibilityLabel("\(name) settings")
                 .help("\(name) settings")
+            }
+            // What the tile IS, which the card never said. The name answers
+            // "which one", and on a clock carrying two usage tiles that is
+            // not the same question.
+            if presentation.blurb.isEmpty == false {
+                Text(presentation.blurb)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let line = resultLine {
                 Text(line)

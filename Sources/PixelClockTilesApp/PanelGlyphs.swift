@@ -332,5 +332,131 @@ enum PanelGlyph {
     ]
 
     /// The one-ink marks: drawn in whatever colour the card's text is.
+    // MARK: - A tile's own mark
+
+    /// The key a tile badge's coloured field carries, against `"G"` for the
+    /// mark drawn on it.
+    static let fieldInk: Character = "B"
+
+    /// A terminal prompt: the Claude and z.ai tiles both report a coding
+    /// subscription being spent, and a prompt is what a reader of either has
+    /// been looking at all day.
+    ///
+    /// One mark for the two of them rather than a bar chart for one and a
+    /// prompt for the other — they answer the same question about different
+    /// accounts, and the account is said by the tile's name beside the mark.
+    static let terminalTile = [
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+        "BBGBBBBBBBB",
+        "BBBGBBBBBBB",
+        "BBBBGBBBBBB",
+        "BBBGBBBBBBB",
+        "BBGBBBBBBBB",
+        "BBBBBBBBBBB",
+        "BBBBGGGGGBB",
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+    ]
+
+    /// A cloud. The sun was drawn beside it first and lost at this size: two
+    /// shapes in eleven pixels read as one blob.
+    static let weatherTile = [
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+        "BBBBGGGBBBB",
+        "BBBGGGGGBBB",
+        "BBGGGGGGGBB",
+        "BGGGGGGGGGB",
+        "BGGGGGGGGGB",
+        "BBGGGGGGGBB",
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+    ]
+
+    /// A speech bubble: the one tile that SPEAKS.
+    static let anecdoteTile = [
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+        "BBGGGGGGGBB",
+        "BBGBBBBBGBB",
+        "BBGBBBBBGBB",
+        "BBGGGGGGGBB",
+        "BBBGGBBBBBB",
+        "BBBBGBBBBBB",
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+    ]
+
+    /// A padlock, shackle up: the VPN lamp is on when the tunnel is.
+    static let vpnTile = [
+        "BBBBBBBBBBB",
+        "BBBBGGGBBBB",
+        "BBBGBBBGBBB",
+        "BBBGBBBGBBB",
+        "BBGGGGGGGBB",
+        "BBGGGGGGGBB",
+        "BBGGGBGGGBB",
+        "BBGGGGGGGBB",
+        "BBGGGGGGGBB",
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+    ]
+
+    /// A question mark, for a tile this app has not heard of. Visibly a tile
+    /// rather than a gap, which is what the shared table already decided.
+    static let unknownTile = [
+        "BBBBBBBBBBB",
+        "BBBBGGGBBBB",
+        "BBBGBBBGBBB",
+        "BBBBBBBGBBB",
+        "BBBBBGGBBBB",
+        "BBBBBGBBBBB",
+        "BBBBBBBBBBB",
+        "BBBBBGBBBBB",
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+    ]
+
+    /// The mark a connector's tile wears, in the app's pixel vocabulary.
+    ///
+    /// Keyed on the connector id, like the shared `TilePresentation` table it
+    /// stands beside: what a tile looks like is the TILE's question, and a
+    /// running instance may not be in hand when a list is being drawn.
+    static func tile(forConnectorId id: String) -> [String] {
+        switch id {
+        case WeatherConnector.appName: weatherTile
+        case ClaudeUsageConnector.id, ZaiUsageConnector.connectorId: terminalTile
+        case "anecdotes": anecdoteTile
+        case VPNConnector.id: vpnTile
+        default: unknownTile
+        }
+    }
+
+    /// One hue per SHELF rather than per connector.
+    ///
+    /// The store files tiles on four shelves and the clock's list did not say
+    /// so at all — it had a colour per connector, so two Dev tiles sitting
+    /// side by side were orange and green and nothing on either card said
+    /// what they had in common.
+    static func categoryTint(_ category: TileCategory) -> UInt32 {
+        switch category {
+        case .weather: 0x32ADE6
+        case .dev: 0xFF9F0A
+        case .system: 0xBF5AF2
+        case .network: 0x30D158
+        }
+    }
+
+    /// A badge: the shelf's colour as the field, the mark knocked out of it in
+    /// white. White rather than the card's ink, because the field is a colour
+    /// and a mark in grey on it is a mark nobody sees.
+    static func tilePalette(_ category: TileCategory) -> Palette {
+        ["B": categoryTint(category), "G": 0xFFFFFF]
+    }
+
     static func inkPalette(_ ink: UInt32) -> Palette { ["G": ink] }
 }

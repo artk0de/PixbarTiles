@@ -267,3 +267,73 @@ private func reading(
 @Test func anEmptyWordDrawsNothingButKeepsItsRows() {
     #expect(PanelGlyph.text("", in: PixelFont.tiny) == ["", "", "", "", ""])
 }
+
+// MARK: - A tile's own mark
+
+// Every badge is a square of the same size, because they are drawn beside one
+// another in a list: one mark a pixel taller than its neighbour shifts the
+// name beside it.
+@Test func everyTileBadgeIsTheSameElevenBySquare() {
+    for id in ["weather", "claude", "zai", "anecdotes", VPNConnector.id, "nothing-at-all"] {
+        let map = PanelGlyph.tile(forConnectorId: id)
+        #expect(map.count == 11, "\(id)")
+        #expect(map.allSatisfy { $0.count == 11 }, "\(id)")
+    }
+}
+
+// Two chars and no others: the shelf's colour, and the mark knocked out of it.
+@Test func aTileBadgeIsAFieldAndAMarkAndNothingElse() {
+    for id in ["weather", "claude", "anecdotes", VPNConnector.id] {
+        let ink = Set(PanelGlyph.tile(forConnectorId: id).joined())
+        #expect(ink == ["B", "G"], "\(id)")
+    }
+}
+
+// The two coding subscription tiles wear ONE mark. They answer the same
+// question about different accounts, and the account is what their names say.
+@Test func claudeAndZaiWearTheSameTerminal() {
+    #expect(PanelGlyph.tile(forConnectorId: "claude") == PanelGlyph.terminalTile)
+    #expect(PanelGlyph.tile(forConnectorId: "zai") == PanelGlyph.terminalTile)
+}
+
+// A tile the table has not heard of is still visibly a tile.
+@Test func aConnectorTheTableDoesNotKnowWearsTheQuestionMark() {
+    #expect(PanelGlyph.tile(forConnectorId: "not-a-connector") == PanelGlyph.unknownTile)
+}
+
+// Every mark is distinguishable from every other. Five badges that differ only
+// by colour would make the colour do all the work.
+@Test func noTwoMarksAreTheSameShape() {
+    let marks = [
+        PanelGlyph.weatherTile, PanelGlyph.terminalTile, PanelGlyph.anecdoteTile,
+        PanelGlyph.vpnTile, PanelGlyph.unknownTile,
+    ]
+    #expect(Set(marks.map { $0.joined() }).count == marks.count)
+}
+
+// A mark has to actually be drawn on the field, and not fill it either.
+@Test func everyMarkIsDrawnAndLeavesItsFieldVisible() {
+    for map in [
+        PanelGlyph.weatherTile, PanelGlyph.terminalTile, PanelGlyph.anecdoteTile,
+        PanelGlyph.vpnTile, PanelGlyph.unknownTile,
+    ] {
+        let lit = map.joined().filter { $0 == "G" }.count
+        #expect(lit >= 8)
+        #expect(lit <= 11 * 11 - 30)
+    }
+}
+
+// One hue per SHELF, and four shelves that can be told apart.
+@Test func eachShelfHasATintOfItsOwn() {
+    let tints = TileCategory.allCases.map(PanelGlyph.categoryTint)
+    #expect(Set(tints).count == TileCategory.allCases.count)
+}
+
+// The mark is white on the shelf's colour. Grey on a colour is a mark nobody
+// sees, which is what the SF Symbol in `.secondary` was.
+@Test func aBadgesMarkIsWhiteOnItsShelfsColour() {
+    let palette = PanelGlyph.tilePalette(.dev)
+
+    #expect(palette["G"] == 0xFFFFFF)
+    #expect(palette["B"] == PanelGlyph.categoryTint(.dev))
+}

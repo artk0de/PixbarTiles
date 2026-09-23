@@ -30,15 +30,49 @@ public struct UlanziBatterySample: Sendable, Equatable {
 /// three `int32`s. Every failure returns nil, because a wrong number on the
 /// panel is worse than no number.
 public struct UlanziBattery: Sendable {
-    /// libzkgui load-relative offset of the charging `int32`, per firmware
-    /// `appVer`. Percent is +4, millivolts +8; the window is 12 bytes.
+    /// Where one firmware build keeps the battery, as two hops rather than one
+    /// address.
     ///
-    /// Offsets are build-specific, so an unlisted version reads nothing rather
-    /// than reading whatever happens to sit there. Measured on the live clock:
-    /// base 0x43e87000 + 0x732ee8 held charging=1, percent=90, mV=3149 while
-    /// the firmware reported `Battery: 90%, V:3149mv, charging=1`.
-    static let offsets: [String: UInt32] = ["1.1.1": 0x0073_2EE8]
-    private static let windowLength = 12
+    /// The first address the spike found — the three `int32`s at `+0x732ee8` —
+    /// is `BatteryApp`'s own copy, and `BatteryApp` is the Battery SCREEN. It
+    /// is written when that screen updates and at no other time, so a clock
+    /// nobody has opened it on serves a figure hours old. Measured: it still
+    /// read 3149 mV three hours after the cell had charged to 4167.
+    ///
+    /// The live figures belong to `BatteryMonitor`, which `LogicThread` drives
+    /// every turn of its loop whatever is on screen. The monitor is allocated,
+    /// not static, so its address cannot be baked: `LogicThread`'s singleton is
+    /// at a fixed place in the library's `.bss`, and it holds the pointer.
+    ///
+    /// Read off `libzkgui.so` for appVer 1.1.1:
+    /// `LogicThread::getInstance` returns `+0x733c18`; `threadLoop` calls
+    /// `BatteryMonitor::update` with `[this + 0x60]`; `checkBatteryStatus`
+    /// stores `McuManager::queryBatteryPower`'s pair into `[monitor + 0x0c]`
+    /// (percent) and `[monitor + 0x10]` (millivolts).
+    struct Layout: Sendable {
+        /// The `LogicThread` singleton, load-relative.
+        let logicThread: UInt32
+        /// Where that object keeps the monitor it drives.
+        let monitorField: UInt32
+        /// The monitor's vtable, load-relative — the firmware's own word that
+        /// the pointer landed on a `BatteryMonitor` and not on whatever else
+        /// a changed build put there.
+        let monitorVTable: UInt32
+        let charging: Int
+        let percent: Int
+        let millivolts: Int
+    }
+
+    /// Layouts are build-specific, so an unlisted version reads nothing rather
+    /// than reading whatever happens to sit at those addresses.
+    static let layouts: [String: Layout] = [
+        "1.1.1": Layout(
+            logicThread: 0x0073_3C18, monitorField: 0x60, monitorVTable: 0x0072_1028,
+            charging: 0x04, percent: 0x0C, millivolts: 0x10
+        )
+    ]
+    /// Enough of the object to reach the millivolts.
+    private static let windowLength = 0x14
     /// Where the reader and its parameters live. `/tmp` is a 16 MB tmpfs wiped
     /// on reboot, so both are pushed every poll — idempotent and cheaper than
     /// probing for them.
@@ -65,25 +99,30 @@ public struct UlanziBattery: Sendable {
     }
 
     public func read(appVersion: String?, at now: Date) async -> UlanziBatterySample? {
-        guard let appVersion, let offset = Self.offsets[appVersion] else { return nil }
+        guard let appVersion, let layout = Self.layouts[appVersion] else { return nil }
         do {
             guard let pid = try await resolvePid() else { return nil }
             guard let base = try await resolveBase(pid: pid) else { return nil }
+            let mem = "/proc/\(pid)/mem"
 
             try await adb.push(helper, to: Self.helperPath, mode: 0o755)
-            try await adb.push(
-                request(address: base &+ offset, path: "/proc/\(pid)/mem"),
-                to: Self.requestPath, mode: 0o644
-            )
-            // Redirected to a file and pulled back: `shell:` is a PTY and turns
-            // every 0x0a into 0x0d 0x0a, which a percent of 10 would hit.
-            _ = try await adb.shell("\(Self.helperPath) > \(Self.outputPath)")
-            let out = try await adb.pull(Self.outputPath)
-            guard out.count >= Self.windowLength else { return nil }
 
-            let charging = le32(out, 0) != 0
-            let percent = Int(le32(out, 4))
-            let millivolts = Int(le32(out, 8))
+            // Hop one: the pointer the LogicThread singleton keeps.
+            let slot = try await window(
+                at: base &+ layout.logicThread &+ layout.monitorField, length: 4, in: mem
+            )
+            guard slot.count >= 4 else { return nil }
+            let monitor = le32(slot, 0)
+            guard monitor != 0 else { return nil }
+
+            // Hop two: the object it points at.
+            let out = try await window(at: monitor, length: UInt32(Self.windowLength), in: mem)
+            guard out.count >= Self.windowLength else { return nil }
+            guard le32(out, 0) == base &+ layout.monitorVTable else { return nil }
+
+            let charging = le32(out, layout.charging) != 0
+            let percent = Int(le32(out, layout.percent))
+            let millivolts = Int(le32(out, layout.millivolts))
             // A wrong number is worse than none.
             guard (0...100).contains(percent), (2000...4500).contains(millivolts) else { return nil }
             return UlanziBatterySample(
@@ -92,6 +131,21 @@ public struct UlanziBattery: Sendable {
         } catch {
             return nil
         }
+    }
+
+    /// One window of the process's memory: the request written, the reader run,
+    /// its bytes pulled back.
+    ///
+    /// Redirected to a file and pulled over sync rather than read off the
+    /// shell: `shell:` is a PTY and turns every 0x0a into 0x0d 0x0a, which a
+    /// percent of 10 would hit.
+    private func window(at address: UInt32, length: UInt32, in mem: String) async throws -> Data {
+        try await adb.push(
+            request(address: address, length: length, path: mem),
+            to: Self.requestPath, mode: 0o644
+        )
+        _ = try await adb.shell("\(Self.helperPath) > \(Self.outputPath)")
+        return try await adb.pull(Self.outputPath)
     }
 
     /// The pid whose cmdline names zkgui.
@@ -152,10 +206,10 @@ public struct UlanziBattery: Sendable {
     /// The reader's parameters: `u32` address, `u32` length, NUL-terminated
     /// path. The reader carries none of this itself, so one shipped binary
     /// serves any pid and any load address.
-    private func request(address: UInt32, path: String) -> Data {
+    private func request(address: UInt32, length: UInt32, path: String) -> Data {
         var d = Data()
         withUnsafeBytes(of: address.littleEndian) { d.append(Data($0)) }
-        withUnsafeBytes(of: UInt32(Self.windowLength).littleEndian) { d.append(Data($0)) }
+        withUnsafeBytes(of: length.littleEndian) { d.append(Data($0)) }
         d.append(Data(path.utf8))
         d.append(0)
         return d

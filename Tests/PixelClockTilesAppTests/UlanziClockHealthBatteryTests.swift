@@ -23,32 +23,6 @@ private struct DeadTransport: Transport {
     }
 }
 
-/// Feeds one plausible battery window, so the trajectory produces a reading.
-private actor StubADB: ADB {
-    let percent: UInt32
-    let charging: UInt32
-    init(percent: UInt32, charging: UInt32) {
-        self.percent = percent
-        self.charging = charging
-    }
-    func shell(_ command: String) async throws -> Data {
-        if command.contains("cmdline") {
-            return Data("/proc/670\r\n/bin/zkgui\u{0}\r\n\r\n".utf8)
-        }
-        if command.contains("maps") {
-            return Data("43e87000-44571000 r-xp 00000000 1f:03 12 /res/lib/libzkgui.so\r\n".utf8)
-        }
-        return Data()
-    }
-    func push(_ bytes: Data, to path: String, mode: Int) async throws {}
-    func pull(_ path: String) async throws -> Data {
-        var d = Data()
-        for v in [charging, percent, UInt32(3600)] {
-            withUnsafeBytes(of: v.littleEndian) { d.append(Data($0)) }
-        }
-        return d
-    }
-}
 
 @MainActor
 private func health(
@@ -58,7 +32,7 @@ private func health(
         clockId: UUID(),
         name: "Desk",
         device: UlanziDevice(host: "192.168.1.72", transport: StubIdentityTransport(appVer: appVer)),
-        battery: UlanziBattery(adb: StubADB(percent: percent, charging: charging), helper: Data("ELF".utf8))
+        battery: UlanziBattery(adb: FakeBatteryADB(percent: percent, charging: charging), helper: Data("ELF".utf8))
     )
 }
 

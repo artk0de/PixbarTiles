@@ -8,30 +8,6 @@ import Testing
 // it reaches the panel it is the same `BatteryReading` an AWTRIX clock
 // produces, drawn by the same `BatteryLine`.
 
-/// Feeds one plausible window, so a poll produces a reading.
-private actor StubBatteryADB: ADB {
-    let percent: UInt32
-    let charging: UInt32
-    init(percent: UInt32, charging: UInt32) {
-        self.percent = percent
-        self.charging = charging
-    }
-    func shell(_ command: String) async throws -> Data {
-        if command.contains("cmdline") { return Data("/proc/670\r\n/bin/zkgui\u{0}\r\n\r\n".utf8) }
-        if command.contains("maps") {
-            return Data("43e87000-44571000 r-xp 00000000 1f:03 12 /res/lib/libzkgui.so\r\n".utf8)
-        }
-        return Data()
-    }
-    func push(_ bytes: Data, to path: String, mode: Int) async throws {}
-    func pull(_ path: String) async throws -> Data {
-        var d = Data()
-        for v in [charging, percent, UInt32(3600)] {
-            withUnsafeBytes(of: v.littleEndian) { d.append(Data($0)) }
-        }
-        return d
-    }
-}
 
 /// Answers /getBase with the one firmware whose battery offset is known.
 private struct BatteryIdentityTransport: Transport {
@@ -55,7 +31,7 @@ private struct BatteryIdentityTransport: Transport {
             deviceHost: "192.0.2.9",
             clocks: [desk],
             ulanziBattery: UlanziBattery(
-                adb: StubBatteryADB(percent: 73, charging: 0), helper: Data("ELF".utf8)
+                adb: FakeBatteryADB(percent: 73, charging: 0), helper: Data("ELF".utf8)
             )
         )
 

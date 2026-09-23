@@ -190,7 +190,7 @@ public enum TileCatalogue {
     private static func modelName(_ model: ClockModel) -> String {
         switch model {
         case .awtrix3: "AWTRIX 3"
-        case .ulanziTC002: "TC002"
+        case .ulanziTC002: "TC-002 Pixbar"
         }
     }
 }

@@ -30,8 +30,8 @@ private func availability(
 }
 
 @Test func aConnectorWithNoFaceForTheModelSaysSo() {
-    #expect(availability(anecdotes, on: desk) == .unavailable("not supported on TC002"))
-    #expect(availability(vpn, on: desk) == .unavailable("not supported on TC002"))
+    #expect(availability(anecdotes, on: desk) == .unavailable("not supported on TC-002 Pixbar"))
+    #expect(availability(vpn, on: desk) == .unavailable("not supported on TC-002 Pixbar"))
 }
 
 @Test func aConnectorWithAFaceForTheModelIsAvailable() {
@@ -77,7 +77,7 @@ private func availability(
 @Test func theFaceIsAskedBeforeAnythingPlacedAnywhere() {
     let tiles = [placed("anecdotes", on: desk), placed("anecdotes", on: kitchen)]
 
-    #expect(availability(anecdotes, on: desk, tiles) == .unavailable("not supported on TC002"))
+    #expect(availability(anecdotes, on: desk, tiles) == .unavailable("not supported on TC-002 Pixbar"))
 }
 
 // The VPN is a lamp, not a scene: an AWTRIX clock only, one tile per VPN —
@@ -148,7 +148,7 @@ private func availability(
 }
 
 @Test func aConnectorWithNoTC002FaceStaysUnsupportedOnTheTC002() {
-    #expect(availability(TileCandidate(AWTRIXOnly()), on: desk) == .unavailable("not supported on TC002"))
+    #expect(availability(TileCandidate(AWTRIXOnly()), on: desk) == .unavailable("not supported on TC-002 Pixbar"))
 }
 
 // The shipped connectors read through their faces, as the spec's
@@ -166,7 +166,7 @@ private func availability(
     #expect(shippedClaude.models == [.awtrix3, .ulanziTC002])
     #expect(availability(shippedWeather, on: desk) == .available)
     #expect(availability(shippedClaude, on: desk) == .available)
-    #expect(availability(vpn, on: desk) == .unavailable("not supported on TC002"))
+    #expect(availability(vpn, on: desk) == .unavailable("not supported on TC-002 Pixbar"))
 }
 
 private struct AWTRIXOnly: Connector {

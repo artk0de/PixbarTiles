@@ -138,6 +138,17 @@ private func entry(
 // carries the same two facts now, so one surface cannot be read against the
 // other.
 
+// The vendor calls the device the TC-002 Pixbar, and every surface that names
+// a model to a person says the vendor's name. The bare "TC002" that used to be
+// here is what the clock puts in its own UDP announcement — that string is the
+// device talking on the wire, not the app talking to a reader, and it stays.
+@Suite struct ClockModelNameTests {
+    @Test func theTC002IsNamedTheWayItsVendorNamesIt() {
+        #expect(ClockModel.ulanziTC002.spokenName == "TC-002 Pixbar")
+        #expect(ClockModel.awtrix3.spokenName == "AWTRIX 3")
+    }
+}
+
 @MainActor @Suite struct ClockEntryProjectionTests {
     @Test func anEntryCarriesTheDeviceItIsAndTheDotItHasEarned() throws {
         let model = testModel(clocks: [

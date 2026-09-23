@@ -1294,3 +1294,30 @@ private func assembledTile(
     #expect(deskSheet != nil)
     #expect(deskSheet != loftSheet)
 }
+
+// MARK: - The wordmark
+
+/// One view drawn on its own, at a size that fits the header's mark.
+@MainActor
+private func drawnMark(_ view: some View) -> Data? {
+    let host = NSHostingView(rootView: view)
+    host.frame = NSRect(x: 0, y: 0, width: 200, height: 40)
+    host.layoutSubtreeIfNeeded()
+    guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
+    host.cacheDisplay(in: host.bounds, to: target)
+    return target.representation(using: .png, properties: [:])
+}
+
+// The name is SET, not typed: its middle word is a bitmap out of the kit's own
+// face. Drawn against the plain headline it replaced, because a wordmark that
+// renders as the same pixels as `Text("PixelClockTiles")` is a wordmark that
+// never reached the screen.
+@MainActor
+@Test func theWordmarkIsDrawnRatherThanTyped() {
+    let mark = drawnMark(Wordmark())
+    #expect(mark != nil)
+    #expect(mark != drawnMark(Text("PixelClockTiles").font(.headline)))
+    // And its pixel word is scaled: the same mark at another pixel size is
+    // another drawing, so the bitmap is on screen rather than laid out at zero.
+    #expect(mark != drawnMark(Wordmark(pixel: 3)))
+}

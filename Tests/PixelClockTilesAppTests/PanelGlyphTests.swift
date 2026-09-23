@@ -184,3 +184,43 @@ private func reading(
     #expect(PanelGlyph.devicePalette(dark: false, live: true) == UserClock.lightOnline)
     #expect(PanelGlyph.devicePalette(dark: false, live: false) == UserClock.lightOffline)
 }
+
+// MARK: - Words set in the clock's own face
+
+// The middle of the wordmark is not a picture of a word — it IS the word, set
+// in a face the clock itself draws with. So the bridge is pinned to the shapes
+// the kit's table actually carries: change a letter's bytes and this fails,
+// which is the point of drawing it from the face rather than redrawing it here.
+@Test func aWordIsSetInTheFacesOwnShapes() {
+    #expect(
+        PanelGlyph.text("Clock", in: PixelFont.tiny) == [
+            ".WW.WW..........W..",
+            "W....W..WWW.WWW.W..",
+            "W....W..W.W.W...W.W",
+            "W....W..W.W.W...WW.",
+            ".WW..WW.WWW.WWW.W.W",
+        ]
+    )
+}
+
+// One gap column between letters and none after the last: a trailing gap is a
+// word that sits a column left of where it measures.
+@Test func lettersAreSeparatedByTheFacesOwnGapAndNothingTrails() {
+    let rows = PanelGlyph.text("ll", in: PixelFont.tiny)
+    #expect(rows.count == PixelFont.tiny.height)
+    #expect(rows.allSatisfy { $0.count == 3 + PixelFont.tiny.gap + 3 })
+    #expect(rows[1] == ".W...W.")
+}
+
+// A mark the face cannot spell draws the substitute rather than a hole: a
+// skipped glyph that still advanced is the defect the kit's own face fixed.
+@Test func aMarkTheFaceCannotSpellDrawsTheSubstitute() {
+    #expect(
+        PanelGlyph.text("\u{2603}", in: PixelFont.tiny)
+            == PanelGlyph.text(String(PixelFont.substitute), in: PixelFont.tiny)
+    )
+}
+
+@Test func anEmptyWordDrawsNothingButKeepsItsRows() {
+    #expect(PanelGlyph.text("", in: PixelFont.tiny) == ["", "", "", "", ""])
+}

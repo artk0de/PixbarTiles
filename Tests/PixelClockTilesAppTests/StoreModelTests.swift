@@ -52,7 +52,7 @@ private func tile(_ connector: String, on clock: ClockRecord) -> TileRecord {
     subject.show(kitchen.id)
     #expect(
         subject.cards.map(\.action)
-            == [.refused(reason: "not supported on TC002"), .refused(reason: "not supported on TC002")]
+            == [.refused(reason: "not supported on TC-002 Pixbar"), .refused(reason: "not supported on TC-002 Pixbar")]
     )
 }
 

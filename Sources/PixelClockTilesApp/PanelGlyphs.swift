@@ -84,6 +84,47 @@ enum PanelGlyph {
         }
     }
 
+    // MARK: - Words set in the clock's own face
+
+    /// The key a set word's lit pixels carry, so one palette entry colours a
+    /// whole word.
+    static let wordInk: Character = "W"
+
+    /// A word set in one of the kit's bitmap faces, as a row map `PixelArt`
+    /// draws.
+    ///
+    /// The bridge between the two halves of the app's pixel vocabulary: the
+    /// kit keeps faces as packed rows (one `UInt8` per row, **bit 0 the
+    /// leftmost column** — `PixelCanvas.drawText`'s convention), and the panel
+    /// draws `[String]` maps. Nothing is redrawn here: the header's "Clock" is
+    /// the same shape the clock itself would put on its panel, so a change to
+    /// the face changes the wordmark and the two cannot drift apart.
+    ///
+    /// One gap column after every letter but the last. A trailing gap is a
+    /// word that sits a column left of where it measures.
+    static func text(_ text: String, in face: PixelFontFace, lit: Character = wordInk) -> [String] {
+        var rows = [String](repeating: "", count: face.height)
+        guard text.isEmpty == false else { return rows }
+        let last = text.index(before: text.endIndex)
+        for index in text.indices {
+            let character = text[index]
+            // Never nil: a face that cannot spell a mark answers with the
+            // substitute, because a skipped glyph is a HOLE in the word.
+            let glyph = face.glyph(for: character) ?? []
+            let columns = face.columns(of: character)
+            for row in rows.indices {
+                let bits = row < glyph.count ? glyph[row] : 0
+                for column in 0..<columns {
+                    rows[row].append(bits & (1 << column) != 0 ? lit : ".")
+                }
+                if index != last {
+                    rows[row].append(contentsOf: String(repeating: ".", count: face.gap))
+                }
+            }
+        }
+        return rows
+    }
+
     /// The knob's orange, lit top and shaded side.
     static let knobTop: UInt32 = 0xFF9F0A
     static let knobSide: UInt32 = 0xC2610A

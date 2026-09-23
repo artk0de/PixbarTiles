@@ -149,7 +149,7 @@ struct MenuPanel: View {
                 ),
                 pixel: 1
             )
-            Text("PixelClockTiles").font(.headline)
+            Wordmark()
             Spacer()
             Text(panel.onlineSummary)
                 .font(.caption)
@@ -338,7 +338,11 @@ extension ClockModel {
     var spokenName: String {
         switch self {
         case .awtrix3: "AWTRIX 3"
-        case .ulanziTC002: "TC002"
+        // The vendor's own name for it. The bare "TC002" this used to be is
+        // what the clock puts in its UDP announcement — the device talking on
+        // the wire, not the app talking to a reader — and that string stays
+        // where it is.
+        case .ulanziTC002: "TC-002 Pixbar"
         }
     }
 }

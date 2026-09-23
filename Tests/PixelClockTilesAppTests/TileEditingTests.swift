@@ -18,7 +18,7 @@ private let tc002 = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "
 @Test @MainActor func aTileTheClockCannotTakeIsRefusedWithTheMenusReason() {
     let subject = testModel(connectors: [StubConnector(id: "anecdotes")], clocks: [desk, tc002], tiles: [])
 
-    #expect(subject.addTile("anecdotes", to: tc002.id) == .refused("not supported on TC002"))
+    #expect(subject.addTile("anecdotes", to: tc002.id) == .refused("not supported on TC-002 Pixbar"))
 }
 
 @Test @MainActor func aSecondTileOfOneConnectorOnOneClockIsRefused() {

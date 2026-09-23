@@ -185,6 +185,23 @@ private func reading(
     #expect(PanelGlyph.devicePalette(dark: false, live: false) == UserClock.lightOffline)
 }
 
+// MARK: - The bin
+
+// A wastebasket read head-on: a lid wider than the body, a handle above it,
+// and a tapering body with staves down it. The lid's overhang is what makes
+// the mark a bin rather than a cup — drawn flush it reads as a glass.
+@Test func theBinHasALidWiderThanItsBodyAndAHandleAboveIt() {
+    #expect(PanelGlyph.bin.count == 9)
+    #expect(PanelGlyph.bin.allSatisfy { $0.count == 9 })
+    let ink = { (row: String) in row.filter { $0 != "." }.count }
+    // The handle is the narrowest thing, above the widest.
+    #expect(ink(PanelGlyph.bin[0]) < ink(PanelGlyph.bin[1]))
+    // The lid overhangs the body's first row.
+    #expect(ink(PanelGlyph.bin[1]) > ink(PanelGlyph.bin[3]))
+    // And the body tapers: it ends narrower than it starts.
+    #expect(ink(PanelGlyph.bin[7]) < ink(PanelGlyph.bin[3]))
+}
+
 // MARK: - The pin
 
 // A pushpin read side-on: a head, a narrowed neck, a flange wider than the

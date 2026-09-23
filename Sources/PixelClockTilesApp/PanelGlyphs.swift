@@ -303,6 +303,21 @@ enum PanelGlyph {
         "...GGG...",
     ]
 
+    /// Remove: a wastebasket read head-on — handle, a lid that overhangs, and
+    /// a tapering body with staves down it. The overhang is what makes it a
+    /// bin; drawn flush the mark reads as a glass.
+    static let bin = [
+        "...GGG...",
+        "GGGGGGGGG",
+        ".........",
+        ".GGGGGGG.",
+        ".G.G.G.G.",
+        ".G.G.G.G.",
+        ".G.G.G.G.",
+        "..GGGGG..",
+        ".........",
+    ]
+
     /// Quit: the power mark, a stem through the gap of an open ring.
     static let power = [
         "....G....",

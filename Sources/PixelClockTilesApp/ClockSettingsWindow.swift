@@ -122,6 +122,17 @@ private struct TilesGrid: View {
                     ClockTileCard(record: record, model: model)
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
+                        // The open hand is the only thing on this card that
+                        // says it can be picked up. `List.onMove` starts the
+                        // drag on a press, and a press with no affordance is
+                        // a feature nobody finds — the friction reported.
+                        .onHover { inside in
+                            if inside {
+                                NSCursor.openHand.push()
+                            } else {
+                                NSCursor.pop()
+                            }
+                        }
                 }
                 .onMove { from, to in
                     guard let source = from.first,
@@ -164,8 +175,13 @@ private struct ClockTileCard: View {
     let record: TileRecord
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var open
+    @Environment(\.colorScheme) private var scheme
 
     @State private var confirming = false
+
+    /// The ink the card's own marks are drawn in — the panel's secondary,
+    /// so a gear here and a gear there are the same weight.
+    private var chromeInk: UInt32 { PixelInk.secondary(dark: scheme == .dark) }
 
     private var key: TileKey { record.key }
     private var name: String { model.tileName(of: record) }
@@ -204,9 +220,12 @@ private struct ClockTileCard: View {
                     open(id: "tile-settings")
                     NSApp.activate()
                 } label: {
-                    Image(systemName: "gearshape")
+                    // The panel's own gear, not an SF Symbol: this list and
+                    // the panel are the same app, and two vocabularies for
+                    // one action is the friction the user reported.
+                    PixelArt(map: PanelGlyph.gear, palette: PanelGlyph.inkPalette(chromeInk))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .accessibilityLabel("\(name) settings")
                 .help("\(name) settings")
             }
@@ -232,9 +251,9 @@ private struct ClockTileCard: View {
                 HStack {
                     Spacer()
                     Button { confirming = true } label: {
-                        Image(systemName: "trash")
+                        PixelArt(map: PanelGlyph.bin, palette: PanelGlyph.inkPalette(chromeInk))
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Remove \(name)")
                     .help("Remove \(name)")
                 }

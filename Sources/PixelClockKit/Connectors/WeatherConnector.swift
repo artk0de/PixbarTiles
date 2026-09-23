@@ -131,13 +131,6 @@ public struct WeatherConnector: Connector {
     public static func output(
         for reading: WeatherReading, config: WeatherTileConfig
     ) -> AwtrixDelivery {
-        // The felt temperature is the tile's own answer now: shown when the
-        // tile says so, and colouring the digits only while it does — the
-        // colour is what that feels like, and digits coloured from a number
-        // they do not show read as broken rather than as informed.
-        let felt = config.showsFeelsLike
-            ? reading.apparentTemperature ?? reading.temperature
-            : reading.temperature
         return AwtrixDelivery(
             text: Self.degrees(reading.temperature, units: config.units),
             // The sky, drawn inside the app rather than over the whole matrix.
@@ -147,7 +140,7 @@ public struct WeatherConnector: Connector {
             // The icon is what distinguishes the eleven, in the eight pixels next
             // to the reading they belong to.
             icon: WeatherTheme(code: reading.code, isDay: reading.isDay).icon,
-            color: TemperatureColour(celsius: felt).hex,
+            color: TemperatureColour(celsius: Self.colourTemperature(reading, config: config)).hex,
             surface: .app(Self.appName),
             // An hour without a fresh reading and the clock drops the app on
             // its own — the only thing that survives this process ending
@@ -214,10 +207,12 @@ public struct WeatherConnector: Connector {
         for reading: WeatherReading, config: WeatherTileConfig
     ) -> PixelCanvas {
         var canvas = PixelCanvas()
-        let felt = config.showsFeelsLike
-            ? reading.apparentTemperature ?? reading.temperature
-            : reading.temperature
-        let ink = Pixel(colour: UlanziColour(hex: TemperatureColour(celsius: felt).hex))
+        let felt = reading.apparentTemperature ?? reading.temperature
+        let ink = Pixel(
+            colour: UlanziColour(
+                hex: TemperatureColour(celsius: Self.colourTemperature(reading, config: config)).hex
+            )
+        )
 
         // The temperature, with its scale named: a picker chooses it now, so
         // a bare number is the reading a person misreads as the other scale.
@@ -262,6 +257,17 @@ public struct WeatherConnector: Connector {
             )
         }
         return canvas
+    }
+
+    /// The temperature the digits are coloured from: what it feels like when
+    /// the tile's Feels-like colour is on (the air when the reading carries
+    /// no felt value), the air when it is off.
+    ///
+    /// Its own setting, apart from the felt LINE's `showsFeelsLike`: the
+    /// TC002 face reads the same switch, so one switch means one thing on
+    /// both clocks — where the colour used to follow whether the line showed.
+    static func colourTemperature(_ reading: WeatherReading, config: WeatherTileConfig) -> Double {
+        config.feelsLikeColour ? reading.apparentTemperature ?? reading.temperature : reading.temperature
     }
 
     /// `text` centred on a fresh panel at `scale`, as one full-screen bitmap.

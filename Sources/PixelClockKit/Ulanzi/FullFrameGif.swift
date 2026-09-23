@@ -42,7 +42,7 @@ public enum FullFrameGif {
     /// Per frame because a page that moves and then rests is the ordinary
     /// shape: a marquee steps at a tenth of a second and dwells for seconds
     /// at either end, and a dwell is ONE frame with a long delay rather than
-    /// the same frame repeated — repeats would spend the panel's fifty-frame
+    /// the same frame repeated — repeats would spend the panel's frame
     /// ceiling on standing still.
     ///
     /// The GIF's size is the FIRST frame's: a preview of a TC002 tile encodes

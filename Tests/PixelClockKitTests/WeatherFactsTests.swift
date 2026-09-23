@@ -28,32 +28,12 @@ private func icon(_ reading: WeatherReading) -> WeatherIcon {
     WeatherFacts.icon(for: reading, at: noon)
 }
 
-/// The oracle's reading as the app would have decoded it: epochs become
-/// dates, absent series become empty ones.
-private func appReading(_ r: WeatherOracle.Reading) -> WeatherReading {
-    WeatherReading(
-        code: r.code, isDay: r.isDay, temperature: r.temperature,
-        apparentTemperature: r.apparentTemperature, precipitation: 0,
-        windSpeed: r.windSpeed, interval: 900, relativeHumidity: r.relativeHumidity,
-        windDirection: r.windDirection, windGusts: r.windGusts, uvIndex: r.uvIndex,
-        todayHigh: r.todayHigh, todayLow: r.todayLow,
-        sunrises: (r.sunrises ?? []).map { Date(timeIntervalSince1970: $0) },
-        sunsets: (r.sunsets ?? []).map { Date(timeIntervalSince1970: $0) },
-        hourly: (r.hourly ?? []).map {
-            WeatherReading.HourlyPoint(
-                time: Date(timeIntervalSince1970: $0.time), temperature: $0.temperature,
-                precipitationProbability: $0.precipitationProbability
-            )
-        }
-    )
-}
-
 // MARK: - The oracle
 
 @Test func everyOracleCaseAgreesOnTheFacts() throws {
     let oracle = try WeatherOracle.load()
     for c in oracle.cases {
-        let r = c.reading.map(appReading)
+        let r = c.reading.map(\.appReading)
         let facts = c.facts
         #expect(WeatherFacts.icon(for: r, at: c.now).rawValue == facts.icon, "\(c.id) icon")
         #expect(WeatherFacts.moonPhase(at: c.now) == facts.moon, "\(c.id) moon")

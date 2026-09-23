@@ -186,3 +186,25 @@ struct WeatherOracle {
         let cases: [RawCase]
     }
 }
+
+extension WeatherOracle.Reading {
+    /// The oracle's reading as the app would have decoded it: epochs become
+    /// dates, absent series become empty ones.
+    var appReading: WeatherReading {
+        WeatherReading(
+            code: code, isDay: isDay, temperature: temperature,
+            apparentTemperature: apparentTemperature, precipitation: 0,
+            windSpeed: windSpeed, interval: 900, relativeHumidity: relativeHumidity,
+            windDirection: windDirection, windGusts: windGusts, uvIndex: uvIndex,
+            todayHigh: todayHigh, todayLow: todayLow,
+            sunrises: (sunrises ?? []).map { Date(timeIntervalSince1970: $0) },
+            sunsets: (sunsets ?? []).map { Date(timeIntervalSince1970: $0) },
+            hourly: (hourly ?? []).map {
+                WeatherReading.HourlyPoint(
+                    time: Date(timeIntervalSince1970: $0.time), temperature: $0.temperature,
+                    precipitationProbability: $0.precipitationProbability
+                )
+            }
+        )
+    }
+}

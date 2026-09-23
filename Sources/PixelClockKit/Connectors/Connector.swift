@@ -29,6 +29,12 @@ public protocol Connector: Sendable {
     var id: String { get }
     var displayName: String { get }
     var defaultInterval: TimeInterval { get }
+    /// The refresh intervals this connector's tiles are offered. A REQUIREMENT
+    /// rather than an extension alone: defaulted only in the extension it
+    /// would dispatch statically, and every tile reached through
+    /// `any Connector` — which is all of them — would silently get the general
+    /// ladder back.
+    var refreshSteps: [TimeInterval] { get }
     /// The voice this connector's narration is spoken in.
     ///
     /// A character per connector, so the weather and a broken build are told
@@ -118,6 +124,17 @@ public protocol Connector: Sendable {
 }
 
 extension Connector {
+    /// The refresh intervals this connector's tiles are offered, and the
+    /// ladder their stored seconds are snapped to.
+    ///
+    /// Declared by the connector rather than decided by a table keyed on tile
+    /// ids: what a sensible cadence is, is a fact about the thing being read.
+    /// A free forecast API answers a place about every quarter of an hour and
+    /// must never be offered ten seconds; an account's own usage dashboard
+    /// can be. A connector that says nothing keeps the general ladder, so
+    /// every one written before this goes on offering exactly what it did.
+    public var refreshSteps: [TimeInterval] { RefreshScale.steps }
+
     /// What a connector that names no voice narrates in.
     ///
     /// Defaulted rather than required, so every connector written before this

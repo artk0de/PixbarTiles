@@ -29,14 +29,18 @@ public struct ClaudeUsageConnector: Connector {
     public static let id = "claude"
     public var id: String { Self.id }
     public let displayName = "Claude usage"
-    /// Five minutes, and chosen against `lifetime` rather than on its own.
+    /// One minute: a subscription's remaining limit is watched, not glanced
+    /// at, and a person who has just spent some of one wants the bar to move
+    /// now rather than at the top of the next five minutes.
     ///
-    /// The figure itself would tolerate a much lazier poll — a weekly bar moves
-    /// slowly. What sets this is that the app must leave the clock soon after
-    /// the Focus does, and the only thing that removes it is its lifetime
-    /// expiring. Three polls inside one lifetime survives a couple of misses
-    /// while still clearing the matrix within a quarter of an hour.
-    public let defaultInterval: TimeInterval = 300
+    /// Still read against `lifetime`, which is the quarter hour below. Fifteen
+    /// polls inside one lifetime is the same insurance five minutes bought
+    /// three of: a crashed Mac clears the figure within the quarter hour, and
+    /// the app still LEAVES the clock soon after a Focus does.
+    public let defaultInterval: TimeInterval = 60
+
+    /// Ten seconds up to four hours — see `RefreshScale.codingSubscription`.
+    public let refreshSteps = RefreshScale.codingSubscription
     public var defaultPolicy: TilePolicy { TileDefaults.claude }
     public let narrator: Voice = .crystal
     public let isAudible = false

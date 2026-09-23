@@ -15,7 +15,7 @@ public enum TileDefaults {
     /// bed; an unnamed Focus keeps it, because hiding on "cannot tell" is an
     /// app that never appears on a machine without Full Disk Access.
     public static let claude = TilePolicy(
-        refreshSeconds: 300,
+        refreshSeconds: 60,
         focus: FocusRule(silencedIn: [.doNotDisturb, .sleep], whenUnknown: .run)
     )
 
@@ -32,7 +32,8 @@ public enum TileDefaults {
 
     /// Ambient and silent like the weather: the z.ai figure is drawn into the
     /// device's own loop and says nothing, so nothing about a Focus or the
-    /// hour applies. Ten minutes is the poll the design's connector row asks
-    /// for — a plan's usage moves slowly, and the route is a dashboard one.
-    public static let zai = TilePolicy(refreshSeconds: 600)
+    /// hour applies. One minute, as the Claude figure has — both report a
+    /// subscription being spent, and that is a number watched rather than
+    /// glanced at.
+    public static let zai = TilePolicy(refreshSeconds: 60)
 }

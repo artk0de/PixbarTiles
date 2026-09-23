@@ -16,10 +16,13 @@ import Testing
     ))
 }
 
-@Test func aNewClaudeTileRunsEveryFiveMinutesOutsideDoNotDisturbAndSleep() {
+// A minute, not the five it started at: a subscription's remaining limit is
+// watched rather than glanced at, and a bar that moves five minutes after the
+// spending did is a bar nobody trusts.
+@Test func aNewClaudeTileRunsEveryMinuteOutsideDoNotDisturbAndSleep() {
     #expect(TileDefaults.claude == TilePolicy(
         isPaused: false,
-        refreshSeconds: 300,
+        refreshSeconds: 60,
         focus: FocusRule(silencedIn: [.doNotDisturb, .sleep], whenUnknown: .run),
         window: .always
     ))
@@ -45,10 +48,10 @@ import Testing
 
 // The z.ai figure is ambient and silent, exactly like the weather's reading:
 // drawn into the device's own loop, nothing to trigger, nothing to witness.
-@Test func aNewZaiTileRunsEveryTenMinutesThroughEverything() {
+@Test func aNewZaiTileRunsEveryMinuteThroughEverything() {
     #expect(TileDefaults.zai == TilePolicy(
         isPaused: false,
-        refreshSeconds: 600,
+        refreshSeconds: 60,
         focus: FocusRule(silencedIn: [], whenUnknown: .run),
         window: .always
     ))

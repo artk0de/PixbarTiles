@@ -46,6 +46,11 @@ public struct WeatherConnector: Connector {
     /// refreshing it so rarely that fewer than a handful fit inside `lifetime`
     /// puts a blank slot on the matrix the first time the network hiccups.
     public let defaultInterval: TimeInterval = 600
+
+    /// A minute up to four hours — see `RefreshScale.weatherFetch`. Not the
+    /// general ladder, whose thirty-second floor would offer a cadence the
+    /// source answers out of its own cache anyway.
+    public let refreshSteps = RefreshScale.weatherFetch
     public var defaultPolicy: TilePolicy { TileDefaults.weather }
     /// Nothing here is heard. The reading is drawn into the device's own loop
     /// and the sky is a setting on the matrix — no speech, no jingle, nothing

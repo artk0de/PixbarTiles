@@ -18,19 +18,24 @@ struct StubConnector: Connector {
     /// the protocol defaults to, so every test written before an ambient
     /// connector existed still poses a connector the panel draws a row for.
     let isAmbient: Bool
+    /// The ladder this one's tiles are offered, defaulted to the general one
+    /// the protocol defaults to.
+    let refreshSteps: [TimeInterval]
 
     init(
         id: String = "stub",
         displayName: String = "Stub",
         defaultInterval: TimeInterval = 5 * 60,
         isAudible: Bool = true,
-        isAmbient: Bool = false
+        isAmbient: Bool = false,
+        refreshSteps: [TimeInterval] = RefreshScale.steps
     ) {
         self.id = id
         self.displayName = displayName
         self.defaultInterval = defaultInterval
         self.isAudible = isAudible
         self.isAmbient = isAmbient
+        self.refreshSteps = refreshSteps
     }
 
     func read() async throws -> AwtrixDelivery { AwtrixDelivery(text: "hello") }

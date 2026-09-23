@@ -448,12 +448,13 @@ private func inkedColumns(of rep: NSBitmapImageRep, rows: Range<Int>) -> Range<I
     return highest < 0 ? nil : lowest..<(highest + 1)
 }
 
-// The header is the app's name ALONE — every gear on the panel is a clock's
-// — and the last row carries Quit at one corner and Settings at the other:
-// the general surface said in words, a third gear being the thing the
-// correction removed. Ink at the title's left end and no ink at its right is
-// the header half; ink at BOTH ends of the last row is the corner half.
-@Test @MainActor func theHeaderIsTheNameAloneAndTheCornersCarryQuitAndSettings() throws {
+// The header carries the app's name at its left and the count of clocks
+// answering at its right — words, not a gear: every gear on the panel is a
+// clock's (the card redesign, 2026-09-23, put the count where nothing stood).
+// The last row carries Settings at one corner and Quit at the other: the
+// general surface said in words, a third gear being the thing the correction
+// removed. Ink at BOTH ends of each row is what is asserted.
+@Test @MainActor func theHeaderSpansNameAndCountAndTheCornersCarryQuitAndSettings() throws {
     let model = testModel(deviceHost: "10.0.0.5")
     let browsing = FakeBonjourBrowser()
     let discovery = panelDiscovery(browsing: browsing)
@@ -470,7 +471,7 @@ private func inkedColumns(of rep: NSBitmapImageRep, rows: Range<Int>) -> Range<I
     )
     let firstRow = try #require(inkedColumns(of: rep, rows: top..<(top + 20 * scale)))
     #expect(firstRow.lowerBound < rep.pixelsWide / 3)
-    #expect(firstRow.upperBound < rep.pixelsWide / 2)
+    #expect(firstRow.upperBound > rep.pixelsWide * 2 / 3)
 
     let bottom = try #require(
         (0..<rep.pixelsHigh).reversed().first { inkedColumns(of: rep, rows: $0..<($0 + 1)) != nil }

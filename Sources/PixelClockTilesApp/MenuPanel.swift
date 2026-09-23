@@ -98,17 +98,23 @@ struct MenuPanel: View {
                 .padding(14)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("PixelClockTiles").font(.headline)
-                    ForEach(panel.sections, id: \.clock.id) { section in
-                        ClockSectionView(
-                            section: section,
-                            onClockSettings: {
-                                settings.showClockWindow(section.clock.id)
-                                openAndFocus { openWindow(id: "clock-settings") }
+                    header
+                    // One container for the cards: glass that shares a
+                    // container is sampled once, and the cards themselves are
+                    // CONTENT — a fill on the glass, not glass on glass.
+                    GlassEffectContainer(spacing: 8) {
+                        VStack(spacing: 8) {
+                            ForEach(panel.sections, id: \.clock.id) { section in
+                                ClockSectionView(
+                                    section: section,
+                                    onClockSettings: {
+                                        settings.showClockWindow(section.clock.id)
+                                        openAndFocus { openWindow(id: "clock-settings") }
+                                    }
+                                )
                             }
-                        )
+                        }
                     }
-                    Divider()
                     lastRow
                 }
                 .padding(14)
@@ -129,26 +135,69 @@ struct MenuPanel: View {
         .onAppear { model.refreshOnPanelOpen() }
     }
 
-    /// The app's name, alone in the header: every gear on the panel is a
-    /// clock's.
+    @Environment(\.colorScheme) private var colorScheme
 
-    /// Quit at one corner, Settings at the other — the general surface named
-    /// in words rather than a third gear. Quit is instant, so it needs no
-    /// state of its own: the panel is gone before the button could redraw.
-    private var lastRow: some View {
-        HStack {
-            Button("Quit") { NSApplication.shared.terminate(nil) }
+    /// The app's own clock and name, and how many of the clocks are
+    /// answering — the one fact about all of them together.
+    private var header: some View {
+        HStack(spacing: 8) {
+            PixelArt(
+                map: UserClock.map,
+                palette: PanelGlyph.devicePalette(
+                    dark: colorScheme == .dark,
+                    live: panel.sections.contains { $0.dot == .green }
+                ),
+                pixel: 1
+            )
+            Text("PixelClockTiles").font(.headline)
             Spacer()
-            Button("Settings") {
+            Text(panel.onlineSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .contentTransition(.numericText())
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Settings at one corner, Quit at the other, each with its pixel mark —
+    /// the general surface named in words rather than a third gear. Glass
+    /// buttons: controls are what the glass layer is for. Quit is instant, so
+    /// it needs no state of its own: the panel is gone before the button
+    /// could redraw.
+    private var lastRow: some View {
+        let ink = PanelGlyph.inkPalette(PixelInk.primary(dark: colorScheme == .dark))
+        return HStack {
+            Button {
                 openAndFocus { openTheSettings() }
+            } label: {
+                Label {
+                    Text("Settings")
+                } icon: {
+                    PixelArt(map: PanelGlyph.gear, palette: ink, pixel: 1.5)
+                }
+            }
+            Spacer()
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Label {
+                    Text("Quit")
+                } icon: {
+                    PixelArt(map: PanelGlyph.power, palette: ink, pixel: 1.5)
+                }
             }
         }
+        .buttonStyle(.glass)
+        .labelStyle(.titleAndIcon)
     }
 }
 
-/// One clock's section: the dot its session has earned, its name said the way
-/// a person says it, its own gear, and the statistics the panel exists for —
-/// the connection in words, the battery beside it when the clock has one.
+/// One clock's card: the device drawn in the app's pixel hand, its name said
+/// the way a person says it, the connection as a lit lamp, its own gear, and
+/// the charge as cells, a figure and what happens next.
+///
+/// The card is CONTENT on the panel's glass: a quiet fill rather than a second
+/// pane of glass, which would sample the first and wash both out.
 private struct ClockSectionView: View {
     let section: PanelModel.ClockSection
     /// Where the gear goes: straight into the clock's settings window — a
@@ -156,50 +205,128 @@ private struct ClockSectionView: View {
     /// question asked twice.
     let onClockSettings: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var dark: Bool { colorScheme == .dark }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(Self.colour(for: section.dot))
-                    .frame(width: 8, height: 8)
-                    .accessibilityLabel(Self.dotName(for: section.dot))
-                Text("\(section.clock.name) (\(section.clock.model.spokenName))")
-                    .font(.headline)
-                Spacer()
-                Button(action: onClockSettings) {
-                    Image(systemName: "gearshape")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("\(section.clock.name) settings")
-            }
-            // The statistics line: the connection, and the battery when the
-            // clock reports one. A TC002 reads as the connection alone, which
-            // is the truth about a clock with no cell.
-            Text(
-                [section.statusLine, section.batteryLine]
-                    .compactMap { $0 }
-                    .joined(separator: " · ")
+        HStack(alignment: .top, spacing: 12) {
+            PixelArt(
+                map: PanelGlyph.map(for: section.clock.model),
+                palette: PanelGlyph.devicePalette(dark: dark, live: section.isLive),
+                pixel: 2
             )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(section.clock.name).font(.headline)
+                        Text(section.clock.model.spokenName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    StatusBadge(dot: section.dot, words: section.statusLine)
+                }
+                if let reading = section.battery {
+                    BatteryRow(reading: reading, live: section.isLive, dark: dark)
+                }
+            }
+            // One element for VoiceOver: the card's facts in one sentence,
+            // with the gear left out as its own control.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Self.spoken(section))
+        }
+        .padding(.leading, 12)
+        .padding(.vertical, 12)
+        // The gear's own column, so the badge never slides under it.
+        .padding(.trailing, 36)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.fill.quaternary, in: .rect(cornerRadius: 14))
+        .overlay(alignment: .topTrailing) {
+            Button(action: onClockSettings) {
+                PixelArt(
+                    map: PanelGlyph.gear,
+                    palette: PanelGlyph.inkPalette(PixelInk.secondary(dark: dark)),
+                    pixel: 1.5
+                )
+                .padding(6)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.borderless)
+            .padding(6)
+            .help("\(section.clock.name) settings")
+            .accessibilityLabel("\(section.clock.name) settings")
         }
     }
 
-    private static func colour(for dot: PanelModel.ClockDot) -> Color {
-        switch dot {
-        case .green: .green
-        case .yellow: .yellow
-        case .red: .red
+    /// The card as one sentence: who, what, whether it answers, and the charge.
+    static func spoken(_ section: PanelModel.ClockSection) -> String {
+        var parts = [section.clock.name, section.clock.model.spokenName, section.statusLine]
+        if let reading = section.battery {
+            var charge = "battery \(reading.shownPercent) percent"
+            if let caption = BatteryLine.caption(for: reading, live: section.isLive) {
+                charge += ", \(caption)"
+            }
+            parts.append(charge)
         }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// The connection as a lamp and its word, on a capsule tinted by the lamp.
+private struct StatusBadge: View {
+    let dot: PanelModel.ClockDot
+    let words: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            PixelArt(map: PanelGlyph.led, palette: PanelGlyph.ledPalette(for: dot), pixel: 2)
+            Text(words)
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Self.tint(dot).opacity(0.16), in: .capsule)
     }
 
-    /// What the dot says to VoiceOver, in the words the status line used.
-    private static func dotName(for dot: PanelModel.ClockDot) -> String {
-        switch dot {
-        case .green: "Connected"
-        case .yellow: "Checking…"
-        case .red: "Disconnected"
+    private static func tint(_ dot: PanelModel.ClockDot) -> Color {
+        let palette = PanelGlyph.ledPalette(for: dot)
+        return Color(hex: (palette["L"] ?? nil) ?? PanelGlyph.unknownTint)
+    }
+}
+
+/// The charge: the bolt while it fills, the cells, the figure, and — at the
+/// far end — what happens next.
+private struct BatteryRow: View {
+    let reading: BatteryReading
+    let live: Bool
+    let dark: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if PanelGlyph.showsBolt(for: reading, live: live) {
+                PixelArt(map: PanelGlyph.bolt, palette: PanelGlyph.boltPalette, pixel: 2)
+            }
+            PixelArt(
+                map: PanelGlyph.battery,
+                palette: PanelGlyph.batteryPalette(
+                    for: reading, ink: PixelInk.secondary(dark: dark), live: live
+                ),
+                pixel: 2
+            )
+            Text("\(reading.shownPercent)%")
+                .font(.system(.callout, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .contentTransition(.numericText(value: Double(reading.shownPercent)))
+            Spacer(minLength: 4)
+            if let caption = BatteryLine.caption(for: reading, live: live) {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(live ? BatteryLine.colour(for: reading) : .secondary)
+                    .lineLimit(1)
+            }
         }
+        .opacity(live ? 1 : 0.7)
     }
 }
 

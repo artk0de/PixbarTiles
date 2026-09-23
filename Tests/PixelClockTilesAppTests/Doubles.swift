@@ -555,7 +555,12 @@ func testModel(
     // handed in, which is what every test written before per-clock registries
     // existed assumes. A test about a tile whose connector differs PER CLOCK
     // — the preview's own question — names a factory here.
-    makeClockRegistry: (@MainActor (ClockRecord) -> ConnectorRegistry)? = nil
+    makeClockRegistry: (@MainActor (ClockRecord) -> ConnectorRegistry)? = nil,
+    // Nil: no TC002 reads its battery, which is what every test written before
+    // the adb memory read existed assumes — and it is also the shipped
+    // behaviour on a firmware whose offset is unknown. A test about the
+    // battery line hands one in.
+    ulanziBattery: UlanziBattery? = nil
 ) -> AppModel {
     var clocks = clocks
     // Empty is a state now — the no-clocks install — and means no first clock
@@ -636,6 +641,7 @@ func testModel(
         makeUlanziDevice: { clock in
             UlanziDevice(host: clock.address, transport: transport)
         },
+        makeUlanziBattery: { _ in ulanziBattery },
         probe: probe,
         installer: CatalogueIconInstaller(
             device: device, transport: transport, uploads: uploads

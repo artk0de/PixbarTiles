@@ -475,6 +475,10 @@ struct WeatherTileControls: View {
                     get: { draft.showsSunEvents },
                     set: { settings.setShowsSunEvents($0) }
                 ))
+                Toggle("Moon phase", isOn: Binding(
+                    get: { draft.showsMoon },
+                    set: { settings.setShowsMoon($0) }
+                ))
                 Toggle("Hourly chart", isOn: Binding(
                     get: { draft.showsHourly },
                     set: { settings.setShowsHourly($0) }

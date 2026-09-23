@@ -156,6 +156,10 @@ final class TileSettingsModel {
         edit { $0.showsSunEvents = shown }
     }
 
+    func setShowsMoon(_ shown: Bool) {
+        edit { $0.showsMoon = shown }
+    }
+
     func setShowsHourly(_ shown: Bool) {
         edit { $0.showsHourly = shown }
     }

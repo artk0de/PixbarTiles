@@ -84,6 +84,32 @@ enum PanelGlyph {
         }
     }
 
+    // MARK: - The pin
+
+    /// A pushpin read side-on: head, narrowed neck, a flange wider than the
+    /// head, then the needle. The flange is what makes it a pin — drawn
+    /// without one the mark reads as a screw.
+    static let pin = [
+        "..PPPPP..",
+        "..PPPPP..",
+        "...PPP...",
+        ".PPPPPPP.",
+        ".PPPPPPP.",
+        "....P....",
+        "....P....",
+        "....P....",
+        "....P....",
+    ]
+
+    /// Pinned reads as ON, in the accent the app uses for a live thing.
+    static let pinnedTint: UInt32 = 0x4FBAF6
+
+    /// Lit while the panel is pinned, an ordinary control's ink while it is
+    /// not. A switch whose two states look alike is a switch nobody can read.
+    static func pinPalette(pinned: Bool, ink: UInt32) -> Palette {
+        ["P": pinned ? pinnedTint : ink]
+    }
+
     // MARK: - Words set in the clock's own face
 
     /// The key a set word's lit pixels carry, so one palette entry colours a

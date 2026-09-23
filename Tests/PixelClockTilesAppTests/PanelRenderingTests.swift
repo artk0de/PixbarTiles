@@ -1321,3 +1321,32 @@ private func drawnMark(_ view: some View) -> Data? {
     // another drawing, so the bitmap is on screen rather than laid out at zero.
     #expect(mark != drawnMark(Wordmark(pixel: 3)))
 }
+
+// MARK: - The pin
+
+// The pin is ON the panel and its two states LOOK different. Both halves
+// matter: a pin drawn identically either way is a switch nobody can read, and
+// a pin that never reached `body` is one nothing else in the suite would miss.
+@MainActor
+@Test func thePanelDrawsItsPinAndPinnedLooksDifferentFromNot() {
+    func panel(pinned: Bool) -> Data? {
+        let store = UserDefaults(suiteName: "pin-render-\(UUID().uuidString)")!
+        let pin = PanelPin(defaults: store)
+        pin.set(pinned)
+        let model = testModel()
+        let host = NSHostingView(
+            rootView: MenuPanel(
+                model: model, panel: PanelModel(model: model),
+                settings: SettingsModel(model: model), pin: pin, defaults: store
+            )
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 300)
+        host.layoutSubtreeIfNeeded()
+        guard let target = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
+        host.cacheDisplay(in: host.bounds, to: target)
+        return target.representation(using: .png, properties: [:])
+    }
+
+    #expect(panel(pinned: false) != nil)
+    #expect(panel(pinned: false) != panel(pinned: true))
+}

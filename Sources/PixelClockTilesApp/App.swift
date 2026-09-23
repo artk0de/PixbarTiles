@@ -14,10 +14,18 @@ struct PixelClockTilesApp: App {
 
     var body: some Scene {
         MenuBarExtra {
+            // While the panel is pinned it lives in a window, and the item
+            // stays in the menu bar as the way BACK to it — not as a second
+            // live copy of one surface.
+            if delegate.panelPin.isPinned {
+                PinnedElsewherePanel(pin: delegate.panelPin)
+                    .glassPanel()
+            } else {
             MenuPanel(
                 model: delegate.model,
                 panel: delegate.panelModel,
-                settings: delegate.settingsModel
+                settings: delegate.settingsModel,
+                pin: delegate.panelPin
             )
             // The panel's material, laid on by the SCENE rather than the
             // view: Liquid Glass is the navigation layer's own, and a view
@@ -36,10 +44,30 @@ struct PixelClockTilesApp: App {
                 PanelWindowReader { delegate.panelMoved(to: $0) }
                     .allowsHitTesting(false)
             )
+            }
         } label: {
             MenuBarGlyph(model: delegate.model)
         }
         .menuBarExtraStyle(.window)
+
+        // The panel pinned to a window of its own. Floating, because a pinned
+        // panel that a text editor can cover is a pin that did not take.
+        Window("PixelClockTiles", id: PinnedPanelWindow.id) {
+            PinnedPanelWindow(
+                model: delegate.model,
+                panel: delegate.panelModel,
+                settings: delegate.settingsModel,
+                pin: delegate.panelPin
+            )
+        }
+        .windowLevel(.floating)
+        .windowResizability(.contentSize)
+        // Present at launch only when the pin was left in. Suppressed by
+        // default an app would otherwise open a panel window nobody asked for;
+        // suppressed ALWAYS, an app quit while pinned would come back saying
+        // "pinned to its own window" with no window anywhere — a state the
+        // user has to click their way out of.
+        .defaultLaunchBehavior(delegate.panelPin.isPinned ? .presented : .suppressed)
 
         // The real Settings window — ⌘, opens it, the window is restorable,
         // and the panel's gear and every clock's gear aim it before opening.
@@ -332,6 +360,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The store's facade, aimed by the clock gears. One store, one aim at
     /// a time: the cards answer about the clock that asked.
     let storeModel: StoreModel
+    /// Whether the panel is pinned to a window of its own. Owned here because
+    /// BOTH scenes read it — the menu bar item to decide what it shows, and
+    /// the window to know it should be there at all.
+    let panelPin = PanelPin()
     /// Which clocks are advertising themselves on the network — both models:
     /// the AWTRIX browse merged with the TC002 broadcasts.
     ///

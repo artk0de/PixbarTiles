@@ -185,6 +185,32 @@ private func reading(
     #expect(PanelGlyph.devicePalette(dark: false, live: false) == UserClock.lightOffline)
 }
 
+// MARK: - The pin
+
+// A pushpin read side-on: a head, a narrowed neck, a flange wider than the
+// head, and a needle under it. The flange is what makes it a pin rather than a
+// key or a lamp — drawn without it the mark reads as a screw.
+@Test func thePinIsAPushpinWithAFlangeAndANeedle() {
+    #expect(PanelGlyph.pin.count == 9)
+    #expect(PanelGlyph.pin.allSatisfy { $0.count == 9 })
+    // The flange row is the widest run of ink, and it is wider than the head.
+    let ink = { (row: String) in row.filter { $0 != "." }.count }
+    #expect(ink(PanelGlyph.pin[3]) > ink(PanelGlyph.pin[0]))
+    // The needle is one column, and it is the last thing drawn.
+    #expect(ink(PanelGlyph.pin[8]) == 1)
+}
+
+// Pinned reads as ON — the app's own accent — and unpinned as an ordinary
+// control in the card's ink. A pin that looks the same either way is a switch
+// nobody can see the state of.
+@Test func aPinnedPanelsMarkIsLitAndAnUnpinnedOnesIsNot() {
+    let lit = PanelGlyph.pinPalette(pinned: true, ink: 0x112233)
+    let dim = PanelGlyph.pinPalette(pinned: false, ink: 0x112233)
+    #expect(lit != dim)
+    #expect(lit["P"] == PanelGlyph.pinnedTint)
+    #expect(dim["P"] == 0x112233)
+}
+
 // MARK: - Words set in the clock's own face
 
 // The middle of the wordmark is not a picture of a word — it IS the word, set

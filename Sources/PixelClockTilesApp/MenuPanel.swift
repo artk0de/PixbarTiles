@@ -32,6 +32,8 @@ struct MenuPanel: View {
     /// Opens one of the app's plain windows — the store, or a clock's own
     /// settings.
     @Environment(\.openWindow) private var openWindow
+    /// Closes the pinned panel's window when the pin comes out.
+    @Environment(\.dismissWindow) private var dismissWindow
     /// Where the width is read at launch and written when a drag ends.
     ///
     /// Handed in rather than reached for, so a test can put a width in the
@@ -50,16 +52,26 @@ struct MenuPanel: View {
     /// own and took their own facades with them. A parameter every call site
     /// must supply and nothing ever asks for is a shape that outlives its
     /// reason, and the next reader has to prove the negative to be sure.
+    /// Whether the panel is pinned to a window of its own.
+    ///
+    /// Handed in by the scene, which needs the same answer to decide what to
+    /// draw — nil builds one over this panel's own `defaults`, so a test that
+    /// brings its own store gets an isolated pin and no test reads the pin of
+    /// whoever is running the suite.
+    let pin: PanelPin
+
     init(
         model: AppModel,
         panel: PanelModel,
         settings: SettingsModel,
+        pin: PanelPin? = nil,
         defaults: UserDefaults = .standard
     ) {
         self.model = model
         self.panel = panel
         self.settings = settings
         self.defaults = defaults
+        self.pin = pin ?? PanelPin(defaults: defaults)
     }
 
     /// The system action plus the activation that makes the opened window
@@ -141,6 +153,7 @@ struct MenuPanel: View {
     /// answering — the one fact about all of them together.
     private var header: some View {
         HStack(spacing: 8) {
+            pinButton
             PixelArt(
                 map: UserClock.map,
                 palette: PanelGlyph.devicePalette(
@@ -156,7 +169,37 @@ struct MenuPanel: View {
                 .foregroundStyle(.secondary)
                 .contentTransition(.numericText())
         }
-        .accessibilityElement(children: .combine)
+    }
+
+    /// The pin, at the corner SoundSource puts its own.
+    ///
+    /// Pinning opens the panel as a window of its own and lets this popover
+    /// go; unpinning closes that window. The panel cannot simply REFUSE to
+    /// close — macOS dismisses a `MenuBarExtra(.window)` when it stops being
+    /// key, and the app only ever hears about it afterwards.
+    private var pinButton: some View {
+        Button {
+            pin.toggle()
+            if pin.isPinned {
+                openAndFocus { openWindow(id: PinnedPanelWindow.id) }
+            } else {
+                dismissWindow(id: PinnedPanelWindow.id)
+            }
+        } label: {
+            PixelArt(
+                map: PanelGlyph.pin,
+                palette: PanelGlyph.pinPalette(
+                    pinned: pin.isPinned, ink: PixelInk.secondary(dark: colorScheme == .dark)
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(pin.isPinned ? "Unpin the panel" : "Pin the panel to its own window")
+        .help(
+            pin.isPinned
+                ? "Unpin — close the window and go back to the menu bar"
+                : "Pin — keep the panel in a window of its own"
+        )
     }
 
     /// Settings at one corner, Quit at the other, each with its pixel mark —

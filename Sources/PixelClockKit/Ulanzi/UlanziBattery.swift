@@ -54,6 +54,16 @@ public struct UlanziBattery: Sendable {
         self.helper = helper
     }
 
+    /// The reader's bytes as shipped in the kit's resource bundle, or nil if it
+    /// did not ship. The lookup lives here rather than in the app because the
+    /// bundle is the kit's own; a build with no helper simply grows no battery
+    /// line.
+    public static func bundledHelper() -> Data? {
+        guard let url = KitResources.bundle.url(forResource: "pct-batt", withExtension: nil)
+        else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
     public func read(appVersion: String?, at now: Date) async -> UlanziBatterySample? {
         guard let appVersion, let offset = Self.offsets[appVersion] else { return nil }
         do {

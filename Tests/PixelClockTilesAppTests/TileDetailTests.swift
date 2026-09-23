@@ -247,3 +247,40 @@ private func editor(_ policy: TilePolicy) -> some View {
         #expect(policy.refreshSeconds == Int(step), "\(step)")
     }
 }
+
+// MARK: - The Focus grid
+
+// The four modes macOS ships, two by two, in the order its own Focus list puts
+// them. "No Focus" is NOT among them: it is the absence of one, and a fifth
+// box in a square of four reads as a fifth mode.
+@Test func theFocusGridIsTheFourBuiltInModesTwoByTwo() {
+    #expect(TilePolicyEditor.focusGrid == [[.work, .personal], [.doNotDisturb, .sleep]])
+    #expect(TilePolicyEditor.focusGrid.flatMap { $0 }.contains(.noFocus) == false)
+    #expect(TilePolicyEditor.focusGrid.flatMap { $0 }.contains(.unknown) == false)
+}
+
+// Every box on the surface, grid and the one under it, is still every box the
+// rules run over — so a mode cannot be silently unreachable.
+@Test func theGridAndNoFocusTogetherAreEveryBoxTheRulesRunOver() {
+    let shown = TilePolicyEditor.focusGrid.flatMap { $0 } + [.noFocus]
+    #expect(Set(shown) == Set(TilePolicyEditor.worksInBoxes))
+}
+
+// An icon per mode, and none of them the same: four boxes telling a reader
+// nothing apart is worse than four boxes with no icons at all.
+@Test func everyFocusOnTheSurfaceHasAnIconOfItsOwn() {
+    let shown = TilePolicyEditor.focusGrid.flatMap { $0 } + [.noFocus]
+    let symbols = shown.map(TilePolicyEditor.symbol)
+    #expect(symbols.allSatisfy { $0.isEmpty == false })
+    #expect(Set(symbols).count == shown.count)
+}
+
+// The question mark says what "any other Focus" IS, which is the thing the
+// picker's own label cannot: that macOS names four modes and calls everything
+// else — a Focus the user made, a Focus this Mac will not disclose — other.
+@Test func theAnyOtherFocusHintSaysWhatMacOSWillAndWillNotName() {
+    let hint = TilePolicyEditor.anyOtherFocusHint
+    #expect(hint.contains("four"))
+    #expect(hint.contains("Run"))
+    #expect(hint.contains("Hold"))
+}

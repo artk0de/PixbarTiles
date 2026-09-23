@@ -1,6 +1,79 @@
-// Sources/PixelClockKit/Zai/TileKeyStoring.swift
+// Sources/PixelClockKit/Secrets/SecretStoring.swift
 import Foundation
 import Security
+
+/// Whose secret it is: one tile's own key, or one connector's, shared by
+/// every tile of that connector — a GitHub token reads every repository the
+/// user watches, so asking for it once per tile would be asking three times
+/// for the same string.
+public enum SecretAccount: Hashable, Sendable, Codable {
+    case tile(TileKey)
+    case connector(String)
+
+    /// The stable string the account is filed under — the key in the
+    /// encrypted file's map. A prefix per case, so a connector named like a
+    /// tile's key can never read that tile's secret.
+    public var storageKey: String {
+        switch self {
+        case .tile(let key):
+            "tile:\(key.clockId.uuidString).\(key.connectorId).\(key.instance)"
+        case .connector(let id):
+            "connector:\(id)"
+        }
+    }
+}
+
+/// Where the app's secrets live: out of the tile records, behind a port.
+///
+/// A protocol so the paste field, the connectors' reads and every test run
+/// against a store they name, and no test ever reaches the user's real file.
+/// Nothing here caches, for the same reason the keychain store did not: a key
+/// pasted now must be on its way to the service at the next poll.
+public protocol SecretStoring: Sendable {
+    /// The secret stored under this account, or nil when there is none. A
+    /// failed read reads as no secret — there is nothing honest to say beyond
+    /// "it is not there".
+    func secret(for account: SecretAccount) -> String?
+    /// Stores a secret under this account, replacing any already there.
+    /// Throws when the store refuses: a paste the store did not take is one
+    /// the user has to be told about.
+    func save(_ secret: String, for account: SecretAccount) throws
+    /// Takes a secret away. Removing one that is not there is fine: the
+    /// wanted end state is "no secret", and that is what exists after.
+    func remove(for account: SecretAccount) throws
+}
+
+/// Why a secret store refused, in words for whoever reads the console.
+public struct SecretStoreError: Error, Equatable, Sendable {
+    public let reason: String
+
+    public init(reason: String) {
+        self.reason = reason
+    }
+}
+
+/// A secret store in memory, for the suite.
+///
+/// A class so the state it holds is the state everyone holding it sees; the
+/// lock is what makes the unchecked `Sendable` a true sentence.
+public final class MemorySecretStore: SecretStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [SecretAccount: String] = [:]
+
+    public init() {}
+
+    public func secret(for account: SecretAccount) -> String? {
+        lock.withLock { items[account] }
+    }
+
+    public func save(_ secret: String, for account: SecretAccount) throws {
+        lock.withLock { items[account] = secret }
+    }
+
+    public func remove(for account: SecretAccount) throws {
+        lock.withLock { _ = items.removeValue(forKey: account) }
+    }
+}
 
 /// Where a tile's API key lives: one secret per tile, out of the tile record.
 ///

@@ -16,8 +16,13 @@ struct StubConnector: Connector {
     let defaultInterval: TimeInterval = 300
     var output: AwtrixDelivery?
     var error: (any Error)?
+    /// Which tile a factory built this for.
+    var tag: String
 
-    init(id: String = "stub") { self.id = id }
+    init(id: String = "stub", tag: String = "") {
+        self.id = id
+        self.tag = tag
+    }
 
     func read() async throws -> AwtrixDelivery {
         if let error { throw error }
@@ -651,6 +656,100 @@ private func staysFalse(
         Issue.record("expected .failed for unknown connector")
         return
     }
+}
+
+// MARK: - Instanced tiles
+
+private func githubTile(_ instance: String) -> TileRecord {
+    TileRecord(
+        key: TileKey(clockId: UUID(), connectorId: "github", instance: instance),
+        policy: TilePolicyRecord(isPaused: false, refreshSeconds: 1800)
+    )
+}
+
+/// A session whose "github" connector is built per tile: instance "a" fails,
+/// every other one delivers.
+private func instancedHost(
+    transport: any Transport = RecordingTransport(),
+    store: any SettingsStore = InMemorySettingsStore()
+) -> AwtrixClockSession {
+    let registry = ConnectorRegistry()
+    registry.register(
+        factory: { tile in
+            var connector = StubConnector(id: "github", tag: tile.key.instance)
+            if tile.key.instance == "a" { connector.error = BoomError() }
+            return connector
+        },
+        for: "github"
+    )
+    return AwtrixClockSession(
+        device: AwtrixDevice(host: "10.0.0.5", transport: transport),
+        registry: registry,
+        store: store,
+        audio: SpyAudio(),
+        iconInstaller: StubIconInstaller()
+    )
+}
+
+// Two repositories on one clock are two feeds: one of them failing says
+// nothing about the other, so only the failing one is backed off.
+@Test func twoInstancesBackOffIndependently() async {
+    let host = instancedHost()
+    let a = githubTile("a")
+    let b = githubTile("b")
+
+    guard case .failed = await host.runOnce(tile: a) else {
+        Issue.record("expected instance a to fail")
+        return
+    }
+    #expect(await host.runOnce(tile: b) == .delivered)
+
+    #expect(await host.nextDelay(tile: a, interval: 1800) < 1800)
+    #expect(await host.nextDelay(tile: b, interval: 1800) == 1800)
+    #expect(await host.consecutiveFailures(connectorId: a.key.tileId) == 1)
+    #expect(await host.consecutiveFailures(connectorId: b.key.tileId) == 0)
+}
+
+// Enablement is the tile's own: pausing one repository leaves the other
+// running.
+@Test func anInstanceIsSkippedByItsOwnSettings() async {
+    let store = InMemorySettingsStore()
+    store.save(ConnectorSettings(isEnabled: false, intervalPosition: 0), for: "github.b")
+    let transport = RecordingTransport()
+    let host = instancedHost(transport: transport, store: store)
+
+    #expect(await host.runOnce(tile: githubTile("b")) == .skipped)
+    #expect(await host.runOnce(tile: githubTile("c")) == .delivered)
+    #expect(paths(transport) == ["/api/notify"])
+}
+
+// The id entry points are a tile with no instance, so a caller still naming a
+// connector reaches the same connector, settings and backoff it did before.
+@Test func runningByConnectorIdIsRunningItsSingleTile() async {
+    var failing = StubConnector()
+    failing.error = BoomError()
+    let host = makeHost(connector: failing)
+    let single = TileRecord(
+        key: TileKey(clockId: UUID(), connectorId: "stub"),
+        policy: TilePolicyRecord(isPaused: false, refreshSeconds: 1800)
+    )
+
+    _ = await host.runOnce(connectorId: "stub")
+    _ = await host.runOnce(tile: single)
+
+    #expect(await host.consecutiveFailures(connectorId: "stub") == 2)
+    #expect(
+        await host.nextDelay(tile: single, interval: 1800)
+            == (await host.nextDelay(connectorId: "stub", interval: 1800))
+    )
+}
+
+@Test func maintainingAnInstanceReachesItsOwnConnector() async {
+    let host = instancedHost()
+
+    // The stub has no background pass, so a found connector skips; an unknown
+    // one would have failed.
+    #expect(await host.maintain(tile: githubTile("a")) == .skipped)
 }
 
 // MARK: - Cancellation

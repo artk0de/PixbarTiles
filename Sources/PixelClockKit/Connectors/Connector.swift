@@ -90,6 +90,11 @@ public protocol Connector: Sendable {
     /// The policy a new tile of this connector starts from: copied into the
     /// tile when it is made, and the tile's own from then on.
     var defaultPolicy: TilePolicy { get }
+    /// How many tiles of this connector a clock may carry. A requirement for
+    /// the reason `refreshSteps` is one: the catalogue reads it through
+    /// `any Connector`, and an extension-only member would answer the default
+    /// for a connector that declared otherwise.
+    var instancing: Instancing { get }
     /// Goes out for the value this connector shows. May throw; never draws.
     func read() async throws -> Reading
     /// How the reading looks on an AWTRIX clock.
@@ -164,6 +169,11 @@ extension Connector {
     /// that says nothing, keeps its row. Only one that has declared itself
     /// ambient out loud loses one.
     public var isAmbient: Bool { false }
+
+    /// Once per clock, which is what every scene connector was before a tile
+    /// could carry an instance. A connector watching one thing per tile — a
+    /// repository apiece — says `.perKey` out loud.
+    public var instancing: Instancing { .single }
 
     /// What a connector that names no policy starts from: exactly what the
     /// app-wide quiet rules did to it before tiles. Those were asked of an

@@ -84,8 +84,35 @@ public actor AwtrixClockSession {
     /// because the chain is what watched the last runs — see
     /// `DeliveryChain.nextDelay(connectorId:interval:)`.
     public func nextDelay(connectorId: String, interval: TimeInterval) async -> TimeInterval {
-        await chain.nextDelay(connectorId: connectorId, interval: interval)
+        await nextDelay(tile: singleTile(connectorId), interval: interval)
     }
+
+    /// The tile's own backoff: two tiles of one connector are two feeds, and
+    /// one failing says nothing about the other.
+    public func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval {
+        await chain.nextDelay(connectorId: tile.key.tileId, interval: interval)
+    }
+
+    /// The single tile of a connector, for the entry points that still name a
+    /// connector rather than a tile.
+    ///
+    /// Its clock id is a placeholder, and honestly so: this session drives one
+    /// clock and never reads the key's clock. Its policy is what the store
+    /// holds for the id — informational, since enablement is read from the
+    /// store again when the run is asked for. Goes when the app hands every
+    /// call a tile.
+    private func singleTile(_ connectorId: String) -> TileRecord {
+        let settings = store.settings(for: connectorId)
+        return TileRecord(
+            key: TileKey(clockId: Self.unplacedClock, connectorId: connectorId),
+            policy: TilePolicyRecord(
+                isPaused: !settings.isEnabled, refreshSeconds: Int(settings.interval)
+            ),
+            lastDeliveredAt: settings.lastDeliveredAt
+        )
+    }
+
+    private static let unplacedClock = UUID(uuid: UUID_NULL)
 
     /// Produces, delivers and speaks, one delivery at a time.
     ///
@@ -103,6 +130,14 @@ public actor AwtrixClockSession {
     /// minute long, and making the banner wait behind it is the trade the queue
     /// exists to avoid.
     public func runOnce(connectorId: String) async -> RunResult {
+        await runOnce(tile: singleTile(connectorId))
+    }
+
+    /// Runs one tile: its own connector, its own settings, its own place in
+    /// the backoff — all keyed by `tile.key.tileId`, which for a single tile
+    /// is the connector id every one of them was keyed by before.
+    public func runOnce(tile: TileRecord) async -> RunResult {
+        let tileId = tile.key.tileId
         // Answered before a place in the chain is claimed. Neither a registry
         // lookup nor a settings read touches the device, so serialising them
         // buys nothing — and behind the chain a "run now" on a switched-off
@@ -118,12 +153,14 @@ public actor AwtrixClockSession {
         // wiring mistake rather than a feed outage — nothing schedules it, so a
         // count kept against it would grow on every "run now" against a stale
         // id and never be read by anything.
-        guard let connector = registry.connector(id: connectorId) else {
-            return .failed("unknown connector \(connectorId)")
+        guard let connector = registry.connector(for: tile) else {
+            return .failed("unknown connector \(tileId)")
         }
-        guard store.settings(for: connectorId).isEnabled else { return .skipped }
+        guard store.settings(for: tileId).isEnabled else { return .skipped }
 
-        return await chain.run(for: connectorId) { [self] in await produceAndSend(connector) }
+        return await chain.run(for: tileId) { [self] in
+            await produceAndSend(connector, for: tileId)
+        }
     }
 
     /// Puts something already produced on the clock and speaks it.
@@ -154,10 +191,16 @@ public actor AwtrixClockSession {
     /// it on its own schedule: the pass is where the synthesis bill is paid,
     /// and the point of paying it here is that no banner is waiting on it.
     public func maintain(connectorId: String) async -> MaintenanceResult {
-        guard let connector = registry.connector(id: connectorId) else {
-            return .failed("unknown connector \(connectorId)")
+        await maintain(tile: singleTile(connectorId))
+    }
+
+    /// The background pass of one tile's own connector.
+    public func maintain(tile: TileRecord) async -> MaintenanceResult {
+        let tileId = tile.key.tileId
+        guard let connector = registry.connector(for: tile) else {
+            return .failed("unknown connector \(tileId)")
         }
-        guard store.settings(for: connectorId).isEnabled else { return .skipped }
+        guard store.settings(for: tileId).isEnabled else { return .skipped }
         // A switched-off connector reaches `.skipped` first: restocking one
         // means a model load and a batch of synthesis for output nobody will
         // ever hear.
@@ -186,9 +229,12 @@ public actor AwtrixClockSession {
     /// and a produce that ran ahead of its turn would spend anecdotes on
     /// deliveries that had not happened yet — and, when the queue is empty,
     /// would put a whole batch of synthesis in front of the run behind it.
-    private func produceAndSend(_ connector: any Connector) async -> RunResult {
+    ///
+    /// Custody is recorded against the tile id rather than the connector's,
+    /// so two tiles of one connector give back only what each of them took.
+    private func produceAndSend(_ connector: any Connector, for tileId: String) async -> RunResult {
         do {
-            return await send(try await connector.produce(), from: connector.id)
+            return await send(try await connector.produce(), from: tileId)
         } catch {
             return DeliveryChain.classify(error)
         }

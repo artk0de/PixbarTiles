@@ -80,6 +80,26 @@ private func availability(
     #expect(availability(anecdotes, on: desk, tiles) == .unavailable("not supported on TC-002 Pixbar"))
 }
 
+// A scene connector that says it sits on a clock once per key — a repository
+// per GitHub tile — is still offered with one of its tiles already there. The
+// candidate reads that off the connector rather than assuming every scene is
+// single.
+@Test func aPerKeyConnectorAlreadyOnTheClockIsStillListed() {
+    let candidate = TileCandidate(PerKeyScene())
+
+    #expect(candidate.instancing == .perKey)
+    #expect(
+        availability(candidate, on: kitchen, [placed("per-key", on: kitchen, instance: "a/x")])
+            == .available
+    )
+}
+
+// A scene connector that says nothing is single, which is what every one
+// written before instancing was.
+@Test func aSceneConnectorThatSaysNothingIsSingle() {
+    #expect(TileCandidate(AWTRIXOnly()).instancing == .single)
+}
+
 // The VPN is a lamp, not a scene: an AWTRIX clock only, one tile per VPN —
 // and its card wears the lamp's own shelf, mark and line on the store.
 @Test func theVPNIsOfferedOnAWTRIXClocksOnePerVPN() {
@@ -188,6 +208,16 @@ private struct TC002Too: Connector {
     var ulanziFace: UlanziFace<Int>? {
         UlanziFace { _ in UlanziDelivery(scene: UlanziScene(frames: [UlanziFrame(duration: 5)])) }
     }
+}
+
+private struct PerKeyScene: Connector {
+    let id = "per-key"
+    let displayName = "Per key"
+    let defaultInterval: TimeInterval = 600
+    let isAudible = false
+    let instancing = Instancing.perKey
+    func read() async throws -> Int { 0 }
+    var awtrixFace: AwtrixFace<Int> { AwtrixFace { _ in AwtrixDelivery(text: "") } }
 }
 
 /// Never called: the catalogue reads the candidate, and the candidate never

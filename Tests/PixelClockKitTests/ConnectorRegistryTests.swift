@@ -7,6 +7,8 @@ private struct FakeConnector: Connector {
     let displayName: String
     let defaultInterval: TimeInterval = 300
     var output = AwtrixDelivery(text: "hi")
+    /// Which tile a factory built this for — read back by the factory tests.
+    var tag = ""
 
     func read() async throws -> AwtrixDelivery { output }
 }
@@ -93,6 +95,47 @@ private struct FakeConnector: Connector {
 
     #expect(registry.all.count == count)
     #expect(Set(registry.all.map(\.id)).count == count)
+}
+
+// MARK: - Per-tile factories
+
+// Two tiles of one connector on one clock each need a connector of their own —
+// a repository apiece — so the factory is handed the tile it builds for.
+@Test func aFactoryBuildsTheConnectorForItsOwnTile() {
+    let registry = ConnectorRegistry()
+    registry.register(
+        factory: { tile in FakeConnector(id: "github", displayName: "GitHub", tag: tile.key.instance) },
+        for: "github"
+    )
+    let a = TileRecord(
+        key: TileKey(clockId: UUID(), connectorId: "github", instance: "a/x"),
+        policy: TilePolicyRecord(isPaused: false, refreshSeconds: 60)
+    )
+    let b = TileRecord(
+        key: TileKey(clockId: UUID(), connectorId: "github", instance: "b/y"),
+        policy: TilePolicyRecord(isPaused: false, refreshSeconds: 60)
+    )
+
+    #expect((registry.connector(for: a) as? FakeConnector)?.tag == "a/x")
+    #expect((registry.connector(for: b) as? FakeConnector)?.tag == "b/y")
+}
+
+// A connector with no factory is the one registered under its id, whatever
+// the tile — which is every connector before instancing.
+@Test func aTileWithNoFactoryRunsTheRegisteredConnector() {
+    let registry = ConnectorRegistry()
+    registry.register(FakeConnector(id: "weather", displayName: "Weather"))
+    let tile = TileRecord(
+        key: TileKey(clockId: UUID(), connectorId: "weather"),
+        policy: TilePolicyRecord(isPaused: false, refreshSeconds: 900)
+    )
+    let stranger = TileRecord(
+        key: TileKey(clockId: UUID(), connectorId: "missing"),
+        policy: TilePolicyRecord(isPaused: false, refreshSeconds: 900)
+    )
+
+    #expect(registry.connector(for: tile)?.displayName == "Weather")
+    #expect(registry.connector(for: stranger) == nil)
 }
 
 // MARK: - The output shape

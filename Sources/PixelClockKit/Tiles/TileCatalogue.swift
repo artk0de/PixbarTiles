@@ -3,7 +3,7 @@ import Foundation
 
 /// How many tiles of one connector a clock may carry.
 public enum Instancing: Sendable, Equatable {
-    /// One. Every scene connector is this.
+    /// One. A scene connector is this unless it says otherwise.
     case single
     /// One per key — the VPN tile, one per watched VPN.
     case perKey
@@ -73,7 +73,7 @@ public struct TileCandidate: Hashable, Sendable {
         self.init(
             connectorId: connector.id,
             models: models,
-            instancing: .single,
+            instancing: connector.instancing,
             isAudible: connector.isAudible
         )
     }

@@ -129,3 +129,78 @@ private func stored(
             == chosen
     )
 }
+
+// MARK: - Instanced tiles
+
+private func instanced(
+    _ connector: String, _ instance: String, paused: Bool = false, every seconds: Int
+) -> TileRecord {
+    TileRecord(
+        key: TileKey(clockId: desk, connectorId: connector, instance: instance),
+        policy: TilePolicyRecord(isPaused: paused, refreshSeconds: seconds)
+    )
+}
+
+// A record written before tiles could be instanced has an empty instance, and
+// its tile id is the connector id it was always read under — so its settings
+// still load, by id and by key. The bytes are written by hand, as an older
+// build stored them, rather than through today's encoder.
+@Test func aRecordWrittenBeforeInstancingStillReadsItsSettings() throws {
+    let suite = "tile-settings-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let legacy = Data(
+        """
+        [{"key":{"clockId":"\(desk.uuidString)","connectorId":"weather","instance":""},
+          "policy":{"isPaused":true,"refreshSeconds":3600}}]
+        """.utf8
+    )
+    defaults.set(legacy, forKey: TileStore.key)
+    let store = TileSettingsStore(defaults: defaults, clockId: desk)
+    let expected = ConnectorSettings(isEnabled: false, intervalPosition: 11)
+
+    #expect(store.storedSettings(for: "weather") == expected)
+    #expect(store.storedSettings(for: TileKey(clockId: desk, connectorId: "weather")) == expected)
+}
+
+// Two repositories on one clock are two tiles, each with its own settings,
+// found by the tile id the session keys everything by.
+@Test func eachInstanceReadsItsOwnSettings() throws {
+    let suite = "tile-settings-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    try TileStore(defaults: defaults).replaceAll([
+        instanced("github", "a/x", paused: true, every: 3600),
+        instanced("github", "b/y", every: 600),
+    ])
+    let store = TileSettingsStore(defaults: defaults, clockId: desk)
+
+    #expect(store.storedSettings(for: "github.a/x")?.isEnabled == false)
+    #expect(store.storedSettings(for: "github.b/y")?.isEnabled == true)
+    #expect(
+        store.storedSettings(for: TileKey(clockId: desk, connectorId: "github", instance: "b/y"))?
+            .intervalPosition == 1
+    )
+    #expect(store.storedSettings(for: "github") == nil)
+}
+
+// A delivery saved under an instance's tile id lands on that instance, rather
+// than growing a tile whose connector id is the whole name.
+@Test func savingUnderAnInstancesTileIdWritesIntoThatInstance() throws {
+    let suite = "tile-settings-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    try TileStore(defaults: defaults).replaceAll([
+        instanced("github", "a/x", every: 600), instanced("github", "b/y", every: 600),
+    ])
+    let store = TileSettingsStore(defaults: defaults, clockId: desk)
+    var settings = try #require(store.storedSettings(for: "github.a/x"))
+
+    settings.lastDeliveredAt = delivered
+    store.save(settings, for: "github.a/x")
+
+    let tiles = TileStore(defaults: defaults).all()
+    #expect(tiles.count == 2)
+    #expect(tiles.first { $0.key.instance == "a/x" }?.lastDeliveredAt == delivered)
+    #expect(tiles.first { $0.key.instance == "b/y" }?.lastDeliveredAt == nil)
+}

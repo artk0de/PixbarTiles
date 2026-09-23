@@ -15,6 +15,14 @@ public struct TileKey: Codable, Sendable, Hashable {
         self.connectorId = connectorId
         self.instance = instance
     }
+
+    /// The key's name on the wire and in custody: the connector id alone for
+    /// a single tile — every page already on a clock keeps the name it was
+    /// delivered under — else "<connectorId>.<instance>". Unique on one clock,
+    /// because two keys on it differ in connector or in instance.
+    public var tileId: String {
+        instance.isEmpty ? connectorId : "\(connectorId).\(instance)"
+    }
 }
 
 /// The stored half of a tile's policy — the part the schedule reads today.

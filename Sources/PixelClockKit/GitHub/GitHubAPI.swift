@@ -35,6 +35,34 @@ public struct OpenPR: Sendable, Equatable, Codable, Hashable {
     }
 }
 
+/// The default branch's CI as its head commit's check rollup reports it.
+///
+/// The commit is the identity: a failure is news once per failing head
+/// (`GitHubSnapshot.lastFailedOid`), not once per read that finds it red.
+public struct GitHubCI: Sendable, Equatable {
+    /// GitHub's rollup folded into what the lamp draws: `FAILURE` and `ERROR`
+    /// are both a failure, `PENDING` and `EXPECTED` both still running, and a
+    /// commit no check ran on is `none` — drawn like success, as nothing.
+    public enum State: String, Sendable, Equatable {
+        case success, failure, pending, none
+    }
+
+    public var state: State
+    /// The default branch's name — what the celebration calls it.
+    public var branch: String
+    public var headOid: String
+    /// The head commit author's login; nil when the commit's email is linked
+    /// to no GitHub account.
+    public var author: String?
+
+    public init(state: State, branch: String, headOid: String, author: String?) {
+        self.state = state
+        self.branch = branch
+        self.headOid = headOid
+        self.author = author
+    }
+}
+
 /// A repository as one read found it: the three counts the face shows, and the
 /// newest few stargazers, forks and open PRs the event detector compares
 /// against the last snapshot.
@@ -50,10 +78,14 @@ public struct GitHubRepoState: Sendable, Equatable {
     public var stargazers: [Stargazer]
     public var forkEvents: [ForkEvent]
     public var openPRNumbers: [OpenPR]
+    /// The default branch's CI; nil when the repository has no default
+    /// branch (an empty one) to ask about.
+    public var ci: GitHubCI?
 
     public init(
         nameWithOwner: String, stars: Int, forks: Int, openPRs: Int,
-        stargazers: [Stargazer] = [], forkEvents: [ForkEvent] = [], openPRNumbers: [OpenPR] = []
+        stargazers: [Stargazer] = [], forkEvents: [ForkEvent] = [], openPRNumbers: [OpenPR] = [],
+        ci: GitHubCI? = nil
     ) {
         self.nameWithOwner = nameWithOwner
         self.stars = stars
@@ -62,6 +94,7 @@ public struct GitHubRepoState: Sendable, Equatable {
         self.stargazers = stargazers
         self.forkEvents = forkEvents
         self.openPRNumbers = openPRNumbers
+        self.ci = ci
     }
 }
 
@@ -88,7 +121,9 @@ public struct GitHubAPI: GitHubReporting {
     /// The spec's query, verbatim. `stargazers` pages oldest → newest by
     /// `starredAt`, so `last: 20` is the newest twenty; the forks are ordered
     /// explicitly for the same reason, and `openPRs` is an alias because the
-    /// unaliased `pullRequests` already carries the count.
+    /// unaliased `pullRequests` already carries the count. The default
+    /// branch's head commit carries the CI: its checks' rollup, its oid (a
+    /// failure's identity) and its author's account.
     static let query = """
     query($owner: String!, $name: String!) {
       repository(owner: $owner, name: $name) {
@@ -99,6 +134,7 @@ public struct GitHubAPI: GitHubReporting {
         stargazers(last: 20) { edges { starredAt node { login } } }
         forks(last: 20, orderBy: {field: CREATED_AT, direction: ASC}) { nodes { createdAt owner { login } } }
         openPRs: pullRequests(states: OPEN, last: 20) { nodes { number author { login } } }
+        defaultBranchRef { name target { ... on Commit { oid author { user { login } } statusCheckRollup { state } } } }
       }
     }
     """
@@ -194,8 +230,22 @@ public struct GitHubAPI: GitHubReporting {
             // calls it "ghost".
             openPRNumbers: repository.openPRs.nodes.map {
                 OpenPR(number: $0.number, author: $0.author?.login ?? "ghost")
-            }
+            },
+            ci: repository.defaultBranchRef.flatMap(Self.ci)
         )
+    }
+
+    /// The branch's head as the lamp reads it. A target that is not a commit
+    /// (the inline fragment matched nothing) has no oid and is no CI.
+    private static func ci(_ ref: Repository.BranchRef) -> GitHubCI? {
+        guard let target = ref.target, let oid = target.oid else { return nil }
+        let state: GitHubCI.State = switch target.statusCheckRollup?.state {
+        case "SUCCESS": .success
+        case "FAILURE", "ERROR": .failure
+        case "PENDING", "EXPECTED": .pending
+        default: .none
+        }
+        return GitHubCI(state: state, branch: ref.name, headOid: oid, author: target.author?.user?.login)
     }
 
     /// GitHub's `DateTime` is whole-second ISO 8601; the fractional form is
@@ -225,6 +275,19 @@ public struct GitHubAPI: GitHubReporting {
         struct Forks: Decodable { let nodes: [ForkNode] }
         struct PRNode: Decodable { let number: Int; let author: Login? }
         struct PRs: Decodable { let nodes: [PRNode] }
+        struct BranchRef: Decodable {
+            struct Author: Decodable { let user: Login? }
+            struct Rollup: Decodable { let state: String }
+            /// Every field optional: a non-commit target decodes as `{}`.
+            struct Target: Decodable {
+                let oid: String?
+                let author: Author?
+                let statusCheckRollup: Rollup?
+            }
+
+            let name: String
+            let target: Target?
+        }
 
         let nameWithOwner: String
         let stargazerCount: Int
@@ -233,5 +296,8 @@ public struct GitHubAPI: GitHubReporting {
         let stargazers: Stars
         let forks: Forks
         let openPRs: PRs
+        /// Null for an empty repository; absent from an answer recorded
+        /// before the query asked for it.
+        let defaultBranchRef: BranchRef?
     }
 }

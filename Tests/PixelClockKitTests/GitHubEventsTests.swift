@@ -210,3 +210,93 @@ private func state(
         #expect(d.data(forKey: "githubSnapshot.\(a.tileId).\(clock.uuidString)") != nil)
     }
 }
+
+// The default branch's CI: a failure is news once per failing head commit.
+// The snapshot remembers the last failing head, so a relaunch, a later read of
+// the same commit, or a re-run that fails again never celebrates twice.
+
+private func ciState(_ state: GitHubCI.State, oid: String, author: String? = "dave") -> GitHubRepoState {
+    var repo = GitHubRepoState(nameWithOwner: "artk0de/tea-rags", stars: 0, forks: 0, openPRs: 0)
+    repo.ci = GitHubCI(state: state, branch: "main", headOid: oid, author: author)
+    return repo
+}
+
+private let quiet = GitHubSnapshot(lastStarAt: nil, lastForkAt: nil, openPRs: [])
+
+@Suite struct GitHubCIEventTests {
+    @Test func aFailingHeadAfterAGreenOneIsAnEvent() {
+        let (_, green) = GitHubEventDetector.detect(ciState(.success, oid: "a1"), since: quiet)
+        let (events, snap) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: green)
+        #expect(events.ciFailure == GitHubCIFailure(branch: "main", author: "dave", oid: "b2"))
+        #expect(!events.isEmpty)
+        #expect(snap.lastFailedOid == "b2")
+    }
+
+    @Test func aBaselineWithAFailingHeadIsNoEventButIsRemembered() {
+        let (events, snap) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: nil)
+        #expect(events.ciFailure == nil)
+        #expect(events.isEmpty)
+        #expect(snap.lastFailedOid == "b2")
+        // …so the next read of the same commit does not celebrate it either.
+        let (again, _) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: snap)
+        #expect(again.ciFailure == nil)
+    }
+
+    @Test func theSameFailingCommitNeverCelebratesTwice() {
+        let (first, snap) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: quiet)
+        #expect(first.ciFailure != nil)
+        let (second, snap2) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: snap)
+        #expect(second.ciFailure == nil)
+        #expect(second.isEmpty)
+        #expect(snap2.lastFailedOid == "b2")
+    }
+
+    @Test func theRememberedFailureSurvivesARelaunch() throws {
+        let (_, snap) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: quiet)
+        let relaunched = try JSONDecoder().decode(GitHubSnapshot.self, from: JSONEncoder().encode(snap))
+        let (events, _) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: relaunched)
+        #expect(events.ciFailure == nil)
+    }
+
+    @Test func pendingThenFailureOnTheSameCommitIsOneEvent() {
+        let (pending, snap) = GitHubEventDetector.detect(ciState(.pending, oid: "b2"), since: quiet)
+        #expect(pending.ciFailure == nil)
+        #expect(snap.lastFailedOid == nil)
+        let (failed, snap2) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: snap)
+        #expect(failed.ciFailure?.oid == "b2")
+        let (after, _) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: snap2)
+        #expect(after.ciFailure == nil)
+    }
+
+    @Test func aNewFailingCommitAfterAnEarlierFailingOneIsAnEvent() {
+        let (_, snap) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: quiet)
+        let (events, snap2) = GitHubEventDetector.detect(ciState(.failure, oid: "c3", author: nil), since: snap)
+        #expect(events.ciFailure == GitHubCIFailure(branch: "main", author: nil, oid: "c3"))
+        #expect(snap2.lastFailedOid == "c3")
+    }
+
+    @Test func greenPendingAndNoChecksAreNoEvents() {
+        for state in [GitHubCI.State.success, .pending, .none] {
+            let (events, _) = GitHubEventDetector.detect(ciState(state, oid: "b2"), since: quiet)
+            #expect(events.ciFailure == nil, "\(state)")
+        }
+        let (events, _) = GitHubEventDetector.detect(state(), since: quiet)
+        #expect(events.ciFailure == nil)
+    }
+
+    /// A green read keeps the last failure: a re-run that fails the same
+    /// commit again is not news.
+    @Test func aGreenReadKeepsTheLastFailure() {
+        let (_, snap) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: quiet)
+        let (_, green) = GitHubEventDetector.detect(ciState(.success, oid: "b2"), since: snap)
+        #expect(green.lastFailedOid == "b2")
+        let (events, _) = GitHubEventDetector.detect(ciState(.failure, oid: "b2"), since: green)
+        #expect(events.ciFailure == nil)
+    }
+
+    @Test func aSnapshotWithoutALastFailureDecodes() throws {
+        let old = Data(#"{"openPRs":[41]}"#.utf8)
+        let snapshot = try JSONDecoder().decode(GitHubSnapshot.self, from: old)
+        #expect(snapshot.lastFailedOid == nil)
+    }
+}

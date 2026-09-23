@@ -26,10 +26,15 @@ public struct GitHubSnapshot: Codable, Sendable, Equatable {
     /// what the page shows.
     public var stars: Int?
     public var forks: Int?
+    /// The last default-branch head commit seen failing. A failure is news
+    /// once per commit: a later read, a relaunch, or a re-run failing the
+    /// same commit again finds it here. Kept through green reads for that
+    /// last reason; optional so an older snapshot still decodes.
+    public var lastFailedOid: String?
 
     public init(
         lastStarAt: Date?, lastForkAt: Date?, openPRs: Set<Int>,
-        stars: Int? = nil, forks: Int? = nil, lastPRNumber: Int? = nil
+        stars: Int? = nil, forks: Int? = nil, lastPRNumber: Int? = nil, lastFailedOid: String? = nil
     ) {
         self.lastStarAt = lastStarAt
         self.lastForkAt = lastForkAt
@@ -37,9 +42,25 @@ public struct GitHubSnapshot: Codable, Sendable, Equatable {
         self.lastPRNumber = lastPRNumber
         self.stars = stars
         self.forks = forks
+        self.lastFailedOid = lastFailedOid
     }
 
     public var isBaseline: Bool { lastStarAt == nil && lastForkAt == nil && openPRs.isEmpty }
+}
+
+/// The default branch's head commit failing its checks, as a celebration
+/// names it.
+public struct GitHubCIFailure: Sendable, Equatable {
+    public var branch: String
+    /// The commit author's login, nil when the commit is linked to no account.
+    public var author: String?
+    public var oid: String
+
+    public init(branch: String, author: String?, oid: String) {
+        self.branch = branch
+        self.author = author
+        self.oid = oid
+    }
 }
 
 /// What arrived since the snapshot.
@@ -57,6 +78,8 @@ public struct GitHubEvents: Sendable, Equatable {
     public var newStarCount = 0
     /// At least `newForks.count`.
     public var newForkCount = 0
+    /// The default branch's head commit newly seen failing.
+    public var ciFailure: GitHubCIFailure?
 
     public init() {}
 
@@ -65,6 +88,7 @@ public struct GitHubEvents: Sendable, Equatable {
     public var isEmpty: Bool {
         newStarCount == 0 && newForkCount == 0
             && newStars.isEmpty && newForks.isEmpty && newPRs.isEmpty
+            && ciFailure == nil
     }
 }
 
@@ -84,13 +108,17 @@ public enum GitHubEventDetector {
         let newestFork = state.forkEvents.map(\.createdAt).max()
         let current = Set(state.openPRNumbers.map(\.number))
         let highestPR = current.max()
+        // The head commit failing now, if it is; a baseline records it
+        // without celebrating, like the stars already there.
+        let failing = state.ci.flatMap { $0.state == .failure ? $0 : nil }
 
         guard let snapshot else {
             return (
                 GitHubEvents(),
                 GitHubSnapshot(
                     lastStarAt: newestStar, lastForkAt: newestFork, openPRs: current,
-                    stars: state.stars, forks: state.forks, lastPRNumber: highestPR
+                    stars: state.stars, forks: state.forks, lastPRNumber: highestPR,
+                    lastFailedOid: failing?.headOid
                 )
             )
         }
@@ -110,6 +138,11 @@ public enum GitHubEventDetector {
             .sorted { $0.number > $1.number }
         events.newStarCount = count(pageNew: stars.count, total: state.stars, previous: snapshot.stars)
         events.newForkCount = count(pageNew: forks.count, total: state.forks, previous: snapshot.forks)
+        // By commit, not by transition: pending → failure on one commit is
+        // one event, and the same failing commit read again is none.
+        if let failing, failing.headOid != snapshot.lastFailedOid {
+            events.ciFailure = GitHubCIFailure(branch: failing.branch, author: failing.author, oid: failing.headOid)
+        }
 
         // Advances only: when every newer star was withdrawn, the page's
         // newest is older than the last seen, and moving back would make an
@@ -119,7 +152,8 @@ public enum GitHubEventDetector {
             lastForkAt: latest(snapshot.lastForkAt, newestFork),
             openPRs: current,
             stars: state.stars, forks: state.forks,
-            lastPRNumber: [snapshot.lastPRNumber, highestPR].compactMap { $0 }.max()
+            lastPRNumber: [snapshot.lastPRNumber, highestPR].compactMap { $0 }.max(),
+            lastFailedOid: failing?.headOid ?? snapshot.lastFailedOid
         )
         return (events, next)
     }

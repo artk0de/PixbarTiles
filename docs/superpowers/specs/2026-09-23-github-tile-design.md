@@ -173,6 +173,7 @@ public var interruption: Interruption<Scene>?
       stargazers(last: 20) { edges { starredAt node { login } } }
       forks(last: 20, orderBy: {field: CREATED_AT, direction: ASC}) { nodes { createdAt owner { login } } }
       openPRs: pullRequests(states: OPEN, last: 20) { nodes { number author { login } } }
+      defaultBranchRef { name target { ... on Commit { oid author { user { login } } statusCheckRollup { state } } } }
     }
   }
   ```

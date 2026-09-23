@@ -146,3 +146,68 @@ private let recordedBody = Data("""
         #expect(transport.requests.isEmpty)
     }
 }
+
+/// A repository answer carrying the default branch's head commit, with the
+/// rollup's `state` spelled as GitHub spells it — or no rollup when nil.
+private func ciBody(rollup: String?, author: String? = "dave", ref: Bool = true) -> Data {
+    let rollupJSON = rollup.map { #"{"state":"\#($0)"}"# } ?? "null"
+    let authorJSON = author.map { #"{"user":{"login":"\#($0)"}}"# } ?? #"{"user":null}"#
+    let refJSON = ref
+        ? #"{"name":"main","target":{"oid":"abc123","author":\#(authorJSON),"statusCheckRollup":\#(rollupJSON)}}"#
+        : "null"
+    return Data("""
+    {"data":{"repository":{
+      "nameWithOwner":"artk0de/tea-rags","stargazerCount":1,"forkCount":0,
+      "pullRequests":{"totalCount":0},"stargazers":{"edges":[]},"forks":{"nodes":[]},
+      "openPRs":{"nodes":[]},
+      "defaultBranchRef":\(refJSON)
+    }}}
+    """.utf8)
+}
+
+@Suite struct GitHubAPICITests {
+    private func decoded(_ body: Data) throws -> GitHubRepoState {
+        try GitHubAPI.decode(body, repo: "artk0de/tea-rags")
+    }
+
+    @Test func theQueryAsksForTheDefaultBranchsRollup() {
+        #expect(GitHubAPI.query.contains("defaultBranchRef"))
+        #expect(GitHubAPI.query.contains("statusCheckRollup { state }"))
+        #expect(GitHubAPI.query.contains("oid"))
+    }
+
+    @Test func theRollupStatesMapToTheLampsStates() throws {
+        let cases: [(String, GitHubCI.State)] = [
+            ("SUCCESS", .success), ("FAILURE", .failure), ("ERROR", .failure),
+            ("PENDING", .pending), ("EXPECTED", .pending),
+        ]
+        for (rollup, expected) in cases {
+            let ci = try #require(try decoded(ciBody(rollup: rollup)).ci, "\(rollup)")
+            #expect(ci.state == expected, "\(rollup)")
+        }
+    }
+
+    @Test func theHeadCommitIsNamed() throws {
+        let ci = try #require(try decoded(ciBody(rollup: "FAILURE")).ci)
+        #expect(ci == GitHubCI(state: .failure, branch: "main", headOid: "abc123", author: "dave"))
+    }
+
+    @Test func aCommitWithoutALinkedAccountHasNoAuthor() throws {
+        let ci = try #require(try decoded(ciBody(rollup: "FAILURE", author: nil)).ci)
+        #expect(ci.author == nil)
+    }
+
+    @Test func noRollupIsNone() throws {
+        let ci = try #require(try decoded(ciBody(rollup: nil)).ci)
+        #expect(ci.state == .none)
+    }
+
+    @Test func noDefaultBranchIsNoCI() throws {
+        #expect(try decoded(ciBody(rollup: nil, ref: false)).ci == nil)
+    }
+
+    /// An answer without the branch — an empty repository has none — decodes.
+    @Test func anAnswerWithoutTheBranchStillDecodes() throws {
+        #expect(try decoded(recordedBody).ci == nil)
+    }
+}

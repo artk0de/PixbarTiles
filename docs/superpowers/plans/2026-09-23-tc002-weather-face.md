@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the TC002 weather page's still raster with the approved face: 47 animated 16×16 icons, a large temperature, a rotating detail line, and three layouts (Anchor / Pages / Hybrid).
+**Goal:** Replace the TC002 weather page's still raster with the approved face: 46 animated 16×16 icons plus `nodata`, a large temperature, a rotating detail line, and three layouts (Anchor / Pages / Hybrid).
 
 **Architecture:** The skill's Python (`.claude/skills/tc002-face-mockup/weather/wgen.py`, `icons.py`) is the pixel source of truth. A recorder script turns it into JSON fixtures, and the Swift face is held to those fixtures pixel for pixel and delay for delay. Swift splits into:
 - icon art (procedural frames);
@@ -36,7 +36,7 @@
 | `Scripts/make_weather_face_oracle.py` (create) | Records `weather_icons_oracle.json`, `weather_face_oracle.json` |
 | `Sources/PixelClockKit/Ulanzi/ProportionalGlyphs.swift` (modify) | Adds `h i k z x ° / ↑ ↓` and 8 wind arrows |
 | `Sources/PixelClockKit/Ulanzi/BigDigitGlyphs.swift` (create) | `PixelFont.big`, the 5×9 temperature face |
-| `Sources/PixelClockKit/Weather/WeatherIcon.swift` (create) | `enum WeatherIcon` (47 cases + `nodata`), `frames` |
+| `Sources/PixelClockKit/Weather/WeatherIcon.swift` (create) | `enum WeatherIcon` (46 approved icons + `nodata` = 47 cases), `frames` |
 | `Sources/PixelClockKit/Weather/WeatherIconArt.swift` (create) | Procedural primitives: disc, sun, moon, cloud, drops, flakes, bolt, streaks |
 | `Sources/PixelClockKit/Weather/OpenMeteoSource.swift` (modify) | Wider request + optional fields on `WeatherReading` |
 | `Sources/PixelClockKit/Weather/WeatherFacts.swift` (create) | Icon selection, moon phase, next sun event, rain chance, wind arrow/units |
@@ -82,7 +82,7 @@ import Testing
         let face = try #require(Bundle.module.url(forResource: "weather_face_oracle", withExtension: "json"))
         let iconsJSON = try JSONSerialization.jsonObject(with: Data(contentsOf: icons)) as? [String: Any]
         let names = (iconsJSON?["icons"] as? [String: Any])?.keys.sorted() ?? []
-        #expect(names.count == 48)  // 47 approved icons + nodata
+        #expect(names.count == 47)  // 46 approved icons + nodata
         let faceJSON = try JSONSerialization.jsonObject(with: Data(contentsOf: face)) as? [String: Any]
         let cases = faceJSON?["cases"] as? [[String: Any]] ?? []
         #expect(cases.count >= 30)   // every icon rule × at least one layout, plus the corner cases
@@ -177,7 +177,7 @@ Run: `python3 .claude/skills/tc002-face-mockup/weather/wgen.py && python3 .claud
 
 ---
 
-### Task 3: Icons — the 47 animations as Swift
+### Task 3: Icons — the 46 animations and nodata as Swift
 
 **Files:**
 - Create: `Sources/PixelClockKit/Weather/WeatherIconArt.swift` (primitives)
@@ -229,7 +229,7 @@ public enum WeatherIcon: String, CaseIterable, Sendable {
   - Colours come from `icons.C`; keep the names.
   - `nodata` is the grey `nt` cloud at (0,4), one frame of 1000 ms (`wgen.nodata_icon`).
 - [ ] **Step 4: Run — PASS.** A pixel mismatch is a porting bug. Compare the named function with the Python line by line; never edit the fixture.
-- [ ] **Step 5: Commit** — `feat(weather): the 47 approved 16x16 animations`
+- [ ] **Step 5: Commit** — `feat(weather): the 46 approved 16x16 animations and nodata`
 
 ---
 

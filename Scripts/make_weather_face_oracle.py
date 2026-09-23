@@ -18,6 +18,10 @@ This writes two fixtures under `Tests/PixelClockKitTests/Fixtures/`:
   wgen derives, and wgen's timeline: Anchor's `icon` and `area`, or Pages'
   and Hybrid's `full`, every frame as rows of packed `RRGGBB` hex with its
   duration in milliseconds. `burst` is the fallback the budget rule picked.
+  The frames are stored as `framesZ`: base64 of the raw DEFLATE (no zlib
+  header) of the compact JSON of that `{"icon", "area"}` / `{"full"}` object —
+  hex rows repeat so much that this keeps the fixture small. Foundation's
+  `NSData.decompressed(using: .zlib)` inflates exactly this format.
 
 Times are formatted in UTC, the zone the Swift tests inject.
 
@@ -31,12 +35,14 @@ test pass: the fixture is the approved design, and a new one is a new design.
 
 from __future__ import annotations
 
+import base64
 import calendar
 import importlib.util
 import json
 import math
 import os
 import sys
+import zlib
 from datetime import timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -223,6 +229,7 @@ CASES = [
          items=ALL, every=10),
 ]
 
+CASES_FRAMES = []   # the decoded frames, for the summary line
 WIND_UNITS = {"m/s": "metresPerSecond", "km/h": "kilometresPerHour", "mph": "milesPerHour"}
 SWITCHES = [("showsFeelsLike", "feels"), ("showsHumidity", "humidity"), ("showsWind", "wind"),
             ("showsHiLo", "hilo"), ("showsRainChance", "rain"), ("showsUV", "uv"),
@@ -235,6 +242,13 @@ def hexrows(grid):
 
 def frames_json(frames):
     return [{"ms": ms, "rows": hexrows(g)} for g, ms in frames]
+
+
+def deflate(obj):
+    """base64 of raw DEFLATE (wbits -15) of compact, key-sorted JSON."""
+    raw = json.dumps(obj, separators=(",", ":"), sort_keys=True).encode()
+    z = zlib.compressobj(9, zlib.DEFLATED, -15)
+    return base64.b64encode(z.compress(raw) + z.flush()).decode()
 
 
 def reading_json(r):
@@ -289,6 +303,7 @@ def main():
         f.write("\n")
 
     cases = []
+    CASES_FRAMES.clear()
     for c in CASES:
         # BASE carries the switch-derived items in wgen's ORDER, as the tile does
         items = tuple(k for k in wgen.ORDER if k in c["items"])
@@ -302,15 +317,16 @@ def main():
         else:
             full, burst = wgen.full_timeline(v)
             frames = {"full": frames_json(full)}
+        CASES_FRAMES.append(frames)
         cases.append({"id": c["id"], "now": c["now"], "reading": reading_json(c["reading"]),
-                      "config": config_json(c), "facts": v.facts, "burst": burst, "frames": frames})
+                      "config": config_json(c), "facts": v.facts, "burst": burst, "framesZ": deflate(frames)})
 
     glyphs = {"small": dict(sorted(wgen.G.items())), "big": dict(sorted(wgen.B.items()))}
     with open(FACE_OUT, "w", encoding="utf-8") as f:
         json.dump({"timeZone": "UTC", "width": wgen.W, "height": wgen.H, "areaX": wgen.AREA_X,
                    "glyphs": glyphs, "cases": cases}, f, indent=1, ensure_ascii=False)
         f.write("\n")
-    total = sum(len(v) for c in cases for v in c["frames"].values())
+    total = sum(len(v) for c in CASES_FRAMES for v in c.values())
     print(f"{len(icons)} icons -> {ICONS_OUT}")
     print(f"{len(cases)} cases, {total} frames -> {FACE_OUT}")
 

@@ -12,7 +12,8 @@ The TC002 weather page is currently one still raster: the temperature in the
 TC001 has animated weather icons. The redesign gives the 52×16 panel:
 
 - a 16×16 animated icon for every weather state Open-Meteo can report, plus
-  states derived from wind, temperature and the moon;
+  states derived from wind, temperature and the moon — 46 approved
+  animations, plus a grey `nodata` cloud;
 - a large temperature;
 - rotating details (feels-like, humidity, wind, hi/lo, rain chance, UV,
   sunrise/sunset, an hourly chart), each switchable per tile;
@@ -56,7 +57,9 @@ every `changeEvery` seconds (tile setting, default **10 s**).
   2 blank rows between pages.
 - Every delay is a whole number of centiseconds, so the GIF says exactly what
   the timeline says.
-- A layout with a single state has no transition and is a still dwell.
+- A layout with a single state has no transition and is a still dwell. In
+  Hybrid and Pages that dwell lasts one whole loop of its icon; Anchor's
+  single-state area is one 1000 ms still (its icon loops on its own).
 
 ## 3. Content
 
@@ -90,21 +93,28 @@ label/value rule. All glyphs are 5 px tall.
 Order on screen is the table's order, filtered by the tile's switches.
 
 - Wind arrow points where the air GOES: Open-Meteo reports where it comes
-  from, the arrow is that bearing + 180°, rounded to 8 directions.
+  from, the arrow is that bearing + 180°, rounded to 8 directions. Without a
+  direction the `wind` line (and the Pages wind page) is dropped.
+- Gusts are compared in m/s, unrounded, whatever the display unit: the
+  `g 25` part shows when gusts − mean ≥ 5 m/s.
 - `rain` is the highest precipitation probability over the current hour and
-  the next two.
+  the next two. When none of those hours has a probability, `rain` is
+  dropped.
 - `sun` is the next event after now: today's sunrise if it has not happened,
   else today's sunset if it has not happened, else tomorrow's sunrise. The
   hour has no leading zero; the time is in `TimeZone.current`.
 - `hilo` is today's daily max/min, today as the service's local day.
+  Without them the line is dropped, and the Pages temperature page's bottom
+  line stays blank.
 
 ### 3.3 Hourly chart
 
 Eleven bars for the current hour and the next ten, each 2 px wide with 1 px
-between (33 px). Bar height is 1–4 px, scaled between the lowest and highest
+between (33 px). The bars are the hourly entries in [current hour, +11 h), so
+a short series draws fewer than eleven. Bar height is 1–4 px, scaled between the lowest and highest
 of those eleven temperatures (all equal: 2 px). The bar is coloured by its
 temperature; an hour with precipitation probability ≥ 50 % gets a `#D8F0FF`
-cap pixel row above its bar.
+cap pixel row above its bar. An hour without a probability gets no cap.
 
 ### 3.4 Colour scales
 
@@ -132,7 +142,7 @@ converts.
 
 ## 4. Icons
 
-47 procedural 16×16 animations (`icons.py`): shared primitives (sun disc with
+46 approved procedural 16×16 animations (`icons.py`), plus `nodata`: shared primitives (sun disc with
 breathing rays, crescent/phase moon, a lit cloud union, drops, flakes, bolt,
 wind streaks) and per-icon motion. Frame delays are multiples of 10 ms.
 
@@ -193,7 +203,8 @@ the daily buckets are the place's local days.
 high and low, sunrise and sunset for today and tomorrow, and the hourly
 series (time, temperature, precipitation probability). Each is optional and
 decoded with `decodeIfPresent`: a response missing one drops that detail, not
-the poll. A detail whose data is missing is left out of the rotation.
+the poll. A detail whose data is missing is left out of the rotation (§3.2,
+§3.3 say what each one needs).
 
 ## 6. Tile settings
 
@@ -233,7 +244,9 @@ does.
   ceiling, every state's icon plays whole loops for at least 2 s after its
   change and then rests on its first frame (68–156 frames for the approved
   scenarios). Measured: the worst live case, storm with all six default lines,
-  is 478 frames and fits without it; more lines can need it.
+  is 478 frames and fits without it; more lines can need it. The rule applies
+  only to the single GIF of Pages and Hybrid; Anchor's two GIFs are not
+  rebuilt.
 - The poll cadence is unchanged (600 s); each push restarts the cycle.
 
 ## 8. Testing

@@ -90,6 +90,51 @@ struct ConnectorFactories {
             },
             for: ZaiUsageConnector.connectorId
         )
+        // One connector per repository, one token for all of them: the PAT
+        // sits under the connector's account, not the tile's, and is looked
+        // up at every read like the z.ai key. The snapshot is per tile, so
+        // each repository celebrates only what is new to itself; the store
+        // keys them by tile, so one store serves every tile on the clock.
+        let snapshots = UserDefaultsGitHubSnapshots(defaults: defaults)
+        registry.register(
+            factory: { tile in
+                GitHubConnector(
+                    tile: tile,
+                    source: GitHubAPI(
+                        transport: transport,
+                        token: { secrets.secret(for: .connector(GitHubConnector.connectorId)) }
+                    ),
+                    snapshots: snapshots
+                )
+            },
+            for: GitHubConnector.connectorId
+        )
         return registry
     }
+
+    /// The instances the app-wide registry holds only so the store can name
+    /// them and the panel can ask what they are — in the order they are
+    /// offered. No clock produces through one: each clock's session builds
+    /// its own from the tile's record, so these carry no key, no token and no
+    /// repository.
+    static func namingInstances(transport: any Transport) -> [any Connector] {
+        [
+            ZaiUsageConnector(source: ZaiUsageAPI(transport: transport, key: { nil })),
+            GitHubConnector(
+                tile: TileRecord(
+                    key: TileKey(clockId: UUID(), connectorId: GitHubConnector.connectorId),
+                    policy: TilePolicyRecord(isPaused: false, refreshSeconds: 60)
+                ),
+                source: GitHubAPI(transport: transport, token: { nil }),
+                snapshots: NoGitHubSnapshots()
+            ),
+        ]
+    }
+}
+
+/// The naming instance's snapshot store: it never reads a state, so it never
+/// has one to keep.
+private struct NoGitHubSnapshots: GitHubSnapshotStoring {
+    func snapshot(for tile: TileKey) -> GitHubSnapshot? { nil }
+    func save(_ snapshot: GitHubSnapshot, for tile: TileKey) {}
 }

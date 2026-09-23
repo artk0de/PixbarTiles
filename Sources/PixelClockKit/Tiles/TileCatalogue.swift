@@ -131,6 +131,10 @@ public struct TilePresentation: Sendable, Equatable {
             )
         case ZaiUsageConnector.connectorId:
             TilePresentation(category: .dev, icon: "chart.bar", blurb: "z.ai usage, week to date")
+        case GitHubConnector.connectorId:
+            TilePresentation(
+                category: .dev, icon: "star", blurb: "A repository's stars, forks and PRs"
+            )
         case "anecdotes":
             TilePresentation(
                 category: .system, icon: "text.bubble", blurb: "The day's anecdotes, spoken"

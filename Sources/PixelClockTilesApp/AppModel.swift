@@ -851,15 +851,10 @@ final class AppModel: ObservableObject {
                 reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document)
             )
         )
-        // Offered so the Add tile menu can name it; no clock produces through
-        // this instance — each clock's session builds its own, closed over
-        // that clock's tile's key. The panel copy has no clock, hence no key.
+        // z.ai and GitHub, offered so the Add tile menu can name them; each
+        // clock's session builds its own from the tile's record.
         let secrets = EncryptedFileSecretStore.live()
-        registry.register(
-            ZaiUsageConnector(
-                source: ZaiUsageAPI(transport: transport, key: { nil })
-            )
-        )
+        ConnectorFactories.namingInstances(transport: transport).forEach(registry.register)
 
         // After every connector is registered: one the step does not hear
         // about gets no tile, and runs on its own default until its first

@@ -56,6 +56,22 @@ private let zaiHandle = ZaiTileConfig(keyAccount: "8C0D2E7A-6A4B-4E5C-9D1F-2B3A4
     #expect(TileConfig.vpn(pritunl).key == nil)
 }
 
+// The GitHub tile's config is stored under its connector like every other,
+// and a record written without a celebration length reads the default eight.
+@Test func aGitHubConfigRoundTrips() throws {
+    let config = TileConfig.github(GitHubTileConfig(repo: "a/x"))
+    let stored = try decoded(
+        TileConfig.self, #"{"github":{"repo":"a/x","shortName":null,"celebrationSeconds":8}}"#
+    )
+
+    #expect(stored == config)
+    #expect(try decoded(TileConfig.self, try json(config)) == config)
+    #expect(stored.github == GitHubTileConfig(repo: "a/x"))
+    #expect(TileConfig.vpn(pritunl).github == nil)
+    #expect(try decoded(TileConfig.self, #"{"github":{"repo":"a/x"}}"#).github?.celebrationSeconds == 8)
+    #expect(GitHubTileConfig.celebrationChoices == [5, 8, 10, 15])
+}
+
 // Phase 1's records carry no config, and they still decode.
 @Test func aTileWithoutAConfigStillDecodes() throws {
     let text = """

@@ -13,11 +13,13 @@ import Foundation
 ///           "whenDown":{"colour":"#FF0000","kind":"blink"}}}
 ///   {"claude":{"showResetAfter":70,"showResetEvery":30}}
 ///   {"claude":"daily"}  — legacy: the display metric, read as the defaults
+///   {"github":{"repo":"owner/name","celebrationSeconds":8}}
 public enum TileConfig: Equatable, Sendable {
     case weather(WeatherTileConfig)
     case vpn(VPNTileConfig)
     case zai(ZaiTileConfig)
     case claude(ClaudeTileConfig)
+    case github(GitHubTileConfig)
 
     /// A weather tile's config in the shipped defaults, at this place — the
     /// form every caller that knows only the place means. Overloading the
@@ -58,20 +60,26 @@ public enum TileConfig: Equatable, Sendable {
         return config
     }
 
+    /// The GitHub tile's config, or nil for any other tile.
+    public var github: GitHubTileConfig? {
+        guard case let .github(config) = self else { return nil }
+        return config
+    }
+
     /// The coding-subscription parameters — the Claude tile's or the z.ai
     /// tile's, and the same list either way — or nil for a tile that is not one.
     public var parameters: CodeUsage.Parameters? {
         switch self {
         case let .claude(config): config.parameters
         case let .zai(handle): handle.parameters
-        case .weather, .vpn: nil
+        case .weather, .vpn, .github: nil
         }
     }
 }
 
 extension TileConfig: Codable {
     private enum Key: String, CodingKey {
-        case weather, vpn, zai, claude
+        case weather, vpn, zai, claude, github
     }
 
     public init(from decoder: any Decoder) throws {
@@ -93,6 +101,8 @@ extension TileConfig: Codable {
             self = .zai(try container.decode(ZaiTileConfig.self, forKey: .zai))
         case .claude:
             self = .claude(try container.decode(ClaudeTileConfig.self, forKey: .claude))
+        case .github:
+            self = .github(try container.decode(GitHubTileConfig.self, forKey: .github))
         }
     }
 
@@ -107,6 +117,8 @@ extension TileConfig: Codable {
             try container.encode(handle, forKey: .zai)
         case let .claude(config):
             try container.encode(config, forKey: .claude)
+        case let .github(config):
+            try container.encode(config, forKey: .github)
         }
     }
 }

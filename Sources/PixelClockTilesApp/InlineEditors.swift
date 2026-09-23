@@ -106,11 +106,17 @@ struct InlineConfirmRow: View {
                 .font(.caption)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
+            // Both say "clicked, not dragged". The row is drawn INSIDE cards
+            // that carry a drag affordance of their own, and a pointer style
+            // resolves innermost-first — without these the card's open hand
+            // would sit over two buttons.
             Button(confirmTitle, role: .destructive) { onConfirm() }
                 .controlSize(.small)
+                .pointerStyle(.default)
             Button("Cancel", role: .cancel) { onCancel() }
                 .controlSize(.small)
                 .keyboardShortcut(.cancelAction)
+                .pointerStyle(.default)
         }
     }
 }

@@ -125,14 +125,17 @@ private struct TilesGrid: View {
                         // The open hand is the only thing on this card that
                         // says it can be picked up. `List.onMove` starts the
                         // drag on a press, and a press with no affordance is
-                        // a feature nobody finds — the friction reported.
-                        .onHover { inside in
-                            if inside {
-                                NSCursor.openHand.push()
-                            } else {
-                                NSCursor.pop()
-                            }
-                        }
+                        // a feature nobody finds.
+                        //
+                        // `pointerStyle` rather than pushing an `NSCursor`,
+                        // and that is the whole difference: a pushed cursor
+                        // belongs to the ROW, and the gear and the bin are
+                        // the row's own children — the pointer never leaves
+                        // it, so the hand stayed over controls that are
+                        // clicked, not dragged. A pointer style resolves from
+                        // the innermost view under the pointer outwards, so
+                        // each control's own answer wins over the card's.
+                        .pointerStyle(.grabIdle)
                 }
                 .onMove { from, to in
                     guard let source = from.first,
@@ -226,6 +229,7 @@ private struct ClockTileCard: View {
                     PixelArt(map: PanelGlyph.gear, palette: PanelGlyph.inkPalette(chromeInk))
                 }
                 .buttonStyle(.plain)
+                .pointerStyle(.default)
                 .accessibilityLabel("\(name) settings")
                 .help("\(name) settings")
             }
@@ -254,6 +258,7 @@ private struct ClockTileCard: View {
                         PixelArt(map: PanelGlyph.bin, palette: PanelGlyph.inkPalette(chromeInk))
                     }
                     .buttonStyle(.plain)
+                    .pointerStyle(.default)
                     .accessibilityLabel("Remove \(name)")
                     .help("Remove \(name)")
                 }

@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
-APP="build/PixelClockTiles.app"
+APP="build/PixbarTiles.app"
 
 swift build -c "$CONFIG" --product PixbarTilesApp
 BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)"
@@ -21,7 +21,7 @@ BINARY="$BIN_PATH/PixbarTilesApp"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BINARY" "$APP/Contents/MacOS/PixelClockTiles"
+cp "$BINARY" "$APP/Contents/MacOS/PixbarTiles"
 
 # The kit's resources (the bundled GIFs), as SwiftPM built them. Without this
 # copy the app finds them only through the absolute build path compiled into
@@ -55,9 +55,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleExecutable</key><string>PixelClockTiles</string>
-  <key>CFBundleIdentifier</key><string>dev.artk0re.pixelclocktiles</string>
-  <key>CFBundleName</key><string>PixelClockTiles</string>
+  <key>CFBundleExecutable</key><string>PixbarTiles</string>
+  <key>CFBundleIdentifier</key><string>dev.artk0re.pixbartiles</string>
+  <key>CFBundleName</key><string>PixbarTiles</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
@@ -72,7 +72,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
        exactly the answer the panel has to be able to tell apart from an empty
        network. -->
   <key>NSLocalNetworkUsageDescription</key>
-  <string>PixelClockTiles looks for pixel clocks on your network, so you do not have to type their address yourself.</string>
+  <string>PixbarTiles looks for pixel clocks on your network, so you do not have to type their address yourself.</string>
   <!-- Required, and not merely for the wording: without this key
        `INFocusStatusCenter.requestAuthorization` does not fail, it ABORTS the
        process — EXC_CRASH, TCC namespace, "must contain an
@@ -81,7 +81,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
        window rather than crashing; this is what makes the other half reachable
        the day the app is signed. -->
   <key>NSFocusStatusUsageDescription</key>
-  <string>PixelClockTiles checks whether a Focus is on, so it stays quiet instead of reading a joke out loud while you are busy.</string>
+  <string>PixbarTiles checks whether a Focus is on, so it stays quiet instead of reading a joke out loud while you are busy.</string>
   <!-- Without this key CoreLocation refuses whatever the signature says, so it
        has to be here before location is worth attempting at all. It IS worth
        attempting: measured on a signed probe from this bundle's own signing
@@ -92,7 +92,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
        only knows settlements, which cannot tell one side of a 40 km city from
        the other. -->
   <key>NSLocationWhenInUseUsageDescription</key>
-  <string>PixelClockTiles reads this Mac's location once, when you ask it to, so the clock shows the weather where you actually are.</string>
+  <string>PixbarTiles reads this Mac's location once, when you ask it to, so the clock shows the weather where you actually are.</string>
 </dict>
 </plist>
 PLIST
@@ -102,8 +102,10 @@ PLIST
 # keychain ACL and TCC grant is pinned to one binary's cdhash: the z.ai key
 # saved by one build prompts in the next. A certificate-based designated
 # requirement survives rebuilds. Without the identity the bundle stays ad-hoc,
-# loudly, rather than failing the build.
-SIGN_ID="${PIXELCLOCK_SIGN_ID:-6417A281BC7E103BB9B4A4EA69F831F5211A89A5}"
+# loudly, rather than failing the build. PIXELCLOCK_SIGN_ID is the variable's
+# name from before the rename to PixbarTiles, still honoured so an existing
+# shell profile keeps signing with the identity it names.
+SIGN_ID="${PIXBAR_SIGN_ID:-${PIXELCLOCK_SIGN_ID:-6417A281BC7E103BB9B4A4EA69F831F5211A89A5}}"
 if security find-certificate -a -Z | grep -qi "SHA-1 hash: $SIGN_ID"; then
   codesign --force --deep --sign "$SIGN_ID" "$APP"
   echo "signed $APP with $SIGN_ID"

@@ -52,7 +52,7 @@ struct PixbarTilesApp: App {
 
         // The panel pinned to a window of its own. Floating, because a pinned
         // panel that a text editor can cover is a pin that did not take.
-        Window("PixelClockTiles", id: PinnedPanelWindow.id) {
+        Window("PixbarTiles", id: PinnedPanelWindow.id) {
             PinnedPanelWindow(
                 model: delegate.model,
                 panel: delegate.panelModel,
@@ -327,7 +327,7 @@ enum AppGlyph {
             // it, which looks exactly like an app that did not launch.
             (NSImage(named: chosen.resource(for: appearance))
                 ?? NSImage(
-                    systemSymbolName: chosen.symbol, accessibilityDescription: "PixelClockTiles"
+                    systemSymbolName: chosen.symbol, accessibilityDescription: "PixbarTiles"
                 )!)
                 .draw(in: rect)
             return true

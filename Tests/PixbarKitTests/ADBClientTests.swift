@@ -79,12 +79,12 @@ private let handshake = frame(A_CNXN, 0x0100_0000, 256 * 1024, Data("device::\0"
     let stream = ScriptedStream(canned)
     let client = ADBClient(connect: { stream })
 
-    let out = try await client.pull("/tmp/pct-out")
+    let out = try await client.pull("/tmp/pbt-out")
 
     #expect(out == window)
     let written = await stream.writtenBytes()
     #expect(written.range(of: Data("RECV".utf8)) != nil)
-    #expect(written.range(of: Data("/tmp/pct-out".utf8)) != nil)
+    #expect(written.range(of: Data("/tmp/pbt-out".utf8)) != nil)
 }
 
 @Test func framesLeftOverFromAFinishedStreamAreNotReadAsThisOnes() async throws {

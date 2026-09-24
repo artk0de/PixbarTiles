@@ -108,9 +108,9 @@ public actor UlanziBattery {
     /// on reboot, so the reader is pushed on every full walk and the request
     /// on every window. A cached read against a rebooted clock finds no reader
     /// and an empty output, fails its check, and walks — which pushes it back.
-    private static let helperPath = "/tmp/pct-batt"
-    private static let requestPath = "/tmp/pct-req"
-    private static let outputPath = "/tmp/pct-out"
+    private static let helperPath = "/tmp/pbt-batt"
+    private static let requestPath = "/tmp/pbt-req"
+    private static let outputPath = "/tmp/pbt-out"
 
     private let adb: any ADB
     private let helper: Data
@@ -125,7 +125,7 @@ public actor UlanziBattery {
     /// bundle is the kit's own; a build with no helper simply grows no battery
     /// line.
     public static func bundledHelper() -> Data? {
-        guard let url = KitResources.bundle.url(forResource: "pct-batt", withExtension: nil)
+        guard let url = KitResources.bundle.url(forResource: "pbt-batt", withExtension: nil)
         else { return nil }
         return try? Data(contentsOf: url)
     }

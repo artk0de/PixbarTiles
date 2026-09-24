@@ -38,7 +38,7 @@ private actor RestartableBatteryADB: ADB {
         return BatteryFixture.shellAnswer(command)
     }
     func push(_ bytes: Data, to path: String, mode: Int) async throws {
-        guard path == "/tmp/pct-req" else { return }
+        guard path == "/tmp/pbt-req" else { return }
         // The request's path names the pid; a dead pid's memory reads nothing.
         let named = String(decoding: bytes.dropFirst(8), as: UTF8.self)
         let address = bytes.prefix(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }

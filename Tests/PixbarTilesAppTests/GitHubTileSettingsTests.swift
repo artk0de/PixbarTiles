@@ -174,7 +174,7 @@ import Testing
 
     @Test func theHelpLinkIsThePrefilledForm() {
         #expect(GitHubTokenHelp.createURL(.privateRepos, owner: nil).absoluteString
-            == "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read")
+            == "https://github.com/settings/personal-access-tokens/new?name=PixbarTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read")
         for phrase in [
             "Public repositories", "Metadata: read", "Pull requests: read",
             "Commit statuses: read", "Checks: read",
@@ -199,7 +199,7 @@ import Testing
     /// repositories need no permission (the Public repositories option is
     /// picked on the page), private ones the five reads.
     @Test func theHelpOffersAFormForPublicAndOneForPrivateRepos() {
-        let base = "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles"
+        let base = "https://github.com/settings/personal-access-tokens/new?name=PixbarTiles"
             + "&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366"
         #expect(GitHubTokenHelp.createURL(.publicRepos, owner: "artk0de").absoluteString
             == base + "&target_name=artk0de")

@@ -311,7 +311,7 @@ public struct GitHubAPI: GitHubReporting {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // GitHub refuses a request without a User-Agent.
-        request.setValue("PixelClockTiles", forHTTPHeaderField: "User-Agent")
+        request.setValue("PixbarTiles", forHTTPHeaderField: "User-Agent")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "query": Self.query(omitting: omitted),
             "variables": ["owner": owner, "name": name],

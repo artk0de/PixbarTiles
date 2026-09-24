@@ -89,7 +89,7 @@ private let recordedBody = Data("""
         #expect(request.url == GitHubAPI.endpoint)
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer t")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
-        #expect(request.value(forHTTPHeaderField: "User-Agent") == "PixelClockTiles")
+        #expect(request.value(forHTTPHeaderField: "User-Agent") == "PixbarTiles")
 
         let body = try #require(request.httpBody)
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])

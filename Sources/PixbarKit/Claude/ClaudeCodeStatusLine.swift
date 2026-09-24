@@ -235,7 +235,7 @@ public struct ClaudeCodeStatusLine {
     /// owner's alone; it carries the session's working directory.
     static let script = #"""
     #!/bin/sh
-    # PixelClockTiles keeps Claude Code's rate limits here for the clock, then
+    # PixbarTiles keeps Claude Code's rate limits here for the clock, then
     # hands the status line to the command that was configured before it, if any.
     # The app rewrites this file whenever it differs from the copy it ships.
     umask 077

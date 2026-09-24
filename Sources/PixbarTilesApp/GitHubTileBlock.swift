@@ -43,7 +43,7 @@ enum GitHubTokenHelp {
 
     /// The prefilled form, aimed at `owner` when there is one.
     static func createURL(_ kind: Kind, owner: String?) -> URL {
-        var text = "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles"
+        var text = "https://github.com/settings/personal-access-tokens/new?name=PixbarTiles"
             + "&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366"
         if let owner {
             // Only unreserved characters pass: an owner must not be able to

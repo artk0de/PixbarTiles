@@ -6,10 +6,10 @@ import Testing
 /// already copies into the app. If SwiftPM's `.process` rule ever mangles or
 /// drops a binary with no extension, this is what says so — the alternative is
 /// an app whose battery silently never reads.
-@Test func pctBattShipsInTheKitBundleAsAnElf() throws {
+@Test func pbtBattShipsInTheKitBundleAsAnElf() throws {
     let url = try #require(
-        KitResources.bundle.url(forResource: "pct-batt", withExtension: nil),
-        "pct-batt is not in the kit resource bundle"
+        KitResources.bundle.url(forResource: "pbt-batt", withExtension: nil),
+        "pbt-batt is not in the kit resource bundle"
     )
     let bytes = try Data(contentsOf: url)
     #expect(bytes.prefix(4) == Data([0x7F, 0x45, 0x4C, 0x46]))     // \x7fELF

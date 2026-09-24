@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Emit the static ARMv7 ELF `pct-batt`.
+"""Emit the static ARMv7 ELF `pbt-batt`.
 
-It reads three parameters from /tmp/pct-req — u32 address, u32 length, a
+It reads three parameters from /tmp/pbt-req — u32 address, u32 length, a
 NUL-terminated path — then open(path), lseek(address), read(length),
 write(stdout), exit. No toolchain: hand-encoded A32 + a hand-built ELF32
 header, exactly as the spike's mkelf_mem.py proved on the device. The only
@@ -11,7 +11,7 @@ run time so one shipped binary serves any pid and any load address.
 The kernel preserves r4-r11 across the SVC (only r0 is the return), so the
 address (r4), length (r5) and path pointer (r9) survive the open/lseek calls.
 
-Usage: make_pct_batt.py OUT
+Usage: make_pbt_batt.py OUT
 """
 import struct
 import sys
@@ -42,10 +42,10 @@ def load32(rd, value):
 
 def main():
     out = sys.argv[1]
-    req_path = b"/tmp/pct-req\0"
+    req_path = b"/tmp/pbt-req\0"
     insns = []
 
-    # open("/tmp/pct-req", O_RDONLY) — path address patched after layout.
+    # open("/tmp/pbt-req", O_RDONLY) — path address patched after layout.
     open_req_index = len(insns)
     insns.append(None)                       # add r0, pc, #(reqpath - pc)
     insns.append(mov_imm(1, 0))              # O_RDONLY

@@ -44,7 +44,7 @@ struct Wordmark: View {
             Text("Tiles").font(.headline.weight(.regular))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("PixelClockTiles")
+        .accessibilityLabel("PixbarTiles")
     }
 
     private var ink: UInt32 {

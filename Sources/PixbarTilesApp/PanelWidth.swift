@@ -86,7 +86,7 @@ struct PanelWidth: Equatable, Sendable {
         guard defaults.object(forKey: storageKey) != nil else { return PanelWidth(designed) }
         // `double(forKey:)` and not a cast off `object(forKey:)`: the value may
         // have been written by this app as a double, or by a person as
-        // `defaults write dev.artk0re.pixelclocktiles panelWidth -int 500`,
+        // `defaults write dev.artk0re.pixbartiles panelWidth -int 500`,
         // and a cast that only accepts one of those turns the other into a
         // silent reset to 320.
         return PanelWidth(defaults.double(forKey: storageKey))
@@ -208,7 +208,7 @@ struct HistoryHeight: Equatable, Sendable {
         // `double(forKey:)` and not a cast off `object(forKey:)`, for the reason
         // `PanelWidth.stored(in:)` reads it that way: the value may have been
         // written by this app as a double or by a person as
-        // `defaults write dev.artk0re.pixelclocktiles historyHeight -int 280`,
+        // `defaults write dev.artk0re.pixbartiles historyHeight -int 280`,
         // and a cast that accepts only one turns the other into a silent reset.
         return HistoryHeight(defaults.double(forKey: storageKey), fittingInto: screenHeight)
     }

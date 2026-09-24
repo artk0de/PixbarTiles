@@ -78,7 +78,7 @@ final class LoginItemModel: ObservableObject {
     /// object's state, and a test asking what the sentence says has no reason
     /// to hop to the main actor to find out.
     nonisolated static let approvalIsHeldInSystemSettings =
-        "macOS is holding this one. Turn PixelClockTiles on in System Settings › "
+        "macOS is holding this one. Turn PixbarTiles on in System Settings › "
             + "General › Login Items."
 
     /// What the system last answered. Published so the tick follows a change

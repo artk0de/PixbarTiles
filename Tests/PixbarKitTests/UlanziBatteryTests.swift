@@ -112,7 +112,7 @@ private func fake(pointer: UInt32 = monitorAddress, _ object: Data) -> FakeADB {
     let pushes = await adb.pushes()
     // The FIRST request asks for the pointer field: the LogicThread singleton
     // at base + 0x733c18, plus the monitor slot at +0x60, four bytes of it.
-    let requests = pushes.filter { $0.path == "/tmp/pct-req" }.map(\.bytes)
+    let requests = pushes.filter { $0.path == "/tmp/pbt-req" }.map(\.bytes)
     #expect(requests.count == 2)
     #expect(requests[0].prefix(4) == le32(base &+ 0x0073_3C18 &+ 0x60))
     #expect(requests[0].dropFirst(4).prefix(4) == le32(4))
@@ -120,7 +120,7 @@ private func fake(pointer: UInt32 = monitorAddress, _ object: Data) -> FakeADB {
     #expect(requests[1].prefix(4) == le32(monitorAddress))
     #expect(requests[0].range(of: Data("/proc/670/mem\0".utf8)) != nil)
     // The helper itself is pushed too, since /tmp is wiped on reboot.
-    #expect(pushes.contains { $0.path == "/tmp/pct-batt" })
+    #expect(pushes.contains { $0.path == "/tmp/pbt-batt" })
 }
 
 // The pointer names an object, and the object says what it is. Reading a
@@ -187,7 +187,7 @@ private func sweeps(_ streams: [String]) -> Int { streams.filter { $0.contains("
     #expect(streams.filter { $0.contains("maps") }.count == 1)
     #expect(streams.count - firstRead <= 5)
     // The window it read is the monitor's, not the singleton's slot.
-    let lastRequest = try #require(await adb.pushes().last { $0.path == "/tmp/pct-req" })
+    let lastRequest = try #require(await adb.pushes().last { $0.path == "/tmp/pbt-req" })
     #expect(lastRequest.bytes.prefix(4) == le32(monitorAddress))
 }
 

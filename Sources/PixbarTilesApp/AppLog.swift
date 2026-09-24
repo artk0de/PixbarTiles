@@ -10,7 +10,7 @@ import os
 /// diagnosable from the system log alone.
 enum AppLog {
     static let clocks = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "PixelClockTiles",
+        subsystem: Bundle.main.bundleIdentifier ?? "PixbarTiles",
         category: "clocks"
     )
 
@@ -19,7 +19,7 @@ enum AppLog {
     /// gesture that does nothing looks exactly like a gesture that was never
     /// made — so the drag-to-pin has to be diagnosable from the log alone.
     static let panel = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "PixelClockTiles",
+        subsystem: Bundle.main.bundleIdentifier ?? "PixbarTiles",
         category: "panel"
     )
 }

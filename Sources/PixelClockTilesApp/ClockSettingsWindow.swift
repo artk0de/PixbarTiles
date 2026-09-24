@@ -200,8 +200,9 @@ private struct ClockTileCard: View {
     }
 
     /// Open on the tile the clock is showing, closed on the rest; a click on
-    /// either brings the tile's page up. Every eye stays closed on a clock
-    /// that cannot say which page is up (the TC002) — the click still works.
+    /// either brings the tile's page up. On a clock that cannot say which page
+    /// is up (the TC002) the open eye is the tile the app last put up there
+    /// (`AppModel.tileOnScreen`), until the clock returns from an outage.
     private var eye: some View {
         let open = model.tileOnScreen[key.clockId] == key
         return Button { model.showOnClock(key) } label: {

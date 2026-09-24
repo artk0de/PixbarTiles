@@ -52,7 +52,7 @@ private func storeAZaiTile(on clock: ClockRecord, in defaults: UserDefaults) thr
     try TileStore(defaults: defaults).replaceAll([
         TileRecord(
             key: key,
-            policy: TilePolicyRecord(TileDefaults.zai),
+            policy: TilePolicyRecord(TileDefaults.codeUsage),
             config: .zai(ZaiTileConfig(keyAccount: ZaiTileConfig.account(for: key)))
         ),
     ])

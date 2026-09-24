@@ -170,18 +170,17 @@ struct GitHubTileBlock: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Picker("Celebrate for", selection: Binding(
-                get: { config.celebrationSeconds },
-                set: { seconds in
+            SteppedSlider(
+                label: "Celebrate for",
+                ladder: StepLadder(GitHubTileConfig.celebrationChoices.map(Double.init)),
+                value: Double(config.celebrationSeconds),
+                caption: { "\(Int($0)) s" },
+                onCommit: { seconds in
                     var edited = config
-                    edited.celebrationSeconds = seconds
+                    edited.celebrationSeconds = Int(seconds)
                     onConfig(edited)
                 }
-            )) {
-                ForEach(Self.celebrationChoices(config), id: \.self) {
-                    Text("\($0) s").tag($0)
-                }
-            }
+            )
         }
         .onAppear {
             shortName = config.shortName ?? ""
@@ -299,11 +298,6 @@ struct GitHubTileBlock: View {
 
     /// The offered lengths, plus a stored one the design does not offer — a
     /// picker whose selection matches no tag draws blank.
-    private static func celebrationChoices(_ config: GitHubTileConfig) -> [Int] {
-        let offered = GitHubTileConfig.celebrationChoices
-        return offered.contains(config.celebrationSeconds)
-            ? offered : (offered + [config.celebrationSeconds]).sorted()
-    }
 }
 
 /// The pixel `?` beside the token field. Hovering shows the help in a

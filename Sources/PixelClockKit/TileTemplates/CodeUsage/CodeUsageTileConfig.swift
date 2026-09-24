@@ -79,8 +79,11 @@ public extension CodeUsage {
 
         /// What the dwell picker offers: 5 s to 5 min.
         public static let resetEverySteps: [TimeInterval] = [5, 10, 15, 30, 60, 120, 300]
-        /// What "Show reset after" offers: 50 % to 100 % in fives.
-        public static let resetAfterSteps: [Int] = Array(stride(from: 50, through: 100, by: 5))
+        /// What "Show reset after" offers: 0 % to 100 % in fives (the user's
+        /// call of 2026-09-24; it was 50 % up). Every value stored under the
+        /// old range is still on this one, and nothing clamps a stored value —
+        /// the faces compare against it as it is.
+        public static let resetAfterSteps: [Int] = Array(stride(from: 0, through: 100, by: 5))
 
         private enum CodingKeys: String, CodingKey {
             case resetEvery = "showResetEvery"

@@ -166,6 +166,28 @@ private let utc = TimeZone(identifier: "UTC")!
         #expect(timeline[0].milliseconds == 10_000)
     }
 
+    // "Show reset after" reaches 0 % now: every row with a reset date names
+    // it, an empty one included.
+    @Test func aThresholdOfZeroMakesEveryDatedRowHot() {
+        let resets = Date(timeIntervalSince1970: 1_800_000_000)
+        let zero = CodeUsage.Parameters(resetEvery: 10, resetAfter: 0)
+        let compact = CodeUsage.Compact.timeline(
+            vendor: .claude,
+            session: CodeUsage.Window(percent: 0, resetsAt: resets),
+            weekly: nil,
+            config: zero,
+            timeZone: utc
+        )
+        let quiet = CodeUsage.Compact.timeline(
+            vendor: .claude,
+            session: CodeUsage.Window(percent: 0, resetsAt: resets),
+            weekly: nil,
+            config: CodeUsage.Parameters(resetEvery: 10, resetAfter: 5),
+            timeZone: utc
+        )
+        #expect(compact.count > quiet.count)
+    }
+
     // MARK: - Delivery
 
     // The whole timeline ships as ONE full-frame GIF at the panel's origin,
@@ -249,7 +271,8 @@ private let utc = TimeZone(identifier: "UTC")!
 
     @Test func thePickersOfferTheDesignsSteps() {
         #expect(CodeUsage.Parameters.resetEverySteps == [5, 10, 15, 30, 60, 120, 300])
-        #expect(CodeUsage.Parameters.resetAfterSteps == [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100])
+        // 0 … 100 since 2026-09-24 (user-approved design change; was 50 … 100).
+        #expect(CodeUsage.Parameters.resetAfterSteps == Array(stride(from: 0, through: 100, by: 5)))
     }
 
     @Test func theConfigRoundTrips() throws {

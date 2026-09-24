@@ -320,8 +320,8 @@ struct TilePolicyEditor: View {
 
 /// How often a tile runs, on the ladder its connector offers.
 ///
-/// A menu when the ladder is a dozen named choices, a slider when it is the
-/// general scale's twenty-seven five-minute steps — see
+/// A slider over the connector's ladder when it is a dozen named choices, and
+/// over the general scale's steps otherwise — see
 /// `TilePolicyEditor.picks(from:)`. The label is the caller's because the same
 /// stored value is "Refresh" on the shared editor and "Fetch weather every"
 /// beside the weather's own "Change every", which is a different setting
@@ -331,33 +331,17 @@ struct TileRefreshControl: View {
     let ladder: [TimeInterval]
     @Binding var policy: TilePolicy
 
+    /// A slider over the ladder's steps either way — the connector's own
+    /// ladder when it is a short list of named choices, the general scale
+    /// otherwise — written when the drag lets go.
     var body: some View {
-        if TilePolicyEditor.picks(from: ladder) {
-            Picker(label, selection: Binding(
-                get: { TilePolicyEditor.shownRefresh(of: policy, on: ladder) },
-                set: { TilePolicyEditor.set(refresh: $0, in: &policy) }
-            )) {
-                ForEach(ladder, id: \.self) { step in
-                    Text(RefreshScale.label(step)).tag(step)
-                }
-            }
-        } else {
-            HStack {
-                Text(label)
-                Slider(value: Binding(
-                    get: { TilePolicyEditor.position(forSeconds: TimeInterval(policy.refreshSeconds)) },
-                    set: { TilePolicyEditor.set(secondsAtPosition: $0, in: &policy) }
-                ), in: 0...Double(RefreshScale.steps.count - 1))
-                Text(RefreshScale.label(TilePolicyEditor.seconds(
-                    atPosition: TilePolicyEditor.position(
-                        forSeconds: TimeInterval(policy.refreshSeconds)
-                    )
-                )))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            }
-        }
+        SteppedSlider(
+            label: label,
+            ladder: StepLadder(TilePolicyEditor.picks(from: ladder) ? ladder : RefreshScale.steps),
+            value: TimeInterval(policy.refreshSeconds),
+            caption: RefreshScale.label,
+            onCommit: { TilePolicyEditor.set(refresh: $0, in: &policy) }
+        )
     }
 }
 
@@ -552,23 +536,25 @@ struct CodeUsageBlock: View {
                 // Circle has a choice to make. Compact has a row for each and
                 // no reason to leave one empty.
                 if config.layout == .circle { windowChoice }
-                Picker(config.layout.dwellLabel, selection: Binding(
-                    get: { config.resetEvery },
-                    set: { chosen in change { $0.resetEvery = chosen } }
-                )) {
-                    ForEach(everySteps, id: \.self) { Text(Self.everyCaption($0)).tag($0) }
-                }
+                SteppedSlider(
+                    label: config.layout.dwellLabel,
+                    ladder: StepLadder(CodeUsage.Parameters.resetEverySteps),
+                    value: config.resetEvery,
+                    caption: Self.everyCaption,
+                    onCommit: { chosen in change { $0.resetEvery = chosen } }
+                )
                 // A Circle showing one window has nothing to change to.
                 .disabled(config.dwellIsAdjustable == false)
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Reset").font(.caption).foregroundStyle(.secondary)
-                Picker("Show reset after", selection: Binding(
-                    get: { config.resetAfter },
-                    set: { chosen in change { $0.resetAfter = chosen } }
-                )) {
-                    ForEach(afterSteps, id: \.self) { Text(Self.afterCaption($0)).tag($0) }
-                }
+                SteppedSlider(
+                    label: "Show reset after",
+                    ladder: StepLadder(CodeUsage.Parameters.resetAfterSteps.map(Double.init)),
+                    value: Double(config.resetAfter),
+                    caption: { Self.afterCaption(Int($0)) },
+                    onCommit: { chosen in change { $0.resetAfter = Int(chosen) } }
+                )
                 // The options ARE the spellings, on a date that tells them
                 // apart — naming the orders instead ("Day first") makes the
                 // reader picture the result rather than read it.
@@ -624,21 +610,6 @@ struct CodeUsageBlock: View {
         }
         let left = current.filter { $0 != kind }
         return left.isEmpty ? current : left
-    }
-
-    /// The steps, plus the stored value when a record carries one the design
-    /// does not offer — a picker whose selection matches no tag draws blank,
-    /// which reads as a setting lost.
-    private var everySteps: [TimeInterval] {
-        CodeUsage.Parameters.resetEverySteps.contains(config.resetEvery)
-            ? CodeUsage.Parameters.resetEverySteps
-            : (CodeUsage.Parameters.resetEverySteps + [config.resetEvery]).sorted()
-    }
-
-    private var afterSteps: [Int] {
-        CodeUsage.Parameters.resetAfterSteps.contains(config.resetAfter)
-            ? CodeUsage.Parameters.resetAfterSteps
-            : (CodeUsage.Parameters.resetAfterSteps + [config.resetAfter]).sorted()
     }
 
     /// Seconds as the picker says them: `10 s` under a minute, `2 min` from.

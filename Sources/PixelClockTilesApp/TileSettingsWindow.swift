@@ -495,14 +495,13 @@ struct WeatherTileControls: View {
             // state stays on screen, the other how often the sky behind it is
             // read, and they differ by three orders of magnitude.
             Section("Timing") {
-                Picker("Change every", selection: Binding(
-                    get: { draft.changeEvery },
-                    set: { settings.setChangeEvery($0) }
-                )) {
-                    ForEach(Self.changeEverySteps(draft), id: \.self) {
-                        Text(CodeUsageBlock.everyCaption($0)).tag($0)
-                    }
-                }
+                SteppedSlider(
+                    label: "Change every",
+                    ladder: StepLadder(WeatherTileConfig.changeEverySteps),
+                    value: draft.changeEvery,
+                    caption: CodeUsageBlock.everyCaption,
+                    onCommit: { settings.setChangeEvery($0) }
+                )
                 fetchEvery
             }
             Section("Units") {
@@ -582,8 +581,4 @@ struct WeatherTileControls: View {
     /// The offered intervals, plus the stored one when a record carries a
     /// value the design does not offer — a picker whose selection matches no
     /// tag draws blank, which reads as a setting lost (as `CodeUsageBlock`).
-    private static func changeEverySteps(_ draft: WeatherTileConfig) -> [TimeInterval] {
-        let steps = WeatherTileConfig.changeEverySteps
-        return steps.contains(draft.changeEvery) ? steps : (steps + [draft.changeEvery]).sorted()
-    }
 }

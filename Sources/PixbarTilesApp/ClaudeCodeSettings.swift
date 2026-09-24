@@ -26,9 +26,15 @@ enum ClaudeCodePaths {
     static var shippedLink: ClaudeCodeStatusLine? {
         guard Bundle.main.bundleIdentifier != nil else { return nil }
         return ClaudeCodeStatusLine(
-            settingsFile: settingsFile, directory: directory, defaults: .standard
+            settingsFile: settingsFile, directory: directory, defaults: .standard,
+            legacyDirectories: legacyDirectories
         )
     }
+
+    /// Where the hook lived before the app was renamed. A Claude Code
+    /// connected then still runs it from there; the launch's refresh moves
+    /// that command here.
+    static let legacyDirectories = [SupportFolder.previous]
 }
 
 /// Connect / Disconnect Claude Code, and what the section says about it.

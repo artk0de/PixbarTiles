@@ -17,7 +17,7 @@ private struct ClaudeSettingsFixture {
     var link: ClaudeCodeStatusLine {
         ClaudeCodeStatusLine(
             settingsFile: settings,
-            directory: root.appendingPathComponent("PixelClockTiles"),
+            directory: root.appendingPathComponent("PixbarTiles"),
             defaults: UserDefaults(suiteName: suite)!
         )
     }
@@ -49,6 +49,14 @@ private struct ClaudeSettingsFixture {
     #expect(ClaudeCodePaths.directory.path.contains("/Application Support/"))
     #expect(ClaudeCodePaths.directory.lastPathComponent == "PixbarTiles")
     #expect(ClaudeCodePaths.settingsFile.path.hasSuffix("/.claude/settings.json"))
+}
+
+// A Claude Code connected while the app was PixelClockTiles runs the hook in
+// that folder. The shipped link has to know the folder, or the launch's refresh
+// never moves the command and the status line breaks with the folder's move.
+@Test func theShippedLinkKnowsTheFolderTheHookLivedInBeforeTheRename() {
+    #expect(ClaudeCodePaths.legacyDirectories.map(\.path) == [SupportFolder.previous.path])
+    #expect(ClaudeCodePaths.legacyDirectories.map(\.lastPathComponent) == ["PixelClockTiles"])
 }
 
 // Under `swift test` there is no bundle, and this guard is the only thing

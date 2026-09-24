@@ -38,12 +38,19 @@ public struct ClaudeCodeStatusLine {
     public let settingsFile: URL
     /// This app's own folder. The hook, and the document it writes, live here.
     public let directory: URL
+    /// Folders this app's hook lived in under an earlier name of the app. A
+    /// command running the hook in one of them is still this app's, and is
+    /// moved to `hook` by `connect()` and `refreshHookIfConnected()`.
+    public let legacyDirectories: [URL]
     private let defaults: UserDefaults
 
-    public init(settingsFile: URL, directory: URL, defaults: UserDefaults) {
+    public init(
+        settingsFile: URL, directory: URL, defaults: UserDefaults, legacyDirectories: [URL] = []
+    ) {
         self.settingsFile = settingsFile
         self.directory = directory
         self.defaults = defaults
+        self.legacyDirectories = legacyDirectories
     }
 
     public var hook: URL { directory.appendingPathComponent(Self.hookName) }
@@ -76,6 +83,9 @@ public struct ClaudeCodeStatusLine {
     public func connect() throws {
         var root = try readSettings()
         let previous = root["statusLine"]
+        // Connected under an earlier name of the app: moved, not chained —
+        // chaining would have the new hook run the old one.
+        if try moveToThisHook(&root) { return }
         // Already connected. Remembering this app's own status line as the
         // previous one would have Disconnect put the hook back.
         guard isOurs(previous) == false else { return }
@@ -114,10 +124,45 @@ public struct ClaudeCodeStatusLine {
     ///
     /// Only while connected: a launch never creates anything for a user who has
     /// not asked. A hook that already matches is not rewritten.
+    ///
+    /// A command still running the hook in a `legacyDirectories` folder is
+    /// pointed at `hook`, with whatever it chained kept verbatim.
     public func refreshHookIfConnected() throws {
-        guard isConnected() else { return }
+        guard var root = try? readSettings(), isOurs(root["statusLine"]) else { return }
+        if try moveToThisHook(&root) { return }
         guard (try? Data(contentsOf: hook)) != Data(Self.script.utf8) else { return }
         try installHook()
+    }
+
+    /// Points a command that runs a legacy folder's hook at `hook`, installing
+    /// the hook first, and says whether it did. The command's base is swapped
+    /// and the rest — the quoted previous command, if any — is kept as text, so
+    /// nothing has to be unquoted to survive. Every other field of the status
+    /// line stays as it was.
+    private func moveToThisHook(_ root: inout [String: Any]) throws -> Bool {
+        guard
+            var line = root["statusLine"] as? [String: Any],
+            let command = line["command"] as? String,
+            let legacyBase = legacyBases.first(where: { Self.command(command, runs: $0) })
+        else { return false }
+        try installHook()
+        line["command"] = Self.command(hook: hook, chaining: nil) + command.dropFirst(legacyBase.count)
+        root["statusLine"] = line
+        try writeSettings(root)
+        return true
+    }
+
+    /// The command without a chained argument, for each legacy folder's hook.
+    private var legacyBases: [String] {
+        legacyDirectories.map {
+            Self.command(hook: $0.appendingPathComponent(Self.hookName), chaining: nil)
+        }
+    }
+
+    /// Whether `command` runs exactly the hook `base` runs, with or without a
+    /// chained argument.
+    private static func command(_ command: String, runs base: String) -> Bool {
+        command == base || command.hasPrefix(base + " ")
     }
 
     /// When the hook last stored a document, or nil when there is none.
@@ -188,13 +233,14 @@ public struct ClaudeCodeStatusLine {
     }
 
     /// Whether a `statusLine` value is this app's: its command is exactly the
-    /// hook's, or the hook's followed by a chained argument.
+    /// hook's, or the hook's followed by a chained argument — this folder's hook
+    /// or a legacy folder's.
     private func isOurs(_ statusLine: Any?) -> Bool {
         guard let command = (statusLine as? [String: Any])?["command"] as? String else {
             return false
         }
-        let base = Self.command(hook: hook, chaining: nil)
-        return command == base || command.hasPrefix(base + " ")
+        let bases = [Self.command(hook: hook, chaining: nil)] + legacyBases
+        return bases.contains { Self.command(command, runs: $0) }
     }
 
     // MARK: - Hook

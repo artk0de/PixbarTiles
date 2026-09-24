@@ -22,7 +22,7 @@ private struct ClaudeLinkScratch {
     }
 
     var settings: URL { root.appendingPathComponent(".claude/settings.json") }
-    var directory: URL { root.appendingPathComponent("Application Support/PixelClockTiles") }
+    var directory: URL { root.appendingPathComponent("Application Support/PixbarTiles") }
     var link: ClaudeCodeStatusLine {
         ClaudeCodeStatusLine(settingsFile: settings, directory: directory, defaults: defaults)
     }

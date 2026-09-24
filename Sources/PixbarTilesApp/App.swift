@@ -423,12 +423,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         // First, before `.live()`: everything it builds reads the defaults, and
-        // on the first launch after the rename those are still in the old domain.
-        DefaultsCarryOver.run(
-            from: DefaultsCarryOver.previousDomain,
-            into: Bundle.main.bundleIdentifier,
-            through: .standard
-        )
+        // on the first launch after a rename those are still in an old domain.
+        DefaultsCarryOver.run(into: Bundle.main.bundleIdentifier, through: .standard)
         self.model = .live()
         self.panelModel = PanelModel(model: model)
         self.settingsModel = SettingsModel(model: model)

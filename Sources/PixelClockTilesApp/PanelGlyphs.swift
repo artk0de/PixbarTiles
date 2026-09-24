@@ -477,4 +477,22 @@ enum PanelGlyph {
     }
 
     static func inkPalette(_ ink: UInt32) -> Palette { ["G": ink] }
+
+    // MARK: - Help
+
+    /// A question mark, 5x7: the hook, the stem, a pixel's gap, the dot. It
+    /// stands beside a field whose help carries a link, so it opens a popover
+    /// rather than a tooltip.
+    static let question = [
+        ".###.",
+        "#...#",
+        "...#.",
+        "..#..",
+        "..#..",
+        ".....",
+        "..#..",
+    ]
+
+    /// The question mark in one ink.
+    static func questionPalette(_ ink: UInt32) -> Palette { ["#": ink] }
 }

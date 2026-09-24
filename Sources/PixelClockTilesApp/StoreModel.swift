@@ -49,6 +49,9 @@ final class StoreModel {
     /// card: pressing one twice was a silent no-op for ever.
     private(set) var lastRefusal: String?
     private(set) var cards: [StoreCard] = []
+    /// The GitHub card whose repository sheet is up, or nil. Set by the
+    /// window's binding to nil when the sheet is dismissed.
+    var askingForRepo: StoreCard?
 
     init(model: AppModel) {
         self.model = model
@@ -80,6 +83,9 @@ final class StoreModel {
     /// "Add tile…" means, whatever the store showed last time.
     func show(_ clockId: UUID) {
         self.clockId = clockId
+        // A repository asked for on behalf of another clock is not this
+        // clock's question.
+        askingForRepo = nil
         // The assignment itself refiles the cards through `didSet` — even
         // when nil was already showing, so a re-aim never keeps the cards
         // of the clock the store has just left.
@@ -94,6 +100,12 @@ final class StoreModel {
         // Cleared first, so a refusal from a previous press cannot be read as
         // this one's answer.
         lastRefusal = nil
+        // A GitHub tile is its repository: the sheet asks for it before any
+        // tile exists, and `addGitHub(repo:)` is the add.
+        if card.candidate.connectorId == GitHubConnector.connectorId {
+            askingForRepo = card
+            return
+        }
         switch model.addTile(card.candidate.connectorId, to: clockId) {
         case .saved:
             let key = TileKey(clockId: clockId, connectorId: card.candidate.connectorId)
@@ -102,6 +114,34 @@ final class StoreModel {
         case let .refused(reason):
             lastRefusal = reason
         }
+    }
+
+    /// The sheet's Add: the GitHub tile goes on the clock under the repository
+    /// typed, and its settings window opens, as any other add's does.
+    @discardableResult
+    func addGitHub(repo: String) -> Bool {
+        guard let clockId else { return false }
+        lastRefusal = nil
+        guard let instance = GitHubRepoName.instance(from: repo) else {
+            lastRefusal = "type the repository as owner/name"
+            return false
+        }
+        guard model.addGitHubTile(repo: repo, to: clockId) else {
+            let clock = model.clocks.first { $0.id == clockId }?.name ?? "this clock"
+            lastRefusal = "\(instance) is already on \(clock)"
+            return false
+        }
+        askingForRepo = nil
+        let key = TileKey(clockId: clockId, connectorId: GitHubConnector.connectorId, instance: instance)
+        model.openDetail(for: key)
+        lastAdded = key
+        return true
+    }
+
+    /// Closes the repository sheet without adding anything.
+    func cancelRepo() {
+        askingForRepo = nil
+        lastRefusal = nil
     }
 
     /// Takes the refusal off screen — the window calls this when the card

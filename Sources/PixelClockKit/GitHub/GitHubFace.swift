@@ -180,6 +180,13 @@ public enum GitHubFace {
         return name.lowercased()
     }
 
+    /// Whether the ticker's name line edge-marquees on the TC002: the same
+    /// measure `lineState` takes, the proportional face against the 34 px
+    /// area. The settings say it beside the short-name field.
+    public static func nameScrolls(repo: String, shortName: String?) -> Bool {
+        WeatherFace.partsWidth([part(displayName(repo, shortName: shortName), whiteInk)]) > areaWidth
+    }
+
     // MARK: - The right area
 
     /// Rows 0–8 of the right area: `text` in the 5×9 face, after the big

@@ -267,6 +267,15 @@ struct TileSettingsWindow: View {
                 )
                 parametersBlock
             }
+        } else if key.connectorId == GitHubConnector.connectorId {
+            // Keyed on the id, like the lamp: the block is the tile's.
+            GitHubTileBlock(
+                config: value.config?.github ?? GitHubTileConfig(repo: key.instance),
+                hasToken: model.hasGitHubToken,
+                outcome: model.lastGitHubTokenOutcome,
+                onConfig: { settings.setGitHubConfig($0) },
+                onSaveToken: { model.saveGitHubToken($0) }
+            )
         } else if key.connectorId == VPNConnector.id {
             // Keyed on the connector id, not on `connector is VPNConnector`:
             // a lamp tile's connector is built per VPN by the clock's own

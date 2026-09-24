@@ -303,6 +303,21 @@ final class TileSettingsModel {
         schedulePreview()
     }
 
+    /// The GitHub block's save: the short name and the celebration length.
+    /// The repository is kept as stored whatever the edit says — it is the
+    /// tile's identity — and a blank short name is no short name.
+    func setGitHubConfig(_ edited: GitHubTileConfig) {
+        guard let key, key.connectorId == GitHubConnector.connectorId,
+            let policy = model.storedPolicy(of: key)
+        else { return }
+        var config = edited
+        config.repo = model.storedTile(key)?.config?.github?.repo ?? key.instance
+        let shortName = edited.shortName?.trimmingCharacters(in: .whitespaces)
+        config.shortName = shortName?.isEmpty == false ? shortName : nil
+        guard save(policy: policy, config: .github(config)) else { return }
+        schedulePreview()
+    }
+
     /// Keyed on the connector id, like the lamp block: the settings are the
     /// tile's, whatever instance is running it.
     private static func isCodeUsageTile(_ key: TileKey) -> Bool {

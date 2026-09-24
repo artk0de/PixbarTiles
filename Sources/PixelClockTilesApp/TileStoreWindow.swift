@@ -64,6 +64,17 @@ struct TileStoreWindow: View {
         }
         .frame(minWidth: 560, minHeight: 380)
         .glassWindow()
+        // A GitHub card asks for its repository before the tile exists.
+        .sheet(isPresented: Binding(
+            get: { store.askingForRepo != nil },
+            set: { if $0 == false { store.cancelRepo() } }
+        )) {
+            GitHubRepoSheet(
+                refusal: store.lastRefusal,
+                onAdd: { store.addGitHub(repo: $0) },
+                onCancel: { store.cancelRepo() }
+            )
+        }
         // The two-step commit's second step: a successful add opens the
         // tile's settings window on it, so a tile is never added and
         // forgotten.

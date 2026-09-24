@@ -1354,6 +1354,56 @@ final class AppModel: ObservableObject {
         secrets.secret(for: .tile(key)) != nil
     }
 
+    // MARK: - The GitHub tiles
+
+    /// What a token save did — the same three answers a z.ai paste gets.
+    typealias TokenOutcome = ZaiKeyOutcome
+
+    /// The last token save's outcome, for the field to say it out loud.
+    @Published private(set) var lastGitHubTokenOutcome: TokenOutcome?
+
+    /// The one token every GitHub tile reads through, filed under the
+    /// connector's account and never a tile's. A blank save removes it.
+    @discardableResult
+    func saveGitHubToken(_ token: String) -> TokenOutcome {
+        let account = SecretAccount.connector(GitHubConnector.connectorId)
+        let typed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outcome: TokenOutcome
+        do {
+            if typed.isEmpty {
+                try secrets.remove(for: account)
+                outcome = .removed
+            } else {
+                try secrets.save(typed, for: account)
+                outcome = .saved
+            }
+        } catch {
+            outcome = .refused
+        }
+        lastGitHubTokenOutcome = outcome
+        return outcome
+    }
+
+    /// Whether the shared token is stored — one answer for every GitHub tile.
+    var hasGitHubToken: Bool {
+        secrets.secret(for: .connector(GitHubConnector.connectorId)) != nil
+    }
+
+    /// Adds a GitHub tile for `owner/name`: the repository lowercased is the
+    /// tile's instance, so one clock never carries a repository twice while
+    /// another clock may carry it too. False for a malformed name or a
+    /// duplicate.
+    func addGitHubTile(repo typed: String, to clockId: UUID) -> Bool {
+        guard let repo = GitHubRepoName.repo(from: typed),
+            let instance = GitHubRepoName.instance(from: typed)
+        else { return false }
+        let outcome = addTile(
+            GitHubConnector.connectorId, to: clockId, instance: instance,
+            config: .github(GitHubTileConfig(repo: repo))
+        )
+        return outcome == .saved
+    }
+
     func removeTile(_ key: TileKey) {
         timers.removeValue(forKey: key)?.cancel()
         // The tile's own settings survive its removal: re-adding the same

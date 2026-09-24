@@ -183,8 +183,9 @@ public var interruption: Interruption<Scene>?
   forks, PRs, each with logins and PR numbers) — computed by a pure
   `GitHubEventDetector(snapshot, response) -> (events, snapshot)`.
 - Missing data: no PAT → the `no token` page; a failed or refused request →
-  `no data`, and the snapshot is kept, so the next good read still celebrates
-  what arrived meanwhile.
+  `bad token` / `no repo` / `no data` by why (live-review amendments), and
+  the snapshot is kept, so the next good read still celebrates what arrived
+  meanwhile.
 
 ## The faces — F2
 
@@ -225,37 +226,41 @@ Pixel for pixel `ggen.py`, recorded as fixtures by
 A `GitHubTileBlock` beside the existing blocks in `TileSettingsWindow`:
 
 - Repo field (`owner/name`, validated on the shape; the tile's instance is set
-  from it when the tile is added).
+  from it when the tile is added; editable since the live review, below).
 - Short name, optional, with a live note when the name will scroll.
 - Celebration seconds: 5 / 8 / 10 / 15.
 - PAT field, shared: saving it on any GitHub tile saves `.connector("github")`;
   every GitHub tile's block shows the same presence line. Beside it a pixel
   `?` glyph (a new `PanelGlyph`), whose hover card says:
-  - Every token: the ACCOUNT permission `Starring: read`. Without it a
-    fine-grained token is refused the `stargazers` connection — even
-    `totalCount` — on public repositories too (measured live 2026-09-24:
-    `FORBIDDEN: Resource not accessible by personal access token`, every other
-    field of the query read fine). It is what names who starred.
   - Public repositories: a fine-grained token with *Repository access →
-    Public repositories*; no repository permissions needed.
-  - Private repositories: *Only select repositories*, and `Metadata: read`,
-    `Pull requests: read`, `Commit statuses: read`, `Checks: read` (the last
-    two feed the CI badge; GitHub documents them for the REST status and
-    check-run endpoints, and GraphQL's `statusCheckRollup` is assumed to follow
-    them — confirmed live in Task 12, where `Contents: read` is tried if the
-    rollup still comes back empty).
+    Public repositories*. The form then shows no repository permissions, and
+    none are needed: the name, the counts, forks, open PRs and their authors,
+    the CI rollup and the default branch's commit all read (measured 200 on a
+    public repository, 2026-09-24).
+  - Private repositories: *Only select repositories*, and `Metadata: read`
+    (automatic), `Pull requests: read`, `Commit statuses: read`,
+    `Checks: read` (the CI badge) and `Contents: read` (the default branch's
+    commit and its author — REST `/commits/{ref}` documents contents=read).
+  - Who starred is not visible to a read-only token: listing stargazers
+    (REST, and GraphQL `stargazers`) needs `Contents: write` on the
+    repository for a fine-grained token. The `Starring` account permission
+    does not cover it — it is about the user's own stars — and
+    unauthenticated the list is 401. So the stars are counted, not named,
+    and that is the normal path.
   - Repository access cannot be preset by a link; pick it on the page.
   - A link to
-    `https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&starring=read`
-    — GitHub documents prefilling the form by these parameters (`starring` is
-    in its account-permission table).
-  - **Partial answers are kept.** GraphQL returns `data` beside `errors`; a
-    `FORBIDDEN` confined to `repository.stargazers` still yields the counts
-    (`stargazerCount` needs no permission). The tile then shows the repo
-    normally; a star rise celebrates by count with no logins, and the
-    settings preview says "Add the Starring: read account permission to see
-    who starred". Any other error, or no `data.repository`, is a failure as
-    in the live-review amendments below.
+    `https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read`
+    — GitHub documents prefilling the form by these parameters.
+  - **Partial answers are kept.** GraphQL returns `data` beside `errors`.
+    When every error is a `FORBIDDEN` on a field inside the repository, the
+    rest of the answer is kept and each withheld part is named by the
+    permission it wants (see "Why a part is missing" below). The normal case
+    is `repository.stargazers` alone (measured live on
+    `artk0de/TeaRAGs-MCP` with the user's read-only token): the counts read
+    (`stargazerCount` needs no permission), a star rise celebrates by count
+    with no logins, and the first read that sees the stargazers again names
+    only the total's rise, never the whole page. Only a `NOT_FOUND`, a 401,
+    another kind of error, or no `data.repository` fails the tile.
 
 ## CI of the default branch (added 2026-09-24)
 
@@ -299,9 +304,8 @@ way to fix it short of deleting the tile. Agreed in the mockup
   - `no data` — network, rate limit, 5xx, anything else.
   The two first wear the dim mark, `no data` its own icon (unchanged).
   `bad token` is 33 px of the 34. The TC001 line says the same words.
-  The settings preview says it in a sentence: "GitHub refused the token
-  (401)", "Repository not found, or the token can't see it", "GitHub could
-  not be reached".
+  The settings preview and the clock's tile list say it in a sentence (the
+  table under "Why a part is missing").
 - **Show** toggles, per tile, default on: Forks, PRs, CI. A hidden count
   leaves the ticker's rotation; with Forks and PRs both off the name holds
   the line alone. CI off draws no badge whatever the rollup says. The stars
@@ -320,6 +324,70 @@ way to fix it short of deleting the tile. Agreed in the mockup
   so nothing it already has is celebrated.
 - **Saving the token** re-renders the open preview at once; the running
   tiles read it on their next poll.
+- **A pasted URL** reads as the repository. The store's add sheet and the
+  block's Repository field share one normaliser (`GitHubRepoName`):
+  `https://github.com/o/n`, `http://…/o/n/`, `github.com/o/n`, `www.…`,
+  `…/o/n.git`, `git@github.com:o/n.git`, and deeper paths
+  (`/pull/12`, `/tree/main/…`) all reduce to `o/n`, the typed case kept (the
+  instance lowercases it). The field shows the reduced form once it reads as
+  a repository; anything else is refused by the `owner/name` shape as before.
+
+### Main watch (added 2026-09-24)
+
+A per-tile setting, the block's "Main watch" picker: which metric holds the
+hero — Stars (default; the face as shipped), PRs, Forks, CI. The review in
+the mockup was waived by the user for this round; `ggen.py` cases
+`a19`–`a26` are the design, all within `fits()`.
+
+- **PRs / Forks**: the hero is that count, `compact()` as the stars, in its
+  colour, after its own big mark (`⑂` fork, `⎇` pull request — the octicons'
+  shapes at 9×9, commits as 3×3 rings). The ticker rotates the name and the
+  remaining counts, the stars included (with the star octicon twinkling),
+  respecting the Show toggles; the hero's own count leaves the ticker, and is
+  shown whatever its Show toggle says. The CI lamp as for the stars.
+- **CI**: the hero is the default branch's checks in words, in the line font
+  on the hero's rows 2–6, coloured by state — `ci passed` green `#3FB950`,
+  `ci processed` amber `#D29922` (the pending state; the user's word),
+  `ci failed` red `#F85149`, `no ci` dim for a repository without checks.
+  Lowercase: the TC002's line font has no capitals, as every other word on
+  the face. `ci processed` (43 px) edge-marquees over the whole timeline,
+  its phase running on like the lamp's (`with_hero`). No lamp: the hero
+  already says it. The ticker rotates the name, stars, forks and PRs per
+  Show. The worst budget (`a26`, a marquee name beside a marquee hero, four
+  ticker states) is 448 frames.
+- **TC001**: the one text line shows the main metric — the PRs or forks as a
+  count in their colour, the CI as `CI passed` / `CI processed` /
+  `CI failed` (the AWTRIX font has capitals) in the same colours, `no CI`
+  quiet.
+- An older record decodes with Stars.
+
+### Why a part is missing (added 2026-09-24)
+
+A read carries a structured diagnosis (`GitHubReading.diagnosis`): the
+failure, or the parts GitHub withheld from the token, each named by the
+permission it wants — GitHub's fine-grained table and the
+`x-accepted-github-permissions` header measured live. The same sentence goes
+to the settings preview (under the picture), to the clock's tile list (the
+card's result line, with an orange sign unless it is only the quiet one), and
+the failure picks the face's label.
+
+| What GitHub answered | Said | Tile |
+|---|---|---|
+| `FORBIDDEN` on `repository.stargazers` | "Who starred needs Contents: write — stars are counted instead" (quiet) | works |
+| `FORBIDDEN` on `pullRequests` / `openPRs` | "Token lacks Pull requests: read" | works; PRs leave the ticker |
+| `FORBIDDEN` under `defaultBranchRef` … `statusCheckRollup` | "Token lacks Commit statuses: read and Checks: read" | works; no lamp |
+| `FORBIDDEN` elsewhere under `defaultBranchRef` (`target`, `author`) | "Token lacks Contents: read" | works |
+| `FORBIDDEN` on `forks` / the counts | "Token lacks Metadata: read" | works; forks leave the ticker |
+| `FORBIDDEN` on any other path | "Token lacks a permission for <path>" | works |
+| `NOT_FOUND`, or the repository itself withheld | "Repository not found, or the token can't see it (Repository access)" | `no repo` |
+| HTTP 401 | "GitHub refused the token (401) — paste a new one" | `bad token` |
+| anything else | "GitHub could not be reached" | `no data` |
+
+A withheld part reads empty and is not taken for data: withheld counts do not
+move the snapshot's totals and withheld PRs do not move its set, so granting
+the permission later replays nothing. The connector writes the diagnosis
+beside the snapshot at every read (`UserDefaultsGitHubDiagnoses`); a clean
+read clears it, and a re-key clears the old and the new key's.
 
 ## Testing
 

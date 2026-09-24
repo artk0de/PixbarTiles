@@ -1,6 +1,18 @@
 import Foundation
 import PixelClockKit
 
+/// What a TC002 clock's session hears from the reachability poll — the one
+/// steady look the app takes at the clock, and so where a reboot is noticed.
+protocol UlanziClockWatching: Sendable {
+    /// The clock answers again after the poll found it gone: every page is
+    /// owed a sweep.
+    func clockReturned() async
+    /// An ordinary answering tick: check the clock still lists every page.
+    func verifyPages() async
+}
+
+extension UlanziClockSession: UlanziClockWatching {}
+
 /// One TC002 clock's answer to "are you there".
 ///
 /// What `ClockHealth` is for an AWTRIX clock, minus everything this firmware
@@ -40,12 +52,24 @@ final class UlanziClockHealth: @unchecked Sendable {
     /// battery line, exactly as it did before this existed.
     private let battery: UlanziBattery?
     private var trajectory = UlanziBatteryTrajectory()
+    /// The clock's session, looked up at each tick rather than held: the
+    /// model builds sessions and healths in separate places, and a clock
+    /// whose session is gone simply has nobody to tell.
+    private let watcher: @MainActor () -> (any UlanziClockWatching)?
+    /// The last word passed to the session. Not awaited by the poll — a sweep
+    /// is several uploads, and the panel's reading must not wait on them — but
+    /// kept so a test can.
+    private(set) var watching: Task<Void, Never>?
 
-    init(clockId: UUID, name: String, device: UlanziDevice, battery: UlanziBattery?) {
+    init(
+        clockId: UUID, name: String, device: UlanziDevice, battery: UlanziBattery?,
+        watcher: @escaping @MainActor () -> (any UlanziClockWatching)? = { nil }
+    ) {
         self.clockId = clockId
         self.name = name
         self.device = device
         self.battery = battery
+        self.watcher = watcher
     }
 
     var isOnline: Bool { answering == .answering }
@@ -67,7 +91,12 @@ final class UlanziClockHealth: @unchecked Sendable {
     /// Every battery failure is silent by construction — `read` returns nil
     /// rather than throwing — so a clock that answers `/getBase` still counts
     /// as online even when its memory read fails.
+    ///
+    /// An answering tick also tells the clock's session what it saw: back from
+    /// unreachable is a return (the clock may have rebooted, every page owed a
+    /// sweep); any other answer is a cue to check the page list.
     func poll(at now: Date) async -> BatteryWarning? {
+        let before = answering
         do {
             let identity = try await device.identity()
             answering = .answering
@@ -77,9 +106,31 @@ final class UlanziClockHealth: @unchecked Sendable {
                 trajectory.accept(sample)
                 lastKnownBattery = trajectory.reading
             }
+            tellSession(returned: before == .unreachable)
         } catch {
             answering = .unreachable
         }
         return nil
     }
+
+    private func tellSession(returned: Bool) {
+        guard let session = watcher() else { return }
+        // A check behind a word still being handled adds nothing but a queue:
+        // a session stuck on a slow push would collect one per minute.
+        if pendingWords > 0, !returned { return }
+        let previous = watching
+        pendingWords += 1
+        // One word at a time, in order: a check must not overtake the return
+        // it follows.
+        watching = Task {
+            await previous?.value
+            if returned {
+                await session.clockReturned()
+            } else {
+                await session.verifyPages()
+            }
+            pendingWords -= 1
+        }
+    }
+    private var pendingWords = 0
 }

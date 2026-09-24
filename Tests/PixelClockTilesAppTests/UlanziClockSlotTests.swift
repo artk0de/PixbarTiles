@@ -286,6 +286,35 @@ private func slotTile(_ connectorId: String) -> TileRecord {
         })
     }
 
+    // A clock that restarted between two polls answers as if nothing happened
+    // and lists none of our pages. The model's poll hands that to the session,
+    // which puts the page back without waiting for the tile's next beat.
+    @Test func aPageTheClockLostComesBackAtTheNextPoll() async throws {
+        let defaults = try defaults()
+        let desk = ClockRecord(name: "desk", model: .ulanziTC002, address: "192.0.2.9")
+        let polls = Metronome()
+        let subject = testModel(
+            connectors: [weatherConnector(over: transport)],
+            transport: transport,
+            defaults: defaults,
+            sleep: Metronome().sleep,
+            pollSleep: polls.sleep,
+            deviceHost: "192.0.2.9",
+            clocks: [desk]
+        )
+        func weatherPages() -> Int {
+            upserts(on: transport).filter { $0.name == "pct-weather" && $0.empty == false }.count
+        }
+
+        subject.start()
+        #expect(await waitUntil { weatherPages() >= 1 })
+        transport.lists([])
+        polls.tick()
+
+        #expect(await waitUntil { weatherPages() >= 2 })
+        await subject.teardown()
+    }
+
     // A tile added on the clock delivers through the upsert path — the Add
     // tile menu's placement turns into pixels on the TC002, not a silent
     // store row.

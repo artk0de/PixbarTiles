@@ -779,10 +779,7 @@ final class AppModel: ObservableObject {
             // nothing else — no battery, no relocation, no stats to carry.
             guard clock.model == .awtrix3 else {
                 if let device = makeUlanziDevice(clock) {
-                    ulanziHealths[clock.id] = UlanziClockHealth(
-                        clockId: clock.id, name: clock.name, device: device,
-                        battery: makeUlanziBattery(clock)
-                    )
+                    ulanziHealths[clock.id] = ulanziHealth(for: clock, device: device)
                 }
                 continue
             }
@@ -2655,6 +2652,19 @@ final class AppModel: ObservableObject {
         reloadClocks()
     }
 
+    /// A TC002 clock's health, told how to reach the clock's session: its
+    /// reachability poll is where a reboot is noticed, and the session is what
+    /// puts the pages back. Looked up per tick — a session is rebuilt when the
+    /// clock moves, and the health outlives that.
+    private func ulanziHealth(for clock: ClockRecord, device: UlanziDevice) -> UlanziClockHealth {
+        let clockId = clock.id
+        return UlanziClockHealth(
+            clockId: clock.id, name: clock.name, device: device,
+            battery: makeUlanziBattery(clock),
+            watcher: { [weak self] in self?.sessions[clockId] as? UlanziClockWatching }
+        )
+    }
+
     /// One clock's threshold crossing out of the poll: which clock it was
     /// about, and what it crossed.
     private struct Crossing: Sendable {
@@ -2867,10 +2877,7 @@ final class AppModel: ObservableObject {
         for clock in stored
         where clock.model == .ulanziTC002 && ulanziHealths[clock.id] == nil {
             if let device = makeUlanziDevice(clock) {
-                ulanziHealths[clock.id] = UlanziClockHealth(
-                    clockId: clock.id, name: clock.name, device: device,
-                    battery: makeUlanziBattery(clock)
-                )
+                ulanziHealths[clock.id] = ulanziHealth(for: clock, device: device)
             }
         }
         // The health list moved, and the panel's dots hang off it.

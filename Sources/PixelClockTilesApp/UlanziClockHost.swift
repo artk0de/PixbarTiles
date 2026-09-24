@@ -25,7 +25,7 @@ import PixelClockKit
 ///
 /// `indicators` is nil: the TC002 has no lamps, and an availability that
 /// said otherwise would promise a surface the firmware does not have.
-actor UlanziClockHost: ConnectorRunning, UlanziConnectorRunning, ClockPageShowing {
+actor UlanziClockHost: ConnectorRunning, UlanziConnectorRunning, ClockPageShowing, UlanziClockWatching {
     private let session: UlanziClockSession
     private let registry: ConnectorRegistry
     private let store: any SettingsStore
@@ -125,6 +125,16 @@ actor UlanziClockHost: ConnectorRunning, UlanziConnectorRunning, ClockPageShowin
     /// Quit or removal: every owned page leaves the knob cycle (D4).
     func shutdown() async {
         await session.shutdown()
+    }
+
+    // MARK: what the reachability poll saw — see `UlanziClockWatching`
+
+    func clockReturned() async {
+        await session.clockReturned()
+    }
+
+    func verifyPages() async {
+        await session.verifyPages()
     }
 
     // MARK: showing a page on request — see `ClockPageShowing`

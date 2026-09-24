@@ -50,7 +50,11 @@ public actor UlanziCustody {
     }
 
     /// The tile's page name: `pct-<tileId>` (D10).
-    private func tileName(_ tileId: String) -> String { "pct-\(tileId)" }
+    private func tileName(_ tileId: String) -> String { Self.pageName(forTile: tileId) }
+
+    /// The name a tile's page lives under, without claiming it — for reading
+    /// the clock's page list against.
+    public static func pageName(forTile tileId: String) -> String { "pct-\(tileId)" }
 
     /// The name this tile's page lives under, claiming it on first use. The
     /// claim is bookkeeping only — the device hears the name at the first

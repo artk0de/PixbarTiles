@@ -47,6 +47,10 @@ public actor UlanziClockSession {
     private var nextSweepAt = Date.distantPast
     /// The wait after the 1st, 2nd and every later failed sweep in a row.
     static let sweepBackoff: [TimeInterval] = [60, 120, 300]
+    /// Upserts on the wire right now, and upserts ever started — so a page
+    /// list read around a push can tell it raced one and must not be trusted.
+    private var pushesInFlight = 0
+    private var pushesStarted = 0
 
     /// How an interruption's duration passes. Injected so a test can hold a
     /// window open and look inside it, or close it at once.
@@ -190,6 +194,74 @@ public actor UlanziClockSession {
         try? await custody.releaseAll()
     }
 
+    // MARK: what the reachability poll saw
+
+    /// The clock answers again after the reachability poll found it gone. It
+    /// may have rebooted in between, and a rebooted TC002 answers the next
+    /// push as if nothing happened — with every page lost. So nothing on it is
+    /// known any more, and one sweep is owed; it runs now unless one is
+    /// already running or backing off, in which case the next answer or check
+    /// after the backoff runs it.
+    public func clockReturned() async {
+        onDevice = [:]
+        sweepDue = true
+        await runOwedSweep()
+    }
+
+    /// The reachability poll's cheap look (`GET /api/customList`, ~0.1 KB):
+    /// every page this session put on the clock should be listed. One that is
+    /// not was lost — a firmware restart the poll never saw go down — and is
+    /// pushed again from what the board holds; the listed ones are left alone.
+    ///
+    /// Stands down whenever its answer could mislead or its work is already
+    /// someone else's: a push or a sweep on the wire (a page list read around
+    /// an upsert says nothing about that upsert), a sweep owed (it covers every
+    /// page — this runs it instead, if its backoff is over), or no page of ours
+    /// known on the clock yet.
+    public func verifyPages() async {
+        if sweepDue {
+            await runOwedSweep()
+            return
+        }
+        guard pushesInFlight == 0, !recovering, !onDevice.isEmpty else { return }
+        let started = pushesStarted
+        guard let listed = try? await device.customApps() else { return }
+        // Re-read after the round trip: the actor may have pushed meanwhile.
+        guard pushesStarted == started, pushesInFlight == 0, !recovering, !sweepDue else { return }
+        let names = Set(listed)
+        let missing = board.tileIds.filter {
+            onDevice[$0] != nil && !names.contains(UlanziCustody.pageName(forTile: $0))
+        }
+        for tile in missing { onDevice[tile] = nil }
+        // A covered page is the restore's: it differs from nothing now, so the
+        // restore pushes it.
+        for tile in missing where !covered.contains(tile) {
+            guard let frame = recoveryFrame(forTile: tile) else { continue }
+            _ = await chain.deliver { [self] in await pushIfOnBoard(frame, toTile: tile) }
+        }
+    }
+
+    /// The owed sweep, on the delivery chain so it cannot interleave with a
+    /// delivery's push — when none is running and the backoff is over.
+    private func runOwedSweep() async {
+        _ = await chain.deliver { [self] in
+            await self.sweepIfOwed()
+            return .delivered
+        }
+    }
+
+    private func sweepIfOwed() async {
+        guard sweepDue, !recovering, now() >= nextSweepAt else { return }
+        await recoverySweep(skipping: nil)
+    }
+
+    /// A restore or a recovery push, unless the tile has since been removed
+    /// from the board.
+    private func pushIfOnBoard(_ frame: UlanziFrame, toTile tileId: String) async -> RunResult {
+        guard board.tileIds.contains(tileId) else { return .skipped }
+        return await push(frame, toTile: tileId)
+    }
+
     // MARK: showing a page on request
 
     /// The tile's page while the clock lists it, or nil when it has none there.
@@ -247,7 +319,7 @@ public actor UlanziClockSession {
                 // this is behind it in the chain and pushes its own, newer frame.
                 guard let scene = board.frame(forTile: tile),
                       let frame = Self.singleFrame(of: scene) else { continue }
-                _ = await chain.deliver { [self] in await pushRestore(frame, toTile: tile) }
+                _ = await chain.deliver { [self] in await pushIfOnBoard(frame, toTile: tile) }
                 if Task.isCancelled { return }
             }
         }
@@ -261,11 +333,6 @@ public actor UlanziClockSession {
         return await push(frame, toTile: tileId)
     }
 
-    /// A restore, unless the tile has since been removed from the board.
-    private func pushRestore(_ frame: UlanziFrame, toTile tileId: String) async -> RunResult {
-        guard board.tileIds.contains(tileId) else { return .skipped }
-        return await push(frame, toTile: tileId)
-    }
 
     // MARK: plumbing
 
@@ -286,6 +353,9 @@ public actor UlanziClockSession {
         } catch {
             return .failed(String(describing: error))
         }
+        pushesInFlight += 1
+        pushesStarted += 1
+        defer { pushesInFlight -= 1 }
         do {
             try await device.showApp(frame, named: name)
             onDevice[tileId] = frame

@@ -149,13 +149,13 @@ struct MenuPanel: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    /// The app's own clock and name, and how many of the clocks are
-    /// answering — the one fact about all of them together.
+    /// The app's mark and name, and how many of the clocks are answering —
+    /// the one fact about all of them together.
     private var header: some View {
         HStack(spacing: 8) {
             pinButton
             PixelArt(
-                map: UserClock.map,
+                map: PanelMark.map,
                 palette: PanelGlyph.devicePalette(
                     dark: colorScheme == .dark,
                     live: panel.sections.contains { $0.dot == .green }

@@ -1,9 +1,9 @@
 // The user's pixel-art alarm clock: the transcription approved out of the
 // candidates (`userclock-dark-online`, `userclock-light-offline`, … in
 // icons-candidates/menubar). It was the menu bar glyph until the PixbarTiles
-// brand replaced it there (`MenuBarGlyph.swift`); it stays as the panel's
-// header clock, and its four palettes stay the panel's device palettes —
-// `PanelGlyph` draws the AWTRIX and the TC002 in them.
+// brand replaced it there (`MenuBarGlyph.swift`) and in the panel's header
+// (`PanelMark`). Its four palettes stay the panel's device palettes —
+// `PanelGlyph` draws the AWTRIX, the TC002 and the header mark in them.
 //
 // Deliberately free of AppKit: a map and a palette are data, and data is what
 // the golden tests pin. `PixelArt` turns them into pixels.

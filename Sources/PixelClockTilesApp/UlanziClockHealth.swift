@@ -100,13 +100,18 @@ final class UlanziClockHealth: @unchecked Sendable {
         do {
             let identity = try await device.identity()
             answering = .answering
-            if let battery,
-                let sample = await battery.read(appVersion: identity.appVersion, at: now)
-            {
-                trajectory.accept(sample)
-                lastKnownBattery = trajectory.reading
+            var restarted = false
+            if let battery {
+                let read = await battery.poll(appVersion: identity.appVersion, at: now)
+                // A new zkgui process is a firmware UI that restarted without
+                // the clock ever going unreachable — its pages are gone too.
+                restarted = read.zkguiRestarted
+                if let sample = read.sample {
+                    trajectory.accept(sample)
+                    lastKnownBattery = trajectory.reading
+                }
             }
-            tellSession(returned: before == .unreachable)
+            tellSession(returned: before == .unreachable || restarted)
         } catch {
             answering = .unreachable
         }

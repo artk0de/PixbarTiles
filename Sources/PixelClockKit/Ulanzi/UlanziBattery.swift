@@ -19,6 +19,18 @@ public struct UlanziBatterySample: Sendable, Equatable {
     }
 }
 
+/// One battery read: the sample, if any, and whether it found a different
+/// zkgui process than the read before — the firmware UI restarted.
+public struct UlanziBatteryPoll: Sendable, Equatable {
+    public let sample: UlanziBatterySample?
+    public let zkguiRestarted: Bool
+
+    public init(sample: UlanziBatterySample?, zkguiRestarted: Bool) {
+        self.sample = sample
+        self.zkguiRestarted = zkguiRestarted
+    }
+}
+
 /// Reads the TC002's firmware battery figures out of the `zkgui` process
 /// memory over ADB.
 ///
@@ -29,7 +41,26 @@ public struct UlanziBatterySample: Sendable, Equatable {
 /// Read-only: it pushes a reader and a request, runs the reader, and parses
 /// three `int32`s. Every failure returns nil, because a wrong number on the
 /// panel is worse than no number.
-public struct UlanziBattery: Sendable {
+///
+/// The first read walks the whole way — the /proc sweep (a `cat` fork per
+/// process on the clock), the maps, the reader pushed, two windows: nine ADB
+/// streams. The process, its load base and the monitor object do not move
+/// while zkgui runs, so they are kept, and every later read is the monitor's
+/// window alone (three streams). The vtable check that already guards the
+/// read is what says the cache still holds; a read that fails it walks the
+/// whole way again.
+public actor UlanziBattery {
+    /// Where the last full walk found the monitor.
+    private struct Found: Equatable {
+        let pid: Int
+        let base: UInt32
+        let monitor: UInt32
+    }
+    private var found: Found?
+    /// The process and load base the last walk resolved — kept through a
+    /// failed read, so the next walk can tell a new zkgui from the old one.
+    private var lastProcess: (pid: Int, base: UInt32)?
+
     /// Where one firmware build keeps the battery, as two hops rather than one
     /// address.
     ///
@@ -74,8 +105,9 @@ public struct UlanziBattery: Sendable {
     /// Enough of the object to reach the millivolts.
     private static let windowLength = 0x14
     /// Where the reader and its parameters live. `/tmp` is a 16 MB tmpfs wiped
-    /// on reboot, so both are pushed every poll — idempotent and cheaper than
-    /// probing for them.
+    /// on reboot, so the reader is pushed on every full walk and the request
+    /// on every window. A cached read against a rebooted clock finds no reader
+    /// and an empty output, fails its check, and walks — which pushes it back.
     private static let helperPath = "/tmp/pct-batt"
     private static let requestPath = "/tmp/pct-req"
     private static let outputPath = "/tmp/pct-out"
@@ -99,10 +131,38 @@ public struct UlanziBattery: Sendable {
     }
 
     public func read(appVersion: String?, at now: Date) async -> UlanziBatterySample? {
-        guard let appVersion, let layout = Self.layouts[appVersion] else { return nil }
+        await poll(appVersion: appVersion, at: now).sample
+    }
+
+    /// One read, and whether it had to find a DIFFERENT zkgui than the last
+    /// walk did — a restarted firmware UI, which has dropped every DIY page.
+    /// The first walk ever is not a restart: there is nothing to differ from.
+    public func poll(appVersion: String?, at now: Date) async -> UlanziBatteryPoll {
+        guard let appVersion, let layout = Self.layouts[appVersion] else {
+            return UlanziBatteryPoll(sample: nil, zkguiRestarted: false)
+        }
+        if let found {
+            let out = try? await window(
+                at: found.monitor, length: UInt32(Self.windowLength), in: "/proc/\(found.pid)/mem"
+            )
+            if let out, let sample = sample(out, base: found.base, layout: layout, at: now) {
+                return UlanziBatteryPoll(sample: sample, zkguiRestarted: false)
+            }
+            self.found = nil
+        }
+        return await walk(layout: layout, at: now)
+    }
+
+    /// The whole way: the process, its load base, the reader, both hops.
+    private func walk(layout: Layout, at now: Date) async -> UlanziBatteryPoll {
+        var restarted = false
         do {
-            guard let pid = try await resolvePid() else { return nil }
-            guard let base = try await resolveBase(pid: pid) else { return nil }
+            guard let pid = try await resolvePid() else { return UlanziBatteryPoll(sample: nil, zkguiRestarted: false) }
+            guard let base = try await resolveBase(pid: pid) else {
+                return UlanziBatteryPoll(sample: nil, zkguiRestarted: false)
+            }
+            if let last = lastProcess, last.pid != pid || last.base != base { restarted = true }
+            lastProcess = (pid, base)
             let mem = "/proc/\(pid)/mem"
 
             try await adb.push(helper, to: Self.helperPath, mode: 0o755)
@@ -111,26 +171,34 @@ public struct UlanziBattery: Sendable {
             let slot = try await window(
                 at: base &+ layout.logicThread &+ layout.monitorField, length: 4, in: mem
             )
-            guard slot.count >= 4 else { return nil }
+            guard slot.count >= 4 else { return UlanziBatteryPoll(sample: nil, zkguiRestarted: restarted) }
             let monitor = le32(slot, 0)
-            guard monitor != 0 else { return nil }
+            guard monitor != 0 else { return UlanziBatteryPoll(sample: nil, zkguiRestarted: restarted) }
 
             // Hop two: the object it points at.
             let out = try await window(at: monitor, length: UInt32(Self.windowLength), in: mem)
-            guard out.count >= Self.windowLength else { return nil }
-            guard le32(out, 0) == base &+ layout.monitorVTable else { return nil }
-
-            let charging = le32(out, layout.charging) != 0
-            let percent = Int(le32(out, layout.percent))
-            let millivolts = Int(le32(out, layout.millivolts))
-            // A wrong number is worse than none.
-            guard (0...100).contains(percent), (2000...4500).contains(millivolts) else { return nil }
-            return UlanziBatterySample(
-                percent: percent, charging: charging, millivolts: millivolts, at: now
-            )
+            let read = sample(out, base: base, layout: layout, at: now)
+            if read != nil { found = Found(pid: pid, base: base, monitor: monitor) }
+            return UlanziBatteryPoll(sample: read, zkguiRestarted: restarted)
         } catch {
-            return nil
+            return UlanziBatteryPoll(sample: nil, zkguiRestarted: restarted)
         }
+    }
+
+    /// The monitor's window as a sample — or nil when it is short, is not a
+    /// `BatteryMonitor` by its vtable, or reads implausibly.
+    private func sample(_ out: Data, base: UInt32, layout: Layout, at now: Date) -> UlanziBatterySample? {
+        guard out.count >= Self.windowLength else { return nil }
+        guard le32(out, 0) == base &+ layout.monitorVTable else { return nil }
+
+        let charging = le32(out, layout.charging) != 0
+        let percent = Int(le32(out, layout.percent))
+        let millivolts = Int(le32(out, layout.millivolts))
+        // A wrong number is worse than none.
+        guard (0...100).contains(percent), (2000...4500).contains(millivolts) else { return nil }
+        return UlanziBatterySample(
+            percent: percent, charging: charging, millivolts: millivolts, at: now
+        )
     }
 
     /// One window of the process's memory: the request written, the reader run,

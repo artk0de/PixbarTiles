@@ -5,9 +5,12 @@ import Testing
 /// A fake ADB that answers scripted shell output by command substring, records
 /// pushes, and hands back canned reader windows in order. No device, no framing.
 private actor FakeADB: ADB {
-    private let answers: [(match: String, out: Data)]
+    private var answers: [(match: String, out: Data)]
     private var windows: [Data]
     private var pushed: [(path: String, bytes: Data)] = []
+    /// Every stream opened, in order: `shell <command>`, `push <path>`,
+    /// `pull <path>` — what a read costs the clock.
+    private(set) var streams: [String] = []
 
     init(answers: [(String, Data)] = [], windows: [Data] = []) {
         self.answers = answers.map { ($0.0, $0.1) }
@@ -15,16 +18,27 @@ private actor FakeADB: ADB {
     }
 
     func shell(_ command: String) async throws -> Data {
+        streams.append("shell \(command)")
         for a in answers where command.contains(a.match) { return a.out }
         return Data()
     }
     func push(_ bytes: Data, to path: String, mode: Int) async throws {
+        streams.append("push \(path)")
         pushed.append((path, bytes))
     }
     func pull(_ path: String) async throws -> Data {
-        windows.isEmpty ? Data() : windows.removeFirst()
+        streams.append("pull \(path)")
+        return windows.isEmpty ? Data() : windows.removeFirst()
     }
     func pushes() -> [(path: String, bytes: Data)] { pushed }
+
+    /// What a command containing `match` answers from now on.
+    func answer(_ match: String, _ out: Data) {
+        answers.removeAll { $0.match == match }
+        answers.append((match, out))
+    }
+    /// More reader windows, served after the ones already queued.
+    func queue(_ more: [Data]) { windows += more }
 }
 
 private func le32(_ v: UInt32) -> Data { withUnsafeBytes(of: v.littleEndian) { Data($0) } }
@@ -146,6 +160,82 @@ private func fake(pointer: UInt32 = monitorAddress, _ object: Data) -> FakeADB {
         windows: [le32(monitorAddress), monitor(percent: 90, charging: 1, mv: 4167)]
     )
     #expect(await UlanziBattery(adb: adb, helper: Data()).read(appVersion: "1.1.1", at: Date()) == nil)
+}
+
+// MARK: - The steady-state read
+
+// Every read used to walk /proc (one `cat` fork per process on the clock),
+// cat the maps, push the reader and read two windows: nine ADB streams a
+// minute. The process, its load base and the monitor it drives do not move
+// while zkgui runs, so after the first read only the monitor window is read —
+// and the vtable check says whether the cache still holds.
+
+private func sweeps(_ streams: [String]) -> Int { streams.filter { $0.contains("cmdline") }.count }
+
+@Test func aSecondReadSkipsTheProcessSweep() async throws {
+    let adb = fake(monitor(percent: 90, charging: 1, mv: 4167))
+    await adb.queue([monitor(percent: 89, charging: 1, mv: 4160)])
+    let battery = UlanziBattery(adb: adb, helper: Data("ELF".utf8))
+    _ = await battery.read(appVersion: "1.1.1", at: Date())
+    let firstRead = await adb.streams.count
+
+    let second = await battery.read(appVersion: "1.1.1", at: Date(timeIntervalSince1970: 60))
+
+    #expect(second?.percent == 89)
+    let streams = await adb.streams
+    #expect(sweeps(streams) == 1)
+    #expect(streams.filter { $0.contains("maps") }.count == 1)
+    #expect(streams.count - firstRead <= 5)
+    // The window it read is the monitor's, not the singleton's slot.
+    let lastRequest = try #require(await adb.pushes().last { $0.path == "/tmp/pct-req" })
+    #expect(lastRequest.bytes.prefix(4) == le32(monitorAddress))
+}
+
+@Test func aCachedReadThatFailsItsCheckSweepsAgain() async {
+    let adb = fake(monitor(percent: 90, charging: 1, mv: 4167))
+    // The cached window reads something that is not the monitor; the re-walk
+    // then finds it again.
+    await adb.queue([
+        monitor(percent: 90, charging: 1, mv: 4167, vtable: 0xDEAD_BEEF),
+        le32(monitorAddress), monitor(percent: 88, charging: 0, mv: 4100),
+    ])
+    let battery = UlanziBattery(adb: adb, helper: Data("ELF".utf8))
+    _ = await battery.read(appVersion: "1.1.1", at: Date())
+
+    let second = await battery.read(appVersion: "1.1.1", at: Date())
+
+    #expect(second?.percent == 88)
+    #expect(sweeps(await adb.streams) == 2)
+}
+
+/// A different zkgui process is a restarted firmware UI — and a restarted UI
+/// has dropped every DIY page. The first read ever is not one.
+@Test func aNewZkguiProcessIsReportedAsARestart() async {
+    let adb = fake(monitor(percent: 90, charging: 1, mv: 4167))
+    let battery = UlanziBattery(adb: adb, helper: Data("ELF".utf8))
+    let first = await battery.poll(appVersion: "1.1.1", at: Date())
+    #expect(first.sample?.percent == 90)
+    #expect(first.zkguiRestarted == false)
+
+    // The old pid's memory reads nothing; the sweep finds pid 671.
+    await adb.answer("cmdline", Data("/proc/1\r\n/init\u{0}\r\n\r\n/proc/671\r\n/bin/zkgui\u{0}\r\n\r\n".utf8))
+    await adb.queue([Data(), le32(monitorAddress), monitor(percent: 87, charging: 0, mv: 4000)])
+    let second = await battery.poll(appVersion: "1.1.1", at: Date())
+
+    #expect(second.sample?.percent == 87)
+    #expect(second.zkguiRestarted)
+}
+
+@Test func theSameProcessFoundAgainIsNoRestart() async {
+    let adb = fake(monitor(percent: 90, charging: 1, mv: 4167))
+    let battery = UlanziBattery(adb: adb, helper: Data("ELF".utf8))
+    _ = await battery.poll(appVersion: "1.1.1", at: Date())
+
+    await adb.queue([Data(), le32(monitorAddress), monitor(percent: 87, charging: 0, mv: 4000)])
+    let second = await battery.poll(appVersion: "1.1.1", at: Date())
+
+    #expect(second.sample?.percent == 87)
+    #expect(second.zkguiRestarted == false)
 }
 
 @Test func missingLibraryMappingYieldsNoReading() async {

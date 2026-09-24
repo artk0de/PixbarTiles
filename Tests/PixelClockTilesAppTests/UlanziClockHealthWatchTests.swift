@@ -25,6 +25,51 @@ private actor RecordingWatcher: UlanziClockWatching {
     func verifyPages() async { heard.append("verify") }
 }
 
+/// A clock whose zkgui can be restarted under a new pid: the old pid's memory
+/// then reads nothing, and the sweep finds the new one.
+private actor RestartableBatteryADB: ADB {
+    private var pid = 670
+    private var pulls: [Data] = []
+
+    func restart() { pid = 671 }
+
+    func shell(_ command: String) async throws -> Data {
+        if command.contains("cmdline") { return Data("/proc/\(pid)\r\n/bin/zkgui\u{0}\r\n\r\n".utf8) }
+        return BatteryFixture.shellAnswer(command)
+    }
+    func push(_ bytes: Data, to path: String, mode: Int) async throws {
+        guard path == "/tmp/pct-req" else { return }
+        // The request's path names the pid; a dead pid's memory reads nothing.
+        let named = String(decoding: bytes.dropFirst(8), as: UTF8.self)
+        let address = bytes.prefix(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
+        if !named.hasPrefix("/proc/\(pid)/") {
+            pulls.append(Data())
+        } else if address == BatteryFixture.monitorAddress {
+            pulls.append(BatteryFixture.monitor(percent: 70, charging: 0))
+        } else {
+            pulls.append(BatteryFixture.le32(BatteryFixture.monitorAddress))
+        }
+    }
+    func pull(_ path: String) async throws -> Data { pulls.isEmpty ? Data() : pulls.removeFirst() }
+}
+
+@MainActor
+@Test func aRestartedZkguiIsAReturn() async {
+    let transport = SwitchableIdentityTransport()
+    let watcher = RecordingWatcher()
+    let adb = RestartableBatteryADB()
+    let health = watchedHealth(transport, watcher, battery: UlanziBattery(adb: adb, helper: Data("ELF".utf8)))
+    _ = await health.poll(at: Date())
+    await health.watching?.value
+
+    await adb.restart()
+    _ = await health.poll(at: Date())
+    await health.watching?.value
+
+    #expect(health.lastKnownBattery?.shownPercent == 70)
+    #expect(await watcher.heard == ["verify", "returned"])
+}
+
 @MainActor
 private func watchedHealth(
     _ transport: SwitchableIdentityTransport, _ watcher: RecordingWatcher, battery: UlanziBattery? = nil

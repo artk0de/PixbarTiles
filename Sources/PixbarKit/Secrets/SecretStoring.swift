@@ -90,6 +90,10 @@ public struct LoginKeychainStore: Sendable {
     /// the app because the login keychain is shared with every other program's
     /// items: an unadorned account name would be a collision waiting for a
     /// stranger to write the same string.
+    ///
+    /// Still the app's name from before the rename to PixbarTiles, on purpose:
+    /// this is the service the old items were filed under, and the migration
+    /// finds them by it. A new name would find nothing.
     public static let service = "PixelClockTiles tile keys"
 
     public init() {}

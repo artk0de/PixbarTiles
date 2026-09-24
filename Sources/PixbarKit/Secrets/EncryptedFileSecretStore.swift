@@ -19,6 +19,10 @@ public final class EncryptedFileSecretStore: SecretStoring, @unchecked Sendable 
     static let version: UInt8 = 1
     /// Compiled in so the key needs the app AND the machine; not a secret on its own.
     static let salt = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 37 &+ 11) })
+    /// The app's name before the rename to PixbarTiles, and it stays: it is
+    /// HKDF input, so a different string derives a different key, and every
+    /// `secrets.enc` written so far — every token the user pasted — would no
+    /// longer open. It names the key, not the app.
     static let info = Data("PixelClockTiles secrets v1".utf8)
 
     private let fileURL: URL
@@ -30,13 +34,18 @@ public final class EncryptedFileSecretStore: SecretStoring, @unchecked Sendable 
         self.hardwareId = hardwareId
     }
 
-    /// The store the app runs on: `Application Support/PixelClockTiles/secrets.enc`,
-    /// keyed by the firmware's platform UUID.
+    /// The file the app runs on: `Application Support/PixbarTiles/secrets.enc`.
+    /// `SupportFolder.carryOver` moves an older installation's folder here
+    /// before the first read.
+    public static var liveFile: URL {
+        SupportFolder.current.appendingPathComponent("secrets.enc")
+    }
+
+    /// The store the app runs on, at `liveFile`, keyed by the firmware's
+    /// platform UUID.
     public static func live() -> EncryptedFileSecretStore {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PixelClockTiles", isDirectory: true)
-        return EncryptedFileSecretStore(
-            fileURL: dir.appendingPathComponent("secrets.enc"),
+        EncryptedFileSecretStore(
+            fileURL: liveFile,
             hardwareId: { HardwareIdentity.platformUUID() }
         )
     }

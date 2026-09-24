@@ -425,6 +425,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // First, before `.live()`: everything it builds reads the defaults, and
         // on the first launch after a rename those are still in an old domain.
         DefaultsCarryOver.run(into: Bundle.main.bundleIdentifier, through: .standard)
+        // Also before `.live()`: it opens the secret store, and on the first
+        // launch as PixbarTiles `secrets.enc` is still in the PixelClockTiles
+        // folder. A failed move leaves that folder where it was; the next
+        // launch tries again.
+        _ = try? SupportFolder.carryOver()
         self.model = .live()
         self.panelModel = PanelModel(model: model)
         self.settingsModel = SettingsModel(model: model)

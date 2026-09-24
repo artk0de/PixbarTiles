@@ -47,7 +47,7 @@ private struct ClaudeSettingsFixture {
         == ClaudeCodePaths.directory.path)
     #expect(ClaudeCodePaths.document.lastPathComponent == ClaudeCodeStatusLine.documentName)
     #expect(ClaudeCodePaths.directory.path.contains("/Application Support/"))
-    #expect(ClaudeCodePaths.directory.lastPathComponent == "PixelClockTiles")
+    #expect(ClaudeCodePaths.directory.lastPathComponent == "PixbarTiles")
     #expect(ClaudeCodePaths.settingsFile.path.hasSuffix("/.claude/settings.json"))
 }
 

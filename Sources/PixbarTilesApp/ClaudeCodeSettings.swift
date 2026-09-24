@@ -7,13 +7,7 @@ import SwiftUI
 enum ClaudeCodePaths {
     /// This app's own folder. The hook and the document it writes live here,
     /// beside the app's other data.
-    static let directory: URL = {
-        let support = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent("Library/Application Support")
-        return support.appendingPathComponent("PixelClockTiles")
-    }()
+    static let directory: URL = SupportFolder.current
 
     /// Claude Code's user settings, the file its `/statusline` and `/config`
     /// edit.

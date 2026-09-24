@@ -57,4 +57,23 @@ import Testing
         let trouble = TileCardTrouble.of(failure: "x", diagnosis: nil)
         #expect(TileCardOutcome.of(trouble: trouble, held: false, result: "delivered") == nil)
     }
+
+    /// Only a red trouble replaces the outcome. A yellow one — the tile works
+    /// without a withheld part — keeps `delivered` in the corner beside its
+    /// sentence.
+    @Test func aPartialRefusalKeepsTheOutcome() {
+        let partial = TileCardTrouble.of(
+            failure: nil,
+            diagnosis: GitHubDiagnosis(
+                message: "Star authors are hidden until the token gets Contents: write", severity: .partial
+            )
+        )
+        #expect(partial?.sign == .partial)
+        #expect(TileCardOutcome.of(trouble: partial, held: false, result: "delivered") == "delivered")
+        #expect(TileCardOutcome.of(trouble: partial, held: true, result: "delivered") == "held")
+        let blocking = TileCardTrouble.of(
+            failure: nil, diagnosis: GitHubDiagnosis(message: "no repo", severity: .blocking)
+        )
+        #expect(TileCardOutcome.of(trouble: blocking, held: false, result: "delivered") == nil)
+    }
 }

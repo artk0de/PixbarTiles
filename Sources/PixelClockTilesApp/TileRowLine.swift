@@ -138,11 +138,12 @@ struct TileTitle: Equatable {
 }
 
 /// The card's bottom-left line: what the tile last did — `delivered`,
-/// `running…`, `held` — or nil. A trouble is not said here: it has its own
-/// sentence line under the description, where it can wrap.
+/// `running…`, `held` — or nil. A red trouble replaces it: the tile is not
+/// working, and its sentence line says why. A yellow one does not — the tile
+/// works without a withheld part, so it still says what it last did.
 enum TileCardOutcome {
     static func of(trouble: TileCardTrouble?, held: Bool, result: String?) -> String? {
-        guard trouble == nil else { return nil }
+        guard trouble?.sign != .blocking else { return nil }
         return held ? "held" : result
     }
 }

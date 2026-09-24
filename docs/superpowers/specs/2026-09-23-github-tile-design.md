@@ -438,7 +438,9 @@ read clears it, and a re-key clears the old and the new key's.
 - The card's outcome — `delivered`, `running…`, `held` — moves to the card's
   bottom-left corner, in upright pixels, so it no longer runs on from the
   description. Its words and timing are unchanged. A trouble keeps its
-  sentence line under the description, where it can wrap.
+  sentence line under the description, where it can wrap. Only a red
+  trouble (a failed push or a blocking diagnosis) replaces the corner line; a
+  yellow, partial one keeps `delivered` in the corner beside its sentence.
 
 ## Testing
 

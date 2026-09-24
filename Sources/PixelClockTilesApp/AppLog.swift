@@ -13,4 +13,13 @@ enum AppLog {
         subsystem: Bundle.main.bundleIdentifier ?? "PixelClockTiles",
         category: "clocks"
     )
+
+    /// The panel's window: which one it is, whether AppKit will move it, and
+    /// what a drag actually posts. None of it is visible from the app — a
+    /// gesture that does nothing looks exactly like a gesture that was never
+    /// made — so the drag-to-pin has to be diagnosable from the log alone.
+    static let panel = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "PixelClockTiles",
+        category: "panel"
+    )
 }

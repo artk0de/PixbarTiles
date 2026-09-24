@@ -87,6 +87,7 @@ struct PinnedElsewherePanel: View {
         // else with an `openWindow` to call. Opening one already open raises
         // it, which is what a reader clicking the menu bar item wants anyway.
         .task {
+            AppLog.panel.info("pinned-elsewhere content appeared — opening the window")
             NSApp.activate(ignoringOtherApps: true)
             openWindow(id: PinnedPanelWindow.id)
         }

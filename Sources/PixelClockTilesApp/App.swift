@@ -605,6 +605,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // dark slab. Clear background, once; it is the window's own and the
         // host does not fight AppKit over it.
         window.clearBackgroundForGlass()
+        AppLog.panel.info(
+            """
+            panel window \(String(describing: type(of: window)), privacy: .public) \
+            movable=\(window.isMovable, privacy: .public) \
+            byBackground=\(window.isMovableByWindowBackground, privacy: .public) \
+            style=\(window.styleMask.rawValue, privacy: .public) \
+            level=\(window.level.rawValue, privacy: .public)
+            """
+        )
         panelWindow = window
         panelDidOpen()
     }
@@ -671,8 +680,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// that placement posts the same notification with no button down. Without
     /// the guard the panel would pin itself the first time it was ever shown.
     private func panelWasDragged() {
+        AppLog.panel.info(
+            """
+            panel moved: pinned=\(self.panelPin.isPinned, privacy: .public) \
+            buttons=\(NSEvent.pressedMouseButtons, privacy: .public) \
+            frame=\(String(describing: self.panelWindow?.frame), privacy: .public)
+            """
+        )
         guard panelPin.isPinned == false, NSEvent.pressedMouseButtons != 0 else { return }
         guard let frame = panelWindow?.frame else { return }
+        AppLog.panel.info("panel dragged off the menu bar — pinning")
         panelPin.detach(at: CGPoint(x: frame.minX, y: frame.maxY))
     }
 

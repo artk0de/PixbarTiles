@@ -173,6 +173,17 @@ struct MenuPanel: View {
         // moves the panel, and moving the panel is what pins it (the delegate
         // hears the move). SoundSource's own pin flips the same way.
         .gesture(WindowDragGesture())
+        // Diagnostic only: says whether the header receives the drag at all.
+        // A gesture that does nothing and a gesture never delivered look the
+        // same from outside. Simultaneous, so it takes nothing from the drag.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    AppLog.panel.info(
+                        "header drag \(value.translation.width, privacy: .public)×\(value.translation.height, privacy: .public)"
+                    )
+                }
+        )
     }
 
     /// The pin, at the corner SoundSource puts its own.

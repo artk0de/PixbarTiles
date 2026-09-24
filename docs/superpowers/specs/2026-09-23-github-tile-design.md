@@ -38,7 +38,7 @@ is its pixel source of truth.
 |---|---|---|
 | Sound on the TC002 | **None.** The celebration is silent there | The stock protocol exposes no audio: the official limitations table says "TTS / MP3 / audio playback — Not exposed by the protocol", re-checked against the protocol as of 2026-09-22. `tc002-audiod` plays uploaded sounds, but only inside a runtime that replaces the stock app and `/api/custom` with it. Root adb is one OTA from closed. The user chose silence over Mac speakers. |
 | Sound on the TC001 | **RTTTL on the buzzer**, `AwtrixScene.jingle` | The buzzer plays RTTTL natively; the Mario coin is a classic RTTTL tune. Nothing plays on the Mac, so the tile does not occupy "the voice in the room" and may sit on several clocks. |
-| Celebration visibility on the TC002 | **Stars overwrite every `pct-*` page for M s; forks and PRs only their own page** | The TC002 has no notification surface and the Mac may not switch pages (`switchDiyApp` throws a user out of an open tool, D3). Covering every page we own shows a star wherever the carousel stands on one of ours. |
+| Celebration visibility on the TC002 | **Stars overwrite every `pct-*` page for M s; forks and PRs only their own page** | The TC002 has no notification surface and the Mac may not switch pages (`switchDiyApp` throws a user out of an open tool, D3). Covering every page we own shows a star wherever the carousel stands on one of ours. Per tile, **Celebrate on all app pages** off keeps stars on their own page too (added 2026-09-24). |
 | Data source | **GraphQL with a required fine-grained PAT** | REST without a token cannot count open PRs (`open_issues_count` mixes them with issues), has no stargazer logins, and allows 60 requests an hour per IP. One GraphQL query per tile gives everything within 5 000 points an hour. |
 | Event detection | **By identity, not by count delta** | Stars by `starredAt` newer than the last seen, forks by `createdAt`, PRs by numbers not in the previous snapshot. A delta hides an unstar-and-star or an opened-and-merged pair inside one interval. |
 | First fetch | **Sets the baseline, celebrates nothing** | Otherwise adding a tile celebrates the repo's whole history. |
@@ -337,6 +337,13 @@ way to fix it short of deleting the tile. Agreed in the mockup
   An event whose toggle is off is not delivered on either model (no
   interruption, no jingle); the snapshot still advances, so turning a toggle
   back on does not replay what was skipped.
+- **Celebrate on all app pages**, per tile, default on
+  (`GitHubTileConfig.celebrateOnAllPages`; a record written before it
+  existed decodes on). On: a star overwrites every `pct-*` page, as above.
+  Off: a star celebrates on the tile's own page only, like a fork or a PR.
+  A toggle in the Repository section, under Celebrate for. The TC001 shows
+  every celebration as a notification over whatever is on screen, so the
+  setting changes nothing there.
 - **The repository can be changed** in the tile's settings (supersedes
   "read-only once the tile exists"). Same `owner/name` validation; a repo
   already on that clock is refused. A change re-keys the tile: the new

@@ -181,6 +181,10 @@ struct GitHubTileBlock: View {
                     onConfig(edited)
                 }
             )
+            // Where a star celebrates on a TC002: every page the app owns, or
+            // only this tile's, as a fork or a PR. The TC001 shows every
+            // celebration over whatever is up, so this changes nothing there.
+            Toggle("Celebrate on all app pages", isOn: binding(\.celebrateOnAllPages))
         }
         .onAppear {
             shortName = config.shortName ?? ""

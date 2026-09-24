@@ -217,6 +217,19 @@ private struct NoSnapshots: GitHubSnapshotStoring {
         #expect(model.storedTile(a.key)?.config?.github == edited)
     }
 
+    @Test func celebratingOnlyOnItsOwnPageIsSaved() {
+        let a = tile("a/x")
+        let model = makeModel(tiles: [a])
+        model.openDetail(for: a.key)
+        let settings = TileSettingsModel(model: model)
+        var edited = GitHubTileConfig(repo: "a/x")
+        edited.celebrateOnAllPages = false
+
+        settings.setGitHubConfig(edited)
+
+        #expect(model.storedTile(a.key)?.config?.github?.celebrateOnAllPages == false)
+    }
+
     // MARK: - The token, and what the preview says
 
     @Test func savingTheTokenRedrawsTheOpenPreview() async {

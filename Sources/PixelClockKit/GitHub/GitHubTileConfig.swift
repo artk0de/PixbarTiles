@@ -25,6 +25,11 @@ public struct GitHubTileConfig: Codable, Sendable, Equatable {
     public var notifyForks = true
     public var notifyPRs = true
     public var notifyCI = true
+    /// Whether a star celebrates on every page the app owns on a TC002 (on)
+    /// or on the tile's own page only, as a fork or a PR does (off). The
+    /// TC001 shows every celebration as a notification over whatever is up,
+    /// so it has nothing to choose here.
+    public var celebrateOnAllPages = true
     /// Which metric holds the hero — always shown, whatever its Show toggle.
     public var mainWatch = GitHubMainWatch.stars
 
@@ -40,6 +45,7 @@ public struct GitHubTileConfig: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case repo, shortName, celebrationSeconds
         case showForks, showPRs, showCI, notifyStars, notifyForks, notifyPRs, notifyCI, mainWatch
+        case celebrateOnAllPages
     }
 
     /// A record written without a setting reads its default, so a setting
@@ -57,6 +63,7 @@ public struct GitHubTileConfig: Codable, Sendable, Equatable {
         notifyForks = try flag(.notifyForks)
         notifyPRs = try flag(.notifyPRs)
         notifyCI = try flag(.notifyCI)
+        celebrateOnAllPages = try flag(.celebrateOnAllPages)
         mainWatch = try container.decodeIfPresent(GitHubMainWatch.self, forKey: .mainWatch) ?? .stars
     }
 }

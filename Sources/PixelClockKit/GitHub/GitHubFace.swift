@@ -125,7 +125,8 @@ public enum GitHubFace {
     // MARK: - The delivery
 
     /// Which pages each kind interrupts: a star reaches every page the app
-    /// owns, a fork or a PR only the tile's own — in this order.
+    /// owns, a fork or a PR only the tile's own — in this order. The tile's
+    /// `celebrateOnAllPages` off narrows the star to its own page too.
     static let interruptionOrder: [(GitHubEventKind, Interruption<UlanziScene>.Scope)] = [
         (.star, .everyPage), (.fork, .ownPage), (.pr, .ownPage),
     ]
@@ -150,7 +151,9 @@ public enum GitHubFace {
         }
         var interruptions = interruptionOrder.compactMap { kind, scope -> Interruption<UlanziScene>? in
             guard arrivals(kind, in: reading.events).count > 0 else { return nil }
-            return interruption(celebration(kind: kind, events: reading.events, config: reading.config), scope)
+            // Celebrate on all app pages off: every kind stays on its own page.
+            let reach = reading.config.celebrateOnAllPages ? scope : .ownPage
+            return interruption(celebration(kind: kind, events: reading.events, config: reading.config), reach)
         }
         // A failing default branch last, on the tile's own page only, like a
         // fork or a PR.

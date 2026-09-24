@@ -381,6 +381,43 @@ private let refusedStargazers = """
         #expect(config == GitHubTileConfig(repo: "a/x", shortName: "ax", celebrationSeconds: 10))
     }
 
+    // MARK: Celebrate on all app pages
+
+    /// On by default, and on for a record written before the setting existed:
+    /// a star reaching every page is what the tile always did.
+    @Test func celebratingOnAllPagesIsTheDefaultOldAndNew() throws {
+        #expect(GitHubTileConfig(repo: "a/x").celebrateOnAllPages)
+        let old = Data(#"{"repo":"a/x","celebrationSeconds":10,"notifyStars":true}"#.utf8)
+        #expect(try JSONDecoder().decode(GitHubTileConfig.self, from: old).celebrateOnAllPages)
+    }
+
+    @Test func celebratingOnlyOnItsOwnPageRoundTrips() throws {
+        var config = GitHubTileConfig(repo: "a/x")
+        config.celebrateOnAllPages = false
+        let decoded = try JSONDecoder().decode(GitHubTileConfig.self, from: JSONEncoder().encode(config))
+        #expect(decoded.celebrateOnAllPages == false)
+    }
+
+    /// Off: a star celebrates on the tile's own page only, as a fork or a PR
+    /// does — the other tiles' pages are left alone.
+    @Test func withAllPagesOffAStarStaysOnItsOwnPage() {
+        var events = GitHubEvents()
+        events.newStars = ["alice"]
+        events.newStarCount = 1
+        events.newForks = ["carol"]
+        events.newForkCount = 1
+        var config = GitHubTileConfig(repo: "artk0de/tea-rags")
+
+        let everywhere = GitHubFace.delivery(for: GitHubReading(content: .state(state), events: events, config: config))
+        config.celebrateOnAllPages = false
+        let ownOnly = GitHubFace.delivery(for: GitHubReading(content: .state(state), events: events, config: config))
+
+        #expect(everywhere.interruptions.map(\.scope) == [.everyPage, .ownPage])
+        #expect(ownOnly.interruptions.map(\.scope) == [.ownPage, .ownPage])
+        // The same celebration, only its reach differs.
+        #expect(ownOnly.interruptions.map(\.scene) == everywhere.interruptions.map(\.scene))
+    }
+
     @Test func theTogglesRoundTrip() throws {
         var config = GitHubTileConfig(repo: "a/x")
         config.showForks = false

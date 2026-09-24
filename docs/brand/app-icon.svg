@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="256" height="256">
+  <!-- The PixbarTiles app icon, drawn from the brand spec
+       (docs/superpowers/specs/2026-09-24-pixbar-brand-design.md) at size 1024:
+       plate inset 82, radius 230.4; 17 x 17 LED grid, cell 50, origin 87,
+       dot radius 21; P_APP at grid (3, 4); the open sparkle at grid (11, 3). -->
+  <defs>
+    <pattern id="led" x="87" y="87" width="50" height="50" patternUnits="userSpaceOnUse">
+      <circle cx="25" cy="25" r="21" fill="#ffffff" fill-opacity="0.06"/>
+    </pattern>
+  </defs>
+  <rect x="82" y="82" width="860" height="860" rx="230.4" fill="#141417"/>
+  <rect x="87" y="87" width="850" height="850" fill="url(#led)"/>
+  <g fill="#4fb8f5">
+    <circle cx="262" cy="312" r="21"/><circle cx="312" cy="312" r="21"/><circle cx="362" cy="312" r="21"/><circle cx="412" cy="312" r="21"/><circle cx="462" cy="312" r="21"/><circle cx="512" cy="312" r="21"/>
+    <circle cx="262" cy="362" r="21"/><circle cx="312" cy="362" r="21"/><circle cx="362" cy="362" r="21"/><circle cx="412" cy="362" r="21"/><circle cx="462" cy="362" r="21"/><circle cx="512" cy="362" r="21"/><circle cx="562" cy="362" r="21"/>
+    <circle cx="262" cy="412" r="21"/><circle cx="312" cy="412" r="21"/><circle cx="362" cy="412" r="21"/><circle cx="512" cy="412" r="21"/><circle cx="562" cy="412" r="21"/>
+  </g>
+  <g fill="#eef0f4">
+    <circle cx="262" cy="462" r="21"/><circle cx="312" cy="462" r="21"/><circle cx="362" cy="462" r="21"/><circle cx="512" cy="462" r="21"/><circle cx="562" cy="462" r="21"/>
+    <circle cx="262" cy="512" r="21"/><circle cx="312" cy="512" r="21"/><circle cx="362" cy="512" r="21"/><circle cx="412" cy="512" r="21"/><circle cx="462" cy="512" r="21"/><circle cx="512" cy="512" r="21"/><circle cx="562" cy="512" r="21"/>
+    <circle cx="262" cy="562" r="21"/><circle cx="312" cy="562" r="21"/><circle cx="362" cy="562" r="21"/><circle cx="412" cy="562" r="21"/><circle cx="462" cy="562" r="21"/><circle cx="512" cy="562" r="21"/>
+  </g>
+  <g fill="#b65cf5">
+    <circle cx="262" cy="612" r="21"/><circle cx="312" cy="612" r="21"/><circle cx="362" cy="612" r="21"/>
+    <circle cx="262" cy="662" r="21"/><circle cx="312" cy="662" r="21"/><circle cx="362" cy="662" r="21"/>
+    <circle cx="262" cy="712" r="21"/><circle cx="312" cy="712" r="21"/><circle cx="362" cy="712" r="21"/>
+  </g>
+  <!-- the sparkle: outline cells of the 7 x 7 half-cell plus, arm tips open;
+       each a 1.35 x half-cell square centred in its half-cell -->
+  <g fill="#63d1ff">
+    <rect x="683" y="233" width="34" height="34"/><rect x="733" y="233" width="34" height="34"/>
+    <rect x="683" y="258" width="34" height="34"/><rect x="733" y="258" width="34" height="34"/>
+    <rect x="633" y="283" width="34" height="34"/><rect x="658" y="283" width="34" height="34"/><rect x="758" y="283" width="34" height="34"/><rect x="783" y="283" width="34" height="34"/>
+    <rect x="633" y="333" width="34" height="34"/><rect x="658" y="333" width="34" height="34"/><rect x="758" y="333" width="34" height="34"/><rect x="783" y="333" width="34" height="34"/>
+    <rect x="683" y="358" width="34" height="34"/><rect x="733" y="358" width="34" height="34"/>
+    <rect x="683" y="383" width="34" height="34"/><rect x="733" y="383" width="34" height="34"/>
+  </g>
+</svg>

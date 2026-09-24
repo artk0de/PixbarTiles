@@ -69,12 +69,23 @@ public actor UlanziDevice {
     }
 
     /// GET /api/customList — the app names the clock currently carries.
+    ///
+    /// appVer 1.1.1 answers it BARE — `{"apps":[…],"count":N}`, no `code`
+    /// envelope (measured 2026-09-24) — so the envelope is read when present
+    /// and not demanded. A `code` that is there and not 200 is still a
+    /// refusal; the `data` spelling of the names is kept for the documented
+    /// envelope form.
     public func customApps() async throws -> [String] {
-        let data = try await envelope("GET", "/api/customList")
+        let data = try await perform("GET", "/api/customList")
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw UlanziError.malformed("/api/customList did not answer a JSON object")
+        }
+        if let code = object["code"] as? Int, code != 200 {
+            throw UlanziError.deviceRejected(code: code, message: object["message"] as? String ?? "")
+        }
         // Names absent is an empty page set, not a failure: a fresh clock has
         // nothing to list, and the sweep reads that as "nothing of ours there".
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
-            .flatMap { $0["data"] as? [String] } ?? []
+        return object["apps"] as? [String] ?? object["data"] as? [String] ?? []
     }
 
     // MARK: writing

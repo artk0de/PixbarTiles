@@ -89,6 +89,33 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
         #expect(names.contains("pct-weather"))
     }
 
+    /// What appVer 1.1.1 actually answers, captured from the clock on
+    /// 2026-09-24: the names under `apps`, a count, and NO `code` envelope.
+    /// The sweep and the page-switch check both read this list, so a decoder
+    /// that demanded the envelope failed every one of them on hardware.
+    @Test func customListDecodesTheBodyTheClockAnswersBare() async throws {
+        let (device, _) = makeDevice(
+            status: 200,
+            body: Data(#"{"apps":["pct-claude","pct-weather","pct-zai"],"count":3}"#.utf8)
+        )
+        #expect(try await device.customApps() == ["pct-claude", "pct-weather", "pct-zai"])
+    }
+
+    /// An envelope that does come back with a failing code is still a refusal.
+    @Test func customListWithAFailingCodeIsRejected() async {
+        do {
+            let (device, _) = makeDevice(
+                status: 200, body: Data(#"{"code":101,"message":"busy"}"#.utf8)
+            )
+            _ = try await device.customApps()
+            Issue.record("expected throw")
+        } catch let error as UlanziError {
+            #expect(error == .deviceRejected(code: 101, message: "busy"))
+        } catch {
+            Issue.record("wrong error type: \(error)")
+        }
+    }
+
     /// A body with no names in it is not a failure to reach the device — the
     /// list is simply empty, which the sweep reads as "nothing of ours there".
     @Test func customListWithNoNamesIsEmpty() async throws {

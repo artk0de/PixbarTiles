@@ -277,3 +277,39 @@ private func decodeBody(_ request: URLRequest) throws -> [String: Any] {
         Issue.record("expected .invalidHost, got \(error)")
     }
 }
+
+// MARK: - The page on screen, and switching to one
+
+// AWTRIX 3 reports the app on screen as `app` in its stats — `getStats` sets
+// `doc["app"] = CURRENT_APP` (Blueforcer/awtrix3, src/DisplayManager.cpp). It
+// is optional: a firmware that leaves it out is still a clock that answered.
+@Test func statsCarryTheAppOnScreen() async throws {
+    let transport = RecordingTransport()
+    transport.body = Data(
+        #"{"bat":83,"ram":139112,"version":"0.98","uid":"awtrix_a07f9c","ip_address":"10.0.0.5","app":"Time"}"#.utf8
+    )
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    #expect(try await device.stats().app == "Time")
+}
+
+@Test func statsWithoutTheAppFieldStillDecode() async throws {
+    let transport = RecordingTransport()
+    transport.body = Data(#"{"bat":83,"ram":1,"version":"0.98","uid":"a","ip_address":"10.0.0.5"}"#.utf8)
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    #expect(try await device.stats().app == nil)
+}
+
+// `POST /api/switch` with `{"name": …}` — the documented switch by app name.
+@Test func switchToAppPostsTheNameToApiSwitch() async throws {
+    let transport = RecordingTransport()
+    let device = AwtrixDevice(host: "10.0.0.5", transport: transport)
+
+    try await device.switchToApp(named: "weather")
+
+    let request = try #require(transport.requests.first)
+    #expect(request.httpMethod == "POST")
+    #expect(request.url?.absoluteString == "http://10.0.0.5/api/switch")
+    #expect(try decodeBody(request)["name"] as? String == "weather")
+}

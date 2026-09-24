@@ -101,6 +101,37 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
         #expect(try await device.customApps() == ["pct-claude", "pct-weather", "pct-zai"])
     }
 
+    /// The page switch is a POST with the name in the query and nothing in the
+    /// body — GET is a 404 on this firmware (measured 2026-09-21). The reply
+    /// names the page and its DIY index and carries no `code`.
+    @Test func switchToAppPostsSwitchDiyAppWithTheName() async throws {
+        let (device, recorder) = makeDevice(
+            status: 200,
+            body: Data(
+                #"{"message":"app switch requested","data":{"name":"pct-weather","index":100}}"#.utf8
+            )
+        )
+        try await device.switchToApp(named: "pct-weather")
+
+        let request = try #require(recorder.requests.last)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/api/switchDiyApp")
+        #expect(request.url?.query == "name=pct-weather")
+        #expect(request.httpBody ?? Data() == Data())
+    }
+
+    @Test func aSwitchTheClockRefusesThrows() async {
+        do {
+            let (device, _) = makeDevice(status: 404, body: Data("Error 404: Not Found".utf8))
+            try await device.switchToApp(named: "pct-gone")
+            Issue.record("expected throw")
+        } catch let error as UlanziError {
+            #expect(error == .unexpectedStatus(404))
+        } catch {
+            Issue.record("wrong error type: \(error)")
+        }
+    }
+
     /// An envelope that does come back with a failing code is still a refusal.
     @Test func customListWithAFailingCodeIsRejected() async {
         do {

@@ -103,6 +103,12 @@ public actor DeviceCustody {
         apps[connectorId, default: []].insert(name)
     }
 
+    /// The app names this tile has in the loop, sorted so a caller asking for
+    /// "its page" gets the same one every time.
+    public func appNames(for connectorId: String) -> [String] {
+        apps[connectorId].map { $0.sorted() } ?? []
+    }
+
     /// Puts the device back the way this app found it.
     ///
     /// - Parameter connectorId: only what this connector took, or nil for

@@ -28,9 +28,9 @@ public struct UlanziIdentity: Codable, Sendable, Equatable {
     }
 }
 
-/// The TC002 HTTP adapter. Endpoints phase 3 needs and nothing else — no page
-/// switch exists here (D3): the knob belongs to the user, and this type never
-/// turns it.
+/// The TC002 HTTP adapter. The knob belongs to the user (D3): nothing on a
+/// schedule or an event path turns it. `switchToApp` exists for one caller —
+/// the user opening a tile's settings, which asks for that tile's page.
 public actor UlanziDevice {
     private var host: String
     private let transport: any Transport
@@ -105,6 +105,22 @@ public actor UlanziDevice {
         _ = try await envelope(
             "POST", "/api/custom?name=\(name)", body: Data(), contentType: "application/json"
         )
+    }
+
+    /// POST /api/switchDiyApp?name=<name> — brings a DIY page on screen. POST
+    /// only (GET is a 404, measured 2026-09-21); the reply names the page and
+    /// its index and carries no `code`, so only a `code` that IS there and is
+    /// not 200 counts as a refusal.
+    ///
+    /// It drops the UI to DIY level 2 from wherever it was, an open tool
+    /// included (research §1.2) — which is why only a user's own action may
+    /// call it.
+    public func switchToApp(named name: String) async throws {
+        let data = try await perform("POST", "/api/switchDiyApp?name=\(name)")
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let code = object["code"] as? Int, code != 200 {
+            throw UlanziError.deviceRejected(code: code, message: object["message"] as? String ?? "")
+        }
     }
 
     // MARK: transport plumbing

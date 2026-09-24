@@ -75,6 +75,27 @@ public actor AwtrixClockSession {
         try? await custody.restore(borrowedBy: tileId)
     }
 
+    // MARK: showing a page on request
+
+    /// The app this tile has in the loop, or nil while it has none — before
+    /// its first delivery, or when it only ever notifies. Custody's record,
+    /// which is keyed by the tile.
+    public func page(forTile tileId: String) async throws -> String? {
+        await custody.appNames(for: tileId).first
+    }
+
+    /// The app on screen, as the clock's stats name it.
+    public func currentPage() async throws -> String? {
+        try await device.stats().app
+    }
+
+    /// Brings this app on screen. User-initiated only (D3). Off the delivery
+    /// chain, like the restore: it writes no page, and a switch queued behind
+    /// a speaking anecdote would land long after the window it answers.
+    public func showPage(_ page: String) async throws {
+        try await device.switchToApp(named: page)
+    }
+
     /// How many deliveries this connector has failed in a row.
     public func consecutiveFailures(connectorId: String) async -> Int {
         await chain.consecutiveFailures(connectorId: connectorId)

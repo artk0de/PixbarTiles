@@ -4,7 +4,8 @@ import Foundation
 ///
 /// Pushes are event-driven only — a delivery, an idle mark, a removal, a
 /// recovery. There is no loop and no timer (D1): the Mac never rotates
-/// anything, and no page switch exists here (D3).
+/// anything, and no push switches a page (D3). The one switch, `showPage`, is
+/// for the user opening a tile's settings.
 ///
 /// Its one recovery rule is deliberately blunt (D4): after any failed device
 /// call the clock is marked offline, and the FIRST successful call after that
@@ -144,6 +145,25 @@ public actor UlanziClockSession {
         pending = []
         covered = []
         try? await custody.releaseAll()
+    }
+
+    // MARK: showing a page on request
+
+    /// The tile's page while the clock lists it, or nil when it has none there.
+    public func page(forTile tileId: String) async throws -> String? {
+        try await custody.listedPage(forTile: tileId)
+    }
+
+    /// The page on screen: always nil. The firmware cannot report which app is
+    /// up or at which level the UI stands (research §0), so a caller that
+    /// wanted to put the clock back afterwards has nothing to put back.
+    public func currentPage() async throws -> String? { nil }
+
+    /// Brings this page on screen. User-initiated only — see
+    /// `UlanziDevice.switchToApp`. Off the delivery chain: it writes no page,
+    /// and waiting behind a push would only make the switch late.
+    public func showPage(_ page: String) async throws {
+        try await device.switchToApp(named: page)
     }
 
     /// What the board says this tile's page shows — never an interruption.

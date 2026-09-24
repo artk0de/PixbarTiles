@@ -43,6 +43,19 @@ cleared at the next launch by `UlanziCustody.sweep(liveTiles:)` (the user chose
 launch-time cleanup over a bounded quit delay, 2026-09-23). `shutdown` still
 runs when a clock is removed in the app.
 
+## Page switching
+
+- `GET /api/customList` answers BARE: `{"apps":[…],"count":N}` — no `code`,
+  no `data` (measured 2026-09-24). `UlanziDevice.customApps` reads it
+  without demanding the envelope.
+- The app switches a page in exactly one place: the user opening a tile's
+  settings (`AppModel.openDetail` → `UlanziDevice.switchToApp`). Every
+  schedule and event path stays unswitched (D3 — a switch drops an open
+  tool to DIY L2).
+- The firmware cannot say which page is on screen, so closing the window
+  leaves the clock on the tile's page — there is nothing known to go back
+  to. The AWTRIX reads `app` from `/api/stats` and does go back.
+
 ## Animation budget
 
 - One page plays a GIF by itself; the Mac never rotates or re-pushes for motion.

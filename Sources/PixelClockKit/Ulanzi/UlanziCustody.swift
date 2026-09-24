@@ -73,6 +73,14 @@ public actor UlanziCustody {
 
     public var ownedNames: [String] { record.names(forClock: clockId) }
 
+    /// The tile's page name while the clock actually lists it, or nil — a
+    /// tile added a moment ago, or a page a reboot wiped, has nothing on the
+    /// clock to show. Read-only: nothing is claimed.
+    public func listedPage(forTile tileId: String) async throws -> String? {
+        let name = tileName(tileId)
+        return try await device.customApps().contains(name) ? name : nil
+    }
+
     /// Startup sweep: names we claim that the device no longer lists leave the
     /// record silently (nothing to delete — a reboot likely wiped them, E9);
     /// names the device still lists but no live tile uses get an empty-body

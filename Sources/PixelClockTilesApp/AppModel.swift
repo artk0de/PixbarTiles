@@ -57,6 +57,22 @@ protocol UlanziConnectorRunning: Sendable {
     func shutdown() async
 }
 
+/// A clock slot that can bring one tile's page on screen — for the paths the
+/// USER starts (opening a tile's settings), never a schedule's (D3).
+///
+/// The model reaches it through `sessions` by a cast, as it reaches the
+/// Ulanzi event half: both clock models conform, a lamp-only double does not.
+protocol ClockPageShowing: Sendable {
+    /// The tile's page while the clock carries it, or nil when it has none
+    /// there — not delivered yet, or gone with a reboot.
+    func page(forTile tileId: String) async throws -> String?
+    /// The page on screen, or nil when the firmware cannot say (the TC002).
+    func currentPage() async throws -> String?
+    func showPage(_ page: String) async throws
+}
+
+extension AwtrixClockSession: ClockPageShowing {}
+
 /// The anecdotes the menu can look back over.
 ///
 /// Declared here rather than in the kit for the reason `ConnectorRunning` is:
@@ -1578,8 +1594,114 @@ final class AppModel: ObservableObject {
     /// which tile it is editing.
     @Published private(set) var detailTileKey: TileKey?
 
-    func openDetail(for key: TileKey) { detailTileKey = key }
-    func closeDetail() { detailTileKey = nil }
+    /// Opens the tile's settings — and brings the tile's page up on its clock,
+    /// so the user sees what the controls change without turning the knob.
+    /// Re-aiming an open window at another tile follows it there.
+    func openDetail(for key: TileKey) {
+        let previous = detailTileKey
+        detailTileKey = key
+        guard previous != key else { return }
+        queuePageWork { [weak self] in await self?.followPage(to: key) }
+    }
+
+    /// Closes the tile's settings, and puts the clock back on the page it
+    /// showed before the window first opened — when that page is known.
+    func closeDetail() {
+        guard detailTileKey != nil else { return }
+        detailTileKey = nil
+        queuePageWork { [weak self] in await self?.returnPage() }
+    }
+
+    // MARK: - The settings window's page on the clock
+
+    /// Which clock the settings window has moved, the page it showed before
+    /// the first move (nil when the clock cannot say — the TC002), and the
+    /// page the window put up (nil until a switch landed).
+    private struct PageFollow {
+        let clockId: UUID
+        let original: String?
+        var shown: String?
+    }
+
+    private var pageFollow: PageFollow?
+    /// The last of the page switches, which run one after another: an open,
+    /// a re-aim and a close fired in one breath must reach the clock in that
+    /// order, and each reads what the one before it left.
+    private var pageWork: Task<Void, Never>?
+
+    private func queuePageWork(_ work: @escaping @MainActor () async -> Void) {
+        let previous = pageWork
+        pageWork = Task { @MainActor in
+            await previous?.value
+            await work()
+        }
+    }
+
+    /// Waits out every queued page switch. For tests, which have to know the
+    /// clock has heard everything before they can say it heard nothing more.
+    func pageSwitchesSettled() async {
+        while let work = pageWork {
+            await work.value
+            if pageWork == work { return }
+        }
+    }
+
+    /// The slot that can show this tile's page: a tile that owns one (not the
+    /// lamp, not a paused tile holding the idle frame), on a clock whose slot
+    /// can switch.
+    private func pageShowing(for key: TileKey) -> (any ClockPageShowing)? {
+        guard key.connectorId != VPNConnector.id,
+            let policy = policy(of: key), policy.isPaused == false
+        else { return nil }
+        return sessions[key.clockId] as? any ClockPageShowing
+    }
+
+    private func followPage(to key: TileKey) async {
+        // Another clock's window closing, as far as that clock is concerned.
+        if let follow = pageFollow, follow.clockId != key.clockId { await returnPage() }
+        guard let clock = pageShowing(for: key) else { return }
+        do {
+            guard let page = try await clock.page(forTile: key.tileId) else { return }
+            if pageFollow == nil {
+                let current: String?
+                do {
+                    current = try await clock.currentPage()
+                } catch {
+                    AppLog.clocks.notice(
+                        "page before the tile settings unreadable: \(String(describing: error), privacy: .public)"
+                    )
+                    current = nil
+                }
+                pageFollow = PageFollow(clockId: key.clockId, original: current, shown: nil)
+            }
+            let onScreen = pageFollow?.shown ?? pageFollow?.original
+            if onScreen != page {
+                try await clock.showPage(page)
+            }
+            pageFollow?.shown = page
+        } catch {
+            AppLog.clocks.notice(
+                "switch to \(key.tileId, privacy: .public)'s page failed: \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
+    /// Puts back the page from before the first open — only a page the clock
+    /// named, and only when the window actually moved it off that page.
+    private func returnPage() async {
+        guard let follow = pageFollow else { return }
+        pageFollow = nil
+        guard let original = follow.original, let shown = follow.shown, original != shown,
+            let clock = sessions[follow.clockId] as? any ClockPageShowing
+        else { return }
+        do {
+            try await clock.showPage(original)
+        } catch {
+            AppLog.clocks.notice(
+                "return to page \(original, privacy: .public) failed: \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
 
     /// Bumped whenever any clock's health has moved: a poll answered, a
     /// health was built or dropped. The panel's dot hangs off per-clock

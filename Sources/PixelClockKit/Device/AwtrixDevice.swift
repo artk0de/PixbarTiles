@@ -179,9 +179,14 @@ public struct DeviceStats: Sendable, Decodable, Equatable {
     public let uptime: Int?
     public let ram: Int
     public let ipAddress: String
+    /// The app on screen — `getStats` sets it to `CURRENT_APP`
+    /// (Blueforcer/awtrix3, src/DisplayManager.cpp). Optional for the reason
+    /// `batRaw` is. Read by one caller: the tile settings window, which puts
+    /// the clock back on this page when it closes.
+    public let app: String?
 
     private enum CodingKeys: String, CodingKey {
-        case version, uid, bat, ram, uptime
+        case version, uid, bat, ram, uptime, app
         case batRaw = "bat_raw"
         case ipAddress = "ip_address"
     }
@@ -195,7 +200,8 @@ public struct DeviceStats: Sendable, Decodable, Equatable {
         batRaw: Int? = nil,
         uptime: Int? = nil,
         ram: Int,
-        ipAddress: String
+        ipAddress: String,
+        app: String? = nil
     ) {
         self.version = version
         self.uid = uid
@@ -204,6 +210,7 @@ public struct DeviceStats: Sendable, Decodable, Equatable {
         self.uptime = uptime
         self.ram = ram
         self.ipAddress = ipAddress
+        self.app = app
     }
 }
 
@@ -262,6 +269,13 @@ public actor AwtrixDevice {
     public func stats() async throws -> DeviceStats {
         let data = try await perform("GET", "/api/stats")
         return try JSONDecoder().decode(DeviceStats.self, from: data)
+    }
+
+    /// Brings an app of the loop on screen by name — `POST /api/switch` with
+    /// `{"name": …}`. User-initiated only: nothing on a schedule turns the
+    /// page (D3).
+    public func switchToApp(named name: String) async throws {
+        _ = try await postJSON("/api/switch", ["name": name])
     }
 
     /// Puts an app in the device's own loop, or replaces the one already there

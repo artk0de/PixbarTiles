@@ -1466,3 +1466,49 @@ private func instancedHost(
     #expect(read.intervalPosition == 11)
     #expect(read.lastDeliveredAt == nil)
 }
+
+// MARK: - Showing a tile's page on request
+
+// The page a tile has on an AWTRIX clock is whatever app name its delivery put
+// in the loop — custody's record, keyed by the tile. Before any delivery there
+// is no page, and nothing to switch to.
+@Test func aTileHasNoPageUntilItsAppIsInTheLoop() async throws {
+    var connector = StubConnector()
+    connector.output = AwtrixDelivery(text: "4°", surface: .app("weather"))
+    let host = makeHost(connector: connector)
+
+    #expect(try await host.page(forTile: "stub") == nil)
+    _ = await host.runOnce(tile: singleTile("stub"))
+    #expect(try await host.page(forTile: "stub") == "weather")
+}
+
+// A notification is not a page: it goes away by itself.
+@Test func aNotificationOnlyTileHasNoPage() async throws {
+    var connector = StubConnector()
+    connector.output = AwtrixDelivery(text: "hi")
+    let host = makeHost(connector: connector)
+
+    _ = await host.runOnce(tile: singleTile("stub"))
+
+    #expect(try await host.page(forTile: "stub") == nil)
+}
+
+@Test func theCurrentPageIsTheOneStatsReport() async throws {
+    let transport = RecordingTransport()
+    transport.body = Data(
+        #"{"bat":83,"ram":1,"version":"0.98","uid":"a","ip_address":"10.0.0.5","app":"weather"}"#.utf8
+    )
+    let host = makeHost(connector: StubConnector(), transport: transport)
+
+    #expect(try await host.currentPage() == "weather")
+}
+
+@Test func showPageSwitchesByName() async throws {
+    let transport = RecordingTransport()
+    let host = makeHost(connector: StubConnector(), transport: transport)
+
+    try await host.showPage("weather")
+
+    #expect(paths(transport) == ["/api/switch"])
+    #expect(jsonBody(try #require(transport.requests.first))["name"] as? String == "weather")
+}

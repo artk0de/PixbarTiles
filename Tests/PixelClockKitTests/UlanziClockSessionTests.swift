@@ -183,3 +183,61 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
         #expect(last.url?.query == "name=pct-weather")
     }
 }
+
+// MARK: - Showing a tile's page on request
+
+/// The settings window brings its tile's page up (user-initiated, so D3's
+/// "the Mac never turns the knob" is not in the way). What the session owes
+/// that path: the page name, only while the clock lists it; the switch
+/// itself; and an honest "cannot say" for the page on screen.
+@Suite struct UlanziClockSessionPageTests {
+    let recorder = RecordingTransport()
+    let record = MemoryAppRecord()
+
+    func makeSession() -> UlanziClockSession {
+        let device = UlanziDevice(host: "192.168.1.72", transport: recorder)
+        return UlanziClockSession(
+            device: device,
+            custody: UlanziCustody(device: device, record: record, clockId: "clock-1")
+        )
+    }
+
+    @Test func aTileTheClockListsHasItsPageName() async throws {
+        recorder.body = Data(#"{"apps":["pct-weather","pct-zai"],"count":2}"#.utf8)
+        let session = makeSession()
+
+        #expect(try await session.page(forTile: "weather") == "pct-weather")
+        #expect(recorder.requests.map { $0.url?.path } == ["/api/customList"])
+    }
+
+    /// Not on the clock yet — added a moment ago, or wiped by a reboot — is no
+    /// page: switching to a name the clock does not carry would do nothing
+    /// useful at best.
+    @Test func aTileTheClockDoesNotListHasNoPage() async throws {
+        recorder.body = Data(#"{"apps":["pct-zai"],"count":1}"#.utf8)
+        let session = makeSession()
+
+        #expect(try await session.page(forTile: "weather") == nil)
+    }
+
+    @Test func showPagePostsTheSwitch() async throws {
+        recorder.body = Data(#"{"message":"app switch requested","data":{"name":"pct-weather","index":100}}"#.utf8)
+        let session = makeSession()
+
+        try await session.showPage("pct-weather")
+
+        let request = try #require(recorder.requests.last)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/api/switchDiyApp")
+        #expect(request.url?.query == "name=pct-weather")
+    }
+
+    /// The firmware cannot report which app is on screen (research §0), so
+    /// the answer is nil and nothing is asked of the wire.
+    @Test func theCurrentPageIsUnknownAndCostsNoRequest() async throws {
+        let session = makeSession()
+
+        #expect(try await session.currentPage() == nil)
+        #expect(recorder.requests.isEmpty)
+    }
+}

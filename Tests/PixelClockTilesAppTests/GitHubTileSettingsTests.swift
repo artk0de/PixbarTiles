@@ -174,7 +174,7 @@ import Testing
 
     @Test func theHelpLinkIsThePrefilledForm() {
         #expect(GitHubTokenHelp.createURL.absoluteString
-            == "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read")
+            == "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read")
         for phrase in [
             "Public repositories", "Metadata: read", "Pull requests: read",
             "Commit statuses: read", "Checks: read",

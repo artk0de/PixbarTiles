@@ -73,6 +73,21 @@ protocol ClockPageShowing: Sendable {
 
 extension AwtrixClockSession: ClockPageShowing {}
 
+/// The clock's session as the TC002's reachability poll reaches it, with the
+/// model listening in on a return: a clock that came back has rebuilt its page
+/// set, so which page the app last put up is no longer known.
+private struct PageBeliefForgettingWatcher: UlanziClockWatching {
+    let session: any UlanziClockWatching
+    let forget: @MainActor @Sendable () -> Void
+
+    func clockReturned() async {
+        await forget()
+        await session.clockReturned()
+    }
+
+    func verifyPages() async { await session.verifyPages() }
+}
+
 /// The anecdotes the menu can look back over.
 ///
 /// Declared here rather than in the kit for the reason `ConnectorRunning` is:
@@ -1659,10 +1674,39 @@ final class AppModel: ObservableObject {
         return sessions[key.clockId] as? any ClockPageShowing
     }
 
-    /// The tile whose page each clock is showing, as far as the clock has
-    /// said: absent for a clock that cannot say (the TC002), one on a page of
-    /// its own, or one not asked yet. The tile cards' open eye.
+    /// The tile whose page each clock is showing: what the clock said, or —
+    /// for a clock that cannot say (the TC002) — what this app last put up
+    /// there itself (`pageBelief`). Absent on a page of the clock's own, on a
+    /// clock not asked yet, and on one that returned since the app last
+    /// showed a page. The tile cards' open eye.
     @Published private(set) var tileOnScreen: [UUID: TileKey] = [:]
+
+    /// The tile whose page this app last brought up on each clock — by an eye
+    /// click, the settings window's follow, or the window's restore.
+    ///
+    /// The TC002 cannot report its page, so without this every eye on it
+    /// stayed closed, even on the tile the user had just clicked. It is a
+    /// belief, not a reading: the knob can move the clock behind the app's
+    /// back, so a clock that CAN say (the AWTRIX) is always read instead, and
+    /// the belief only stands in where the reading is nil. Forgotten when the
+    /// clock returns (`forgetPageBelief`) — a rebooted or restarted clock
+    /// shows whatever it booted to.
+    private var pageBelief: [UUID: TileKey] = [:]
+
+    /// The TC002's reachability poll tells the clock's session when the clock
+    /// returns; the model hears that word too, on its way to the session, and
+    /// forgets which page it put up. Nil when the clock has no such session.
+    func ulanziWatcher(for clockId: UUID) -> (any UlanziClockWatching)? {
+        guard let session = sessions[clockId] as? any UlanziClockWatching else { return nil }
+        return PageBeliefForgettingWatcher(session: session) { [weak self] in
+            self?.forgetPageBelief(clockId: clockId)
+        }
+    }
+
+    private func forgetPageBelief(clockId: UUID) {
+        pageBelief[clockId] = nil
+        tileOnScreen[clockId] = nil
+    }
 
     /// Asks the clock which page is up and finds the tile it belongs to.
     /// Called when the clock's tile list appears — no polling beyond that.
@@ -1681,6 +1725,7 @@ final class AppModel: ObservableObject {
             do {
                 guard let page = try await clock.page(forTile: key.tileId) else { return }
                 try await clock.showPage(page)
+                showed(key, on: key.clockId)
             } catch {
                 AppLog.clocks.notice(
                     "switch to \(key.tileId, privacy: .public)'s page failed: \(String(describing: error), privacy: .public)"
@@ -1696,24 +1741,29 @@ final class AppModel: ObservableObject {
             return
         }
         do {
+            // A clock that cannot say is shown what this app last put up.
             guard let current = try await clock.currentPage() else {
-                tileOnScreen[clockId] = nil
+                tileOnScreen[clockId] = pageBelief[clockId]
                 return
             }
-            var showing: TileKey?
-            for record in tiles.all() where record.key.clockId == clockId && ownsPage(record.key) {
-                if try await clock.page(forTile: record.key.tileId) == current {
-                    showing = record.key
-                    break
-                }
-            }
-            tileOnScreen[clockId] = showing
+            tileOnScreen[clockId] = try await tile(showing: current, on: clockId, via: clock)
         } catch {
             tileOnScreen[clockId] = nil
             AppLog.clocks.notice(
                 "page on screen unreadable: \(String(describing: error), privacy: .public)"
             )
         }
+    }
+
+    /// The tile on this clock whose page is `page`, or nil for a page of the
+    /// clock's own.
+    private func tile(
+        showing page: String, on clockId: UUID, via clock: any ClockPageShowing
+    ) async throws -> TileKey? {
+        for record in tiles.all() where record.key.clockId == clockId && ownsPage(record.key) {
+            if try await clock.page(forTile: record.key.tileId) == page { return record.key }
+        }
+        return nil
     }
 
     private func followPage(to key: TileKey) async {
@@ -1739,6 +1789,7 @@ final class AppModel: ObservableObject {
                 try await clock.showPage(page)
             }
             pageFollow?.shown = page
+            showed(key, on: key.clockId)
         } catch {
             AppLog.clocks.notice(
                 "switch to \(key.tileId, privacy: .public)'s page failed: \(String(describing: error), privacy: .public)"
@@ -1756,11 +1807,19 @@ final class AppModel: ObservableObject {
         else { return }
         do {
             try await clock.showPage(original)
+            showed(try await tile(showing: original, on: follow.clockId, via: clock), on: follow.clockId)
         } catch {
             AppLog.clocks.notice(
                 "return to page \(original, privacy: .public) failed: \(String(describing: error), privacy: .public)"
             )
         }
+    }
+
+    /// The app has just put this tile's page up (nil: a page of the clock's
+    /// own): what it believes is on screen, and the eye that opens.
+    private func showed(_ key: TileKey?, on clockId: UUID) {
+        pageBelief[clockId] = key
+        tileOnScreen[clockId] = key
     }
 
     /// Bumped whenever any clock's health has moved: a poll answered, a
@@ -2661,7 +2720,7 @@ final class AppModel: ObservableObject {
         return UlanziClockHealth(
             clockId: clock.id, name: clock.name, device: device,
             battery: makeUlanziBattery(clock),
-            watcher: { [weak self] in self?.sessions[clockId] as? UlanziClockWatching }
+            watcher: { [weak self] in self?.ulanziWatcher(for: clockId) }
         )
     }
 

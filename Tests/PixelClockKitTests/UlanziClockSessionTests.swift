@@ -73,8 +73,9 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
             UlanziDelivery(scene: drawnScene(colour: .white)), toTile: "weather"
         )
 
-        // The clock goes away mid-delivery: claude's first push fails.
-        recorder.status = 500
+        // The clock goes away mid-delivery: claude's first push fails. A
+        // transport failure — an HTTP 500 is the clock answering, not gone.
+        recorder.failure = URLError(.timedOut)
         let failed = await session.deliver(
             UlanziDelivery(scene: drawnScene(colour: .black)), toTile: "claude"
         )
@@ -84,7 +85,7 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
         }
 
         // Back online: the next successful push drags every page back with it.
-        recorder.status = 200
+        recorder.failure = nil
         _ = await session.deliver(
             UlanziDelivery(scene: drawnScene(colour: .white)), toTile: "weather"
         )

@@ -19,9 +19,17 @@ final class RecordingTransport: Transport, @unchecked Sendable {
     private var recorded: [URLRequest] = []
     private var cannedStatus = 200
     private var cannedBody = Data("OK".utf8)
+    private var cannedFailure: (any Error)?
 
     var requests: [URLRequest] {
         lock.withLock { recorded }
+    }
+
+    /// Thrown instead of an answer while set — the clock off the network, as
+    /// the transport reports it (a timeout, a refused connection).
+    var failure: (any Error)? {
+        get { lock.withLock { cannedFailure } }
+        set { lock.withLock { cannedFailure = newValue } }
     }
 
     var status: Int {
@@ -37,10 +45,11 @@ final class RecordingTransport: Transport, @unchecked Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         // One acquisition, released before the response is built — never held
         // across a suspension point.
-        let (status, body) = lock.withLock { () -> (Int, Data) in
+        let (status, body, failure) = lock.withLock { () -> (Int, Data, (any Error)?) in
             recorded.append(request)
-            return (cannedStatus, cannedBody)
+            return (cannedStatus, cannedBody, cannedFailure)
         }
+        if let failure { throw failure }
         let response = HTTPURLResponse(
             url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil
         )!

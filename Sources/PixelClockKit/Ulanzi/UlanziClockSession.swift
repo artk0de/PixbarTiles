@@ -7,11 +7,16 @@ import Foundation
 /// anything, and no push switches a page (D3). The one switch, `showPage`, is
 /// for the user opening a tile's settings.
 ///
-/// Its one recovery rule is deliberately blunt (D4): after any failed device
-/// call the clock is marked offline, and the FIRST successful call after that
-/// re-pushes every registered page. Twenty-one upserts are cheap; guessing
-/// which pages survived an outage or a reboot is not (E9 — the design refuses
-/// to care).
+/// Its recovery rule is still blunt (D4) — after an outage the FIRST successful
+/// call re-pushes every registered page — with three limits learned from a
+/// clock that rebooted under load (2026-09-24):
+///
+/// - only the transport failing (a timeout, a refused connection) is an
+///   outage. A clock that answers — a `code` refusal, an unreadable body, an
+///   HTTP error status — still carries its pages;
+/// - one sweep at a time, and a sweep's own failures do not start the next;
+/// - a sweep that fails backs the next one off: 60 s, 120 s, then 300 s for
+///   as long as they keep failing. A clean sweep resets it.
 ///
 /// One exception to "no timer": an interruption window. A delivery that
 /// carries interruptions overwrites pages for their durations and then puts
@@ -29,17 +34,25 @@ public actor UlanziClockSession {
     private let chain: DeliveryChain
     private var board = UlanziTileBoard()
 
-    /// The clock stopped answering. Set by any failed device call, cleared by
-    /// the recovery sweep that the next successful call runs.
-    private var offline = false
+    /// Every page is owed a re-push: the transport failed, and whatever the
+    /// clock carries is unknown. Cleared when a sweep starts.
+    private var sweepDue = false
     /// A recovery sweep is running. The calls it makes go through the same
     /// bookkeeping as any other push; this flag keeps one of their outcomes
     /// from starting a second, nested sweep.
     private var recovering = false
+    /// Sweeps that ended with the transport failing again, in a row.
+    private var failedSweeps = 0
+    /// No sweep starts before this — the backoff after a failed one.
+    private var nextSweepAt = Date.distantPast
+    /// The wait after the 1st, 2nd and every later failed sweep in a row.
+    static let sweepBackoff: [TimeInterval] = [60, 120, 300]
 
     /// How an interruption's duration passes. Injected so a test can hold a
     /// window open and look inside it, or close it at once.
     private let sleep: @Sendable (TimeInterval) async -> Void
+    /// The wall clock the sweep backoff is read against. Injected for tests.
+    private let now: @Sendable () -> Date
 
     /// The interruptions still to play, each with the tile that delivered it —
     /// `.ownPage` means that tile's page. A delivery arriving while a window is
@@ -73,12 +86,14 @@ public actor UlanziClockSession {
         custody: UlanziCustody,
         sleep: @escaping @Sendable (TimeInterval) async -> Void = { seconds in
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
-        }
+        },
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.device = device
         self.custody = custody
         self.chain = DeliveryChain()
         self.sleep = sleep
+        self.now = now
     }
 
     // MARK: startup
@@ -89,15 +104,15 @@ public actor UlanziClockSession {
     ///
     /// Off the delivery chain, like the AWTRIX session's teardown — this is
     /// startup work the app awaits before anything else reaches the clock.
-    /// A failure here marks the clock offline rather than throwing: the first
-    /// successful push after it drags every page back (D4).
+    /// A transport failure here marks the clock offline rather than throwing:
+    /// the first successful push after it drags every page back (D4).
     public func sweep(liveTiles: [String]) async {
         for tile in liveTiles { board.register(tileId: tile) }
         do {
             try await custody.sweep(liveTiles: liveTiles)
-            await heard(success: true, from: nil)
+            await heardAnswer(from: nil)
         } catch {
-            await heard(success: false, from: nil)
+            heardFailure(error)
         }
     }
 
@@ -274,43 +289,75 @@ public actor UlanziClockSession {
         do {
             try await device.showApp(frame, named: name)
             onDevice[tileId] = frame
-            await heard(success: true, from: tileId)
+            await heardAnswer(from: tileId)
             return .delivered
         } catch {
             // What the page shows is no longer known: the next push goes out.
             onDevice[tileId] = nil
-            await heard(success: false, from: tileId)
+            heardFailure(error)
             return DeliveryChain.classify(error)
         }
     }
 
-    /// Records how a device call went and runs the recovery sweep on the first
-    /// success after a failure (D4). The page whose push just got through is
-    /// the one tile the sweep skips — it is current as of the call that ended
-    /// the outage; everything else re-pushes.
+    /// Whether a failed call means the clock is gone rather than that it
+    /// answered and said no. Everything `UlanziDevice` raises after a reply —
+    /// a `code` refusal, an unreadable body, an HTTP error status — is an
+    /// answer; a cancellation is nobody's outage.
+    static func isOutage(_ error: any Error) -> Bool {
+        if error is UlanziError || error is CancellationError { return false }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return false }
+        return true
+    }
+
+    /// A failed call. Only an outage owes the pages a sweep — and forgets
+    /// what every page carries, since the outage may have taken any of them.
+    private func heardFailure(_ error: any Error) {
+        guard Self.isOutage(error) else { return }
+        sweepDue = true
+        onDevice = [:]
+    }
+
+    /// The clock answered. Runs the recovery sweep when one is owed and its
+    /// backoff has run out; the page whose push just got through is the one
+    /// tile it skips — that page is current as of the call that ended the
+    /// outage.
+    private func heardAnswer(from tileId: String?) async {
+        guard sweepDue, !recovering, now() >= nextSweepAt else { return }
+        await recoverySweep(skipping: tileId)
+    }
+
+    /// Re-pushes every registered page, once. Its own failures only set
+    /// `sweepDue` again: they cannot start another sweep while this one runs,
+    /// and a sweep that ends with one owed pushes the next one back by the
+    /// backoff instead of starting it at the next answer.
     ///
     /// The sweep's own calls bypass the delivery chain: it runs from inside a
     /// chain job, and queueing behind itself would wait on the very job that
-    /// is running it. Upserts are idempotent, so an overlap with an unrelated
-    /// push costs nothing but a duplicate frame on the wire.
-    private func heard(success: Bool, from tileId: String?) async {
-        guard success else {
-            offline = true
-            // An outage may have taken any page with it: none is known now.
-            onDevice = [:]
-            return
-        }
-        guard offline, !recovering else { return }
-        offline = false
+    /// is running it.
+    private func recoverySweep(skipping tileId: String?) async {
+        sweepDue = false
         recovering = true
-        defer { recovering = false }
         // A covered page is the window's to restore: re-pushing it here would
         // cut its interruption short.
         for tile in board.tileIds where tile != tileId && !covered.contains(tile) {
-            let scene = board.lastScene(forTile: tile) ?? UlanziScene.idle
-            guard let frame = Self.singleFrame(of: scene) else { continue }
+            guard let frame = recoveryFrame(forTile: tile) else { continue }
             _ = await push(frame, toTile: tile)
         }
+        recovering = false
+        if sweepDue {
+            failedSweeps += 1
+            let wait = Self.sweepBackoff[min(failedSweeps, Self.sweepBackoff.count) - 1]
+            nextSweepAt = now().addingTimeInterval(wait)
+        } else {
+            failedSweeps = 0
+            nextSweepAt = .distantPast
+        }
+    }
+
+    /// What a recovery puts back on a tile's page: the last real scene it
+    /// delivered, or the idle frame when it never delivered one.
+    private func recoveryFrame(forTile tile: String) -> UlanziFrame? {
+        Self.singleFrame(of: board.lastScene(forTile: tile) ?? UlanziScene.idle)
     }
 
     private static func singleFrame(of scene: UlanziScene) -> UlanziFrame? {

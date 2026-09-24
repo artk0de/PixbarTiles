@@ -287,9 +287,9 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
 
         // An outage and its end: the first success sweeps every page back —
         // every page but the covered one.
-        recorder.status = 500
+        recorder.failure = URLError(.timedOut)
         _ = await session.deliver(UlanziDelivery(scene: scene(zaiTag)), toTile: "zai")
-        recorder.status = 200
+        recorder.failure = nil
         _ = await session.deliver(UlanziDelivery(scene: scene(zaiTag)), toTile: "zai")
 
         #expect(!pushes(after: before).dropFirst(2).contains { $0.hasPrefix("pct-github=") })

@@ -1308,15 +1308,15 @@ private func drawnMark(_ view: some View) -> Data? {
     return target.representation(using: .png, properties: [:])
 }
 
-// The name is SET, not typed: its middle word is a bitmap out of the kit's own
+// The name is SET, not typed: PIXBAR is a bitmap out of the kit's own
 // face. Drawn against the plain headline it replaced, because a wordmark that
-// renders as the same pixels as `Text("PixelClockTiles")` is a wordmark that
+// renders as the same pixels as `Text("PixbarTiles")` is a wordmark that
 // never reached the screen.
 @MainActor
 @Test func theWordmarkIsDrawnRatherThanTyped() {
     let mark = drawnMark(Wordmark())
     #expect(mark != nil)
-    #expect(mark != drawnMark(Text("PixelClockTiles").font(.headline)))
+    #expect(mark != drawnMark(Text("PixbarTiles").font(.headline)))
     // And its pixel word is scaled: the same mark at another pixel size is
     // another drawing, so the bitmap is on screen rather than laid out at zero.
     #expect(mark != drawnMark(Wordmark(pixel: 3)))

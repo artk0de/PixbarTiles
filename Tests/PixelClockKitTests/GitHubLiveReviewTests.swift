@@ -130,18 +130,44 @@ private let refusedStargazers = """
         }
     }
 
-    /// The settings preview says it in a sentence.
+    /// The settings preview and the tile list say it in a sentence.
     @Test func thePreviewSaysItInASentence() {
         let config = GitHubTileConfig(repo: "a/x")
         let notes: [(GitHubReading.Content, String?)] = [
-            (.badToken, "GitHub refused the token (401)"),
-            (.noRepo, "Repository not found, or the token can't see it"),
+            (.badToken, "GitHub refused the token (401) — paste a new one"),
+            (.noRepo, "Repository not found, or the token can't see it (Repository access)"),
             (.noData, "GitHub could not be reached"),
+            (.noToken, nil),
             (.state(GitHubRepoState(nameWithOwner: "a/x", stars: 1, forks: 0, openPRs: 0)), nil),
         ]
         for (content, note) in notes {
-            #expect(GitHubReading(content: content, config: config).previewNote == note, "\(content)")
+            let reading = GitHubReading(content: content, config: config)
+            #expect(reading.previewNote == note, "\(content)")
+            #expect(reading.diagnosis?.isQuiet ?? false == false, "\(content)")
         }
+    }
+
+    /// The diagnosis is kept per tile for the tile list, and a clean read
+    /// clears it.
+    @Test func theDiagnosisIsKeptForTheTileListAndClearedByACleanRead() async throws {
+        let defaults = UserDefaults(suiteName: "github-diagnosis-\(UUID().uuidString)")!
+        let diagnoses = UserDefaultsGitHubDiagnoses(defaults: defaults)
+        let failing = GitHubConnector(
+            tile: record(GitHubTileConfig(repo: "a/x")),
+            source: FixedSource { throw GitHubAPI.Failure.status(401) },
+            snapshots: Snapshots(), diagnoses: diagnoses
+        )
+        _ = try await failing.read()
+        #expect(diagnoses.diagnosis(for: failing.tile)
+            == GitHubDiagnosis(message: "GitHub refused the token (401) — paste a new one", isQuiet: false))
+
+        let clean = GitHubConnector(
+            tile: record(GitHubTileConfig(repo: "a/x")),
+            source: FixedSource { GitHubRepoState(nameWithOwner: "a/x", stars: 1, forks: 0, openPRs: 0) },
+            snapshots: Snapshots(), diagnoses: diagnoses
+        )
+        _ = try await clean.read()
+        #expect(diagnoses.diagnosis(for: clean.tile) == nil)
     }
 }
 
@@ -167,11 +193,74 @@ private let refusedStargazers = """
         #expect(state.stargazersRefused == false)
     }
 
-    @Test func anyOtherErrorBesideDataIsAFailure() throws {
-        let elsewhere = #"[{"type":"FORBIDDEN","path":["repository","forks"],"message":"no"}]"#
-        #expect(throws: GitHubAPI.Failure.graphQL("no")) {
-            _ = try GitHubAPI.decode(body(repository: repository(stargazers: "null"), errors: elsewhere), repo: "a/x")
+    /// The live answer for the user's read-only token on a public repository
+    /// (artk0de/TeaRAGs-MCP, 2026-09-24): every field reads except
+    /// `repository.stargazers`. The tile works, and says so quietly.
+    @Test func theLiveReadOnlyAnswerIsQuiet() throws {
+        let state = try GitHubAPI.decode(
+            body(repository: repository(stargazers: "null"), errors: refusedStargazers), repo: "a/x"
+        )
+        let reading = GitHubReading(content: .state(state), config: GitHubTileConfig(repo: "a/x"))
+        #expect(reading.diagnosis == GitHubDiagnosis(
+            message: "Who starred needs Contents: write — stars are counted instead", isQuiet: true
+        ))
+    }
+
+    /// Any other forbidden field is that part absent: the rest is kept and
+    /// the permission named.
+    @Test func aForbiddenFieldNamesThePermissionItWants() throws {
+        let cases: [([String], GitHubWithheld, String)] = [
+            (["repository", "openPRs"], .pullRequests, "Token lacks Pull requests: read"),
+            (["repository", "pullRequests"], .pullRequests, "Token lacks Pull requests: read"),
+            (["repository", "defaultBranchRef", "target", "statusCheckRollup"], .checks,
+             "Token lacks Commit statuses: read and Checks: read"),
+            (["repository", "defaultBranchRef", "target", "author"], .contents, "Token lacks Contents: read"),
+            (["repository", "forks"], .metadata, "Token lacks Metadata: read"),
+            (["repository", "forkCount"], .metadata, "Token lacks Metadata: read"),
+            (["repository", "watchers"], .other("repository.watchers"),
+             "Token lacks a permission for repository.watchers"),
+        ]
+        for (path, part, sentence) in cases {
+            let pathJSON = "[" + path.map { "\"\($0)\"" }.joined(separator: ",") + "]"
+            let errors = #"[{"type":"FORBIDDEN","path":\#(pathJSON),"message":"no"}]"#
+            let state = try GitHubAPI.decode(
+                body(repository: repository(stargazers: #"{"edges":[]}"#), errors: errors), repo: "a/x"
+            )
+            #expect(state.withheld == [part], "\(path)")
+            #expect(state.stars == 12, "\(path)")
+            let reading = GitHubReading(content: .state(state), config: GitHubTileConfig(repo: "a/x"))
+            #expect(reading.diagnosis == GitHubDiagnosis(message: sentence, isQuiet: false), "\(path)")
         }
+    }
+
+    /// A withheld part is hidden on the TC002 ticker, not drawn as a zero.
+    @Test func aWithheldCountLeavesTheTicker() {
+        let config = GitHubTileConfig(repo: "a/x")
+        var state = GitHubRepoState(nameWithOwner: "a/x", stars: 12, forks: 3, openPRs: 0)
+        state.withheld = [.pullRequests]
+        var hidden = config
+        hidden.showPRs = false
+        #expect(GitHubFace.timeline(ambient: state, noToken: false, config: config)
+            == GitHubFace.timeline(ambient: state, noToken: false, config: hidden))
+    }
+
+    /// Withheld PRs are not "every PR closed": the set is kept, and the
+    /// permission granted back replays nothing.
+    @Test func withheldPRsDoNotMoveTheSnapshot() {
+        let open = GitHubRepoState(
+            nameWithOwner: "a/x", stars: 1, forks: 0, openPRs: 1, openPRNumbers: [OpenPR(number: 5, author: "d")]
+        )
+        let (_, snapshot) = GitHubEventDetector.detect(open, since: nil)
+        var blind = GitHubRepoState(nameWithOwner: "a/x", stars: 1, forks: 0, openPRs: 0)
+        blind.withheld = [.pullRequests]
+        let (none, kept) = GitHubEventDetector.detect(blind, since: snapshot)
+        #expect(none.isEmpty)
+        #expect(kept.openPRs == [5])
+        let (again, _) = GitHubEventDetector.detect(open, since: kept)
+        #expect(again.isEmpty)
+    }
+
+    @Test func anyOtherErrorBesideDataIsAFailure() throws {
         let mixed = """
         [{"type":"FORBIDDEN","path":["repository","stargazers"],"message":"stars"},
          {"type":"INTERNAL","path":["repository","openPRs"],"message":"other"}]
@@ -188,14 +277,13 @@ private let refusedStargazers = """
     }
 
     /// The normal path for a read-only fine-grained token: listing
-    /// stargazers needs Contents: write, so the preview says the stars are
-    /// counted, not named.
+    /// stargazers needs Contents: write, so the preview names the permission
+    /// and says the stars are counted.
     @Test func thePreviewSaysStarsAreCountedNotNamed() {
         var state = GitHubRepoState(nameWithOwner: "a/x", stars: 12, forks: 3, openPRs: 1)
         state.stargazersRefused = true
         let reading = GitHubReading(content: .state(state), config: GitHubTileConfig(repo: "a/x"))
-        #expect(reading.previewNote
-            == "GitHub does not tell a read-only token who starred — stars are counted, not named.")
+        #expect(reading.previewNote == "Who starred needs Contents: write — stars are counted instead")
     }
 
     /// A rise celebrates by count, with no logins to name.

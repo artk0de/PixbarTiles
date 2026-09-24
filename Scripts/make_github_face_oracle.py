@@ -17,7 +17,8 @@ This writes `Tests/PixelClockKitTests/Fixtures/github_face_oracle.json`:
 - `cases`: every `ggen.CASES` entry at `dwell=10000, celebrate=8000`, plus
   `a1-steady` at `dwell=5000`. A case carries its input as the Swift side
   receives it (`kind`; the reading's `repo`/`stars`/`forks`/`prs`/`ci` or
-  null, `shortName`, `token` for an ambient case; `count`, `who`, `prNumbers`
+  null, `shortName`, `token`, `problem` and the Show toggles `showForks` /
+  `showPRs` / `showCI` for an ambient case; `count`, `who`, `prNumbers`
   for a celebration, and `branch` for a `ci` one) and ggen's timeline as `framesZ`: base64 of the raw DEFLATE
   (no zlib header) of the compact JSON `[{"ms", "rows"}]`, every frame as
   sixteen rows of packed `RRGGBB` hex — the weather oracle's format, which
@@ -76,6 +77,12 @@ def case_json(ggen, c, cid, dwell, celebrate):
                                                 "ci": r.ci}
         out["shortName"] = c.get("short_name")
         out["token"] = c.get("token", True)
+        # Why there is no reading (`token` / `repo` / `data`), or null; and
+        # the tile's Show toggles, each on unless the case turns it off.
+        out["problem"] = c.get("problem")
+        out["showForks"] = c.get("show_forks", True)
+        out["showPRs"] = c.get("show_prs", True)
+        out["showCI"] = c.get("show_ci", True)
     else:
         out["count"] = c["count"]
         out["who"] = c["who"]

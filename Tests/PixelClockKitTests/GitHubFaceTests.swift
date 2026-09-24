@@ -30,6 +30,12 @@ private struct GitHubOracle: Decodable {
         let reading: Reading?
         let shortName: String?
         let token: Bool?
+        /// Why there is no reading — `token`, `repo`, `data` — or nil.
+        let problem: String?
+        /// The tile's Show toggles; nil (a celebration) is on.
+        let showForks: Bool?
+        let showPRs: Bool?
+        let showCI: Bool?
         // celebration
         let count: Int?
         let who: [String]?
@@ -68,9 +74,14 @@ private func drawn(_ c: GitHubOracle.Case) throws -> [GitHubFace.Frame] {
                 }
             )
         }
-        let config = GitHubTileConfig(repo: c.reading?.repo ?? "", shortName: c.shortName)
+        var config = GitHubTileConfig(repo: c.reading?.repo ?? "", shortName: c.shortName)
+        config.showForks = c.showForks ?? true
+        config.showPRs = c.showPRs ?? true
+        config.showCI = c.showCI ?? true
+        let problem = try c.problem.map { try #require(GitHubProblem(rawValue: $0), "\(c.id) problem") }
         return GitHubFace.timeline(
-            ambient: state, noToken: c.token == false, config: config, dwellMilliseconds: c.dwell
+            ambient: state, noToken: c.token == false, config: config, dwellMilliseconds: c.dwell,
+            problem: problem
         )
     }
     if c.kind == "ci" {
@@ -94,7 +105,7 @@ private func gif(_ frames: [GitHubFace.Frame]) throws -> Data {
 @Suite struct GitHubFaceOracleTests {
     @Test func everyCaseReproducesTheApprovedFramesExactly() throws {
         let oracle = try GitHubOracle.load()
-        #expect(oracle.cases.count == 22)
+        #expect(oracle.cases.count == 27)
         for c in oracle.cases {
             let frames = try drawn(c)
             let approved = try c.frames()

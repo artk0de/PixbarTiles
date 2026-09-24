@@ -27,11 +27,15 @@ struct PinnedPanelWindow: View {
             .glassWindow(fill: false)
             // Placed where the drag let it go, when a drag is what opened it.
             // A window that pins itself and then appears in the middle of the
-            // screen is a move the user has to make twice.
+            // screen is a move the user has to make twice. However it opened,
+            // it takes the focus alone: the app's other windows stay put.
             .background(
                 PanelWindowReader { window in
-                    guard let window, let origin = pin.takeDetachedOrigin() else { return }
-                    window.setFrameTopLeftPoint(origin)
+                    guard let window else { return }
+                    if let origin = pin.takeDetachedOrigin() {
+                        window.setFrameTopLeftPoint(origin)
+                    }
+                    WindowFocus.bringOnly(window)
                 }
                 .allowsHitTesting(false)
             )
@@ -69,8 +73,8 @@ struct PinnedElsewherePanel: View {
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Button("Bring it forward") {
-                    NSApp.activate(ignoringOtherApps: true)
                     openWindow(id: PinnedPanelWindow.id)
+                    focusThePinnedWindow()
                 }
                 .buttonStyle(.glass)
                 Button("Unpin") {
@@ -84,12 +88,26 @@ struct PinnedElsewherePanel: View {
         .frame(width: 240)
         // Opening is how a DRAG becomes a window: the pin flips in the
         // delegate, this content replaces the panel, and there is nowhere
-        // else with an `openWindow` to call. Opening one already open raises
-        // it, which is what a reader clicking the menu bar item wants anyway.
+        // else with an `openWindow` to call. After a drag the popover it came
+        // from closes — the window, where the drag let go, is the one panel
+        // on screen, and it takes the focus alone. Opened from the menu bar
+        // item instead, the popover stays: it is where Unpin is.
         .task {
             AppLog.panel.info("pinned-elsewhere content appeared — opening the window")
-            NSApp.activate(ignoringOtherApps: true)
+            let fromADrag = pin.isDetaching
             openWindow(id: PinnedPanelWindow.id)
+            if fromADrag {
+                dismiss()
+            } else {
+                focusThePinnedWindow()
+            }
         }
+    }
+
+    @Environment(\.dismiss) private var dismiss
+
+    private func focusThePinnedWindow() {
+        guard let window = WindowFocus.pinnedWindow(among: NSApp.windows) else { return }
+        WindowFocus.bringOnly(window)
     }
 }

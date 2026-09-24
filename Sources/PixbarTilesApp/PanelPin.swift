@@ -41,6 +41,10 @@ final class PanelPin {
         set(true)
     }
 
+    /// Whether a drag has just pinned the panel and its window has not opened
+    /// yet — the popover the drag came from is then to be closed, not shown.
+    var isDetaching: Bool { detachedOrigin != nil }
+
     /// The detach origin, once. Left behind, the next pin would drag the
     /// window back to wherever the last detach happened to land.
     func takeDetachedOrigin() -> CGPoint? {

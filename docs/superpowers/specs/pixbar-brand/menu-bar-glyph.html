@@ -68,7 +68,7 @@ function draw(spec, online, ink, bg, s) {
   const filled = online && fillOn;
   if (filled) {
     // lit screen: the body filled, the P knocked out of it
-    body(); g.fill();
+    body(); g.fill(); g.lineWidth = stroke; g.stroke();   // out to the outline the offline stroke draws
     g.globalCompositeOperation = 'destination-out';
     for (const [x, y] of cells) g.fillRect(x, y, pixel, pixel);
     if (spec.pageDots) for (let i = 0; i < 3; i++) g.fillRect(w - 3.5 - 2*(2 - i), h - 3.5, 1, 1); // three page dots, bottom right

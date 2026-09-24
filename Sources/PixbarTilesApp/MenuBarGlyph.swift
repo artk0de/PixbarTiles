@@ -137,12 +137,11 @@ enum PixbarGlyph {
     static let stroke = 1.5
     static let stairs = 2
 
-    /// The case's centreline — what the online state FILLS, as the oracle
-    /// does: the fill stops at the stroke's middle, 0.75 pt inside the
-    /// outline the stroked states draw.
-    static let caseFill = stepped(x0: stroke / 2, y0: stroke / 2,
-                                  x1: caseWidth - stroke / 2, y1: caseHeight - stroke / 2,
-                                  steps: stairs)
+    /// What the online state FILLS: the case out to the outline the stroked
+    /// states draw. The oracle filled the stroke's centreline, 0.75 pt
+    /// inside it, and the glyph shrank by half a stroke every time a clock
+    /// came back.
+    static let caseFill = stepped(x0: 0, y0: 0, x1: caseWidth, y1: caseHeight, steps: stairs)
 
     /// The case's 1.5-pt stroke, outside less inside.
     static let caseStroke: Region = {

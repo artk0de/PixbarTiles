@@ -72,7 +72,7 @@ States:
 
 | State | Drawing |
 |---|---|
-| online (a clock is connected) | Case **filled**. The P's cells and a 0.5-pt bezel ring (`strokeRect(2.25, 2.25, 21.5, 10.5)`, width 0.5) are knocked out to transparent. |
+| online (a clock is connected) | Case **filled** out to the stroke's outer edge (fill + stroke, 0...26 × 0...15), the same outline the offline state draws — the approved page filled the centreline only, and the glyph shrank by half a stroke when a clock came back (corrected 2026-09-24). The P's cells and a 0.5-pt bezel ring (`strokeRect(2.25, 2.25, 21.5, 10.5)`, width 0.5) are knocked out to transparent. |
 | offline (clocks configured, none reachable) | Case **stroked**. The P as a contour: its silhouette rasterised on a 0.5-pt grid, every edge cell of the silhouette filled as a 0.5 × 0.5 pt square. On the case's top-right corner, a moat `(21.5, −1.5, 6, 6)` is cleared to transparent, then a red square `(22.5, −0.5, 4, 4)` in `#d6001c` is filled. |
 | empty (no clock configured) | Case stroked, feet, nothing on the screen: no P, no badge. *Assumption, not approved in the browser;* it keeps the existing rule "the device is drawn, not its contents". |
 

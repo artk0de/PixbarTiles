@@ -101,11 +101,31 @@ private func isInk(_ pixel: PixbarGlyph.Pixel, _ ink: UInt32 = white) -> Bool {
 @Test func onlineCutsTheCaseCornersAsAStaircase() {
     let raster = glyph(.online)
     #expect(raster.pixel(x: 0, y: 0).alpha == 0)
-    #expect(raster.pixel(x: 5, y: 3).alpha == 0)    // inside the cut
+    #expect(raster.pixel(x: 3, y: 1).alpha == 0)    // inside the cut
+    #expect(isInk(raster.pixel(x: 5, y: 3)))        // the second step
     #expect(isInk(raster.pixel(x: 9, y: 3)))        // past the second step
     #expect(isInk(raster.pixel(x: 5, y: 15)))       // the straight side
     #expect(isInk(raster.pixel(x: 11, y: 31)))      // a foot
     #expect(!allPixels(raster).contains { $0.alpha > 0 && $0.rgb == red })
+}
+
+// The glyph does not shrink when a clock comes back: the online case is filled
+// out to the outline the offline stroke draws, not to the stroke's middle
+// 0.75 pt inside it. Every pixel the stroked case and its feet ink is ink
+// online too — except the half-point bezel ring (columns 6 and 49, rows 5 and
+// 26), which the online state knocks out and the stroke's inner stair corners
+// reach.
+@Test func onlineFillsTheCaseOutToTheOfflineOutline() {
+    let online = glyph(.online)
+    let outline = glyph(.empty)
+    for y in 0..<outline.height {
+        for x in 0..<outline.width where isInk(outline.pixel(x: x, y: y)) {
+            let onTheBezel = ((x == 6 || x == 49) && (5...26).contains(y))
+                || ((y == 5 || y == 26) && (6...49).contains(x))
+            #expect(isInk(online.pixel(x: x, y: y)) || onTheBezel, "(\(x), \(y))")
+        }
+    }
+    #expect(isInk(online.pixel(x: 28, y: 1)))       // the top edge's outer half
 }
 
 // Offline: the case is a 1.5-pt stroke (three device pixels at @2x) with the

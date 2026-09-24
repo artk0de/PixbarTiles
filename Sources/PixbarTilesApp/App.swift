@@ -382,6 +382,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notifications: NotificationCenter
     /// The subscriptions that hear the panel's window come and go.
     private var windowWatchers: [any NSObjectProtocol] = []
+    /// The popover's drag, followed until it is let go (`PanelDrag`).
+    private var panelDrag = PanelDrag()
+    /// Asks whether the drag is over; runs only while one is under way.
+    private var panelDragRelease: Timer?
     /// The subscription that hears whether the clock is answering.
     private var reachability: AnyCancellable?
     /// The subscription that hears the Clocks tab come and go.
@@ -674,7 +678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The panel's window moved. If a mouse button is DOWN it was the user
     /// dragging it, and a panel dragged off the menu bar is a panel pinned —
-    /// the way SoundSource's own pin flips.
+    /// the way SoundSource's own pin flips — where the drag is let go.
     ///
     /// The held button is the whole discriminator, and it is not a heuristic:
     /// macOS places this window under the menu bar item on every open, and
@@ -688,10 +692,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             frame=\(String(describing: self.panelWindow?.frame), privacy: .public)
             """
         )
-        guard panelPin.isPinned == false, NSEvent.pressedMouseButtons != 0 else { return }
         guard let frame = panelWindow?.frame else { return }
+        let following = panelDrag.moved(
+            topLeft: CGPoint(x: frame.minX, y: frame.maxY),
+            buttonDown: NSEvent.pressedMouseButtons != 0,
+            pinned: panelPin.isPinned
+        )
+        guard following, panelDragRelease == nil else { return }
+        panelDragRelease = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.panelDragMayHaveEnded() }
+        }
+    }
+
+    /// The drag is over when no button is down: pin where it was let go.
+    private func panelDragMayHaveEnded() {
+        guard let origin = panelDrag.released(buttonDown: NSEvent.pressedMouseButtons != 0) else { return }
+        panelDragRelease?.invalidate()
+        panelDragRelease = nil
         AppLog.panel.info("panel dragged off the menu bar — pinning")
-        panelPin.detach(at: CGPoint(x: frame.minX, y: frame.maxY))
+        panelPin.detach(at: origin)
     }
 
     /// One observer of `name`, deaf to every window that is not the panel's.

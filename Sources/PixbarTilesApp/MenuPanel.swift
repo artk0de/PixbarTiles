@@ -196,7 +196,10 @@ struct MenuPanel: View {
         Button {
             pin.toggle()
             if pin.isPinned {
-                openAndFocus { openWindow(id: PinnedPanelWindow.id) }
+                // Not `openAndFocus`: activating the app raises every window
+                // it has. The pinned window focuses itself, alone, as it
+                // appears.
+                openWindow(id: PinnedPanelWindow.id)
             } else {
                 dismissWindow(id: PinnedPanelWindow.id)
             }

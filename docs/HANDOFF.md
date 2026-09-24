@@ -162,35 +162,37 @@ cover banner (1792x1024) whose wordmark is illegible below roughly 64pt, under
 CC BY-NC-SA; the firmware itself serves an **empty** `/favicon.ico` — HTTP 200,
 zero bytes — and 404s every other asset path. Both were checked, not assumed.
 
-So the mark is the user's own pixel-art clock: `Scripts/MakeIcon.swift` sets the
-approved `UserClock` map — the menu bar glyph's single home, compiled into the
-app target AND into the generator, so the shipped art and the tested map cannot
-drift apart — on the dark circular badge its source art sits on, the badge
-having been dropped only for the tiny bar. Everything is generated at bundle
-time into git-ignored `build/`, which keeps binary art out of the repository
-and makes the design reviewable as code. Run it with
-`swiftc Sources/PixbarTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift
--o build/icon-maker && build/icon-maker` and look at
-`build/icon/preview-appicon-*.png`.
+So the mark is the PixbarTiles brand approved on 2026-09-24
+(`docs/superpowers/specs/2026-09-24-pixbar-brand-design.md`, with its two
+oracle pages): a pixel P on a screen. The geometry lives in
+`Sources/PixbarTilesApp/MenuBarGlyph.swift` (the glyph and the shared P) and
+`AppIconArt.swift` (the icon), compiled into the app target AND into the
+generator, so the shipped art and the tested geometry cannot drift apart.
+Everything is generated at bundle time into git-ignored `build/`, which keeps
+binary art out of the repository and makes the design reviewable as code. Run
+it with `swiftc Sources/PixbarTilesApp/MenuBarGlyph.swift
+Sources/PixbarTilesApp/AppIconArt.swift Scripts/MakeIcon.swift -o
+build/icon-maker && build/icon-maker` and look at `build/icon/preview-*.png`.
 
-Rules inside it, each of which was arrived at by rendering and looking:
+Rules inside it:
 
-- One master at 1024, resampled down for every other size. Drawing simplified
-  art per size was tried first and lost: the resampled clock still reads at
-  32px, the directly-drawn one aliases into noise. The comparison sheet stays
-  in the generator's previews as the record.
-- Clock pixels stay pixels: the map rides on the badge at a whole art-pixel
-  scale, centred on whole device pixels, so the icon itself never resamples
-  the art — only the badge, its sheen and its halo are smooth. The dark
-  palette is the source of truth; Finder and the Dock put the icon on light
-  ground, where the light frame carries the silhouette.
-- The menu bar glyph is the bare clock in colour, NOT a template — a template
-  is macOS DISCARDING the colour, and the four approved palettes are what the
-  glyph is. One art pixel is one point on a 21x18 canvas (the bar caps an
-  item's height, not its width); `@2x` and `@3x` are emitted and macOS picks
-  by display scale, so a larger file does not buy a larger glyph.
-- Online and offline are two palettes, not one drawing plus a badge: offline
-  dims the sliders to grey and takes the sparkles out.
+- The app icon is the P lit in three bands (blue, white, purple) and a cyan
+  open-plus sparkle on a 17 x 17 LED grid, on a near-black rounded plate. One
+  master at 1024, resampled down for every other size — a grid redrawn at
+  32px rounds its cell to a pixel and loses the dots. The comparison sheet
+  stays in the generator's previews as the record.
+- The menu bar glyph is drawn per appearance, NOT as a template — white ink
+  on a dark bar, black on a light one, because a template would tint the
+  offline red with the ink. The canvas is 28x18 pt (the bar caps an item's
+  height, not its width); `@2x` and `@3x` come from the same vector geometry,
+  rasterized as exact area per device pixel, and macOS picks by display scale.
+- Online fills the case and knocks the P and a half-point bezel out of it;
+  offline strokes the case, traces the P as a half-point contour and puts a
+  red square in a clear moat on the corner; empty (no clock configured) is the
+  stroked case alone.
+- The user's old pixel-art clock (`UserClock`) no longer marks the app; it
+  stays as the panel's header clock and its palettes colour the panel's
+  device drawings.
 
 The alternative treatments of the candidates stay in
 `icons-candidates/menubar/MakeMenuBarCandidates.swift`, because the comparison

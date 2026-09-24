@@ -184,9 +184,9 @@ struct MenuBarGlyph: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        // No rendering mode on purpose. The old glyph was a template because
-        // it was drawn shapeless; this one is the user's own clock in the four
-        // approved palettes, and a template is macOS discarding exactly that.
+        // No rendering mode on purpose. A template would let macOS tint the
+        // ink for the bar, but it would tint the offline state's red square
+        // with it — so the glyph is drawn per appearance instead.
         Image(nsImage: AppGlyph.menuBar(for: AppGlyph.state(
             hasNoClocks: model.hasNoClocks,
             isDeviceOnline: model.isDeviceOnline
@@ -195,13 +195,13 @@ struct MenuBarGlyph: View {
 }
 
 enum AppGlyph {
-    /// 21x18, not square: one art pixel of the user's clock is one point, and
-    /// that is the canvas `Scripts/MakeIcon.swift` emits at every scale — the
-    /// menu bar caps an item's HEIGHT at the bar's, not its width. A size set
-    /// here that disagrees is macOS stretching the art.
-    static let menuBarSize = NSSize(width: 21, height: 18)
+    /// 28x18, not square: the glyph's canvas in points, which is what
+    /// `Scripts/MakeIcon.swift` emits at every scale — the menu bar caps an
+    /// item's HEIGHT at the bar's, not its width. Read off `PixbarGlyph` so a
+    /// size set here cannot disagree with the art and have macOS stretch it.
+    static let menuBarSize = NSSize(width: PixbarGlyph.width, height: PixbarGlyph.height)
 
-    /// Which of the two palettes the bar is asking for.
+    /// Which of the two inks the bar is asking for.
     enum BarAppearance {
         case dark
         case light
@@ -246,29 +246,29 @@ enum AppGlyph {
         }
     }
 
-    /// The clock with its sliders lit: the clock is answering.
+    /// The screen lit: the case filled, the P and a hairline bezel knocked
+    /// out of it. A clock is answering.
     static let litDrawing = Drawing(
-        darkResource: "userclock-dark-online",
-        lightResource: "userclock-light-online",
+        darkResource: "pixbar-glyph-dark-online",
+        lightResource: "pixbar-glyph-light-online",
         symbol: "square.grid.3x2.fill"
     )
 
-    /// The same clock with its screen out: the clock is not answering. Two
-    /// drawings rather than one plus a badge, because a badge does not survive
-    /// being 18pt tall — and a grey-screened clock is also what an unreachable
-    /// one actually looks like.
+    /// The screen out: the case an outline, the P a half-point contour, a
+    /// red square on the corner. No clock is answering. The outline is what
+    /// still reads at 18pt; the red square is what says "fault" when it does.
     static let unlitDrawing = Drawing(
-        darkResource: "userclock-dark-offline",
-        lightResource: "userclock-light-offline",
+        darkResource: "pixbar-glyph-dark-offline",
+        lightResource: "pixbar-glyph-light-offline",
         symbol: "square.grid.3x2"
     )
 
-    /// The clock with a blank screen: no clock has ever been configured, so
-    /// there is nothing on it to show — no sliders, no sparkles, the frame
-    /// and feet whole.
+    /// The case with a blank screen: no clock has ever been configured, so
+    /// there is nothing on it to show — no P, no badge, the case and feet
+    /// whole.
     static let emptyDrawing = Drawing(
-        darkResource: "userclock-dark-empty",
-        lightResource: "userclock-light-empty",
+        darkResource: "pixbar-glyph-dark-empty",
+        lightResource: "pixbar-glyph-light-empty",
         symbol: "rectangle"
     )
 
@@ -302,8 +302,8 @@ enum AppGlyph {
     }
 
     /// The menu bar mark: an image whose drawing handler picks the variant for
-    /// whichever bar is drawing it, so the dark menu bar gets the source as
-    /// drawn and the light one the open-screen treatment.
+    /// whichever bar is drawing it, so the dark menu bar gets white ink and
+    /// the light one black.
     ///
     /// A drawing handler rather than a resolved `NSImage`, and that is about
     /// time, not size: the bar's appearance is only known when AppKit draws,
@@ -334,7 +334,7 @@ enum AppGlyph {
         }
         // The default for a built image, said out loud because the old glyph's
         // whole preparation was the opposite: a template would discard the
-        // palettes this glyph exists to carry.
+        // offline red this glyph exists to carry.
         image.isTemplate = false
         image.cacheMode = .never
         return image

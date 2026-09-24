@@ -1,8 +1,8 @@
 import PixbarKit
 
-// The panel's own marks, in the app's pixel language: the user's clock on the
-// menu bar is a map of characters and a palette, and so is everything the
-// panel draws beside it — the AWTRIX clock, the battery and its bolt, the
+// The panel's own marks, in the app's pixel language: the user's clock in the
+// panel's header is a map of characters and a palette, and so is everything
+// the panel draws beside it — the AWTRIX clock, the battery and its bolt, the
 // status light, the two footer marks. Emoji and SF Symbols are drawn in
 // somebody else's hand; next to the pixel clock they read as borrowed.
 //
@@ -177,7 +177,7 @@ enum PanelGlyph {
     }
 
     /// The device drawing's colours: lit while the clock answers, screen out
-    /// while it does not — the menu bar clock's own two palettes.
+    /// while it does not — the user's clock's own two palettes.
     static func devicePalette(dark: Bool, live: Bool) -> Palette {
         switch (dark, live) {
         case (true, true): UserClock.darkOnline

@@ -1,12 +1,12 @@
-// The user's pixel-art alarm clock as the menu bar glyph: the transcription
-// approved out of the candidates (`userclock-dark-online`, `userclock-light-
-// offline`, … in icons-candidates/menubar). This file is the map's single
-// home — `Scripts/MakeIcon.swift` is compiled alongside it and ships what it
-// rasterizes, so the art on the bar and the art the generator writes cannot
-// drift apart.
+// The user's pixel-art alarm clock: the transcription approved out of the
+// candidates (`userclock-dark-online`, `userclock-light-offline`, … in
+// icons-candidates/menubar). It was the menu bar glyph until the PixbarTiles
+// brand replaced it there (`MenuBarGlyph.swift`); it stays as the panel's
+// header clock, and its four palettes stay the panel's device palettes —
+// `PanelGlyph` draws the AWTRIX and the TC002 in them.
 //
 // Deliberately free of AppKit: a map and a palette are data, and data is what
-// the golden tests pin. Turning a raster into CG pixels lives in the generator.
+// the golden tests pin. `PixelArt` turns them into pixels.
 
 enum UserClock {
     /// Which colour a character of the map carries, 0xRRGGBB. An absent
@@ -59,8 +59,8 @@ enum UserClock {
 
     /// The glyph as device pixels: one 0xRRGGBB per pixel, 0 where it stays
     /// empty, rows top-down. A pure function of its arguments — the same map,
-    /// palette and scale answer the same raster everywhere, which is what both
-    /// the generator's PNGs and the golden tests stand on.
+    /// palette and scale answer the same raster everywhere, which is what the
+    /// golden tests stand on.
     struct Raster: Equatable {
         let width: Int
         let height: Int

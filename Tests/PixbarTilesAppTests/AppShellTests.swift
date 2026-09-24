@@ -6,15 +6,14 @@ import Testing
 
 // MARK: - The menu bar glyph
 
-// 21x18: one art pixel of the user's clock is one point, and that is the
-// canvas `Scripts/MakeIcon.swift` emits at every scale. A size set here that
-// disagrees is macOS stretching the art. And not a template — a template is
-// macOS DISCARDING the colour, and the four approved palettes are what the
-// glyph is.
+// 28x18: the canvas `Scripts/MakeIcon.swift` emits at every scale, the
+// glyph's points times the scale. A size set here that disagrees is macOS
+// stretching the art. And not a template — a template is macOS DISCARDING the
+// colour, and the offline state's red square is part of the glyph.
 @Test @MainActor func theMenuBarGlyphIsAtItsPointsPerArtPixelSizeAndKeepsItsColours() {
     let glyph = AppGlyph.menuBar(for: .online)
 
-    #expect(glyph.size == NSSize(width: 21, height: 18))
+    #expect(glyph.size == NSSize(width: 28, height: 18))
     #expect(glyph.isTemplate == false)
 }
 
@@ -71,24 +70,24 @@ import Testing
     #expect(
         AppGlyph.drawing(for: .online)
             == AppGlyph.Drawing(
-                darkResource: "userclock-dark-online",
-                lightResource: "userclock-light-online",
+                darkResource: "pixbar-glyph-dark-online",
+                lightResource: "pixbar-glyph-light-online",
                 symbol: "square.grid.3x2.fill"
             )
     )
     #expect(
         AppGlyph.drawing(for: .offline)
             == AppGlyph.Drawing(
-                darkResource: "userclock-dark-offline",
-                lightResource: "userclock-light-offline",
+                darkResource: "pixbar-glyph-dark-offline",
+                lightResource: "pixbar-glyph-light-offline",
                 symbol: "square.grid.3x2"
             )
     )
     #expect(
         AppGlyph.drawing(for: .empty)
             == AppGlyph.Drawing(
-                darkResource: "userclock-dark-empty",
-                lightResource: "userclock-light-empty",
+                darkResource: "pixbar-glyph-dark-empty",
+                lightResource: "pixbar-glyph-light-empty",
                 symbol: "rectangle"
             )
     )

@@ -2,7 +2,10 @@ import Foundation
 import Testing
 @testable import PixbarTilesApp
 
-// MARK: - The pure map -> raster core behind the menu bar glyph
+// MARK: - The pure map -> raster core behind the panel's header clock
+//
+// The user's clock was the menu bar glyph until the PixbarTiles brand; these
+// pins moved with it to the panel, where the map and its palettes still draw.
 
 /// The glyph as rows of `#`/`.`. Pins the transcription without pixel
 /// arithmetic: one art pixel is one character, the same reading the approved

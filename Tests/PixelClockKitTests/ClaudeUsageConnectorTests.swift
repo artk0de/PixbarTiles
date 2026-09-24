@@ -4,7 +4,7 @@ import Testing
 @testable import PixelClockKit
 
 // The TC002 face of the Claude usage connector: the shared usage face
-// (`UsageFace`) fed the five-hour and the seven-day windows, whatever the
+// (`CodeUsage.Compact`) fed the five-hour and the seven-day windows, whatever the
 // tile's metric picks. The AWTRIX half is the metric's own; its tests live
 // beside the other faces in ConnectorFaceTests.
 
@@ -35,7 +35,7 @@ import Testing
     // row, the seven-day figure — the reading's own — on the weekly row, each
     // with its own reset instant. The metric answers only the AWTRIX page.
     @Test func thePageIsTheSharedUsageFaceFedBothWindows() {
-        let config = UsageFaceConfig(resetEvery: 30, resetAfter: 20)
+        let config = CodeUsage.Parameters(resetEvery: 30, resetAfter: 20)
         let weekly = ClaudeUsageReading(
             utilization: 41,
             resetsAt: Date(timeIntervalSince1970: 1_790_845_200),
@@ -44,11 +44,11 @@ import Testing
         )
 
         #expect(
-            ClaudeUsageConnector.ulanziOutput(for: weekly, config: config, timeZone: utc)
-                == UsageFace.delivery(
+            ClaudeUsageConnector.ulanziOutput(for: weekly, parameters: config, timeZone: utc)
+                == CodeUsage.Compact.delivery(
                     vendor: .claude,
-                    session: UsageFace.Window(percent: 23, resetsAt: reading.fiveHour?.resetsAt),
-                    weekly: UsageFace.Window(
+                    session: CodeUsage.Window(percent: 23, resetsAt: reading.fiveHour?.resetsAt),
+                    weekly: CodeUsage.Window(
                         percent: 41, resetsAt: Date(timeIntervalSince1970: 1_790_845_200)
                     ),
                     config: config,
@@ -63,11 +63,11 @@ import Testing
         let bare = ClaudeUsageReading(utilization: 41, resetsAt: nil)
 
         #expect(
-            ClaudeUsageConnector.ulanziOutput(for: bare, config: .standard, timeZone: utc)
-                == UsageFace.delivery(
+            ClaudeUsageConnector.ulanziOutput(for: bare, parameters: .standard, timeZone: utc)
+                == CodeUsage.Compact.delivery(
                     vendor: .claude,
                     session: nil,
-                    weekly: UsageFace.Window(percent: 41, resetsAt: nil),
+                    weekly: CodeUsage.Window(percent: 41, resetsAt: nil),
                     config: .standard,
                     timeZone: utc
                 )
@@ -78,17 +78,17 @@ import Testing
     // when the connector is built: a picker moved in the tile's window
     // reaches the next poll.
     @Test func theFaceReadsTheTilesSettingsWhenItDraws() throws {
-        let config = UsageFaceConfig(resetEvery: 60, resetAfter: 20)
+        let config = CodeUsage.Parameters(resetEvery: 60, resetAfter: 20)
         let connector = ClaudeUsageConnector(
             reporter: Reports(reading: nil),
-            usageFace: { config },
+            parameters: { config },
             timeZone: { TimeZone(identifier: "UTC")! }
         )
 
         let delivery = try #require(connector.ulanziFace?.draw(reading))
 
         #expect(
-            delivery == ClaudeUsageConnector.ulanziOutput(for: reading, config: config, timeZone: utc)
+            delivery == ClaudeUsageConnector.ulanziOutput(for: reading, parameters: config, timeZone: utc)
         )
     }
 

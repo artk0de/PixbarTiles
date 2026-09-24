@@ -1,46 +1,41 @@
 import Foundation
 
-/// The Claude tile's own settings: which figure the AWTRIX page shows, and the
-/// two settings of the TC002's shared usage face.
+/// The Claude tile's settings: the shared coding-subscription parameters, and
+/// nothing else.
 ///
-/// Stored the way it always was while the usage settings are the defaults —
-/// the metric's bare word, `{"claude":"daily"}` — and as an object only once
-/// they are not: `{"claude":{"metric":"daily","showResetAfter":70,…}}`. The
-/// decode reads both, so a record written before the settings existed is a
-/// tile at the defaults, and nothing rewrites it.
+/// Nothing else because Claude's way in needs no setting — it reads a
+/// status-line document this Mac already writes. `ZaiTileConfig` is the same
+/// type plus the one thing that differs: where its key is filed.
+///
+/// It used to carry a display metric as well, choosing which of three figures
+/// the AWTRIX page drew. It went for three reasons: z.ai had no counterpart, so
+/// the two tiles offered different settings for one question; its "Daily limit"
+/// drew the five-hour window, which is not a day; and of its three figures only
+/// two are limits at all — the third was how full one session's context is,
+/// which empties on every `/clear`.
+///
+/// Records written before the parameters existed carry the metric's bare word,
+/// `{"claude":"daily"}`. That spelling still DECODES — as a tile at the
+/// defaults — because the alternative is a tile that vanishes from a clock at
+/// the update that removed a picker. Nothing writes it again.
 public struct ClaudeTileConfig: Codable, Equatable, Sendable {
-    public var metric: ClaudeDisplayMetric
-    public var usageFace: UsageFaceConfig
+    public var parameters: CodeUsage.Parameters
 
-    public init(metric: ClaudeDisplayMetric, usageFace: UsageFaceConfig = .standard) {
-        self.metric = metric
-        self.usageFace = usageFace
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case metric
+    public init(parameters: CodeUsage.Parameters = .standard) {
+        self.parameters = parameters
     }
 
     public init(from decoder: any Decoder) throws {
-        if let word = try? decoder.singleValueContainer().decode(ClaudeDisplayMetric.self) {
-            self.init(metric: word)
+        // The legacy spelling: the metric's bare word, and no parameters had
+        // been chosen when it was written.
+        if (try? decoder.singleValueContainer().decode(String.self)) != nil {
+            self.init()
             return
         }
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            metric: try container.decode(ClaudeDisplayMetric.self, forKey: .metric),
-            usageFace: try UsageFaceConfig(from: decoder)
-        )
+        self.init(parameters: try CodeUsage.Parameters(from: decoder))
     }
 
     public func encode(to encoder: any Encoder) throws {
-        guard usageFace != .standard else {
-            var word = encoder.singleValueContainer()
-            try word.encode(metric)
-            return
-        }
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(metric, forKey: .metric)
-        try usageFace.encode(to: encoder)
+        try parameters.encode(to: encoder)
     }
 }

@@ -20,7 +20,7 @@ private let reconciledClock = ClockRecord(name: "Clock", model: .awtrix3, addres
 private func claudeTile(on clock: ClockRecord) -> TileRecord {
     TileRecord(
         key: TileKey(clockId: clock.id, connectorId: "claude"),
-        policy: TilePolicyRecord(TileDefaults.claude)
+        policy: TilePolicyRecord(TileDefaults.codeUsage)
     )
 }
 
@@ -122,7 +122,7 @@ private func claudeTile(on clock: ClockRecord) -> TileRecord {
     let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0.5")
     let hour = HourBox(18)
     let host = SpyHost()
-    var office = TileDefaults.claude
+    var office = TileDefaults.codeUsage
     office.window = .active(HourWindow(startHour: 9, endHour: 19))
     let subject = testModel(
         connectors: [StubConnector(id: "claude", isAudible: false)],

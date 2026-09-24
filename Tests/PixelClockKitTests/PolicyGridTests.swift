@@ -26,7 +26,7 @@ private let never = String(repeating: ".", count: 24)
 }
 
 @Test func claudeIsHeldAllDayUnderDoNotDisturbAndSleepAndNowhereElse() {
-    #expect(picture(TileDefaults.claude.grid) == [
+    #expect(picture(TileDefaults.codeUsage.grid) == [
         allDay, // No Focus
         allDay, // Work
         allDay, // Personal

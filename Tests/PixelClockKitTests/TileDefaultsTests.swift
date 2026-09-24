@@ -19,8 +19,12 @@ import Testing
 // A minute, not the five it started at: a subscription's remaining limit is
 // watched rather than glanced at, and a bar that moves five minutes after the
 // spending did is a bar nobody trusts.
-@Test func aNewClaudeTileRunsEveryMinuteOutsideDoNotDisturbAndSleep() {
-    #expect(TileDefaults.claude == TilePolicy(
+//
+// ONE policy for both coding-subscription tiles. z.ai's used to be the bare
+// interval with no Focus rule at all, so a z.ai figure stayed lit under Do Not
+// Disturb where a Claude one went dark. That was neglect, not a decision.
+@Test func bothCodingTilesRunEveryMinuteOutsideDoNotDisturbAndSleep() {
+    #expect(TileDefaults.codeUsage == TilePolicy(
         isPaused: false,
         refreshSeconds: 60,
         focus: FocusRule(silencedIn: [.doNotDisturb, .sleep], whenUnknown: .run),
@@ -46,21 +50,10 @@ import Testing
     ))
 }
 
-// The z.ai figure is ambient and silent, exactly like the weather's reading:
-// drawn into the device's own loop, nothing to trigger, nothing to witness.
-@Test func aNewZaiTileRunsEveryMinuteThroughEverything() {
-    #expect(TileDefaults.zai == TilePolicy(
-        isPaused: false,
-        refreshSeconds: 60,
-        focus: FocusRule(silencedIn: [], whenUnknown: .run),
-        window: .always
-    ))
-}
-
 // Every default is already on the scale, so no new tile starts at a refresh
 // the slider cannot show.
 @Test func everyDefaultRefreshIsAStepOfTheScale() {
-    for policy in [TileDefaults.weather, TileDefaults.claude, TileDefaults.anecdotes, TileDefaults.vpn, TileDefaults.zai] {
+    for policy in [TileDefaults.weather, TileDefaults.codeUsage, TileDefaults.anecdotes, TileDefaults.vpn] {
         #expect(policy.refresh == TimeInterval(policy.refreshSeconds))
     }
 }

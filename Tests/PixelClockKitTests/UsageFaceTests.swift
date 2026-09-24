@@ -61,9 +61,9 @@ private func hexRows(_ canvas: PixelCanvas) -> [String] {
     }
 }
 
-private func window(_ oracle: Oracle.Window) -> UsageFace.Window? {
+private func window(_ oracle: Oracle.Window) -> CodeUsage.Window? {
     oracle.percent.map { percent in
-        UsageFace.Window(
+        CodeUsage.Window(
             percent: percent,
             resetsAt: oracle.resetsAt.map { Date(timeIntervalSince1970: $0) }
         )
@@ -78,12 +78,12 @@ private let utc = TimeZone(identifier: "UTC")!
         #expect(oracle.timeZone == "UTC")
         #expect(oracle.cases.isEmpty == false)
         for recorded in oracle.cases {
-            let vendor: UsageFace.Vendor = recorded.vendor == "claude" ? .claude : .zai
-            let config = UsageFaceConfig(
+            let vendor: CodeUsage.Vendor = recorded.vendor == "claude" ? .claude : .zai
+            let config = CodeUsage.Parameters(
                 resetEvery: TimeInterval(recorded.resetEveryMs) / 1000,
                 resetAfter: recorded.resetAfter
             )
-            let timeline = UsageFace.timeline(
+            let timeline = CodeUsage.Compact.timeline(
                 vendor: vendor,
                 session: window(recorded.session),
                 weekly: window(recorded.weekly),
@@ -114,14 +114,14 @@ private let utc = TimeZone(identifier: "UTC")!
 
     @Test func theSessionResetIsHoursAndMinutes() {
         let at = Date(timeIntervalSince1970: 1_790_240_700)  // 2026-09-24 09:05 UTC
-        #expect(UsageFace.sessionReset(at, in: utc) == "rst 09:05")
+        #expect(CodeUsage.sessionReset(at, in: utc) == "rst 09:05")
     }
 
     // Day without a leading zero, the month in three lowercase letters, the
     // 24-hour time — and no comma, which the panel has no glyph for.
     @Test func theWeeklyResetIsDayMonthAndTime() {
         let at = Date(timeIntervalSince1970: 1_790_845_200)  // 2026-10-01 09:00 UTC
-        #expect(UsageFace.weeklyReset(at, in: utc) == "rst 1 oct 09:00")
+        #expect(CodeUsage.weeklyReset(at, in: utc) == "rst 1 oct 09:00")
     }
 
     // A reset is an INSTANT: z.ai's server lives in Asia/Shanghai, and its
@@ -129,8 +129,8 @@ private let utc = TimeZone(identifier: "UTC")!
     @Test func aResetIsSaidInTheZoneTheFaceIsDrawnIn() {
         // 2026-09-28 21:00 in Shanghai (UTC+8) = 13:00 UTC.
         let shanghaiNine = Date(timeIntervalSince1970: 1_790_600_400)
-        #expect(UsageFace.weeklyReset(shanghaiNine, in: moscow) == "rst 28 sep 16:00")
-        #expect(UsageFace.sessionReset(shanghaiNine, in: utc) == "rst 13:00")
+        #expect(CodeUsage.weeklyReset(shanghaiNine, in: moscow) == "rst 28 sep 16:00")
+        #expect(CodeUsage.sessionReset(shanghaiNine, in: utc) == "rst 13:00")
     }
 
     // End to end on the live pro answer of 2026-09-23: the week's
@@ -146,8 +146,8 @@ private let utc = TimeZone(identifier: "UTC")!
         let resetsAt = try #require(ZaiUsageDecoder.limits(from: live).weekly?.resetsAt)
         let shanghai = try #require(TimeZone(identifier: "Asia/Shanghai"))
 
-        #expect(UsageFace.weeklyReset(resetsAt, in: moscow) == "rst 26 sep 20:16")
-        #expect(UsageFace.weeklyReset(resetsAt, in: shanghai) == "rst 27 sep 01:16")
+        #expect(CodeUsage.weeklyReset(resetsAt, in: moscow) == "rst 26 sep 20:16")
+        #expect(CodeUsage.weeklyReset(resetsAt, in: shanghai) == "rst 27 sep 01:16")
     }
 
     // MARK: - What flips
@@ -155,10 +155,10 @@ private let utc = TimeZone(identifier: "UTC")!
     // A hot row whose window carries no reset date has nothing to flip to:
     // the page stays the percentages rather than inventing a time.
     @Test func aHotRowWithoutAResetDateDoesNotFlip() {
-        let timeline = UsageFace.timeline(
+        let timeline = CodeUsage.Compact.timeline(
             vendor: .claude,
-            session: UsageFace.Window(percent: 90, resetsAt: nil),
-            weekly: UsageFace.Window(percent: 20, resetsAt: nil),
+            session: CodeUsage.Window(percent: 90, resetsAt: nil),
+            weekly: CodeUsage.Window(percent: 20, resetsAt: nil),
             config: .standard,
             timeZone: utc
         )
@@ -171,16 +171,16 @@ private let utc = TimeZone(identifier: "UTC")!
     // The whole timeline ships as ONE full-frame GIF at the panel's origin,
     // each frame's delay its own — the envelope the TC002 measured (§6f).
     @Test func theTimelineShipsAsOneGifWithItsOwnDelays() throws {
-        let session = UsageFace.Window(
+        let session = CodeUsage.Window(
             percent: 97, resetsAt: Date(timeIntervalSince1970: 1_790_240_700)
         )
-        let weekly = UsageFace.Window(
+        let weekly = CodeUsage.Window(
             percent: 88, resetsAt: Date(timeIntervalSince1970: 1_790_845_200)
         )
-        let timeline = UsageFace.timeline(
+        let timeline = CodeUsage.Compact.timeline(
             vendor: .zai, session: session, weekly: weekly, config: .standard, timeZone: utc
         )
-        let delivery = UsageFace.delivery(
+        let delivery = CodeUsage.Compact.delivery(
             vendor: .zai, session: session, weekly: weekly, config: .standard, timeZone: utc
         )
 
@@ -206,9 +206,9 @@ private let utc = TimeZone(identifier: "UTC")!
 
     // Nothing hot is one frame: a still, and said as one.
     @Test func aQuietPageIsAStill() {
-        let delivery = UsageFace.delivery(
+        let delivery = CodeUsage.Compact.delivery(
             vendor: .claude,
-            session: UsageFace.Window(percent: 12, resetsAt: nil),
+            session: CodeUsage.Window(percent: 12, resetsAt: nil),
             weekly: nil,
             config: .standard,
             timeZone: utc
@@ -228,11 +228,11 @@ private let utc = TimeZone(identifier: "UTC")!
     @Test func theLongestMarqueeStaysInsideTheSceneLimits() throws {
         // 2026-09-30 23:59 UTC: two-digit day, the widest digits.
         let late = Date(timeIntervalSince1970: 1_790_812_740)
-        let delivery = UsageFace.delivery(
+        let delivery = CodeUsage.Compact.delivery(
             vendor: .claude,
-            session: UsageFace.Window(percent: 104, resetsAt: late),
-            weekly: UsageFace.Window(percent: 100, resetsAt: late),
-            config: UsageFaceConfig(resetEvery: 300, resetAfter: 50),
+            session: CodeUsage.Window(percent: 104, resetsAt: late),
+            weekly: CodeUsage.Window(percent: 100, resetsAt: late),
+            config: CodeUsage.Parameters(resetEvery: 300, resetAfter: 50),
             timeZone: utc
         )
         let image = delivery.scene.frames[0].image[0]
@@ -243,43 +243,43 @@ private let utc = TimeZone(identifier: "UTC")!
 
 @Suite struct UsageFaceConfigTests {
     @Test func theDefaultsAreTenSecondsAndEightyPercent() {
-        #expect(UsageFaceConfig.standard.resetEvery == 10)
-        #expect(UsageFaceConfig.standard.resetAfter == 80)
+        #expect(CodeUsage.Parameters.standard.resetEvery == 10)
+        #expect(CodeUsage.Parameters.standard.resetAfter == 80)
     }
 
     @Test func thePickersOfferTheDesignsSteps() {
-        #expect(UsageFaceConfig.resetEverySteps == [5, 10, 15, 30, 60, 120, 300])
-        #expect(UsageFaceConfig.resetAfterSteps == [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100])
+        #expect(CodeUsage.Parameters.resetEverySteps == [5, 10, 15, 30, 60, 120, 300])
+        #expect(CodeUsage.Parameters.resetAfterSteps == [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100])
     }
 
     @Test func theConfigRoundTrips() throws {
-        let config = UsageFaceConfig(resetEvery: 30, resetAfter: 65)
+        let config = CodeUsage.Parameters(resetEvery: 30, resetAfter: 65)
         let data = try JSONEncoder().encode(config)
-        #expect(try JSONDecoder().decode(UsageFaceConfig.self, from: data) == config)
+        #expect(try JSONDecoder().decode(CodeUsage.Parameters.self, from: data) == config)
     }
 
     // A record written before either field existed reads as the defaults.
     @Test func aConfigWithoutTheFieldsReadsAsTheDefaults() throws {
-        #expect(try JSONDecoder().decode(UsageFaceConfig.self, from: Data("{}".utf8)) == .standard)
+        #expect(try JSONDecoder().decode(CodeUsage.Parameters.self, from: Data("{}".utf8)) == .standard)
     }
 }
 
-@Suite struct UsageBandTests {
+@Suite struct CodeUsageBandTests {
     // One ramp for both vendors; below the first warning the bar is in the
     // vendor's own colour, past it in the shared ramp.
     @Test func bothVendorsShareTheRampWithTheirOwnBrandBelowIt() {
-        #expect(UsageBand(utilization: 74).fillColour(brand: ZaiUsage.brandColour) == "#3B5BFE")
-        #expect(UsageBand(utilization: 74).fillColour(brand: ClaudeUsage.brandColour) == "#D97757")
+        #expect(CodeUsage.Band(utilization: 74).fillColour(brand: ZaiUsage.brandColour) == "#3B5BFE")
+        #expect(CodeUsage.Band(utilization: 74).fillColour(brand: ClaudeUsage.brandColour) == "#D97757")
 
         let ramp = [75: "#FFD24A", 80: "#FFAE3A", 85: "#FF8C1A",
                     90: "#FF6321", 95: "#FF3B30", 100: "#FF0000"]
         for (percent, colour) in ramp {
-            #expect(UsageBand(utilization: percent)
+            #expect(CodeUsage.Band(utilization: percent)
                 .fillColour(brand: ZaiUsage.brandColour) == colour, "\(percent)%")
         }
         // Over a hundred is not impossible — an overage channel keeps serving
         // past the bar — and it must not fall back down the ramp.
-        #expect(UsageBand(utilization: 140).fillColour(brand: ClaudeUsage.brandColour) == "#FF0000")
+        #expect(CodeUsage.Band(utilization: 140).fillColour(brand: ClaudeUsage.brandColour) == "#FF0000")
     }
 }
 
@@ -289,13 +289,13 @@ private let utc = TimeZone(identifier: "UTC")!
 // RULES behind it, so a re-recording that quietly changed one of them would
 // still have to be argued for here.
 
-private func facePixel(_ vendor: UsageFace.Vendor, session: Int?, at point: (x: Int, y: Int))
+private func facePixel(_ vendor: CodeUsage.Vendor, session: Int?, at point: (x: Int, y: Int))
     -> String
 {
-    let frames = UsageFace.timeline(
+    let frames = CodeUsage.Compact.timeline(
         vendor: vendor,
-        session: session.map { UsageFace.Window(percent: $0, resetsAt: nil) },
-        weekly: UsageFace.Window(percent: 10, resetsAt: nil),
+        session: session.map { CodeUsage.Window(percent: $0, resetsAt: nil) },
+        weekly: CodeUsage.Window(percent: 10, resetsAt: nil),
         config: .standard,
         timeZone: TimeZone(identifier: "UTC")!
     )
@@ -309,7 +309,7 @@ private func facePixel(_ vendor: UsageFace.Vendor, session: Int?, at point: (x: 
 /// The row is labelled `5h`, which ends at column 15; the gap puts its value
 /// area at 20. Scanning from any earlier column reads the label's grey as if
 /// it were the figure's ink.
-private func figureInk(_ vendor: UsageFace.Vendor, session: Int?) -> Set<String> {
+private func figureInk(_ vendor: CodeUsage.Vendor, session: Int?) -> Set<String> {
     var ink: Set<String> = []
     for x in 20..<PixelCanvas.width {
         for y in 1..<6 {
@@ -353,7 +353,7 @@ private func figureInk(_ vendor: UsageFace.Vendor, session: Int?) -> Set<String>
 // about to run out the same colour, differing only in length — which is the
 // one reading the panel is worst at.
 //
-// The ramp is `UsageBand`'s, shared with the AWTRIX page. White stands in for
+// The ramp is `CodeUsage.Band`'s, shared with the AWTRIX page. White stands in for
 // the vendor's brand as this face's steady colour: the mark already says which
 // account this is, so the bar is free to spend its colour on how much is left.
 @Test func aBarTakesItsWarningColourAsTheWindowRunsOut() {
@@ -376,18 +376,18 @@ private func figureInk(_ vendor: UsageFace.Vendor, session: Int?) -> Set<String>
 // MARK: - The spent pulse
 
 private func usageTimeline(
-    session: Int, resetsAt: Date? = nil, config: UsageFaceConfig = .standard
-) -> [UsageFace.Frame] {
-    UsageFace.timeline(
+    session: Int, resetsAt: Date? = nil, config: CodeUsage.Parameters = .standard
+) -> [CodeUsage.Frame] {
+    CodeUsage.Compact.timeline(
         vendor: .claude,
-        session: UsageFace.Window(percent: session, resetsAt: resetsAt),
-        weekly: UsageFace.Window(percent: 10, resetsAt: nil),
+        session: CodeUsage.Window(percent: session, resetsAt: resetsAt),
+        weekly: CodeUsage.Window(percent: 10, resetsAt: nil),
         config: config,
         timeZone: TimeZone(identifier: "UTC")!
     )
 }
 
-private func barColour(_ frame: UsageFace.Frame) -> String {
+private func barColour(_ frame: CodeUsage.Frame) -> String {
     let pixel = frame.canvas[0, 7]
     return String(format: "%02X%02X%02X", pixel.red, pixel.green, pixel.blue)
 }
@@ -418,8 +418,8 @@ private func barColour(_ frame: UsageFace.Frame) -> String {
 // The beats plus the rest come to exactly the interval the tile asked for —
 // a pulse that overran it would drift against "show reset every".
 @Test func thePulseLastsExactlyAsLongAsThePercentPhaseWouldHave() {
-    for seconds in UsageFaceConfig.resetEverySteps {
-        let config = UsageFaceConfig(resetEvery: seconds, resetAfter: 80)
+    for seconds in CodeUsage.Parameters.resetEverySteps {
+        let config = CodeUsage.Parameters(resetEvery: seconds, resetAfter: 80)
         let total = usageTimeline(session: 100, config: config).reduce(0) { $0 + $1.milliseconds }
         #expect(total == Int(seconds * 1000), "\(seconds)s")
     }
@@ -430,7 +430,7 @@ private func barColour(_ frame: UsageFace.Frame) -> String {
 // — and a five-minute "show reset every" would otherwise spend the panel's
 // whole frame budget on one blinking row.
 @Test func aLongPercentPhaseBreathesAndThenHolds() {
-    let config = UsageFaceConfig(resetEvery: 300, resetAfter: 80)
+    let config = CodeUsage.Parameters(resetEvery: 300, resetAfter: 80)
     let frames = usageTimeline(session: 100, config: config)
 
     #expect(frames.count == 25)
@@ -464,10 +464,10 @@ private func barColour(_ frame: UsageFace.Frame) -> String {
 // the bottom one at the panel's edge — nine columns the weekly row was holding
 // for a mark that is not there, and exactly the columns its long reset needs.
 @Test func eachRowsLabelStartsWhereThatRowHasRoom() {
-    let frames = UsageFace.timeline(
+    let frames = CodeUsage.Compact.timeline(
         vendor: .claude,
-        session: UsageFace.Window(percent: 50, resetsAt: nil),
-        weekly: UsageFace.Window(percent: 50, resetsAt: nil),
+        session: CodeUsage.Window(percent: 50, resetsAt: nil),
+        weekly: CodeUsage.Window(percent: 50, resetsAt: nil),
         config: .standard,
         timeZone: TimeZone(identifier: "UTC")!
     )
@@ -492,10 +492,10 @@ private func barColour(_ frame: UsageFace.Frame) -> String {
 @Test func aResetThatFitsIsCentredInItsRow() {
     // 14:30 UTC: `rst 14:30` is 31 columns against the 5h row's 32.
     let at = Date(timeIntervalSince1970: 1_790_778_600)
-    let frames = UsageFace.timeline(
+    let frames = CodeUsage.Compact.timeline(
         vendor: .claude,
-        session: UsageFace.Window(percent: 84, resetsAt: at),
-        weekly: UsageFace.Window(percent: 52, resetsAt: nil),
+        session: CodeUsage.Window(percent: 84, resetsAt: at),
+        weekly: CodeUsage.Window(percent: 52, resetsAt: nil),
         config: .standard,
         timeZone: TimeZone(identifier: "UTC")!
     )

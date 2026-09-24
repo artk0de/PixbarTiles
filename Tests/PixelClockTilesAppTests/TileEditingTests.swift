@@ -55,16 +55,19 @@ private let tc002 = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "
     )
 }
 
-// The display metric is the Claude tile's own config: chosen in the detail,
-// saved with the policy untouched, and read back by the next open.
-@Test @MainActor func theClaudeTilesMetricIsStoredInItsConfig() throws {
+// The coding-subscription parameters are the tile's own config: chosen in the
+// detail, saved with the policy untouched, and read back by the next open.
+@Test @MainActor func theClaudeTilesParametersAreStoredInItsConfig() throws {
     let subject = testModel(connectors: [StubConnector(id: "claude")], clocks: [desk], tiles: [])
     _ = subject.addTile("claude", to: desk.id)
     let key = TileKey(clockId: desk.id, connectorId: "claude")
     let stored = try #require(subject.storedPolicy(of: key))
+    let tuned = TileConfig.claude(ClaudeTileConfig(
+        parameters: CodeUsage.Parameters(resetEvery: 30, resetAfter: 65)
+    ))
 
-    #expect(subject.saveTile(key: key, policy: stored, config: .claude(.session)) == .saved)
-    #expect(subject.detailValue(for: key)?.config == .claude(.session))
+    #expect(subject.saveTile(key: key, policy: stored, config: tuned) == .saved)
+    #expect(subject.detailValue(for: key)?.config == tuned)
 }
 
 @Test @MainActor func aVPNTileClaimingAHeldLampIsRefusedInTheDesignsWords() {

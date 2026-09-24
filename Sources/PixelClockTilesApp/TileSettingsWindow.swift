@@ -243,16 +243,12 @@ struct TileSettingsWindow: View {
             })
         } else if connector is ClaudeUsageConnector {
             VStack(alignment: .leading, spacing: 10) {
-                ClaudeTileBlock(
-                    metric: value.config?.claude ?? .weekly,
-                    onMetric: { settings.setClaudeMetric($0) }
-                )
                 TileRefreshControl(
                     label: "Refresh every",
                     ladder: ladder(for: key),
                     policy: policyBinding(for: key, value: value, stored: stored)
                 )
-                usageFaceBlock
+                parametersBlock
                 // Machine-wide state, one file, not a tile's: whatever tile's
                 // window it is edited from edits it for every Claude tile.
                 ClaudeCodeSettings(link: claudeCode())
@@ -269,7 +265,7 @@ struct TileSettingsWindow: View {
                     ladder: ladder(for: key),
                     policy: policyBinding(for: key, value: value, stored: stored)
                 )
-                usageFaceBlock
+                parametersBlock
             }
         } else if key.connectorId == VPNConnector.id {
             // Keyed on the connector id, not on `connector is VPNConnector`:
@@ -286,9 +282,9 @@ struct TileSettingsWindow: View {
     /// The shared usage face's two pickers — the same block on the Claude
     /// tile and the z.ai tile, because the face they tune is one.
     @ViewBuilder
-    private var usageFaceBlock: some View {
-        if let usageFace = settings.usageFace {
-            UsageFaceBlock(config: usageFace, onChange: { settings.setUsageFace($0) })
+    private var parametersBlock: some View {
+        if let usageFace = settings.parameters {
+            CodeUsageBlock(config: usageFace, onChange: { settings.setParameters($0) })
         }
     }
 
@@ -482,7 +478,7 @@ struct WeatherTileControls: View {
                     set: { settings.setChangeEvery($0) }
                 )) {
                     ForEach(Self.changeEverySteps(draft), id: \.self) {
-                        Text(UsageFaceBlock.everyCaption($0)).tag($0)
+                        Text(CodeUsageBlock.everyCaption($0)).tag($0)
                     }
                 }
                 fetchEvery
@@ -563,7 +559,7 @@ struct WeatherTileControls: View {
 
     /// The offered intervals, plus the stored one when a record carries a
     /// value the design does not offer — a picker whose selection matches no
-    /// tag draws blank, which reads as a setting lost (as `UsageFaceBlock`).
+    /// tag draws blank, which reads as a setting lost (as `CodeUsageBlock`).
     private static func changeEverySteps(_ draft: WeatherTileConfig) -> [TimeInterval] {
         let steps = WeatherTileConfig.changeEverySteps
         return steps.contains(draft.changeEvery) ? steps : (steps + [draft.changeEvery]).sorted()

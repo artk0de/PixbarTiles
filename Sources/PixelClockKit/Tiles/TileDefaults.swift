@@ -11,10 +11,16 @@ public enum TileDefaults {
     /// Ambient and silent, so nothing about a Focus or the hour applies.
     public static let weather = TilePolicy(refreshSeconds: 600)
 
+    /// Every coding-subscription tile — Claude's and z.ai's alike.
+    ///
     /// A lit figure is not what anybody wants under Do Not Disturb or beside a
     /// bed; an unnamed Focus keeps it, because hiding on "cannot tell" is an
     /// app that never appears on a machine without Full Disk Access.
-    public static let claude = TilePolicy(
+    ///
+    /// ONE policy, where z.ai's used to be the bare interval with no Focus rule
+    /// at all. Nothing about a z.ai figure makes it more welcome at 3 a.m. than
+    /// a Claude one; the difference was neglect, not a decision.
+    public static let codeUsage = TilePolicy(
         refreshSeconds: 60,
         focus: FocusRule(silencedIn: [.doNotDisturb, .sleep], whenUnknown: .run)
     )
@@ -30,10 +36,4 @@ public enum TileDefaults {
     /// Event-driven: the sixty seconds are the recheck between events.
     public static let vpn = TilePolicy(refreshSeconds: 60)
 
-    /// Ambient and silent like the weather: the z.ai figure is drawn into the
-    /// device's own loop and says nothing, so nothing about a Focus or the
-    /// hour applies. One minute, as the Claude figure has — both report a
-    /// subscription being spent, and that is a number watched rather than
-    /// glanced at.
-    public static let zai = TilePolicy(refreshSeconds: 60)
 }

@@ -25,7 +25,7 @@ private final class LockedKeychainStore: TileKeyStoring, @unchecked Sendable {
     private let clock = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
     private var key: TileKey { TileKey(clockId: clock.id, connectorId: ZaiUsageConnector.connectorId) }
     private var zaiTile: [TileRecord] {
-        [TileRecord(key: key, policy: TilePolicyRecord(TileDefaults.zai))]
+        [TileRecord(key: key, policy: TilePolicyRecord(TileDefaults.codeUsage))]
     }
 
     private func makeModel(
@@ -109,6 +109,6 @@ private final class LockedKeychainStore: TileKeyStoring, @unchecked Sendable {
 
         let record = try #require(storedRecords(defaults).first { $0.key == key })
         #expect(record.config?.key != nil)
-        #expect(record.policy.refreshSeconds == Int(TileDefaults.zai.refresh))
+        #expect(record.policy.refreshSeconds == Int(TileDefaults.codeUsage.refresh))
     }
 }

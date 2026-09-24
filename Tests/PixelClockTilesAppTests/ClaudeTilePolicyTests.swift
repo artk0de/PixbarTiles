@@ -13,7 +13,7 @@ import Testing
 // personal time do not stop it, which is a statement about exceptions.
 
 private func claudeRuns(_ status: StubFocusStatus) -> Bool {
-    TileDefaults.claude.runs(in: MacFocus(reading: status), atHour: 12)
+    TileDefaults.codeUsage.runs(in: MacFocus(reading: status), atHour: 12)
 }
 
 @Test func theAppKeepsWorkingThroughTheFocusesItWasAskedToSurvive() {

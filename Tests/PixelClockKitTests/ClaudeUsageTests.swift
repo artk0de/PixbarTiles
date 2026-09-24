@@ -17,50 +17,50 @@ import Testing
 // half by Wednesday midday, so colouring that leaves the bar shouting through
 // an ordinary week — and a warning that is on half the time is not read at all.
 @Test func anOrdinaryWeekLeavesTheBarInItsRestingColour() {
-    #expect(UsageBand(utilization: 0) == .steady)
-    #expect(UsageBand(utilization: 50) == .steady)
-    #expect(UsageBand(utilization: 74) == .steady)
+    #expect(CodeUsage.Band(utilization: 0) == .steady)
+    #expect(CodeUsage.Band(utilization: 50) == .steady)
+    #expect(CodeUsage.Band(utilization: 74) == .steady)
 }
 
 // Past three quarters it steps every five points rather than leaping. Three
 // bands left eighty-one and eighty-nine the same colour, so the reader had
 // only the bar's length to tell them apart.
 @Test func eachThresholdOpensItsOwnBand() {
-    #expect(UsageBand(utilization: 75) == .watch)
-    #expect(UsageBand(utilization: 79) == .watch)
-    #expect(UsageBand(utilization: 80) == .warm)
-    #expect(UsageBand(utilization: 84) == .warm)
-    #expect(UsageBand(utilization: 85) == .hot)
-    #expect(UsageBand(utilization: 89) == .hot)
-    #expect(UsageBand(utilization: 90) == .close)
-    #expect(UsageBand(utilization: 94) == .close)
-    #expect(UsageBand(utilization: 95) == .critical)
-    #expect(UsageBand(utilization: 99) == .critical)
-    #expect(UsageBand(utilization: 100) == .spent)
+    #expect(CodeUsage.Band(utilization: 75) == .watch)
+    #expect(CodeUsage.Band(utilization: 79) == .watch)
+    #expect(CodeUsage.Band(utilization: 80) == .warm)
+    #expect(CodeUsage.Band(utilization: 84) == .warm)
+    #expect(CodeUsage.Band(utilization: 85) == .hot)
+    #expect(CodeUsage.Band(utilization: 89) == .hot)
+    #expect(CodeUsage.Band(utilization: 90) == .close)
+    #expect(CodeUsage.Band(utilization: 94) == .close)
+    #expect(CodeUsage.Band(utilization: 95) == .critical)
+    #expect(CodeUsage.Band(utilization: 99) == .critical)
+    #expect(CodeUsage.Band(utilization: 100) == .spent)
 }
 
 // Over a hundred is not impossible — an overage channel keeps serving past the
 // bar — and it is the one reading that must not fall back to a calm colour.
 @Test func aReadingPastTheEndOfTheBarStaysInTheLastBand() {
-    #expect(UsageBand(utilization: 140) == .spent)
+    #expect(CodeUsage.Band(utilization: 140) == .spent)
 }
 
 @Test func everyBandDrawsADistinctColour() {
-    let colours = Set(UsageBand.allCases.map(\.fillColour))
+    let colours = Set(CodeUsage.Band.allCases.map { $0.fillColour(brand: ClaudeUsage.brandColour) })
 
-    #expect(colours.count == UsageBand.allCases.count)
+    #expect(colours.count == CodeUsage.Band.allCases.count)
     // The resting band is the brand colour, which is what the number is drawn
     // in too: at rest the app reads as one object rather than as a warning.
-    #expect(UsageBand.steady.fillColour == ClaudeUsage.brandColour)
-    #expect(UsageBand.spent.fillColour != ClaudeUsage.brandColour)
+    #expect(CodeUsage.Band.steady.fillColour(brand: ClaudeUsage.brandColour) == ClaudeUsage.brandColour)
+    #expect(CodeUsage.Band.spent.fillColour(brand: ClaudeUsage.brandColour) != ClaudeUsage.brandColour)
 }
 
 // Only a full window pulses, and it is the one band the ramp cannot shout any
 // louder in colour — `critical` already drives the red channel to 255, so past
 // it the face spends motion instead of hue.
 @Test func onlyTheSpentBandCarriesASecondColourToPulseTo() {
-    #expect(UsageBand.spent.pulseColour == "#A00000")
-    for band in UsageBand.allCases where band != .spent {
+    #expect(CodeUsage.Band.spent.pulseColour == "#A00000")
+    for band in CodeUsage.Band.allCases where band != .spent {
         #expect(band.pulseColour == nil, "\(band)")
     }
 }
@@ -75,7 +75,7 @@ import Testing
     #expect(output.icon == .bundled("ClaudeStar"))
     #expect(output.surface == .app(ClaudeUsageConnector.appName))
     #expect(output.progress?.percent == 83)
-    #expect(output.progress?.fill == UsageBand.warm.fillColour)
+    #expect(output.progress?.fill == CodeUsage.Band.warm.fillColour(brand: ClaudeUsage.brandColour))
 }
 
 // The bar is drawn by the firmware from three fields, and a percentage outside

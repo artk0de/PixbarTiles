@@ -29,8 +29,8 @@ private let kitchen = ClockRecord(name: "Kitchen", model: .awtrix3, address: "10
         pollSleep: polls.sleep,
         clocks: [desk, kitchen],
         tiles: [
-            TileRecord(key: TileKey(clockId: desk.id, connectorId: "claude"), policy: TilePolicyRecord(TileDefaults.claude)),
-            TileRecord(key: TileKey(clockId: kitchen.id, connectorId: "claude"), policy: TilePolicyRecord(TileDefaults.claude)),
+            TileRecord(key: TileKey(clockId: desk.id, connectorId: "claude"), policy: TilePolicyRecord(TileDefaults.codeUsage)),
+            TileRecord(key: TileKey(clockId: kitchen.id, connectorId: "claude"), policy: TilePolicyRecord(TileDefaults.codeUsage)),
         ],
         sessions: [desk.id: onDesk, kitchen.id: inKitchen]
     )

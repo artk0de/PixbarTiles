@@ -83,7 +83,7 @@ public enum WeatherFace {
     /// Should a GIF fail to encode — it cannot for these frames: a handful of
     /// colours, one size per GIF — the page falls back to the first frame as
     /// the plain bitmap, which says the weather rather than nothing (as
-    /// `UsageFace.delivery` does).
+    /// `CodeUsage.Compact.delivery` does).
     public static func delivery(
         reading: WeatherReading?, config: WeatherTileConfig, now: Date, timeZone: TimeZone
     ) -> UlanziDelivery {

@@ -10,7 +10,7 @@ import Testing
 // neighbour's would be the window undoing the user's last choice.
 
 private let kitchen = ClockRecord(name: "Kitchen", model: .ulanziTC002, address: "10.0.0.7")
-private let tuned = UsageFaceConfig(resetEvery: 30, resetAfter: 65)
+private let tuned = CodeUsage.Parameters(resetEvery: 30, resetAfter: 65)
 
 /// Answers one fixed reading; the preview is drawn from it, never from a file.
 private struct FixedClaude: ClaudeUsageReporting {
@@ -51,9 +51,9 @@ private func opened(_ model: AppModel, _ key: TileKey) async -> TileSettingsMode
     // record from before the settings existed included.
     @Test func anUntunedUsageTileShowsTheDefaults() async {
         let subject = await opened(
-            model(tiles: [tile("claude", config: .claude(.daily))]), claudeKey
+            model(tiles: [tile("claude", config: .claude(ClaudeTileConfig()))]), claudeKey
         )
-        #expect(subject.usageFace == .standard)
+        #expect(subject.parameters == .standard)
     }
 
     // A tile that does not draw the usage face has no such pickers at all.
@@ -61,30 +61,35 @@ private func opened(_ model: AppModel, _ key: TileKey) async -> TileSettingsMode
         let subject = await opened(model(tiles: [tile("stub")]), TileKey(
             clockId: kitchen.id, connectorId: "stub"
         ))
-        #expect(subject.usageFace == nil)
+        #expect(subject.parameters == nil)
     }
 
-    @Test func theClaudeTileKeepsItsMetricWhenTheUsageFaceIsTuned() async {
-        let app = model(tiles: [tile("claude", config: .claude(.daily))])
+    @Test func tuningAClaudeTileWritesItsParameters() async {
+        let app = model(tiles: [tile("claude", config: .claude(ClaudeTileConfig()))])
         let subject = await opened(app, claudeKey)
 
-        subject.setUsageFace(tuned)
+        subject.setParameters(tuned)
 
-        #expect(app.storedTile(claudeKey)?.config?.usageFace == tuned)
-        #expect(app.storedTile(claudeKey)?.config?.claude == .daily)
-        #expect(subject.usageFace == tuned)
+        #expect(app.storedTile(claudeKey)?.config?.parameters == tuned)
+        #expect(subject.parameters == tuned)
     }
 
-    @Test func theClaudeTileKeepsItsUsageFaceWhenTheMetricMoves() async {
+    // The two tiles take the SAME parameters, so tuning them is one act
+    // through one control — what a vendor's record keeps of its own is the
+    // way in, and nothing else.
+    @Test func tuningEitherVendorsTileGoesThroughOneControl() async {
         let app = model(tiles: [
-            tile("claude", config: .claude(ClaudeTileConfig(metric: .daily, usageFace: tuned))),
+            tile("claude", config: .claude(ClaudeTileConfig())),
+            tile("zai"),
         ])
-        let subject = await opened(app, claudeKey)
 
-        subject.setClaudeMetric(.session)
+        let claude = await opened(app, claudeKey)
+        claude.setParameters(tuned)
+        let zai = await opened(app, zaiKey)
+        zai.setParameters(tuned)
 
-        #expect(app.storedTile(claudeKey)?.config?.claude == .session)
-        #expect(app.storedTile(claudeKey)?.config?.usageFace == tuned)
+        #expect(app.storedTile(claudeKey)?.config?.parameters == tuned)
+        #expect(app.storedTile(zaiKey)?.config?.parameters == tuned)
     }
 
     // A z.ai tile with no key yet has no config; tuning it writes the handle
@@ -93,10 +98,10 @@ private func opened(_ model: AppModel, _ key: TileKey) async -> TileSettingsMode
         let app = model(tiles: [tile("zai")])
         let subject = await opened(app, zaiKey)
 
-        subject.setUsageFace(tuned)
+        subject.setParameters(tuned)
 
         #expect(app.storedTile(zaiKey)?.config?.key == ZaiTileConfig(
-            keyAccount: ZaiTileConfig.account(for: zaiKey), usageFace: tuned
+            keyAccount: ZaiTileConfig.account(for: zaiKey), parameters: tuned
         ))
     }
 
@@ -104,13 +109,13 @@ private func opened(_ model: AppModel, _ key: TileKey) async -> TileSettingsMode
     @Test func aKeyPastedLaterKeepsTheZaiTilesSettings() async {
         let app = model(tiles: [
             tile("zai", config: .zai(ZaiTileConfig(
-                keyAccount: ZaiTileConfig.account(for: zaiKey), usageFace: tuned
+                keyAccount: ZaiTileConfig.account(for: zaiKey), parameters: tuned
             ))),
         ])
 
         app.saveZaiKey("sk-paste", for: zaiKey)
 
-        #expect(app.storedTile(zaiKey)?.config?.usageFace == tuned)
+        #expect(app.storedTile(zaiKey)?.config?.parameters == tuned)
     }
 
     // The preview is the real face: the very GIF the clock would be sent,
@@ -123,9 +128,9 @@ private func opened(_ model: AppModel, _ key: TileKey) async -> TileSettingsMode
             )
         )
         let connector = ClaudeUsageConnector(
-            reporter: FixedClaude(reading: reading), usageFace: { tuned }
+            reporter: FixedClaude(reading: reading), parameters: { tuned }
         )
-        let app = model(tiles: [tile("claude", config: .claude(.weekly))], connectors: [connector])
+        let app = model(tiles: [tile("claude", config: .claude(ClaudeTileConfig()))], connectors: [connector])
         let subject = await opened(app, claudeKey)
 
         #expect(await waitUntil { subject.preview != nil })

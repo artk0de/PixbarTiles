@@ -51,8 +51,13 @@ private let skyAtFourDegrees = Data("""
 
 // MARK: - Claude usage
 
-/// Answers with one fixed reading. Stands behind `ClaudeUsageReporting`, the
-/// seam the Claude connector's `read()` calls whatever source is behind it.
+/// Answers with one fixed reading, on each vendor's own seam — the protocol
+/// its connector's `read()` calls whatever source is behind it.
+private struct ReportsZai: ZaiUsageReporting {
+    let reading: ZaiUsageReading?
+    func read() async throws -> ZaiUsageReading? { reading }
+}
+
 private struct Reports: ClaudeUsageReporting {
     let reading: ClaudeUsageReading?
     func read() async throws -> ClaudeUsageReading? { reading }
@@ -68,10 +73,10 @@ private struct Reports: ClaudeUsageReporting {
     #expect(connector.awtrixFace.draw(reading) == ClaudeUsageConnector.output(for: reading))
 }
 
-// MARK: - Claude display metrics
+// MARK: - One page, two vendors
 
-/// A reading carrying all three figures, for the faces to pick from.
-private let metricReading = ClaudeUsageReading(
+/// A Claude reading carrying every figure a status-line document can name.
+private let claudeReading = ClaudeUsageReading(
     utilization: 41,
     resetsAt: nil,
     fiveHour: ClaudeUsageWindow(utilization: 23, resetsAt: Date(timeIntervalSince1970: 1_738_425_600)),
@@ -79,56 +84,81 @@ private let metricReading = ClaudeUsageReading(
     observedAt: nil
 )
 
-// The weekly face is the one the tile always drew; the daily and the session
-// face draw the same bar around their own figure.
-@Test func theWeeklyFaceIsTheOneItAlwaysDrew() {
-    #expect(
-        ClaudeUsageConnector.output(for: metricReading, metric: .weekly)
-            == ClaudeUsageConnector.output(for: metricReading)
+// The one thing the substrate is FOR: both tiles draw the same page, and what
+// a vendor is allowed to differ by is its mark and its colours. Written as an
+// assertion rather than as a comment, because "they are the same" is a claim
+// that decays silently — the AWTRIX pages had already drifted into two shapes
+// before anybody noticed.
+@Test func bothVendorsDrawOnePageDifferingOnlyInMarkAndColour() {
+    let reading = CodeUsage.Reading(
+        fiveHour: CodeUsage.Window(percent: 23, resetsAt: nil),
+        weekly: CodeUsage.Window(percent: 41, resetsAt: nil)
     )
+    let claude = CodeUsage.Tile.awtrix(reading, vendor: .claude)
+    let zai = CodeUsage.Tile.awtrix(reading, vendor: .zai)
+
+    // Same figure, same bar, same surface kind, same lifetime.
+    #expect(claude?.text == zai?.text)
+    #expect(claude?.progress?.percent == zai?.progress?.percent)
+    #expect(claude?.scene.lifetime == zai?.scene.lifetime)
+    // Differing in exactly the two things a vendor owns.
+    #expect(claude?.color == CodeUsage.Vendor.claude.brand)
+    #expect(zai?.color == CodeUsage.Vendor.zai.brand)
+    #expect(claude?.icon == CodeUsage.Vendor.claude.icon)
+    #expect(zai?.icon == CodeUsage.Vendor.zai.icon)
+    #expect(claude?.icon != zai?.icon)
 }
 
-@Test func theDailyFaceDrawsTheRollingWindowNotTheWeek() throws {
-    let daily = try #require(ClaudeUsageConnector.output(for: metricReading, metric: .daily))
-    #expect(daily.text == "23%")
-    #expect(daily.progress?.percent == 23)
+// The WEEK is the figure, on both tiles. A five-hour window empties and
+// refills several times inside one week, so a page showing it would swing
+// between readings that are each true and mean nothing together.
+@Test func theHeadlineIsTheWeekNotTheFiveHourWindow() {
+    let page = ClaudeUsageConnector.output(for: claudeReading)
+
+    #expect(page.text == "41%")
+    #expect(page.progress?.percent == 41)
 }
 
-@Test func theSessionFaceDrawsTheContextWindow() throws {
-    let session = try #require(ClaudeUsageConnector.output(for: metricReading, metric: .session))
-    #expect(session.text == "8%")
-    #expect(session.progress?.percent == 8)
+// z.ai used to join its windows into one line — `"84% 52%"` — with no mark and
+// no bar. It draws the substrate's page now.
+@Test func theZaiPageIsTheSameShapeAsClaudes() {
+    let reading = ZaiUsageReading(
+        limits: ZaiUsageLimits(
+            fiveHour: ZaiUsageWindow(percentUsed: 84),
+            weekly: ZaiUsageWindow(percentUsed: 52)
+        ),
+        totals: ZaiUsageTotals()
+    )
+    let page = ZaiUsageConnector.output(for: reading)
+
+    #expect(page.text == "52%")
+    #expect(page.progress?.percent == 52)
+    #expect(page.icon == CodeUsage.Vendor.zai.icon)
+    #expect(page.color == ZaiUsage.brandColour)
 }
 
-// A metric whose figure the reading does not carry has nothing to draw: nil,
-// which the run turns into no delivery — never the week's figure drawn under
-// another window's name.
-@Test func aFaceWithNoFigureForItsMetricDrawsNothing() {
-    let bare = ClaudeUsageReading(utilization: 41, resetsAt: nil)
-
-    #expect(ClaudeUsageConnector.output(for: bare, metric: .daily) == nil)
-    #expect(ClaudeUsageConnector.output(for: bare, metric: .weekly) != nil)
-    #expect(ClaudeUsageConnector.output(for: bare, metric: .session) == nil)
+// A reading that names no window at all is no delivery: the app carries a
+// lifetime, so the clock drops the tile by itself rather than being fed a
+// figure nothing stands behind.
+@Test func aReadingWithNoWindowIsNoPage() {
+    #expect(CodeUsage.Tile.awtrix(
+        CodeUsage.Reading(fiveHour: nil, weekly: nil), vendor: .claude
+    ) == nil)
 }
 
-// The run is where the gate lives: a chosen metric with no figure is no
-// reading, so the tile leaves the clock until its figure returns.
-@Test func theRunRefusesAMetricWithNoFigure() async {
-    let bare = ClaudeUsageReading(utilization: 41, resetsAt: nil)
-    let connector = ClaudeUsageConnector(reporter: Reports(reading: bare), metric: { .daily })
+@Test func theRunRefusesAReadingWithNoWindow() async {
+    let blank = ZaiUsageReading(limits: ZaiUsageLimits(), totals: ZaiUsageTotals())
+    let connector = ZaiUsageConnector(source: ReportsZai(reading: blank))
 
-    await #expect(throws: ClaudeUsageConnector.Failure.noReading) {
+    await #expect(throws: ZaiUsageConnector.Failure.noReading) {
         try await connector.produce()
     }
 }
 
-@Test func theRunDeliversTheChosenFace() async throws {
-    let connector = ClaudeUsageConnector(reporter: Reports(reading: metricReading), metric: { .session })
+@Test func theRunDeliversTheFace() async throws {
+    let connector = ClaudeUsageConnector(reporter: Reports(reading: claudeReading))
 
-    let delivered = try await connector.produce()
-    let chosen = try #require(ClaudeUsageConnector.output(for: metricReading, metric: .session))
-
-    #expect(delivered == chosen)
+    #expect(try await connector.produce() == ClaudeUsageConnector.output(for: claudeReading))
 }
 
 // MARK: - Anecdotes

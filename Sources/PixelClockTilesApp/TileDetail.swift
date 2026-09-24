@@ -516,69 +516,127 @@ struct AnecdoteTileBlock: View {
     }
 }
 
-/// The Claude tile's own block: which figure the tile shows — the daily
-/// limit, the weekly window, or the current session.
-///
-/// Values in, closures out, like every block here. On the TC001 the choice
-/// picks one of the connector's three faces; on the TC002 the shared usage
-/// face draws the session and the week at once, and the choice answers only
-/// the AWTRIX page.
-struct ClaudeTileBlock: View {
-    let metric: ClaudeDisplayMetric
-    let onMetric: (ClaudeDisplayMetric) -> Void
-
-    var body: some View {
-        Picker("Show", selection: Binding(
-            get: { metric }, set: { onMetric($0) }
-        )) {
-            ForEach(ClaudeDisplayMetric.allCases, id: \.self) { candidate in
-                Text(candidate.displayName).tag(candidate)
-            }
-        }
-    }
-}
-
-/// The shared usage face's block, on the Claude tile and the z.ai tile alike:
-/// how long the percentages stand before a hot row shows its reset, and from
-/// what percentage a row is hot.
+/// The coding-subscription block, on the Claude tile and the z.ai tile alike:
+/// which face the panel draws, which windows it shows, how long each stands,
+/// and from what percentage a window names its reset.
 ///
 /// Values in, closures out: the block hands back the whole config with one
 /// field moved, and whoever owns the record keeps what else it says.
-struct UsageFaceBlock: View {
-    let config: UsageFaceConfig
-    let onChange: (UsageFaceConfig) -> Void
+struct CodeUsageBlock: View {
+    let config: CodeUsage.Parameters
+    let onChange: (CodeUsage.Parameters) -> Void
 
+    /// Two groups, because the settings answer two questions.
+    ///
+    /// What the panel DRAWS — the face, the windows it rotates through, and
+    /// how long each stands — and, separately, what it says about a RESET:
+    /// from what percentage, and spelled which way round. The second pair is
+    /// the same in either layout, which is what makes it its own block rather
+    /// than a tail on the first.
+    ///
+    /// The dwell stays with the layout, where it belongs: it is that layout's
+    /// tempo, and its name changes with the layout because what it is spent on
+    /// does.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("On the TC002").font(.caption).foregroundStyle(.secondary)
-            Picker("Show reset every", selection: Binding(
-                get: { config.resetEvery },
-                set: { onChange(UsageFaceConfig(resetEvery: $0, resetAfter: config.resetAfter)) }
-            )) {
-                ForEach(everySteps, id: \.self) { Text(Self.everyCaption($0)).tag($0) }
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("On the TC002").font(.caption).foregroundStyle(.secondary)
+                Picker("Layout", selection: Binding(
+                    get: { config.layout },
+                    set: { chosen in change { $0.layout = chosen } }
+                )) {
+                    ForEach(CodeUsage.Layout.allCases) { Text($0.displayName).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                // Only the Circle shows one window at a time, so only the
+                // Circle has a choice to make. Compact has a row for each and
+                // no reason to leave one empty.
+                if config.layout == .circle { windowChoice }
+                Picker(config.layout.dwellLabel, selection: Binding(
+                    get: { config.resetEvery },
+                    set: { chosen in change { $0.resetEvery = chosen } }
+                )) {
+                    ForEach(everySteps, id: \.self) { Text(Self.everyCaption($0)).tag($0) }
+                }
             }
-            Picker("Show reset after", selection: Binding(
-                get: { config.resetAfter },
-                set: { onChange(UsageFaceConfig(resetEvery: config.resetEvery, resetAfter: $0)) }
-            )) {
-                ForEach(afterSteps, id: \.self) { Text(Self.afterCaption($0)).tag($0) }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Reset").font(.caption).foregroundStyle(.secondary)
+                Picker("Show reset after", selection: Binding(
+                    get: { config.resetAfter },
+                    set: { chosen in change { $0.resetAfter = chosen } }
+                )) {
+                    ForEach(afterSteps, id: \.self) { Text(Self.afterCaption($0)).tag($0) }
+                }
+                // The options ARE the spellings, on a date that tells them
+                // apart — naming the orders instead ("Day first") makes the
+                // reader picture the result rather than read it.
+                Picker("Date", selection: Binding(
+                    get: { config.dateOrder },
+                    set: { chosen in change { $0.dateOrder = chosen } }
+                )) {
+                    ForEach(CodeUsage.DateOrder.allCases) { Text($0.displayName).tag($0) }
+                }
             }
         }
+    }
+
+    /// Which windows the Circle rotates through: a checkbox each, in the order
+    /// the panel shows them.
+    ///
+    /// The one still checked is disabled rather than hidden — a box that
+    /// vanishes when it is the last reads as a bug, where one that will not
+    /// come up reads as the rule it is.
+    private var windowChoice: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Show").font(.caption).foregroundStyle(.secondary)
+            ForEach(CodeUsage.WindowKind.allCases) { kind in
+                Toggle(kind.displayName, isOn: Binding(
+                    get: { config.windows.contains(kind) },
+                    set: { _ in
+                        change { $0.windows = Self.windows(config.windows, toggling: kind) }
+                    }
+                ))
+                .disabled(config.windows == [kind])
+            }
+        }
+    }
+
+    /// Hands back the whole config with one field moved, so a setting the
+    /// block does not show is a setting the block cannot lose.
+    private func change(_ move: (inout CodeUsage.Parameters) -> Void) {
+        var edited = config
+        move(&edited)
+        onChange(edited)
+    }
+
+    /// The selection after a box is clicked, with the last one held.
+    ///
+    /// A tile showing no window has nothing to draw, and a panel drawing
+    /// nothing reads as broken rather than as a choice. Unchecking the only
+    /// checked box therefore does nothing at all.
+    nonisolated static func windows(
+        _ current: [CodeUsage.WindowKind], toggling kind: CodeUsage.WindowKind
+    ) -> [CodeUsage.WindowKind] {
+        guard current.contains(kind) else {
+            return CodeUsage.WindowKind.allCases.filter { current.contains($0) || $0 == kind }
+        }
+        let left = current.filter { $0 != kind }
+        return left.isEmpty ? current : left
     }
 
     /// The steps, plus the stored value when a record carries one the design
     /// does not offer — a picker whose selection matches no tag draws blank,
     /// which reads as a setting lost.
     private var everySteps: [TimeInterval] {
-        UsageFaceConfig.resetEverySteps.contains(config.resetEvery)
-            ? UsageFaceConfig.resetEverySteps
-            : (UsageFaceConfig.resetEverySteps + [config.resetEvery]).sorted()
+        CodeUsage.Parameters.resetEverySteps.contains(config.resetEvery)
+            ? CodeUsage.Parameters.resetEverySteps
+            : (CodeUsage.Parameters.resetEverySteps + [config.resetEvery]).sorted()
     }
 
     private var afterSteps: [Int] {
-        UsageFaceConfig.resetAfterSteps.contains(config.resetAfter)
-            ? UsageFaceConfig.resetAfterSteps
-            : (UsageFaceConfig.resetAfterSteps + [config.resetAfter]).sorted()
+        CodeUsage.Parameters.resetAfterSteps.contains(config.resetAfter)
+            ? CodeUsage.Parameters.resetAfterSteps
+            : (CodeUsage.Parameters.resetAfterSteps + [config.resetAfter]).sorted()
     }
 
     /// Seconds as the picker says them: `10 s` under a minute, `2 min` from.

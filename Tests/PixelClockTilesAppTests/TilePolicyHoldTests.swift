@@ -40,7 +40,7 @@ private let clock = ClockRecord(name: "Clock", model: .awtrix3, address: "10.0.0
         focusStatus: StubFocusStatus(access: .authorized, activeMode: .mode("com.apple.sleep.sleep-mode")),
         now: { atHour(12) },
         clocks: [clock],
-        tiles: [tileOf("claude", TileDefaults.claude, on: clock)]
+        tiles: [tileOf("claude", TileDefaults.codeUsage, on: clock)]
     )
 
     subject.start()

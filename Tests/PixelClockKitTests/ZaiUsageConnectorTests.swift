@@ -212,33 +212,37 @@ private let usageBody = Data("""
         }
     }
 
-    /// The AWTRIX face draws all three figures into the app in the loop, in
-    /// the order the plan names them: five hours, the week, the MCP month.
-    @Test func theAwtrixFaceDrawsTheThreeFiguresInTheLoopsApp() throws {
+    /// The AWTRIX face is the substrate's page: ONE figure — the week — with
+    /// the vendor's mark beside it and the band's own bar under it.
+    ///
+    /// It used to join every window the route named into one line, `"12% 35%
+    /// 7%"`, with no mark and no bar. Three figures side by side made the
+    /// reader do the comparing, and the one they wanted was always the week:
+    /// a five-hour window empties and refills several times inside one, and
+    /// the MCP month meters tool calls, which is not a coding allowance at all.
+    @Test func theAwtrixFaceDrawsTheWeekWithTheVendorsMarkAndItsBar() throws {
         let drawn = makeConnector(reading).awtrixFace.draw(reading)
 
         #expect(drawn.surface == .app("zai"))
-        #expect(drawn.scene.text.contains("12%"))
-        #expect(drawn.scene.text.contains("35%"))
-        #expect(drawn.scene.text.contains("7%"))
+        #expect(drawn.scene.text == "35%")
         #expect(drawn.scene.color == ZaiUsage.brandColour)
-        // Three polls inside one lifetime — the same insurance the Claude
-        // figure buys at 300/900.
-        #expect(drawn.scene.lifetime == 1_800)
+        #expect(drawn.scene.icon == CodeUsage.Vendor.zai.icon)
+        #expect(drawn.scene.progress?.percent == 35)
+        // A quarter of an hour, the same as the Claude tile's: fifteen polls
+        // inside one lifetime, and nothing about a z.ai figure is fresher at
+        // twenty minutes than a Claude one.
+        #expect(drawn.scene.lifetime == CodeUsage.Tile.lifetime)
     }
 
-    /// A window the route did not name is a row the face does not carry; the
-    /// figure that did arrive still stands.
-    @Test func theAwtrixFaceCarriesOnlyTheWindowsThatAnswered() throws {
+    /// A week the route did not name falls back to the five-hour window — the
+    /// page says the figure it has rather than nothing.
+    @Test func theAwtrixFaceFallsBackToTheFiveHourWindow() throws {
         let sparse = ZaiUsageReading(
-            limits: ZaiUsageLimits(weekly: ZaiUsageWindow(percentUsed: 35)),
+            limits: ZaiUsageLimits(fiveHour: ZaiUsageWindow(percentUsed: 12)),
             totals: ZaiUsageTotals(), observedAt: nil
         )
 
-        let drawn = makeConnector(sparse).awtrixFace.draw(sparse)
-
-        #expect(drawn.scene.text.contains("35%"))
-        #expect(drawn.scene.text.contains("12%") == false)
+        #expect(makeConnector(sparse).awtrixFace.draw(sparse).scene.text == "12%")
     }
 
     private let utc = TimeZone(identifier: "UTC")!
@@ -247,14 +251,14 @@ private let usageBody = Data("""
     /// weekly windows, each with the reset instant the quota route dated it
     /// with. The MCP month has no row on this face.
     @Test func theTC002FaceIsTheSharedUsageFaceFedFiveHoursAndTheWeek() {
-        let config = UsageFaceConfig(resetEvery: 15, resetAfter: 10)
+        let config = CodeUsage.Parameters(resetEvery: 15, resetAfter: 10)
 
         #expect(
-            ZaiUsageConnector.ulanziOutput(for: reading, config: config, timeZone: utc)
-                == UsageFace.delivery(
+            ZaiUsageConnector.ulanziOutput(for: reading, parameters: config, timeZone: utc)
+                == CodeUsage.Compact.delivery(
                     vendor: .zai,
-                    session: UsageFace.Window(percent: 12, resetsAt: reading.fiveHour?.resetsAt),
-                    weekly: UsageFace.Window(percent: 35, resetsAt: reading.weekly?.resetsAt),
+                    session: CodeUsage.Window(percent: 12, resetsAt: reading.fiveHour?.resetsAt),
+                    weekly: CodeUsage.Window(percent: 35, resetsAt: reading.weekly?.resetsAt),
                     config: config,
                     timeZone: utc
                 )
@@ -271,11 +275,11 @@ private let usageBody = Data("""
         )
 
         #expect(
-            ZaiUsageConnector.ulanziOutput(for: sparse, config: .standard, timeZone: utc)
-                == UsageFace.delivery(
+            ZaiUsageConnector.ulanziOutput(for: sparse, parameters: .standard, timeZone: utc)
+                == CodeUsage.Compact.delivery(
                     vendor: .zai,
                     session: nil,
-                    weekly: UsageFace.Window(percent: 35, resetsAt: nil),
+                    weekly: CodeUsage.Window(percent: 35, resetsAt: nil),
                     config: .standard,
                     timeZone: utc
                 )
@@ -285,17 +289,17 @@ private let usageBody = Data("""
     /// The tile's settings and the zone are read at draw time, so a picker
     /// moved in the tile's window reaches the next poll.
     @Test func theFaceReadsTheTilesSettingsWhenItDraws() throws {
-        let config = UsageFaceConfig(resetEvery: 120, resetAfter: 5)
+        let config = CodeUsage.Parameters(resetEvery: 120, resetAfter: 5)
         let connector = ZaiUsageConnector(
             source: Reports(reading: reading),
-            usageFace: { config },
+            parameters: { config },
             timeZone: { TimeZone(identifier: "UTC")! }
         )
 
         let delivery = try #require(connector.ulanziFace?.draw(reading))
 
         #expect(
-            delivery == ZaiUsageConnector.ulanziOutput(for: reading, config: config, timeZone: utc)
+            delivery == ZaiUsageConnector.ulanziOutput(for: reading, parameters: config, timeZone: utc)
         )
         #expect((try UlanziScene(frames: delivery.scene.frames).jsonObject()).isEmpty == false)
     }

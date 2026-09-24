@@ -898,33 +898,24 @@ final class AppModel: ObservableObject {
                     }
                 )
             )
-            // The Claude tile's own metric, read from its config on every run —
-            // so a choice made in the detail takes effect at the next poll,
-            // exactly the way the weather's place does. A tile with no choice
-            // yet shows the week, which is what it drew before the choice
-            // existed.
+            // Both coding-subscription tiles read their parameters off their
+            // own record at every draw, so a picker moved in the tile's window
+            // reaches the next poll rather than the next launch — exactly the
+            // way the weather's place does.
+            //
+            // One lookup for both, because the tiles take the SAME parameters:
+            // what differs between them is how each reaches its account, and
+            // that is the only place the two registrations diverge below.
             let storedTiles = TileStore(defaults: defaults)
+            let parameters: @Sendable (String) -> CodeUsage.Parameters = { connectorId in
+                storedTiles.all()
+                    .first { $0.key.clockId == clock.id && $0.key.connectorId == connectorId }
+                    .flatMap(\.config)?.parameters ?? .standard
+            }
             registry.register(
                 ClaudeUsageConnector(
                     reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document),
-                    metric: {
-                        storedTiles.all()
-                            .first {
-                                $0.key.clockId == clock.id
-                                    && $0.key.connectorId == ClaudeUsageConnector.id
-                            }
-                            .flatMap(\.config)?.claude ?? .weekly
-                    },
-                    // The TC002 face's two settings, off the same record at
-                    // the same moment: a picker moved reaches the next poll.
-                    usageFace: {
-                        storedTiles.all()
-                            .first {
-                                $0.key.clockId == clock.id
-                                    && $0.key.connectorId == ClaudeUsageConnector.id
-                            }
-                            .flatMap(\.config)?.usageFace ?? .standard
-                    }
+                    parameters: { parameters(ClaudeUsageConnector.id) }
                 )
             )
             // The key is looked up at every read, never held: a key pasted
@@ -940,16 +931,7 @@ final class AppModel: ObservableObject {
                             )))
                         }
                     ),
-                    // The TC002 face's two settings, read off the tile's
-                    // record at every draw, the way the Claude tile's are.
-                    usageFace: {
-                        storedTiles.all()
-                            .first {
-                                $0.key.clockId == clock.id
-                                    && $0.key.connectorId == ZaiUsageConnector.connectorId
-                            }
-                            .flatMap(\.config)?.usageFace ?? .standard
-                    }
+                    parameters: { parameters(ZaiUsageConnector.connectorId) }
                 )
             )
             return registry
@@ -1401,7 +1383,7 @@ final class AppModel: ObservableObject {
                 key: key, policy: policy,
                 config: .zai(ZaiTileConfig(
                     keyAccount: account,
-                    usageFace: storedTile(key)?.config?.usageFace ?? .standard
+                    parameters: storedTile(key)?.config?.parameters ?? .standard
                 ))
             )
         }

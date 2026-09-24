@@ -35,7 +35,9 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_GEN = os.path.join(ROOT, ".claude", "skills", "tc002-face-mockup", "gen.py")
-OUT = os.path.join(ROOT, "Tests", "PixelClockKitTests", "Fixtures", "usage_face_oracle.json")
+FIXTURES = os.path.join(ROOT, "Tests", "PixelClockKitTests", "Fixtures")
+OUT = os.path.join(FIXTURES, "usage_face_oracle.json")
+CIRCLE_OUT = os.path.join(FIXTURES, "usage_circle_oracle.json")
 MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split()
 
 
@@ -58,6 +60,14 @@ def session_reset(epoch):
 
 
 def weekly_reset(epoch):
+    """The day first, which is the tile's default order.
+
+    The tile also offers `sep 26 15:00`. That spelling is NOT recorded here,
+    and deliberately: it is the same glyphs moved, so it is exactly as wide,
+    and nothing about how a reset is centred or scrolled can differ. Recording
+    it would double these fixtures to assert a string Python already proves in
+    a unit test.
+    """
     t = time.gmtime(epoch)
     return f"{t.tm_mday} {MONTHS[t.tm_mon - 1]} {t.tm_hour:02d}:{t.tm_min:02d}"
 
@@ -95,6 +105,60 @@ CASES = [
 ]
 
 
+# ── Circle ────────────────────────────────────────────────────────────────
+# (id, vendor, [(window kind, percent, resetsAt)], dwellMs, resetAfter)
+#
+# The kinds are the tile's multi-select: one selected window is one turn and no
+# transition, two are two turns with a count between them. The order is the
+# order they are shown in, which is the order the windows are listed.
+CIRCLE_CASES = [
+    ("one-window-steady", "claude", [("fiveHour", 23, None)], 6_000, 80),
+    ("one-window-hot", "claude", [("fiveHour", 84, utc(2026, 9, 23, 14, 30))], 6_000, 80),
+    # The weekly reset is 55 columns against the 39 the rim frames, so this is
+    # the case that scrolls — and the longest page Circle can build.
+    ("one-window-marquee", "zai", [("weekly", 92, utc(2026, 9, 26, 15, 0))], 6_000, 80),
+    ("both-steady", "claude",
+     [("fiveHour", 23, None), ("weekly", 41, None)], 6_000, 80),
+    ("both-session-hot", "claude",
+     [("fiveHour", 84, utc(2026, 9, 23, 14, 30)), ("weekly", 52, None)], 6_000, 80),
+    ("both-weekly-hot", "zai",
+     [("fiveHour", 35, None), ("weekly", 92, utc(2026, 9, 26, 15, 0))], 8_000, 80),
+    ("both-hot", "zai",
+     [("fiveHour", 97, utc(2026, 9, 24, 9, 5)),
+      ("weekly", 88, utc(2026, 10, 1, 9, 0))], 6_000, 80),
+    # A full bucket pulses through its reading and then stands still for its
+    # reset: text that blinks under the eye is text nobody finishes.
+    ("spent", "claude",
+     [("fiveHour", 104, utc(2026, 9, 23, 23, 59)),
+      ("weekly", 88, utc(2026, 10, 1, 9, 0))], 6_000, 80),
+    ("spent-no-reset", "claude", [("fiveHour", 100, None)], 10_000, 80),
+    # Nothing to count to: a window with no reading cuts rather than sweeping,
+    # because there is no value between 41% and "--".
+    ("partial", "claude", [("fiveHour", 41, None), ("weekly", None, None)], 6_000, 80),
+    ("no-data", "zai", [("fiveHour", None, None), ("weekly", None, None)], 6_000, 80),
+    ("zero-and-one", "claude", [("fiveHour", 0, None), ("weekly", 1, None)], 6_000, 80),
+    ("threshold-quiet", "zai",
+     [("fiveHour", 72, utc(2026, 9, 23, 18, 10)),
+      ("weekly", 61, utc(2026, 9, 28, 16, 0))], 6_000, 80),
+    ("threshold-60-both", "claude",
+     [("fiveHour", 72, utc(2026, 9, 23, 18, 10)),
+      ("weekly", 61, utc(2026, 9, 28, 16, 0))], 20_000, 60),
+    ("long-dwell", "claude", [("fiveHour", 55, None), ("weekly", 66, None)], 60_000, 80),
+]
+
+# What each window is CALLED on the panel — the period it measures, in the
+# proportional face the rest of the layout is drawn in.
+CIRCLE_NAMES = {"fiveHour": "5h", "weekly": "week"}
+
+
+def circle_reset(kind, epoch):
+    """The session names a time, the week names a date and a time. The rim
+    frames 39 columns, which the first fits and the second never does."""
+    if epoch is None:
+        return ""
+    return session_reset(epoch) if kind == "fiveHour" else weekly_reset(epoch)
+
+
 def rows(canvas):
     return ["".join("%02x%02x%02x" % (px or (0, 0, 0)) for px in row) for row in canvas.px]
 
@@ -113,11 +177,31 @@ def main():
             "resetEveryMs": every_ms, "resetAfter": after,
             "frames": [{"ms": ms, "rows": rows(cv)} for cv, ms in timeline],
         })
-    with open(OUT, "w") as f:
+    write(OUT, gen, cases)
+
+    circles = []
+    for cid, vendor, windows, dwell_ms, after in CIRCLE_CASES:
+        timeline = gen.circle_timeline(
+            vendor,
+            [(CIRCLE_NAMES[kind], pct, circle_reset(kind, at)) for kind, pct, at in windows],
+            dwell_ms=dwell_ms, threshold=after,
+        )
+        circles.append({
+            "id": cid, "vendor": vendor,
+            "windows": [{"kind": kind, "percent": pct, "resetsAt": at}
+                        for kind, pct, at in windows],
+            "dwellMs": dwell_ms, "resetAfter": after,
+            "frames": [{"ms": ms, "rows": rows(cv)} for cv, ms in timeline],
+        })
+    write(CIRCLE_OUT, gen, circles)
+
+
+def write(path, gen, cases):
+    with open(path, "w") as f:
         json.dump({"timeZone": "UTC", "width": gen.W, "height": gen.H, "cases": cases},
                   f, indent=1)
         f.write("\n")
-    print(f"{len(cases)} cases, {sum(len(c['frames']) for c in cases)} frames -> {OUT}")
+    print(f"{len(cases)} cases, {sum(len(c['frames']) for c in cases)} frames -> {path}")
 
 
 if __name__ == "__main__":

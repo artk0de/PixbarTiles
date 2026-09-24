@@ -124,8 +124,28 @@ G = {
 }
 
 
-def text_width(s):
-    return sum(len(G[ch][0]) + 1 for ch in s) - 1 if s else 0
+# The kit's `PixelFont.big` — 5x9 digits, the same bytes `weather/wgen.py`
+# draws its temperature with. Copied rather than imported: this file is meant
+# to be copied out on its own, and a mockup that only renders next to the
+# weather generator is a mockup nobody runs.
+B = {
+    "0": [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+    "1": ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."],
+    "2": [".###.", "#...#", "....#", "....#", "...#.", "..#..", ".#...", "#....", "#####"],
+    "3": [".###.", "#...#", "....#", "....#", "..##.", "....#", "....#", "#...#", ".###."],
+    "4": ["...#.", "..##.", ".#.#.", "#..#.", "#..#.", "#####", "...#.", "...#.", "...#."],
+    "5": ["#####", "#....", "#....", "####.", "....#", "....#", "....#", "#...#", ".###."],
+    "6": [".###.", "#....", "#....", "####.", "#...#", "#...#", "#...#", "#...#", ".###."],
+    "7": ["#####", "....#", "....#", "...#.", "..#..", "..#..", ".#...", ".#...", ".#..."],
+    "8": [".###.", "#...#", "#...#", "#...#", ".###.", "#...#", "#...#", "#...#", ".###."],
+    "9": [".###.", "#...#", "#...#", "#...#", ".####", "....#", "....#", "....#", ".###."],
+    "-": ["...", "...", "...", "...", "###", "...", "...", "...", "..."],
+    "%": ["##..#", "##..#", "...#.", "...#.", "..#..", ".#...", ".#...", "#..##", "#..##"],
+}
+
+
+def text_width(s, font=G):
+    return sum(len(font[ch][0]) + 1 for ch in s) - 1 if s else 0
 
 
 class Canvas:
@@ -147,10 +167,10 @@ class Canvas:
                 if ch == "#":
                     self.put(x + dx, y + dy, c, clip)
 
-    def text(self, s, x, y, c, clip=(0, W)):
+    def text(self, s, x, y, c, clip=(0, W), font=G):
         for ch in s:
-            self.bitmap(G[ch], x, y, c, clip)
-            x += len(G[ch][0]) + 1
+            self.bitmap(font[ch], x, y, c, clip)
+            x += len(font[ch][0]) + 1
 
 
 # Layout: logo 8x5 at (0,1); rows at y=1 and y=9 (text 5 rows, gap, 1px bar).
@@ -306,6 +326,159 @@ def timeline(vendor, s, w, interval_ms=DWELL_MS, step=1, marquee="edge", thresho
         return frames
     for index in scrolling:
         frames += marquee_frames(vendor, pcts, values, index, messages[index])
+    return frames
+
+
+# ── Circle: one window at a time, the reading drawn around the panel ──────
+#
+# Compact answers "where do both windows stand" in one glance and pays for it
+# in size: two rows of 5x5 on a panel sixteen pixels tall leaves the figure the
+# same height as its label. Circle answers "where does THIS window stand" and
+# spends the whole panel on it — the reading at 5x9, and the bar unrolled
+# around the edge, where it is 132 cells instead of 52 and one cell is under a
+# percent.
+#
+# The rim is a frame, not a fourth row: it costs no interior pixels, and a
+# reader who is not looking for it sees a panel with a coloured border rather
+# than a chart they have to decode.
+MARK_AT = (2, 2)
+NAME_Y = 9
+FIGURE_TOP = 3
+FIGURE_RIGHT = W - 3
+RESET_TOP = 4
+# The mark occupies the top-left corner, so everything the rim frames starts
+# after it. Eleven columns: the 8-wide mark at x2, and a column of air.
+RESET_LEFT = 11
+# What the dwell spends on the reset once a window is hot. The reading is the
+# headline and keeps the larger share of every turn.
+RESET_SHARE = 0.4
+SWEEP_MS = 45
+SWEEP_STEPS = 12
+
+
+def rim_path():
+    """The perimeter, clockwise from the top-left, each cell exactly once.
+
+    Clockwise from (0,0) rather than from the bottom, because a gauge is read
+    the way a clock is and the panel has no other zero to start from. The
+    corners belong to the run that reaches them first, so no cell is drawn —
+    or counted — twice.
+    """
+    top = [(x, 0) for x in range(W)]
+    right = [(W - 1, y) for y in range(1, H)]
+    bottom = [(x, H - 1) for x in range(W - 2, -1, -1)]
+    left = [(0, y) for y in range(H - 2, 0, -1)]
+    return top + right + bottom + left
+
+
+RIM = rim_path()
+
+
+def lit_cells(pct):
+    """Cells of the rim a reading fills. A reading that exists is never zero
+    cells: 1% has to look different from no data, and at 132 cells it rounds
+    to one either way."""
+    if pct is None or pct <= 0:
+        return 0
+    return max(1, round(len(RIM) * min(pct, 100) / 100))
+
+
+def circle(vendor, name, pct, value=None, value_x=None, dim=False, lit=None):
+    """One window: the rim at its reading, the mark in the corner, the name
+    along the bottom, and either the figure or a reset inside.
+
+    `lit` overrides what the reading would fill, and it is what makes the
+    transition possible: during a change the rim shows a value between the two
+    windows while the name and figure already belong to one of them.
+    """
+    v = VENDORS[vendor]
+    cv = Canvas()
+    colour = band_colour(pct, dim) if pct else TRACK
+    lit = lit_cells(pct) if lit is None else lit
+    for index, (x, y) in enumerate(RIM):
+        cv.put(x, y, colour if index < lit else TRACK)
+    cv.bitmap(v["logo"], *MARK_AT, v["logo_colour"])
+    cv.text(name, 2, NAME_Y, LABEL, (2, W - 2))
+    ink = value_ink(v, pct, dim)
+    if value is None:
+        figure = percent_text(pct)
+        cv.text(figure, FIGURE_RIGHT - text_width(figure, B), FIGURE_TOP, ink,
+                (RESET_LEFT, W - 2), B)
+    else:
+        cv.text(value, RESET_LEFT if value_x is None else value_x, RESET_TOP, ink,
+                (RESET_LEFT, W - 2))
+    return cv
+
+
+def circle_reset_frames(vendor, name, pct, message, ms):
+    """A reset inside the rim: still and centred when it fits, one pass from
+    off the right edge when it does not — the same rule Compact's rows follow,
+    over a wider area."""
+    lo, hi = RESET_LEFT, W - 2
+    width = text_width(message)
+    if width <= hi - lo:
+        return [(circle(vendor, name, pct, value=message,
+                        value_x=lo + (hi - lo - width) // 2), ms)]
+    return [(circle(vendor, name, pct, value=message, value_x=x), MARQUEE_STEP_MS)
+            for x in range(W, lo - width - 1, -1)]
+
+
+def circle_turn(vendor, name, pct, rst, dwell_ms, threshold):
+    """One window's turn on the panel: its reading, then its reset if it has
+    one and is past the threshold."""
+    hot = pct is not None and bool(rst) and pct >= threshold
+    reading_ms = int(dwell_ms * (1 - RESET_SHARE)) if hot else dwell_ms
+    if pct is not None and pct >= 100:
+        bright = circle(vendor, name, pct)
+        dark = circle(vendor, name, pct, dim=True)
+        beats = min(PULSE_FRAMES, max(2, reading_ms // PULSE_MS))
+        frames = [(bright if i % 2 == 0 else dark, PULSE_MS) for i in range(beats)]
+        rest = reading_ms - PULSE_MS * beats
+        if rest > 0:
+            frames.append((bright, rest))
+    else:
+        frames = [(circle(vendor, name, pct), reading_ms)]
+    if hot:
+        frames += circle_reset_frames(vendor, name, pct, f"rst {rst}", dwell_ms - reading_ms)
+    return frames
+
+
+def sweep_count(vendor, prev_pct, name, pct):
+    """The change of window as one move: the rim runs from where it WAS to
+    where it belongs while the figure counts with it.
+
+    Counting is what makes this read as one instrument re-measuring rather
+    than as two pages. A rim that slides under a figure that jumped is a rim
+    catching up — the eye follows the digits, and the motion it was given
+    happens somewhere it is not looking. The name changes on the first step,
+    so from then on everything drawn is about the window being arrived at.
+
+    A window with no reading has nothing to count to: it cuts, and the cut is
+    honest — there is no value between 41% and "--".
+    """
+    if prev_pct is None or pct is None:
+        return [(circle(vendor, name, pct), SWEEP_MS * 3)]
+    a, b = min(prev_pct, 100), min(pct, 100)
+    # Drawn AT the blended reading rather than with a blended rim under a
+    # settled figure: one number drives the rim, the digits and the band
+    # colour together, so the three cannot disagree for a frame.
+    return [(circle(vendor, name, round(a + (b - a) * s / SWEEP_STEPS)), SWEEP_MS)
+            for s in range(1, SWEEP_STEPS + 1)]
+
+
+def circle_timeline(vendor, windows, dwell_ms=DWELL_MS, threshold=80):
+    """[(canvas, ms)] — every selected window in turn, each arrived at by a count.
+
+    `windows` is [(name, pct, rst)] in the order they are shown, and it is what
+    the tile's multi-select produces: one window selected is one turn with no
+    transition at all, because there is nothing to change to.
+    """
+    if len(windows) == 1:
+        return circle_turn(vendor, *windows[0], dwell_ms, threshold)
+    frames = []
+    for index, (name, pct, rst) in enumerate(windows):
+        frames += sweep_count(vendor, windows[index - 1][1], name, pct)
+        frames += circle_turn(vendor, name, pct, rst, dwell_ms, threshold)
     return frames
 
 

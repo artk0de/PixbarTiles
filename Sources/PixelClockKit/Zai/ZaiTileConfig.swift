@@ -8,19 +8,19 @@ import Foundation
 /// the tiles JSON in UserDefaults never holds the secret — a defaults dump
 /// cannot leak what it never carried.
 ///
-/// It also carries the two settings of the TC002's shared usage face, beside
-/// the handle under their own names. Left out of the JSON while they are the
+/// It also carries the shared coding-subscription parameters — the SAME list
+/// the Claude tile offers — beside the handle under their own names. Left out of the JSON while they are the
 /// defaults, so a record written before they existed — the handle alone —
 /// reads as a tile at the defaults and is never rewritten.
 public struct ZaiTileConfig: Equatable, Sendable, Codable {
     /// The keychain account the tile's key is filed under, as `account(for:)`
     /// derived it.
     public let keyAccount: String
-    public var usageFace: UsageFaceConfig
+    public var parameters: CodeUsage.Parameters
 
-    public init(keyAccount: String, usageFace: UsageFaceConfig = .standard) {
+    public init(keyAccount: String, parameters: CodeUsage.Parameters = .standard) {
         self.keyAccount = keyAccount
-        self.usageFace = usageFace
+        self.parameters = parameters
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -30,14 +30,14 @@ public struct ZaiTileConfig: Equatable, Sendable, Codable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         keyAccount = try container.decode(String.self, forKey: .keyAccount)
-        usageFace = try UsageFaceConfig(from: decoder)
+        parameters = try CodeUsage.Parameters(from: decoder)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(keyAccount, forKey: .keyAccount)
-        if usageFace != .standard {
-            try usageFace.encode(to: encoder)
+        if parameters != .standard {
+            try parameters.encode(to: encoder)
         }
     }
 

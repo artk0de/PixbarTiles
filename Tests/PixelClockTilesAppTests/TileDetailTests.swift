@@ -186,35 +186,73 @@ private func editor(_ policy: TilePolicy) -> some View {
         ])
     }
 
-    // The Claude block is the display selector: the stored metric is what the
-    // picker opens with, and another metric draws differently.
-    @Test func theClaudeBlockOpensWithTheStoredMetric() {
-        func block(_ metric: ClaudeDisplayMetric) -> ClaudeTileBlock {
-            ClaudeTileBlock(metric: metric, onMetric: { _ in })
-        }
-
-        let base = drawn(block(.weekly))
-        #expect(base != nil)
-        #expect(base != drawn(block(.daily)))
-        #expect(base != drawn(block(.session)))
-    }
-
     // The usage face's block: two pickers, each opening with the stored
     // setting, each setting drawn differently — and the captions say the
     // steps the design names.
     @Test func theUsageFaceBlockOpensWithTheStoredSettings() {
-        func block(_ config: UsageFaceConfig) -> UsageFaceBlock {
-            UsageFaceBlock(config: config, onChange: { _ in })
+        func block(_ config: CodeUsage.Parameters) -> CodeUsageBlock {
+            CodeUsageBlock(config: config, onChange: { _ in })
         }
 
         let base = drawn(block(.standard))
         #expect(base != nil)
-        #expect(base != drawn(block(UsageFaceConfig(resetEvery: 60, resetAfter: 80))))
-        #expect(base != drawn(block(UsageFaceConfig(resetEvery: 10, resetAfter: 95))))
-        #expect(UsageFaceConfig.resetEverySteps.map(UsageFaceBlock.everyCaption) == [
+        #expect(base != drawn(block(CodeUsage.Parameters(resetEvery: 60, resetAfter: 80))))
+        #expect(base != drawn(block(CodeUsage.Parameters(resetEvery: 10, resetAfter: 95))))
+        #expect(CodeUsage.Parameters.resetEverySteps.map(CodeUsageBlock.everyCaption) == [
             "5 s", "10 s", "15 s", "30 s", "1 min", "2 min", "5 min",
         ])
-        #expect(UsageFaceBlock.afterCaption(80) == "80%")
+        #expect(CodeUsageBlock.afterCaption(80) == "80%")
+    }
+
+    // The layout is a setting like any other: chosen in the block, drawn
+    // differently, and on both vendors' tiles because the block is one.
+    @Test func theUsageFaceBlockDrawsTheChosenLayout() {
+        func block(_ config: CodeUsage.Parameters) -> CodeUsageBlock {
+            CodeUsageBlock(config: config, onChange: { _ in })
+        }
+        let circle = CodeUsage.Parameters(
+            resetEvery: 10, resetAfter: 80, layout: .circle, windows: CodeUsage.WindowKind.allCases
+        )
+
+        #expect(drawn(block(.standard)) != drawn(block(circle)))
+        // The Circle rotates through the windows the tile selected, so the
+        // selection is part of the block — and moves the picture.
+        let weeklyOnly = CodeUsage.Parameters(
+            resetEvery: 10, resetAfter: 80, layout: .circle, windows: [.weekly]
+        )
+        #expect(drawn(block(circle)) != drawn(block(weeklyOnly)))
+    }
+
+    // One stored dwell, named for what it DOES in the chosen layout. Compact
+    // stands on the percentages for it; Circle spends it on one window's turn.
+    // The same picker under one label would read as two settings.
+    @Test func theDwellIsNamedForWhatItDoesInEachLayout() {
+        #expect(CodeUsage.Layout.compact.dwellLabel == "Show reset every")
+        #expect(CodeUsage.Layout.circle.dwellLabel == "Change every")
+        #expect(CodeUsage.Layout.allCases.map(\.displayName) == ["Compact", "Circle"])
+    }
+
+    // The date-order picker shows the SPELLINGS, so the reader reads the
+    // result instead of picturing it from a name.
+    @Test func theDateOrderIsOfferedAsTheTwoSpellings() {
+        func block(_ config: CodeUsage.Parameters) -> CodeUsageBlock {
+            CodeUsageBlock(config: config, onChange: { _ in })
+        }
+        var moved = CodeUsage.Parameters.standard
+        moved.dateOrder = .monthFirst
+
+        #expect(CodeUsage.DateOrder.allCases.map(\.displayName)
+            == ["26 sep 15:00", "sep 26 15:00"])
+        #expect(drawn(block(.standard)) != drawn(block(moved)))
+    }
+
+    // Unchecking the last window would leave the panel with nothing to draw,
+    // which reads as a broken tile rather than as a setting. The last box
+    // stays checked.
+    @Test func theLastSelectedWindowCannotBeTurnedOff() {
+        #expect(CodeUsageBlock.windows([.fiveHour, .weekly], toggling: .weekly) == [.fiveHour])
+        #expect(CodeUsageBlock.windows([.weekly], toggling: .fiveHour) == [.fiveHour, .weekly])
+        #expect(CodeUsageBlock.windows([.weekly], toggling: .weekly) == [.weekly])
     }
 }
 

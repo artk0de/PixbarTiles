@@ -11,19 +11,13 @@ import Foundation
 ///   {"weather":{"latitude":55.7558,"longitude":37.6173}}
 ///   {"vpn":{"slot":"top","upColour":"#90EE90","vpn":"pritunl",
 ///           "whenDown":{"colour":"#FF0000","kind":"blink"}}}
-///   {"claude":"daily"}
-///   {"claude":{"metric":"daily","showResetAfter":70,"showResetEvery":30}}
+///   {"claude":{"showResetAfter":70,"showResetEvery":30}}
+///   {"claude":"daily"}  — legacy: the display metric, read as the defaults
 public enum TileConfig: Equatable, Sendable {
     case weather(WeatherTileConfig)
     case vpn(VPNTileConfig)
     case zai(ZaiTileConfig)
     case claude(ClaudeTileConfig)
-
-    /// A Claude tile's config at this metric, its usage-face settings the
-    /// defaults — the form every caller from before those settings means.
-    public static func claude(_ metric: ClaudeDisplayMetric) -> TileConfig {
-        .claude(ClaudeTileConfig(metric: metric))
-    }
 
     /// A weather tile's config in the shipped defaults, at this place — the
     /// form every caller that knows only the place means. Overloading the
@@ -58,23 +52,18 @@ public enum TileConfig: Equatable, Sendable {
         return handle
     }
 
-    /// The Claude tile's display metric, or nil for any other tile.
-    public var claude: ClaudeDisplayMetric? {
-        claudeConfig?.metric
-    }
-
     /// The Claude tile's whole config, or nil for any other tile.
     public var claudeConfig: ClaudeTileConfig? {
         guard case let .claude(config) = self else { return nil }
         return config
     }
 
-    /// The shared usage face's settings — the Claude tile's or the z.ai
-    /// tile's — or nil for a tile that does not draw that face.
-    public var usageFace: UsageFaceConfig? {
+    /// The coding-subscription parameters — the Claude tile's or the z.ai
+    /// tile's, and the same list either way — or nil for a tile that is not one.
+    public var parameters: CodeUsage.Parameters? {
         switch self {
-        case let .claude(config): config.usageFace
-        case let .zai(handle): handle.usageFace
+        case let .claude(config): config.parameters
+        case let .zai(handle): handle.parameters
         case .weather, .vpn: nil
         }
     }

@@ -18,7 +18,7 @@ private struct NoZaiReading: ZaiUsageReporting {
 @MainActor private func shipped() -> [(connector: any Connector, row: TilePolicy)] {
     [
         (weatherConnector(over: StubTransport(body: Data())), TileDefaults.weather),
-        (ClaudeUsageConnector(reporter: NoReading()), TileDefaults.claude),
+        (ClaudeUsageConnector(reporter: NoReading()), TileDefaults.codeUsage),
         (
             AppModel.anecdoteWiring(
                 transport: StubTransport(body: Data()),
@@ -31,7 +31,7 @@ private struct NoZaiReading: ZaiUsageReporting {
             ZaiUsageConnector(
                 source: ZaiUsageAPI(transport: StubTransport(body: Data()), key: { nil })
             ),
-            TileDefaults.zai
+            TileDefaults.codeUsage
         ),
     ]
 }
@@ -72,8 +72,8 @@ private struct NoZaiReading: ZaiUsageReporting {
     for (connector, _) in shipped() where connector.refreshSteps == RefreshScale.codingSubscription {
         #expect(connector.defaultInterval == 60, "\(connector.id)")
     }
-    #expect(TileDefaults.claude.refreshSeconds == 60)
-    #expect(TileDefaults.zai.refreshSeconds == 60)
+    #expect(TileDefaults.codeUsage.refreshSeconds == 60)
+    #expect(TileDefaults.codeUsage.refreshSeconds == 60)
 }
 
 // Which connector is offered which ladder, said once and in full. A ladder

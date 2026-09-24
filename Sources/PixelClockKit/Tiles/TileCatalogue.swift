@@ -116,6 +116,32 @@ public struct TilePresentation: Sendable, Equatable {
         self.blurb = blurb
     }
 
+    /// The name of this tile's instance, said beside the tile's own name —
+    /// `GitHub (TeaRAGs)`, `VPN (Pritunl)` — or nil for a tile that is the
+    /// only one of its kind on a clock.
+    ///
+    /// Per connector, because only the connector's config knows what names
+    /// an instance: a GitHub tile by its short name, else its repository's
+    /// name as typed (the instance lowercases it); a VPN tile by its VPN.
+    public static func secondaryName(of tile: TileRecord) -> String? {
+        switch tile.key.connectorId {
+        case GitHubConnector.connectorId:
+            if let short = tile.config?.github?.shortName?.trimmingCharacters(in: .whitespaces), !short.isEmpty {
+                return short
+            }
+            let repo = tile.config?.github?.repo ?? tile.key.instance
+            let name = repo.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+            return name.isEmpty ? nil : name
+        case VPNConnector.id:
+            if let lamp = tile.config?.lamp {
+                return WatchedVPN.preset(id: lamp.vpn)?.displayName ?? lamp.vpn
+            }
+            return tile.key.instance.isEmpty ? nil : tile.key.instance
+        default:
+            return nil
+        }
+    }
+
     /// What a connector looks like, by id. A connector with no entry wears
     /// the "unknown app" mark rather than nothing, so a tile the table has
     /// not heard of is still visibly a tile.

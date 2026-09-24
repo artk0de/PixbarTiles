@@ -128,6 +128,33 @@ enum PanelGlyph {
     ///
     /// One gap column after every letter but the last. A trailing gap is a
     /// word that sits a column left of where it measures.
+    static func text(
+        _ text: String, in face: PixelFontFace, lit: Character = wordInk, italic: Bool
+    ) -> [String] {
+        let upright = self.text(text, in: face, lit: lit)
+        guard italic else { return upright }
+        // The face sheared: one column right per two rows up from the
+        // bottom, padded on the other side so every row keeps one width.
+        let height = upright.count
+        let widest = (height - 1) / 2
+        return upright.enumerated().map { row, line in
+            let shift = (height - 1 - row) / 2
+            return String(repeating: ".", count: shift) + line + String(repeating: ".", count: widest - shift)
+        }
+    }
+
+    /// A tile's title: its name upright and, for an instanced tile, the
+    /// instance's name in parentheses and italic — `GitHub (TeaRAGs)`.
+    static func title(
+        _ name: String, secondary: String?, in face: PixelFontFace, lit: Character = wordInk
+    ) -> [String] {
+        guard let secondary else { return text(name, in: face, lit: lit) }
+        let upright = text(name + " ", in: face, lit: lit)
+        let tail = text("(\(secondary))", in: face, lit: lit, italic: true)
+        let gap = String(repeating: ".", count: face.gap)
+        return zip(upright, tail).map { $0 + gap + $1 }
+    }
+
     static func text(_ text: String, in face: PixelFontFace, lit: Character = wordInk) -> [String] {
         var rows = [String](repeating: "", count: face.height)
         guard text.isEmpty == false else { return rows }

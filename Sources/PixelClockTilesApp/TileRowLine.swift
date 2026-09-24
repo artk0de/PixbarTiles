@@ -124,6 +124,28 @@ struct TileCardTrouble: Equatable {
     }
 }
 
+/// A tile's title on a card and on its settings window: the connector's name,
+/// and for an instanced tile the instance's (`TilePresentation.secondaryName`).
+struct TileTitle: Equatable {
+    let name: String
+    let secondary: String?
+
+    /// In words, where there are no pixels to slant — the window's title.
+    var text: String {
+        secondary.map { "\(name) (\($0))" } ?? name
+    }
+}
+
+/// The card's bottom-left line: what the tile last did — `delivered`,
+/// `running…`, `held` — or nil. A trouble is not said here: it has its own
+/// sentence line under the description, where it can wrap.
+enum TileCardOutcome {
+    static func of(trouble: TileCardTrouble?, held: Bool, result: String?) -> String? {
+        guard trouble == nil else { return nil }
+        return held ? "held" : result
+    }
+}
+
 enum TileRowIcon {
     static func symbol(forConnectorId connectorId: String) -> String {
         TilePresentation.of(connectorId: connectorId).icon

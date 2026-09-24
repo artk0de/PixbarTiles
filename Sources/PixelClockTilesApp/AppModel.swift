@@ -1666,13 +1666,25 @@ final class AppModel: ObservableObject {
         return registry.connector(id: key.connectorId)?.displayName ?? key.connectorId
     }
 
+    /// A tile's title where it is named on a card or its window: the
+    /// connector's own name (the VPN tile's is "VPN") and, for an instanced
+    /// tile, the name the kit gives its instance.
+    func tileTitle(of record: TileRecord) -> TileTitle {
+        let connectorId = record.key.connectorId
+        let name = connectorId == VPNConnector.id
+            ? VPNConnector(isUp: { _ in false }).displayName
+            : registry.connector(id: connectorId)?.displayName ?? connectorId
+        return TileTitle(name: name, secondary: TilePresentation.secondaryName(of: record))
+    }
+
     /// The detail surface's inputs for one tile, beyond the policy it edits:
     /// its display name and the config a save must carry through. Nil for a
     /// tile that is gone — there is nothing left for the surface to be open
     /// for.
     func detailValue(for key: TileKey) -> (name: String, config: TileConfig?)? {
         guard let record = storedTile(key) else { return nil }
-        return (tileName(of: record), record.config)
+        // The window's title: `GitHub (TeaRAGs)`, the card's words.
+        return (tileTitle(of: record).text, record.config)
     }
 
     /// A clock's reachability, as the Clocks section's row says it. The same

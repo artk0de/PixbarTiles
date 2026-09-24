@@ -208,7 +208,8 @@ private struct ClockTileCard: View {
     private var chromeInk: UInt32 { PixelInk.secondary(dark: scheme == .dark) }
 
     private var key: TileKey { record.key }
-    private var name: String { model.tileName(of: record) }
+    private var title: TileTitle { model.tileTitle(of: record) }
+    private var name: String { title.text }
     /// The shared table: the shelf the tile is filed on, and its one line.
     private var presentation: TilePresentation {
         TilePresentation.of(connectorId: key.connectorId)
@@ -245,8 +246,10 @@ private struct ClockTileCard: View {
                 )
                 // The name set in the clock's own face, at twice the pixel —
                 // which is what makes it read bold beside the line under it.
+                // An instanced tile names its instance after it, slanted:
+                // `GitHub (TeaRAGs)`.
                 PixelArt(
-                    map: PanelGlyph.text(name, in: PixelFont.standard, lit: "G"),
+                    map: PanelGlyph.title(title.name, secondary: title.secondary, in: PixelFont.standard, lit: "G"),
                     palette: PanelGlyph.inkPalette(nameInk),
                     pixel: 2
                 )
@@ -302,7 +305,18 @@ private struct ClockTileCard: View {
                     onCancel: { confirming = false }
                 )
             } else {
-                HStack {
+                HStack(alignment: .bottom) {
+                    // What the tile last did, in the clock's face and slanted
+                    // — a status, not a sentence, so it reads apart from the
+                    // description above it.
+                    if let outcome = outcomeLine {
+                        PixelArt(
+                            map: PanelGlyph.text(outcome, in: PixelFont.standard, lit: "G", italic: true),
+                            palette: PanelGlyph.inkPalette(chromeInk),
+                            pixel: 1.5
+                        )
+                        .accessibilityLabel(outcome)
+                    }
                     Spacer()
                     Button { confirming = true } label: {
                         PixelArt(map: PanelGlyph.bin, palette: PanelGlyph.inkPalette(chromeInk))
@@ -359,11 +373,18 @@ private struct ClockTileCard: View {
         // the selected one it could only ever show ANOTHER clock's failure,
         // and on the selected one it repeated what the line above had said.
         // A GitHub tile's last read beside it: which failure, or which
-        // permission the token lacks — the quiet one (who starred) as plainly
-        // as the rest, and said even when the push failed too.
-        if let trouble { return trouble.line }
-        if model.hold(of: key) != nil { return "held" }
-        return model.lastResult(of: key)
+        // permission the token lacks, said even when the push failed too.
+        // The ordinary outcome is not said here: it is the italic line in
+        // the bottom-left corner (`outcomeLine`).
+        trouble?.line
+    }
+
+    /// What the tile last did — `delivered`, `running…`, `held` — for the
+    /// card's bottom-left corner. The same words and timing as before; only
+    /// where and how they are drawn moved, so they no longer run on from the
+    /// description.
+    private var outcomeLine: String? {
+        TileCardOutcome.of(trouble: trouble, held: model.hold(of: key) != nil, result: model.lastResult(of: key))
     }
 }
 

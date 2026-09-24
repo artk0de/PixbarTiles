@@ -17,8 +17,13 @@ final class UlanziPathTransport: Transport, @unchecked Sendable {
     private var recorded: [URLRequest] = []
     private var listed: [String] = []
     private var answering = true
+    private var skyBody = liveSky
 
     var requests: [URLRequest] { lock.withLock { recorded } }
+
+    /// What the weather source answers from now on — a changed sky is a
+    /// changed page, which the session pushes; an unchanged one it does not.
+    func sky(_ body: Data) { lock.withLock { skyBody = body } }
 
     /// What the clock currently lists as its custom apps — the sweep's input.
     func lists(_ names: [String]) { lock.withLock { listed = names } }
@@ -30,7 +35,7 @@ final class UlanziPathTransport: Transport, @unchecked Sendable {
         let body = try lock.withLock { () throws -> Data in
             recorded.append(request)
             guard answering else { throw URLError(.cannotConnectToHost) }
-            if request.url?.host == "api.open-meteo.com" { return liveSky }
+            if request.url?.host == "api.open-meteo.com" { return skyBody }
             switch request.url?.path {
             case "/getBase":
                 return Data(#"{"devSn":"sn-1","mac":"aa:bb","ip":"192.0.2.9"}"#.utf8)
@@ -249,6 +254,12 @@ private func slotTile(_ connectorId: String) -> TileRecord {
             clocks: [desk]
         )
 
+        // A reading the source does not cache, so the schedule's beat below
+        // reaches the network again and can bring a changed sky.
+        let uncachedSky = String(decoding: liveSky, as: UTF8.self)
+            .replacingOccurrences(of: "\"interval\":900", with: "\"interval\":0")
+        transport.sky(Data(uncachedSky.utf8))
+
         subject.start()
         polls.tick()
         #expect(await waitUntil { transport.requests.contains { $0.url?.path == "/getBase" } })
@@ -260,7 +271,10 @@ private func slotTile(_ connectorId: String) -> TileRecord {
         )
 
         // The cadence itself runs the slot — the schedule the stopgap refused
-        // to arm for a TC002 record.
+        // to arm for a TC002 record. The sky turns first: an unchanged page is
+        // not pushed twice.
+        transport.sky(Data(uncachedSky.replacingOccurrences(
+            of: "\"temperature_2m\":4.2", with: "\"temperature_2m\":17.0").utf8))
         schedule.tick()
         #expect(await waitUntil { upserts(on: transport).count >= 2 })
 

@@ -17,6 +17,12 @@ import Foundation
 /// carries interruptions overwrites pages for their durations and then puts
 /// the board back — the TC002 has no notification surface to do it for us.
 /// The board never learns about it; only the wire does.
+///
+/// Every upsert is compared with what the page already carries (`onDevice`):
+/// a byte-identical body is not sent again. The AWTRIX session does not do the
+/// same on purpose — its app payloads carry a `lifetime` the device counts down
+/// from the last upsert, so a skipped re-push there lets the app expire, and a
+/// text payload of a few hundred bytes is not what loads that clock.
 public actor UlanziClockSession {
     private let device: UlanziDevice
     private let custody: UlanziCustody
@@ -47,6 +53,20 @@ public actor UlanziClockSession {
     /// The one task playing `pending` and restoring `covered`; nil when no
     /// window is open.
     private var player: Task<Void, Never>?
+
+    /// What each page carries ON the device as far as this session knows: the
+    /// last frame an upsert of it got through with — an interruption's frame
+    /// included, so a restore is compared against the celebration it replaces
+    /// rather than against the ambient the board holds.
+    ///
+    /// A push whose frame equals this is not sent (the TC002 decodes and
+    /// replaces the whole GIF on every upsert, and an unchanged 60 s tile was
+    /// most of the traffic). A page leaves this map whenever its content on
+    /// the device stops being known: a failed push of it, the clock going
+    /// offline, a restart or a missing page detected, the page removed. The
+    /// frame itself rather than a digest of it: equality is exact, and the
+    /// handful of pages a clock carries cost nothing to hold.
+    private var onDevice: [String: UlanziFrame] = [:]
 
     public init(
         device: UlanziDevice,
@@ -96,9 +116,14 @@ public actor UlanziClockSession {
         // short. The board already has this scene, and the restore carries it
         // out — so the delivery has landed as far as anyone waiting on it is
         // concerned.
+        //
+        // A delivery that opens a window pushes its own frame even when the
+        // clock already carries it: the celebration is ordered after it on the
+        // wire, and this is the rare path — one page per celebration.
+        let opensWindow = !delivery.interruptions.isEmpty
         let result = covered.contains(tileId)
             ? .delivered
-            : await chain.deliver { [self] in await push(frame, toTile: tileId) }
+            : await chain.deliver { [self] in await push(frame, toTile: tileId, force: opensWindow) }
         // After the delivery's own push, and never awaited: the caller's run
         // is over when its page is, not when the celebration is.
         if !delivery.interruptions.isEmpty {
@@ -127,6 +152,8 @@ public actor UlanziClockSession {
         // Forgotten by the board first: a recovery sweep after this must not
         // re-create the page that was just taken back.
         board.remove(tileId: tileId)
+        // Its page is deleted: the same body delivered again re-creates it.
+        onDevice[tileId] = nil
         // And by the window: neither an interruption frame nor the restore may
         // bring the page back.
         covered.removeAll { $0 == tileId }
@@ -144,6 +171,7 @@ public actor UlanziClockSession {
         player = nil
         pending = []
         covered = []
+        onDevice = [:]
         try? await custody.releaseAll()
     }
 
@@ -232,7 +260,11 @@ public actor UlanziClockSession {
     /// touching the offline flag — a full page set says nothing about whether
     /// the clock is reachable (D7), and marking it would drag every page
     /// through a recovery the clock never asked for.
-    private func push(_ frame: UlanziFrame, toTile tileId: String) async -> RunResult {
+    ///
+    /// A frame equal to what the page already carries is answered as delivered
+    /// without a request — unless `force` says the caller needs it on the wire.
+    private func push(_ frame: UlanziFrame, toTile tileId: String, force: Bool = false) async -> RunResult {
+        if !force, onDevice[tileId] == frame { return .delivered }
         let name: String
         do {
             name = try await custody.appName(forTile: tileId)
@@ -241,9 +273,12 @@ public actor UlanziClockSession {
         }
         do {
             try await device.showApp(frame, named: name)
+            onDevice[tileId] = frame
             await heard(success: true, from: tileId)
             return .delivered
         } catch {
+            // What the page shows is no longer known: the next push goes out.
+            onDevice[tileId] = nil
             await heard(success: false, from: tileId)
             return DeliveryChain.classify(error)
         }
@@ -261,6 +296,8 @@ public actor UlanziClockSession {
     private func heard(success: Bool, from tileId: String?) async {
         guard success else {
             offline = true
+            // An outage may have taken any page with it: none is known now.
+            onDevice = [:]
             return
         }
         guard offline, !recovering else { return }

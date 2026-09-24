@@ -539,6 +539,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // click focuses it, and the popover — nothing to see in it — goes as
         // the focus leaves.
         if panelPin.isPinned, let pinned = WindowFocus.pinnedWindow(among: NSApp.windows) {
+            // The popover off the screen first: left on a full-screen app's
+            // Space, it holds the app there and the Space never changes.
+            panelWindow?.orderOut(nil)
             WindowFocus.bringOnly(pinned)
             return
         }

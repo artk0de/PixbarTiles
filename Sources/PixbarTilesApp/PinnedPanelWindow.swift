@@ -34,6 +34,11 @@ struct PinnedPanelWindow: View {
                     guard let window else { return }
                     if let origin = pin.takeDetachedOrigin() {
                         window.setFrameTopLeftPoint(origin)
+                        // Again a turn later: SwiftUI places a Window scene's
+                        // window after it appears (measured: dropped at 759,
+                        // found at 798 50 ms on), and the drop point is the
+                        // one the user chose.
+                        DispatchQueue.main.async { window.setFrameTopLeftPoint(origin) }
                     }
                     WindowFocus.bringOnly(window)
                     window.level = WindowFocus.pinnedLevel(appIsActive: NSApp.isActive)
@@ -61,19 +66,22 @@ struct PinnedElsewherePanel: View {
     let pin: PanelPin
 
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Color.clear
             .frame(width: 1, height: 1)
-            // Opening one already open raises it. A window that appears
-            // focuses itself, alone; one already open is focused here, a turn
-            // later, so the popover's own opening does not take the focus
-            // back. The popover is not dismissed by hand: closing it handed
-            // the focus back to the app before, and the focus moving to the
-            // pinned window is what closes it.
+            // The popover goes FIRST: while it is open the app has a window
+            // on the current Space — over a full-screen app, that Space — and
+            // macOS has no reason to take the user to the Space the pinned
+            // window is on. Then the window is opened (opening one already
+            // open raises it) and focused a turn later, so the popover's own
+            // closing does not take the focus back.
             .task {
                 guard pin.isPinned else { return }
                 AppLog.panel.info("pinned-elsewhere content appeared — opening the window")
+                dismiss()
+                await Task.yield()
                 openWindow(id: PinnedPanelWindow.id)
                 await Task.yield()
                 if let window = WindowFocus.pinnedWindow(among: NSApp.windows) {

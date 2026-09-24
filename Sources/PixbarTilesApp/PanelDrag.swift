@@ -49,9 +49,19 @@ enum WindowFocus {
         windows.first { $0.identifier?.rawValue.hasPrefix(PinnedPanelWindow.id) == true }
     }
 
+    /// Activation is asked for the polite way first — key and main windows
+    /// only. macOS refuses it more often than not from a menu bar click
+    /// (measured: `activated=false` on most clicks, the window left
+    /// inactive, translucent, and on a Space the user was not taken to), so
+    /// the refusal falls back to the call this app has always been granted.
     static func bringOnly(_ window: NSWindow) {
         window.makeKeyAndOrderFront(nil)
-        let activated = NSRunningApplication.current.activate(options: activation)
+        var activated = NSRunningApplication.current.activate(options: activation)
+        if activated == false {
+            NSApp.activate(ignoringOtherApps: true)
+            activated = NSApp.isActive
+        }
+        window.makeKeyAndOrderFront(nil)
         AppLog.panel.info(
             """
             focus pinned window: activated=\(activated, privacy: .public) \

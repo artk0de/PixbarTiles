@@ -11,14 +11,15 @@ against values typed from a screenshot.
 This writes `Tests/PixelClockKitTests/Fixtures/github_face_oracle.json`:
 
 - `glyphs`: the rows ggen ADDS to wgen's tables — `small` (`G`: `j _ + # ☺`)
-  and `big` (`B`: `+ k m ★ c i`) — as strings of `#` / `.`.
+  and `big` (`B`: `+ k m ★ c i ⑂ ⎇`) — as strings of `#` / `.`.
 - `octicons`: `octicons.OCTICONS` as it is, sixteen rows of 32 hex digits per
   icon (one coverage byte per pixel).
 - `cases`: every `ggen.CASES` entry at `dwell=10000, celebrate=8000`, plus
   `a1-steady` at `dwell=5000`. A case carries its input as the Swift side
   receives it (`kind`; the reading's `repo`/`stars`/`forks`/`prs`/`ci` or
   null, `shortName`, `token`, `problem` and the Show toggles `showForks` /
-  `showPRs` / `showCI` for an ambient case; `count`, `who`, `prNumbers`
+  `showPRs` / `showCI` and the Main watch `main` for an ambient case;
+  `count`, `who`, `prNumbers`
   for a celebration, and `branch` for a `ci` one) and ggen's timeline as `framesZ`: base64 of the raw DEFLATE
   (no zlib header) of the compact JSON `[{"ms", "rows"}]`, every frame as
   sixteen rows of packed `RRGGBB` hex — the weather oracle's format, which
@@ -45,7 +46,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DIR = os.path.join(ROOT, ".claude", "skills", "tc002-face-mockup", "github")
 OUT = os.path.join(ROOT, "Tests", "PixelClockKitTests", "Fixtures", "github_face_oracle.json")
 SMALL_ADDED = ["j", "_", "+", "#", "☺"]
-BIG_ADDED = ["+", "k", "m", "★", "c", "i"]
+BIG_ADDED = ["+", "k", "m", "★", "c", "i", "⑂", "⎇"]
 
 
 def load(directory):
@@ -83,6 +84,8 @@ def case_json(ggen, c, cid, dwell, celebrate):
         out["showForks"] = c.get("show_forks", True)
         out["showPRs"] = c.get("show_prs", True)
         out["showCI"] = c.get("show_ci", True)
+        # The Main watch: which of stars / prs / forks / ci holds the hero.
+        out["main"] = c.get("main", "stars")
     else:
         out["count"] = c["count"]
         out["who"] = c["who"]

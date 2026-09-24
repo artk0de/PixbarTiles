@@ -54,6 +54,15 @@ B.update({
     # The CI event's hero, lowercase at x-height like `m` (DRAFT, 2026-09-23).
     "c": [".....", ".....", ".....", ".###.", "#...#", "#....", "#....", "#...#", ".###."],
     "i": [".", "#", ".", "#", "#", "#", "#", "#", "#"],
+    # Main watch (2026-09-24): the fork and the pull request as the hero's
+    # mark when one of them holds the hero instead of the stars — the
+    # octicons' shapes at the big digits' height and the star's width, their
+    # commits as 3x3 rings (a filled block read as a digit's stroke): two tips
+    # joining into a base; a branch beside a base with the arrow coming in.
+    "⑂": ["###...###", "#.#...#.#", "###...###", ".#.....#.", "..#...#..", "...#.#...", "...###...",
+          "...#.#...", "...###..."],
+    "⎇": ["###..#...", "#.#.####.", "###..#.#.", ".#.....#.", ".#.....#.", ".#.....#.", "###...###",
+          "#.#...#.#", "###...###"],
 })
 
 
@@ -206,11 +215,13 @@ class Reading:
 
 class Config:
     def __init__(self, short_name=None, change_ms=10_000, celebrate_ms=8_000,
-                 show_forks=True, show_prs=True, show_ci=True):
-        """show_*: the tile's Show toggles. The stars are the hero and always
-        shown; the name line always rotates first."""
+                 show_forks=True, show_prs=True, show_ci=True, main="stars"):
+        """show_*: the tile's Show toggles. main: the Main watch — which of
+        stars | prs | forks | ci holds the hero; it is always shown whatever
+        its Show toggle says. The name line always rotates first."""
         self.short_name, self.change_ms, self.celebrate_ms = short_name, change_ms, celebrate_ms
         self.show_forks, self.show_prs, self.show_ci = show_forks, show_prs, show_ci
+        self.main = main
 
 
 def compact(n):
@@ -236,11 +247,13 @@ def display_name(repo, short_name):
 # ---- the right area ------------------------------------------------------------------
 
 
-def hero(text, colour, star=False):
+def hero(text, colour, star=False, mark=None):
+    """The count in the big face, after its mark (`★` when `star`) and 1 px."""
     a = Area()
     x = 0
-    if star:
-        x = a.text("★", 0, 0, colour, B) + 1
+    mark = "★" if star else mark
+    if mark:
+        x = a.text(mark, 0, 0, colour, B) + 1
     a.text(text, x, 0, colour, B)
     return a
 
@@ -384,14 +397,70 @@ def ambient(r, cfg, has_token=True, problem=None):
         label = PROBLEMS[problem or "data"]
         icon = nodata_icon() if (problem or "data") == "data" else octocat(dim=True)
         return lace(ticker_segments(Area(), [(icon, [(line_area([(label, DIM)]), 1000)])]))
+    main = cfg.main
     states = [(octocat(), line_state([(display_name(r.repo, cfg.short_name), WHITE)], cfg.change_ms))]
-    if cfg.show_forks:
+    # The counts the hero does not hold, in the ticker: the stars (no Show
+    # toggle — always there) once they have left the hero, then forks and PRs
+    # as Show says.
+    if main != "stars":
+        states.append((star_icon()[1], line_state([(str(r.stars), STAR)], cfg.change_ms)))
+    if cfg.show_forks and main != "forks":
         states.append((fork_icon(), line_state([(str(r.forks), FORK)], cfg.change_ms)))
-    if cfg.show_prs:
+    if cfg.show_prs and main != "prs":
         states.append((pr_icon(), line_state([(str(r.prs), PR)], cfg.change_ms)))
-    frames = lace(ticker_segments(hero(compact(r.stars), STAR, star=True), states))
+    if main == "ci":
+        # The hero says the branch's CI in words; a label wider than the area
+        # edge-marquees over the whole timeline, like the lamp paints over it.
+        # No lamp: the hero already says it.
+        text, colour = CI_HERO[r.ci if r.ci in CI_HERO else None]
+        parts = [(text, colour)]
+        if parts_width(parts) <= AREA_W:
+            top = Area()
+            top.text(text, 0, CI_HERO_Y, colour, G)
+            return lace(ticker_segments(top, states))
+        return with_hero(lace(ticker_segments(Area(), states)), edge_marquee(parts, 0))
+    count, colour, mark = {"stars": (r.stars, STAR, "★"), "forks": (r.forks, FORK, "⑂"),
+                           "prs": (r.prs, PR, "⎇")}[main]
+    frames = lace(ticker_segments(hero(compact(count), colour, mark=mark), states))
     loop = lamp_loop(r.ci) if cfg.show_ci else None
     return with_lamp(frames, loop) if loop else frames
+
+
+# Main watch = CI: the hero is the default branch's checks in words, in the
+# line font, coloured by state — GitHub's check colours, the pending state
+# called "processed" (the user's word). A repo without checks says so, dim.
+CI_HERO = {
+    "success": ("ci passed", PR),
+    "pending": ("ci processed", CI_PENDING),
+    "failure": ("ci failed", CI_FAIL),
+    None: ("no ci", DIM),
+}
+CI_HERO_Y = 2                     # the 5 px line centred on the hero's 9 rows
+
+
+def with_hero(frames, loop):
+    """Paints an edge-marqueeing hero line over a whole timeline, looping, its
+    phase running on across every frame (one GIF) — `with_lamp`'s cut: a
+    frame that spans a step of the marquee is cut there."""
+    total = sum(ms for _, ms in loop)
+    out, t = [], 0
+    for grid, ms in frames:
+        left = ms
+        while left > 0:
+            pos, acc = t % total, 0
+            for line, d in loop:
+                if pos < acc + d:
+                    break
+                acc += d
+            span = min(acc + d - pos, left)
+            g = [row[:] for row in grid]
+            for y in range(5):
+                for x in range(AREA_W):
+                    g[CI_HERO_Y + y][AREA_X + x] = line.px[y][x]
+            out.append((g, span))
+            t += span
+            left -= span
+    return out
 
 
 # ---- the CI lamp -------------------------------------------------------------------------
@@ -595,11 +664,30 @@ CASES = [
          reading=R("artk0de/tea-rags", 1234, 45, 3), show_forks=False, show_prs=False),
     dict(id="a18-ci-hidden", desc="Show: CI выключен — main упал, но бейджа нет", kind="ambient",
          reading=R("artk0de/tea-rags", 1234, 45, 3, ci="failure"), show_ci=False),
+    dict(id="a19-main-prs", desc="Main watch = PRs: PR в hero, в тикере имя, звёзды, форки", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 45, 3), main="prs"),
+    dict(id="a20-main-forks", desc="Main watch = Forks: форки в hero, в тикере имя, звёзды, PR", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 12345, 3), main="forks"),
+    dict(id="a21-main-ci-passed", desc="Main watch = CI: «ci passed» зелёным, без бейджа", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 45, 3, ci="success"), main="ci"),
+    dict(id="a22-main-ci-processed", desc="Main watch = CI: «ci processed» янтарным — шире 34 px, edge-marquee",
+         kind="ambient", reading=R("artk0de/tea-rags", 1234, 45, 3, ci="pending"), main="ci"),
+    dict(id="a23-main-ci-failed", desc="Main watch = CI: «ci failed» красным", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 45, 3, ci="failure"), main="ci"),
+    dict(id="a24-main-no-ci", desc="Main watch = CI у репо без проверок: «no ci» тускло", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 45, 3), main="ci"),
+    dict(id="a25-main-prs-hidden", desc="Main watch = PRs при выключенных Show PRs и Forks: PR всё равно в hero",
+         kind="ambient", reading=R("artk0de/tea-rags", 1234, 45, 912), main="prs", show_prs=False,
+         show_forks=False),
+    dict(id="a26-main-ci-worst", desc="худший бюджет Main watch: длинное имя (marquee) + «ci processed» (marquee) "
+         "+ четыре состояния тикера", kind="ambient",
+         reading=R("typescript-language-server/typescript-language-server", 9999, 45012, 912, ci="pending"),
+         main="ci"),
 ]
-# The review page for the 2026-09-24 round: the new states, beside a1 as the
-# face they are read against.
-CASES_REVIEW = [c for c in CASES if c["id"] in {
-    "a1-steady", "a8-no-data", "a14-bad-token", "a15-no-repo", "a16-no-forks", "a17-name-only", "a18-ci-hidden"}]
+# The review page for the Main watch round (2026-09-24): the new states,
+# beside a1 as the face they are read against.
+CASES_REVIEW = [c for c in CASES if c["id"] == "a1-steady" or c["id"].startswith(
+    ("a19", "a20", "a21", "a22", "a23", "a24", "a25", "a26"))]
 
 DWELLS = [3000, 5000, 8000, 10000, 15000]
 CELEBRATES = [5000, 8000, 10000, 15000]
@@ -607,7 +695,7 @@ CELEBRATES = [5000, 8000, 10000, 15000]
 
 def build(case, dwell=10_000, celebrate=8_000):
     cfg = Config(case.get("short_name"), dwell, celebrate, case.get("show_forks", True),
-                 case.get("show_prs", True), case.get("show_ci", True))
+                 case.get("show_prs", True), case.get("show_ci", True), case.get("main", "stars"))
     if case["kind"] == "ambient":
         return ambient(case["reading"], cfg, case.get("token", True), case.get("problem"))
     return celebration(case["kind"], case["count"], case["who"], cfg, tuple(case.get("prs", ())))

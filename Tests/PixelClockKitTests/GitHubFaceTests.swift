@@ -36,6 +36,9 @@ private struct GitHubOracle: Decodable {
         let showForks: Bool?
         let showPRs: Bool?
         let showCI: Bool?
+        /// The Main watch — `stars`, `prs`, `forks`, `ci`; nil (a
+        /// celebration) is the stars.
+        let main: String?
         // celebration
         let count: Int?
         let who: [String]?
@@ -78,6 +81,7 @@ private func drawn(_ c: GitHubOracle.Case) throws -> [GitHubFace.Frame] {
         config.showForks = c.showForks ?? true
         config.showPRs = c.showPRs ?? true
         config.showCI = c.showCI ?? true
+        config.mainWatch = try #require(GitHubMainWatch(rawValue: c.main ?? "stars"), "\(c.id) main")
         let problem = try c.problem.map { try #require(GitHubProblem(rawValue: $0), "\(c.id) problem") }
         return GitHubFace.timeline(
             ambient: state, noToken: c.token == false, config: config, dwellMilliseconds: c.dwell,
@@ -105,7 +109,7 @@ private func gif(_ frames: [GitHubFace.Frame]) throws -> Data {
 @Suite struct GitHubFaceOracleTests {
     @Test func everyCaseReproducesTheApprovedFramesExactly() throws {
         let oracle = try GitHubOracle.load()
-        #expect(oracle.cases.count == 27)
+        #expect(oracle.cases.count == 35)
         for c in oracle.cases {
             let frames = try drawn(c)
             let approved = try c.frames()

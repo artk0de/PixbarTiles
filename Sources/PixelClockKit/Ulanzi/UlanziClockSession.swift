@@ -85,6 +85,11 @@ public actor UlanziClockSession {
     /// handful of pages a clock carries cost nothing to hold.
     private var onDevice: [String: UlanziFrame] = [:]
 
+    /// The app's tile order — the order the clock's pages should run in under
+    /// the knob. Empty until the start-up sweep or `arrange` names one, and
+    /// while empty nothing is re-ordered. See `reorderIfNeeded`.
+    private var order: [String] = []
+
     public init(
         device: UlanziDevice,
         custody: UlanziCustody,
@@ -111,6 +116,7 @@ public actor UlanziClockSession {
     /// A transport failure here marks the clock offline rather than throwing:
     /// the first successful push after it drags every page back (D4).
     public func sweep(liveTiles: [String]) async {
+        order = liveTiles
         for tile in liveTiles { board.register(tileId: tile) }
         do {
             try await custody.sweep(liveTiles: liveTiles)
@@ -239,6 +245,96 @@ public actor UlanziClockSession {
             guard let frame = recoveryFrame(forTile: tile) else { continue }
             _ = await chain.deliver { [self] in await pushIfOnBoard(frame, toTile: tile) }
         }
+        // A page just put back went to the END of the list, so the list read
+        // above no longer says where anything is: the order waits for the next
+        // check, which reads one that includes it.
+        if missing.isEmpty { await reorderIfNeeded(listed: listed) }
+    }
+
+    // MARK: the order of the pages
+
+    /// The app's tile order changed (or is being confirmed): the clock's pages
+    /// are checked against it, as the reachability poll's check does.
+    public func arrange(order tileIds: [String]) async {
+        order = tileIds
+        await verifyPages()
+    }
+
+    /// Puts our pages in the app's order, re-creating as few as it can.
+    ///
+    /// The TC002 has no order API. Its DIY pages run in the order they were
+    /// CREATED — measured on appVer 1.1.1, 2026-09-24: `probe-order-b`, `-a`,
+    /// `-c` pushed in that order listed b, a, c; an upsert of b kept its
+    /// place; b deleted and pushed again moved to the end. So the only way to
+    /// move a page is to delete it and push it again, which lands it last.
+    ///
+    /// Our pages are compared in the order `customList` names them (anyone
+    /// else's are skipped). Up to the first one out of place nothing moves;
+    /// from there on each is re-created in the app's order, so they arrive at
+    /// the end in that order. A clock already in order costs nothing beyond
+    /// the list read the check made anyway.
+    ///
+    /// Only pages whose content this session KNOWS (`onDevice`) take part: the
+    /// re-created page gets exactly what it carried, never a guess. A page not
+    /// pushed this run yet keeps its place until it is, and the next check
+    /// after that places it. Nothing moves while an interruption window is
+    /// open (its restore owns those pages), and an outage stops the run — the
+    /// recovery sweep puts the pages back in `tilesInOrder`.
+    private func reorderIfNeeded(listed: [String]) async {
+        guard !order.isEmpty, player == nil, covered.isEmpty else { return }
+        let position = Dictionary(
+            listed.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first }
+        )
+        let placed = order.compactMap { tile -> (tile: String, at: Int)? in
+            guard board.tileIds.contains(tile), onDevice[tile] != nil,
+                let at = position[UlanziCustody.pageName(forTile: tile)]
+            else { return nil }
+            return (tile, at)
+        }
+        let wanted = placed.map(\.tile)
+        let onClock = placed.sorted { $0.at < $1.at }.map(\.tile)
+        guard let first = wanted.indices.first(where: { wanted[$0] != onClock[$0] }) else { return }
+        for tile in wanted[first...] {
+            _ = await chain.deliver { [self] in await recreate(tile) }
+            if sweepDue { return }
+        }
+    }
+
+    /// One page deleted and pushed again with the frame it carried — which
+    /// moves it to the end of the clock's list. Skipped when its content is no
+    /// longer known, the page is covered or gone, or an outage is being
+    /// recovered from.
+    private func recreate(_ tileId: String) async -> RunResult {
+        guard board.tileIds.contains(tileId), !covered.contains(tileId), !sweepDue, !recovering,
+            let frame = onDevice[tileId]
+        else { return .skipped }
+        let name: String
+        do {
+            name = try await custody.appName(forTile: tileId)
+        } catch {
+            return .failed(String(describing: error))
+        }
+        pushesInFlight += 1
+        pushesStarted += 1
+        do {
+            try await device.removeApp(named: name)
+            pushesInFlight -= 1
+        } catch {
+            pushesInFlight -= 1
+            // Whether the page is still there is no longer known.
+            onDevice[tileId] = nil
+            heardFailure(error)
+            return DeliveryChain.classify(error)
+        }
+        // Gone from the clock: the push below must go out even though the
+        // frame is the same one.
+        onDevice[tileId] = nil
+        return await push(frame, toTile: tileId, force: true)
+    }
+
+    /// The board's tiles in the app's order, then any the order does not name.
+    private var tilesInOrder: [String] {
+        order.filter { board.tileIds.contains($0) } + board.tileIds.filter { !order.contains($0) }
     }
 
     /// The owed sweep, on the delivery chain so it cannot interleave with a
@@ -409,7 +505,9 @@ public actor UlanziClockSession {
         recovering = true
         // A covered page is the window's to restore: re-pushing it here would
         // cut its interruption short.
-        for tile in board.tileIds where tile != tileId && !covered.contains(tile) {
+        // In the app's order: a page the outage took is re-created at the end
+        // of the clock's list, so the lost ones come back in the right order.
+        for tile in tilesInOrder where tile != tileId && !covered.contains(tile) {
             guard let frame = recoveryFrame(forTile: tile) else { continue }
             _ = await push(frame, toTile: tile)
         }

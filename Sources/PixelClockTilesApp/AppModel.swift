@@ -57,6 +57,14 @@ protocol UlanziConnectorRunning: Sendable {
     func shutdown() async
 }
 
+/// A clock slot whose pages run in an order the app has to keep: the TC002,
+/// whose DIY pages run in the order they were created. Told when the user
+/// reorders the tile list, so the clock follows at once rather than at the
+/// next reachability poll (`UlanziClockSession.arrange`).
+protocol UlanziPageOrdering: Sendable {
+    func pagesReordered() async
+}
+
 /// A clock slot that can bring one tile's page on screen — for the paths the
 /// USER starts (opening a tile's settings), never a schedule's (D3).
 ///
@@ -1937,6 +1945,11 @@ final class AppModel: ObservableObject {
         all.insert(moved, at: min(destinationRow, all.count))
         try? tiles.replaceAll(all)
         tileOrderRevision += 1
+        // The TC002 runs its pages in creation order: its slot re-creates the
+        // ones now out of place. After the write, so it reads the new order.
+        if let ordering = sessions[source.clockId] as? any UlanziPageOrdering {
+            Task { await ordering.pagesReordered() }
+        }
     }
 
     /// A tile's display name: the lamp's VPN for a lamp tile, the connector's

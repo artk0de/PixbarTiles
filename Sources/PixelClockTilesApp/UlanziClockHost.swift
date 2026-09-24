@@ -25,7 +25,7 @@ import PixelClockKit
 ///
 /// `indicators` is nil: the TC002 has no lamps, and an availability that
 /// said otherwise would promise a surface the firmware does not have.
-actor UlanziClockHost: ConnectorRunning, UlanziConnectorRunning, ClockPageShowing, UlanziClockWatching {
+actor UlanziClockHost: ConnectorRunning, UlanziConnectorRunning, ClockPageShowing, UlanziClockWatching, UlanziPageOrdering {
     private let session: UlanziClockSession
     private let registry: ConnectorRegistry
     private let store: any SettingsStore
@@ -133,8 +133,21 @@ actor UlanziClockHost: ConnectorRunning, UlanziConnectorRunning, ClockPageShowin
         await session.clockReturned()
     }
 
+    /// The page check, against the tiles record's order as it stands now: the
+    /// clock's pages run in creation order, and the session re-creates the
+    /// ones out of the app's order (`UlanziClockSession.arrange`).
     func verifyPages() async {
-        await session.verifyPages()
+        await session.arrange(order: liveTiles())
+    }
+
+    // MARK: the order of the pages — see `UlanziPageOrdering`
+
+    /// The user reordered the tile list: checked now rather than at the next
+    /// poll. Waits for the start-up sweep like every other path that writes
+    /// pages.
+    func pagesReordered() async {
+        await sweepAtFirstUse()
+        await session.arrange(order: liveTiles())
     }
 
     // MARK: showing a page on request — see `ClockPageShowing`

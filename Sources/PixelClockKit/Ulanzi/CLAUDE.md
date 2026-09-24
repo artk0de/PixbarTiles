@@ -56,6 +56,27 @@ runs when a clock is removed in the app.
   leaves the clock on the tile's page — there is nothing known to go back
   to. The AWTRIX reads `app` from `/api/stats` and does go back.
 
+## Page order
+
+- DIY pages run in the order they were CREATED. There is no order or
+  position API. Measured on appVer 1.1.1, 2026-09-24, with three 1-frame
+  probes (removed right after): `probe-order-b`, `-a`, `-c` pushed in that
+  order listed `b, a, c` in `customList` (not sorted). An upsert of `b` kept
+  its place. `b` deleted (empty-body POST) and pushed again moved to the END.
+  That `customList` order is also the knob order is inferred, not observed on
+  the panel.
+- So the app's tile order (the tiles record, dragged in Clock Settings →
+  Tiles) is kept by re-creation: `UlanziClockSession.arrange(order:)` compares
+  our pages in `customList` order with the app's order and re-creates (delete +
+  push) from the first one out of place onwards. Pages already in order cost
+  nothing beyond the list read the 60 s check already makes. It runs from that
+  check (`UlanziClockHost.verifyPages`) and right after a drag
+  (`AppModel.moveTile` → `UlanziPageOrdering.pagesReordered`).
+- Only pages whose content the session knows (`onDevice`) are re-created, with
+  exactly that frame. Nothing moves while an interruption window is open, and
+  an outage stops the run. The recovery sweep re-pushes in the app's order, so
+  pages a reboot lost come back in order too.
+
 ## Animation budget
 
 - One page plays a GIF by itself; the Mac never rotates or re-pushes for motion.

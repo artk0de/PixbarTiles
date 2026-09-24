@@ -482,6 +482,29 @@ enum PanelGlyph {
         "..G....",
     ]
 
+    /// The warning sign on a tile card: a triangle with the `!` knocked out
+    /// of it. Nine wide so the triangle has a centre column for the `!`, and
+    /// eight tall so its stroke and its dot are split by a lit row.
+    static let warning = [
+        "....T....",
+        "...TTT...",
+        "...TGT...",
+        "..TTGTT..",
+        "..TTGTT..",
+        ".TTTTTTT.",
+        ".TTTGTTT.",
+        "TTTTTTTTT",
+    ]
+
+    /// The sign's tint by what it says — a failed push red, a diagnosis
+    /// orange — and the `!` in white, the way a badge's mark is knocked out.
+    static func warningPalette(_ sign: TileCardTrouble.Sign) -> Palette {
+        switch sign {
+        case .failing: ["T": criticalTint, "G": 0xFFFFFF]
+        case .diagnosis: ["T": lowTint, "G": 0xFFFFFF]
+        }
+    }
+
     /// The green every surface in this app uses for "this one is up" — the
     /// online LED's. The Add button wears it because adding is the one action
     /// on that surface, not because green is decorative.

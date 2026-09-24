@@ -252,19 +252,13 @@ private struct ClockTileCard: View {
                 )
                 .accessibilityLabel(name)
                 Spacer()
-                if let failure = model.lastFailure(of: key) {
-                    // A failed push is THIS tile's error, said where the tile
-                    // lives: the red sign, the words on hover.
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .help(failure)
-                } else if let diagnosis = model.gitHubDiagnosis(of: key), diagnosis.isQuiet == false {
-                    // The push went through, and the face says what is wrong
-                    // — a refused token, a repository it cannot see, a
-                    // permission it lacks. The sign says it here too.
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .help(diagnosis.message)
+                // A failed push is THIS tile's error, said where the tile
+                // lives: the red sign. A push that went through while the
+                // face says what is wrong — a refused token, a repository it
+                // cannot see, a permission it lacks — is the orange one. The
+                // whole text in a popover on hover.
+                if let trouble, let sign = trouble.sign {
+                    TileTroubleMark(sign: sign, detail: trouble.detail)
                 }
                 Button {
                     model.openDetail(for: key)
@@ -294,7 +288,7 @@ private struct ClockTileCard: View {
                 Text(line)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if confirming {
@@ -352,6 +346,12 @@ private struct ClockTileCard: View {
             ?? name
     }
 
+    /// What is wrong with this tile, if anything: the last push's failure and
+    /// a GitHub read's diagnosis, both.
+    private var trouble: TileCardTrouble? {
+        TileCardTrouble.of(failure: model.lastFailure(of: key), diagnosis: model.gitHubDiagnosis(of: key))
+    }
+
     private var resultLine: String? {
         // `lastFailure(of:)` already falls back to this tile's own
         // maintenance failure. The second lookup that used to sit under it
@@ -359,14 +359,43 @@ private struct ClockTileCard: View {
         // `AppModel.selectedClockId` — so on a card of any clock that is not
         // the selected one it could only ever show ANOTHER clock's failure,
         // and on the selected one it repeated what the line above had said.
-        if let failure = model.lastFailure(of: key) {
-            return TileRowLine.failureWords(failure)
-        }
-        // A GitHub tile's last read: which failure, or which permission the
-        // token lacks — the quiet one (who starred) as plainly as the rest.
-        if let diagnosis = model.gitHubDiagnosis(of: key) { return diagnosis.message }
+        // A GitHub tile's last read beside it: which failure, or which
+        // permission the token lacks — the quiet one (who starred) as plainly
+        // as the rest, and said even when the push failed too.
+        if let trouble { return trouble.line }
         if model.hold(of: key) != nil { return "held" }
         return model.lastResult(of: key)
+    }
+}
+
+/// The warning sign on a tile card, in the panel's pixels rather than an SF
+/// Symbol — the card's gear, bin and badge are all pixel marks. Hovering it
+/// opens the whole text in a popover, the way the GitHub token's `?` does:
+/// a `.help` tooltip waits a second and cuts a long error off. The pointing
+/// hand says it answers the pointer.
+struct TileTroubleMark: View {
+    let sign: TileCardTrouble.Sign
+    let detail: String
+    @State private var showing = false
+
+    var body: some View {
+        PixelArt(map: PanelGlyph.warning, palette: PanelGlyph.warningPalette(sign))
+            .contentShape(Rectangle())
+            .onHover { inside in if inside { showing = true } }
+            .onTapGesture { showing.toggle() }
+            .pointerStyle(.link)
+            .accessibilityElement()
+            .accessibilityLabel(sign == .failing ? "Failing" : "Needs attention")
+            .accessibilityValue(detail)
+            .accessibilityAddTraits(.isButton)
+            .popover(isPresented: $showing, arrowEdge: .bottom) {
+                Text(detail)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
+                    .frame(width: 320, alignment: .leading)
+            }
     }
 }
 

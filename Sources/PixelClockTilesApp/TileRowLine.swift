@@ -85,6 +85,43 @@ struct TileRowLine: Equatable {
 /// "unknown app" mark on its clock card, because this copy had no z.ai case.
 /// One tile, two faces, depending on which window was looking. The table
 /// lives in `TilePresentation`, where the store already reads it.
+/// What a clock's tile card says is wrong: the line under its name, the sign
+/// beside it, and the whole text the sign's popover shows.
+///
+/// A failed push and a GitHub read's diagnosis are two different facts — the
+/// clock did not take the page, and the page says the repository is missing
+/// — and the card said only the first when both were true. Both are said now,
+/// the failure first because it is why the clock may be showing an older page.
+struct TileCardTrouble: Equatable {
+    enum Sign: Equatable {
+        /// The last push did not reach the clock: red.
+        case failing
+        /// The push went through, and the page says what is wrong: orange.
+        case diagnosis
+    }
+
+    /// Nil for the quiet diagnosis: said on the line, worth no sign.
+    let sign: Sign?
+    let line: String
+    /// The popover's text: the raw error behind the words, and the diagnosis.
+    let detail: String
+
+    static func of(failure: String?, diagnosis: GitHubDiagnosis?) -> TileCardTrouble? {
+        if let failure {
+            let words = TileRowLine.failureWords(failure)
+            let said = [words, diagnosis?.message].compactMap(\.self)
+            let detail = [words, failure, diagnosis?.message].compactMap(\.self)
+            return TileCardTrouble(
+                sign: .failing, line: said.joined(separator: "\n"), detail: detail.joined(separator: "\n\n")
+            )
+        }
+        guard let diagnosis else { return nil }
+        return TileCardTrouble(
+            sign: diagnosis.isQuiet ? nil : .diagnosis, line: diagnosis.message, detail: diagnosis.message
+        )
+    }
+}
+
 enum TileRowIcon {
     static func symbol(forConnectorId connectorId: String) -> String {
         TilePresentation.of(connectorId: connectorId).icon

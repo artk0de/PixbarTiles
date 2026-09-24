@@ -405,6 +405,23 @@ enum PanelGlyph {
         "BBBBBBBBBBB",
     ]
 
+    /// A star: the GitHub tile counts them, celebrates them, and the shared
+    /// table already names it `star`. Five points, the lower two splayed so
+    /// the shape is a star at eleven pixels rather than a blob.
+    static let githubTile = [
+        "BBBBBBBBBBB",
+        "BBBBBGBBBBB",
+        "BBBBBGBBBBB",
+        "BBBBGGGBBBB",
+        "BGGGGGGGGGB",
+        "BBGGGGGGGBB",
+        "BBBGGGGGBBB",
+        "BBBGGGGGBBB",
+        "BBGGGBGGGBB",
+        "BBGBBBBBGBB",
+        "BBBBBBBBBBB",
+    ]
+
     /// A question mark, for a tile this app has not heard of. Visibly a tile
     /// rather than a gap, which is what the shared table already decided.
     static let unknownTile = [
@@ -432,6 +449,7 @@ enum PanelGlyph {
         case ClaudeUsageConnector.id, ZaiUsageConnector.connectorId: terminalTile
         case "anecdotes": anecdoteTile
         case VPNConnector.id: vpnTile
+        case GitHubConnector.connectorId: githubTile
         default: unknownTile
         }
     }
@@ -477,22 +495,4 @@ enum PanelGlyph {
     }
 
     static func inkPalette(_ ink: UInt32) -> Palette { ["G": ink] }
-
-    // MARK: - Help
-
-    /// A question mark, 5x7: the hook, the stem, a pixel's gap, the dot. It
-    /// stands beside a field whose help carries a link, so it opens a popover
-    /// rather than a tooltip.
-    static let question = [
-        ".###.",
-        "#...#",
-        "...#.",
-        "..#..",
-        "..#..",
-        ".....",
-        "..#..",
-    ]
-
-    /// The question mark in one ink.
-    static func questionPalette(_ ink: UInt32) -> Palette { ["#": ink] }
 }

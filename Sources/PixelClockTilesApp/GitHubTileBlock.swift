@@ -170,7 +170,9 @@ struct GitHubTokenHelpMark: View {
     @State private var showing = false
 
     var body: some View {
-        PixelArt(map: PanelGlyph.question, palette: PanelGlyph.questionPalette(ink), pixel: 2)
+        // The panel's own `?`, the one beside every control whose label cannot
+        // say what it decides — this one's help just carries a link.
+        PixelArt(map: PanelGlyph.question, palette: PanelGlyph.inkPalette(ink))
             .contentShape(Rectangle())
             .onHover { inside in if inside { showing = true } }
             .onTapGesture { showing.toggle() }

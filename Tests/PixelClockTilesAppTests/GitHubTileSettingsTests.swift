@@ -183,15 +183,28 @@ import Testing
         }
     }
 
+    // The badge the tile wears in the store and on the clock's card: a pixel
+    // star — the shared table's `star` — never the unknown tile's `?`.
+    @Test func aGitHubTileWearsAPixelStar() {
+        let badge = PanelGlyph.tile(forConnectorId: GitHubConnector.connectorId)
+        #expect(badge == PanelGlyph.githubTile)
+        #expect(badge != PanelGlyph.unknownTile)
+        #expect(badge.count == 11)
+        #expect(badge.allSatisfy { $0.count == 11 })
+        #expect(Set(badge.joined()) == ["B", "G"])
+        #expect(TilePresentation.of(connectorId: GitHubConnector.connectorId).category == .dev)
+    }
+
     @Test func theQuestionMarkIsDrawnInThePanelsPixels() {
+        // The panel's shared `?` (master's), not a second one of its own.
         #expect(PanelGlyph.question == [
-            ".###.",
-            "#...#",
-            "...#.",
-            "..#..",
-            "..#..",
-            ".....",
-            "..#..",
+            ".GGGG..",
+            "G....G.",
+            ".....G.",
+            "...GG..",
+            "..G....",
+            ".......",
+            "..G....",
         ])
     }
 }

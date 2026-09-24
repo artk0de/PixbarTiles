@@ -29,18 +29,26 @@ struct SettingsRoot: View {
     }
 
     var body: some View {
-        TabView(selection: $settings.tab) {
-            ClocksTab(settings: settings, model: model, discovery: discovery)
-                .tabItem { Text(SettingsModel.Tab.clocks.title) }
-                .tag(SettingsModel.Tab.clocks)
-            DefaultsTab(model: model)
-                .tabItem { Text(SettingsModel.Tab.defaults.title) }
-                .tag(SettingsModel.Tab.defaults)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            GeneralTab(model: model, loginItem: loginItem())
-                .tabItem { Text(SettingsModel.Tab.general.title) }
-                .tag(SettingsModel.Tab.general)
+        // The app's own pixel switcher over the tab, not a `TabView`: the
+        // system's tabs drew the accent blue above a window whose every
+        // other control is in the clock's hand. Same state, same tabs.
+        VStack(spacing: 0) {
+            PixelSegmentedControl("Tab", selection: $settings.tab, title: \.title)
+                .padding(12)
+            Divider()
+            switch settings.tab {
+            case .clocks:
+                ClocksTab(settings: settings, model: model, discovery: discovery)
+            case .defaults:
+                DefaultsTab(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            case .general:
+                GeneralTab(model: model, loginItem: loginItem())
+            }
         }
+        // The titlebar is transparent under `glassWindow()`: the band clears
+        // it the way the clock settings window's does.
+        .padding(.top, 16)
         // A floor, not a box: the Clocks tab's content grows with every clock
         // a person adds, and a fixed frame CLIPS what a window exists to
         // show. The tabs scroll; the window resizes.

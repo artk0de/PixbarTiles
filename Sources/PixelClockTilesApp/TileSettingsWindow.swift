@@ -144,14 +144,8 @@ struct TileSettingsWindow: View {
         for key: TileKey, value: (name: String, config: TileConfig?), stored: TilePolicy
     ) -> some View {
         VStack(spacing: 0) {
-            Picker("Half", selection: $half) {
-                ForEach(Half.allCases) { tab in
-                    Text(tab.title).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 16)
+            PixelSegmentedControl("Half", selection: $half, title: \.title)
+                .padding(.horizontal, 16)
             .padding(.top, 28)
             .padding(.bottom, 10)
             Form {
@@ -480,15 +474,20 @@ struct WeatherTileControls: View {
                 )
             }
             Section("Layout") {
-                Picker("Arrangement", selection: Binding(
-                    get: { draft.layout },
-                    set: { settings.setLayout($0) }
-                )) {
-                    Text("Anchor").tag(WeatherTileConfig.Layout.anchor)
-                    Text("Pages").tag(WeatherTileConfig.Layout.pages)
-                    Text("Hybrid").tag(WeatherTileConfig.Layout.hybrid)
+                LabeledContent("Arrangement") {
+                    PixelSegmentedControl(
+                        "Arrangement",
+                        selection: Binding(
+                            get: { draft.layout },
+                            set: { settings.setLayout($0) }
+                        ),
+                        options: [
+                            (WeatherTileConfig.Layout.anchor, "Anchor"),
+                            (WeatherTileConfig.Layout.pages, "Pages"),
+                            (WeatherTileConfig.Layout.hybrid, "Hybrid"),
+                        ]
+                    )
                 }
-                .pickerStyle(.segmented)
             }
             // The two intervals together and apart from the arrangement,
             // because they are the pair a reader confuses: one is how long a

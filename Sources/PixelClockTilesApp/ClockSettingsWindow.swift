@@ -42,14 +42,8 @@ struct ClockSettingsWindow: View {
     var body: some View {
         if let clock = settings.aimedClock {
             VStack(spacing: 0) {
-                Picker("Tab", selection: $settings.clockTab) {
-                    ForEach(SettingsModel.ClockTab.allCases) { tab in
-                        Text(tab.title).tag(tab)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(12)
+                PixelSegmentedControl("Tab", selection: $settings.clockTab, title: \.title)
+                    .padding(12)
                 Divider()
                 switch settings.clockTab {
                 case .tiles:

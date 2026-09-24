@@ -209,16 +209,18 @@ struct TilePolicyEditor: View {
             }
         }
         Section("Hours") {
-            Picker("Hours", selection: Binding(
-                get: { Self.hoursKind(of: policy) },
-                set: { Self.setHours($0, in: &policy) }
-            )) {
-                Text("Always").tag(Self.HoursKind.always)
-                Text("Quiet").tag(Self.HoursKind.quiet)
-                Text("Working").tag(Self.HoursKind.active)
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
+            PixelSegmentedControl(
+                "Hours",
+                selection: Binding(
+                    get: { Self.hoursKind(of: policy) },
+                    set: { Self.setHours($0, in: &policy) }
+                ),
+                options: [
+                    (Self.HoursKind.always, "Always"),
+                    (Self.HoursKind.quiet, "Quiet"),
+                    (Self.HoursKind.active, "Working"),
+                ]
+            )
             if case let .quiet(window) = policy.window {
                 hourPickers(window: window) { policy.window = .quiet($0) }
             } else if case let .active(window) = policy.window {
@@ -525,13 +527,16 @@ struct CodeUsageBlock: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("On the TC002").font(.caption).foregroundStyle(.secondary)
-                Picker("Layout", selection: Binding(
-                    get: { config.layout },
-                    set: { chosen in change { $0.layout = chosen } }
-                )) {
-                    ForEach(CodeUsage.Layout.allCases) { Text($0.displayName).tag($0) }
+                LabeledContent("Layout") {
+                    PixelSegmentedControl(
+                        "Layout",
+                        selection: Binding(
+                            get: { config.layout },
+                            set: { chosen in change { $0.layout = chosen } }
+                        ),
+                        title: \.displayName
+                    )
                 }
-                .pickerStyle(.segmented)
                 // Only the Circle shows one window at a time, so only the
                 // Circle has a choice to make. Compact has a row for each and
                 // no reason to leave one empty.

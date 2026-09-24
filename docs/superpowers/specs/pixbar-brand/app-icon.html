@@ -1,0 +1,87 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Pixbar Tiles — the approved app icon and lockup</title>
+<style>
+  body { font-family: -apple-system, system-ui; margin: 24px; background: #9a9a9a; color: #111; }
+  h1 { font-size: 17px; margin: 10px 0 4px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; }
+  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .bar { height: 48px; padding: 0 20px; display: flex; align-items: center; gap: 30px; border-radius: 6px; }
+  .bar.dark { background: #1c1c1e; } .bar.light { background: #e8e8ea; }
+  .cap { font-size: 11px; color: #222; margin-top: 4px; }
+  .lock { padding: 18px 26px; display: flex; align-items: center; gap: 20px; border-radius: 6px; }
+  .lock.light { background: #f2f2f2; color: #1d1d1f; } .lock.dark { background: #161616; color: #f5f5f7; }
+  .tiles { font-size: 45px; font-weight: 400; line-height: 1; transform: translateY(-15px); }
+  canvas { image-rendering: pixelated; }
+</style></head>
+<body>
+<div id="out"></div>
+<script>
+const DPR = 2;
+function hi(wCss, hCss) {
+  const c = document.createElement('canvas'); c.width = Math.round(wCss*DPR); c.height = Math.round(hCss*DPR);
+  c.style.width = wCss + 'px'; c.style.height = hCss + 'px'; return c;
+}
+function outline(g) {
+  const h = g.length, w = g[0].length, on = (x, y) => y >= 0 && y < h && x >= 0 && x < w && g[y][x] === '#';
+  return g.map((r, y) => [...r].map((c, x) => c === '#' && (!on(x-1,y)||!on(x+1,y)||!on(x,y-1)||!on(x,y+1)) ? '#' : '.').join(''));
+}
+function bigP(w, h, stem, bowl) {
+  const m = [];
+  for (let y = 0; y < h; y++) { let r = '';
+    for (let x = 0; x < w; x++) {
+      const counter = x >= stem && x <= w - 4 && y >= 2 && y <= bowl - 3;
+      const corner = x === w - 1 && (y === 0 || y === bowl - 1);
+      r += ((x < stem || y < bowl) && !counter && !corner) ? '#' : '.';
+    } m.push(r); } return m;
+}
+function openPlus(n) {
+  const a0 = (n - 3) / 2, a1 = a0 + 2, solid = [];
+  for (let y = 0; y < n; y++) { let r = ''; for (let x = 0; x < n; x++) r += ((x >= a0 && x <= a1) || (y >= a0 && y <= a1)) ? '#' : '.'; solid.push(r); }
+  const o = outline(solid).map(r => [...r]), mid = a0 + 1;
+  o[0][mid] = '.'; o[n-1][mid] = '.'; o[mid][0] = '.'; o[mid][n-1] = '.';
+  return o.map(r => r.join('')); }
+const BLUE = '#4fb8f5', WHITE = '#eef0f4', PURPLE = '#b65cf5', CYAN = '#63d1ff', RED = '#ff453a';
+
+// ---------- A. The approved app icon: S3 bold, G17, +1, P up 1 ----------
+const P_ICON = bigP(7, 9, 3, 6), SPARK = openPlus(7);
+function appIcon(sizeCss) {
+  const weight = 1.35, grid = 17, shift = 1, lift = 1;
+  const c = hi(sizeCss, sizeCss), size = c.width, g = c.getContext('2d');
+  const m = Math.round(size*0.08); g.fillStyle = '#141417'; g.beginPath(); g.roundRect(m, m, size-2*m, size-2*m, size*0.225); g.fill();
+  const cell = Math.floor(size*0.84 / grid), ox = Math.round((size - grid*cell)/2), oy = ox;
+  const P = P_ICON, sw = Math.ceil(SPARK[0].length * 0.5);
+  const pairW = P[0].length + 1 + sw, pairH = P.length + 2;
+  const gx0 = Math.floor((grid - pairW)/2) + shift, gy0 = Math.floor((grid - pairH)/2);
+  const lit = new Map();
+  P.forEach((r, y) => [...r].forEach((ch, x) => { if (ch === '#') lit.set((gx0+x)+','+(gy0+2-lift+y), y < 3 ? BLUE : y < 6 ? WHITE : PURPLE); }));
+  const dot = (cx, cy, rad, col) => { g.fillStyle = col; g.beginPath(); g.arc(cx, cy, rad, 0, 2*Math.PI); g.fill(); };
+  for (let y = 0; y < grid; y++) for (let x = 0; x < grid; x++)
+    dot(ox + x*cell + cell/2, oy + y*cell + cell/2, cell*0.42, lit.get(x+','+y) || 'rgba(255,255,255,.06)');
+  const q = cell/2, sx = ox + (gx0 + P[0].length + 1)*cell, sy = oy + gy0*cell;
+  g.fillStyle = CYAN;
+  SPARK.forEach((r, y) => [...r].forEach((ch, x) => { if (ch !== '#') return;
+    const s = q*weight, cx = sx + x*q + q/2, cy = sy + y*q + q/2;
+    g.fillRect(Math.round(cx - s/2), Math.round(cy - s/2), Math.round(s), Math.round(s)); }));
+  return c;
+}
+const WORD = ["###.###.#.#.##...#..##.", "#.#..#..#.#.#.#.#.#.#.#", "###..#...#..##..###.##.", "#....#..#.#.#.#.#.#.#.#", "#...###.#.#.##..#.#.#.#"];
+function wordmark(px, ink) {
+  const c = hi(WORD[0].length*px, 5*px), g = c.getContext('2d'); g.fillStyle = ink;
+  WORD.forEach((r, y) => [...r].forEach((ch, x) => { if (ch === '#') g.fillRect(x*px*DPR, y*px*DPR, px*DPR, px*DPR); })); return c;
+}
+
+const out = document.getElementById('out');
+let h1 = document.createElement('h1'); h1.textContent = 'A. App icon — approved: S3 bold, G17, +1, P up 1'; out.appendChild(h1);
+const rowA = document.createElement('div'); rowA.className = 'row';
+for (const [cls, ink] of [['light', '#1d1d1f'], ['dark', '#f5f5f7']]) {
+  const d = document.createElement('div'); d.className = 'lock ' + cls;
+  d.appendChild(appIcon(110)); d.appendChild(wordmark(10, ink));
+  const t = document.createElement('span'); t.className = 'tiles'; t.textContent = 'Tiles'; d.appendChild(t);
+  rowA.appendChild(d);
+}
+const solo = document.createElement('div'); solo.style.cssText = 'display:flex;gap:14px;align-items:flex-end';
+for (const sz of [128, 64, 32]) solo.appendChild(appIcon(sz));
+rowA.appendChild(solo); out.appendChild(rowA);
+
+</script>
+</body></html>

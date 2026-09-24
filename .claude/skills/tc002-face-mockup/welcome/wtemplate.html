@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>PixbarTiles — welcome screen mockups</title>
+<style>
+  body { background:#1b1b1b; color:#ddd; font:14px -apple-system, sans-serif; margin:24px; max-width:1700px }
+  h1 { font-size:20px } h2 { font-size:15px; margin:28px 0 6px }
+  .row { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start }
+  .cell { background:#111; padding:10px; border-radius:8px }
+  .cell b { display:block; margin-bottom:6px; color:#aaa }
+  .t { font-size:11px; color:#888; margin-top:4px; font-variant-numeric: tabular-nums }
+  .spec { background:#111; padding:12px 16px; border-radius:8px; line-height:1.6 }
+  .sw { display:inline-block; width:12px; height:12px; border-radius:2px; vertical-align:middle; margin-right:4px }
+  button { background:#2a2a2a; color:#ddd; border:1px solid #444; border-radius:6px; padding:4px 10px; cursor:pointer }
+</style>
+<h1>Welcome-экран PixbarTiles — при подключении приложения, до загрузки страниц плиток</h1>
+<div class="spec">
+  Выводится <b>всегда, принудительно</b>, держится <b>10 s</b>, затем убирается (в мокапе после 10 s — 1 s тёмной паузы и повтор).<br>
+  TC002: P иконки 7×9 + искорка + PIXBAR + версия. AWTRIX: PIXBAR, у которого переливается собственная P, искорка; последние 3 s — версия (push вверх).<br>
+  Цвета иконки: <span class="sw" style="background:#4fb8f5"></span>синий #4fb8f5 ·
+  <span class="sw" style="background:#eef0f4"></span>белый #eef0f4 · <span class="sw" style="background:#b65cf5"></span>фиолетовый #b65cf5 ·
+  <span class="sw" style="background:#63d1ff"></span>искорка #63d1ff. Версия в мокапе: <b id="ver"></b>.
+  <div style="margin-top:8px"><button id="pp">⏸ пауза</button> <button id="rs">⟲ сначала</button></div>
+</div>
+<div id="root"></div>
+<script>
+const D = /*DATA*/null;
+const CELL = 14, DOT = 11, PAD = 14, GAP_MS = 1000;
+document.getElementById("ver").textContent = D.version;
+let paused = false;
+function paint(ctx, p, px) {
+  ctx.fillStyle = "#0a0a0a"; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  for (let y = 0; y < p.H; y++) for (let x = 0; x < p.W; x++) {
+    const col = px ? D.palette[px[y].charCodeAt(x) - 48] : "#000000";
+    ctx.fillStyle = col === "#000000" ? "#161616" : col;
+    ctx.beginPath();
+    ctx.roundRect(PAD + x * CELL + (CELL - DOT) / 2, PAD + y * CELL + (CELL - DOT) / 2, DOT, DOT, 2);
+    ctx.fill();
+  }
+}
+const players = [];
+const root = document.getElementById("root");
+for (const c of D.cases) {
+  root.insertAdjacentHTML("beforeend", `<h2>${c.id} — ${c.desc}</h2>`);
+  const row = document.createElement("div"); row.className = "row"; root.appendChild(row);
+  for (const p of c.panels) {
+    const cell = document.createElement("div"); cell.className = "cell";
+    cell.innerHTML = `<b>${p.name}</b>`;
+    const cv = document.createElement("canvas");
+    cv.width = p.W * CELL + 2 * PAD; cv.height = p.H * CELL + 2 * PAD; cell.appendChild(cv);
+    const t = document.createElement("div"); t.className = "t"; cell.appendChild(t);
+    row.appendChild(cell);
+    players.push({ p, ctx: cv.getContext("2d"), t, clock: 0, shown: -2 });
+  }
+}
+function frameAt(p, ms) {
+  let acc = 0;
+  for (let i = 0; i < p.frames.length; i++) { acc += p.frames[i].ms; if (ms < acc) return i; }
+  return -1;
+}
+let last = performance.now();
+function tick(now) {
+  const dt = now - last; last = now;
+  for (const pl of players) {
+    if (!paused) pl.clock = (pl.clock + dt) % (D.showMs + GAP_MS);
+    const i = pl.clock < D.showMs ? frameAt(pl.p, pl.clock) : -1;
+    if (i !== pl.shown) { paint(pl.ctx, pl.p, i >= 0 ? pl.p.frames[i].px : null); pl.shown = i; }
+    pl.t.textContent = pl.clock < D.showMs ? `${(pl.clock / 1000).toFixed(1)} s / 10 s` : "убран";
+  }
+  requestAnimationFrame(tick);
+}
+document.getElementById("pp").onclick = e => { paused = !paused; e.target.textContent = paused ? "▶ играть" : "⏸ пауза"; };
+document.getElementById("rs").onclick = () => players.forEach(pl => { pl.clock = 0; });
+requestAnimationFrame(tick);
+</script>

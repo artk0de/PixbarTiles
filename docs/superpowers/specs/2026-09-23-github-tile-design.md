@@ -272,6 +272,42 @@ back. Decided in the browser and on the panel (2026-09-23/24):
 - **TC001.** No lamp (the AWTRIX face is one text line); the failure event
   only.
 
+## Live-review amendments (2026-09-24)
+
+The first live look found a mistyped repository reading `no data`, with no
+way to fix it short of deleting the tile. Agreed in the mockup
+(`a14`–`a18` in `ggen.py`):
+
+- **Why there is no reading.** `GitHubConnector.read()` stops folding every
+  failure into `.noData`. The face's label slot says which:
+  - `bad token` — GitHub answered 401 (wrong, revoked or expired token);
+  - `no repo` — GraphQL `NOT_FOUND` / a repository GitHub will not show this
+    token (a typo, or a private repository outside the token's access);
+  - `no data` — network, rate limit, 5xx, anything else.
+  The two first wear the dim mark, `no data` its own icon (unchanged).
+  `bad token` is 33 px of the 34. The TC001 line says the same words.
+  The settings preview says it in a sentence: "GitHub refused the token
+  (401)", "Repository not found, or the token can't see it", "GitHub could
+  not be reached".
+- **Show** toggles, per tile, default on: Forks, PRs, CI. A hidden count
+  leaves the ticker's rotation; with Forks and PRs both off the name holds
+  the line alone. CI off draws no badge whatever the rollup says. The stars
+  are the hero and are always shown. The TC001 face has no fork/PR/CI
+  ambient, so Show changes nothing there.
+- **Notify** toggles, per tile, default on: Stars, Forks, PRs, CI failures.
+  An event whose toggle is off is not delivered on either model (no
+  interruption, no jingle); the snapshot still advances, so turning a toggle
+  back on does not replay what was skipped.
+- **The repository can be changed** in the tile's settings (supersedes
+  "read-only once the tile exists"). Same `owner/name` validation; a repo
+  already on that clock is refused. A change re-keys the tile: the new
+  instance id is derived from the new repo, the tile keeps its place in the
+  clock's order and its short name, celebration length and toggles; the old
+  page is removed from the device; the new repo's first read is a baseline,
+  so nothing it already has is celebrated.
+- **Saving the token** re-renders the open preview at once; the running
+  tiles read it on their next poll.
+
 ## Testing
 
 - S1: the moved contract suite runs against both stores; the file store adds

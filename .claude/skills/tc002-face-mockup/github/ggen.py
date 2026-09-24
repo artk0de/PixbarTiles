@@ -205,8 +205,12 @@ class Reading:
 
 
 class Config:
-    def __init__(self, short_name=None, change_ms=10_000, celebrate_ms=8_000):
+    def __init__(self, short_name=None, change_ms=10_000, celebrate_ms=8_000,
+                 show_forks=True, show_prs=True, show_ci=True):
+        """show_*: the tile's Show toggles. The stars are the hero and always
+        shown; the name line always rotates first."""
         self.short_name, self.change_ms, self.celebrate_ms = short_name, change_ms, celebrate_ms
+        self.show_forks, self.show_prs, self.show_ci = show_forks, show_prs, show_ci
 
 
 def compact(n):
@@ -361,21 +365,32 @@ def line_state(parts, dwell):
     return edge_marquee(parts, dwell)
 
 
-def ambient(r, cfg, has_token=True):
+# Why there is no reading, each said in the label slot — a reader fixes a bad
+# token and a mistyped repo differently, and one "no data" for both hid which:
+# token = GitHub answered 401; repo = the repo is not there or the token cannot
+# see it (GraphQL NOT_FOUND); data = network, rate limit, outage.
+PROBLEMS = {"token": "bad token", "repo": "no repo", "data": "no data"}
+
+
+def ambient(r, cfg, has_token=True, problem=None):
     """Hybrid: the stars hold the hero; each ticker line brings its own icon —
     the mark with the repo's name, the fork glyph with the fork count, the PR
-    glyph with the open PRs — so a count is named by its icon, not a word."""
+    glyph with the open PRs — so a count is named by its icon, not a word.
+    A hidden count (Show toggles) leaves the rotation; with both hidden the
+    name holds the line alone."""
     if not has_token:
         return lace(ticker_segments(Area(), [(octocat(dim=True), [(line_area([("no token", DIM)]), 1000)])]))
-    if r is None:
-        return lace(ticker_segments(Area(), [(nodata_icon(), [(line_area([("no data", DIM)]), 1000)])]))
-    states = [
-        (octocat(), line_state([(display_name(r.repo, cfg.short_name), WHITE)], cfg.change_ms)),
-        (fork_icon(), line_state([(str(r.forks), FORK)], cfg.change_ms)),
-        (pr_icon(), line_state([(str(r.prs), PR)], cfg.change_ms)),
-    ]
+    if r is None or problem:
+        label = PROBLEMS[problem or "data"]
+        icon = nodata_icon() if (problem or "data") == "data" else octocat(dim=True)
+        return lace(ticker_segments(Area(), [(icon, [(line_area([(label, DIM)]), 1000)])]))
+    states = [(octocat(), line_state([(display_name(r.repo, cfg.short_name), WHITE)], cfg.change_ms))]
+    if cfg.show_forks:
+        states.append((fork_icon(), line_state([(str(r.forks), FORK)], cfg.change_ms)))
+    if cfg.show_prs:
+        states.append((pr_icon(), line_state([(str(r.prs), PR)], cfg.change_ms)))
     frames = lace(ticker_segments(hero(compact(r.stars), STAR, star=True), states))
-    loop = lamp_loop(r.ci)
+    loop = lamp_loop(r.ci) if cfg.show_ci else None
     return with_lamp(frames, loop) if loop else frames
 
 
@@ -570,17 +585,31 @@ CASES = [
                                    ci="failure")),
     dict(id="c8-ci-failed", desc="событие: main упал (только своя страница) — иконка failed-check, "
          "hero «ci», «main fail», автор коммита", kind="ci", count=1, who=["dave"], prs=["main"]),
+    dict(id="a14-bad-token", desc="GitHub ответил 401: токен неверный, отозван или истёк", kind="ambient",
+         reading=None, problem="token"),
+    dict(id="a15-no-repo", desc="репо не найден или токену недоступен (опечатка, приватный без доступа)",
+         kind="ambient", reading=None, problem="repo"),
+    dict(id="a16-no-forks", desc="Show: форки выключены — крутятся имя и PR", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 45, 3), show_forks=False),
+    dict(id="a17-name-only", desc="Show: форки и PR выключены — имя стоит на строке одно", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 45, 3), show_forks=False, show_prs=False),
+    dict(id="a18-ci-hidden", desc="Show: CI выключен — main упал, но бейджа нет", kind="ambient",
+         reading=R("artk0de/tea-rags", 1234, 45, 3, ci="failure"), show_ci=False),
 ]
-CASES_REVIEW = CASES
+# The review page for the 2026-09-24 round: the new states, beside a1 as the
+# face they are read against.
+CASES_REVIEW = [c for c in CASES if c["id"] in {
+    "a1-steady", "a8-no-data", "a14-bad-token", "a15-no-repo", "a16-no-forks", "a17-name-only", "a18-ci-hidden"}]
 
 DWELLS = [3000, 5000, 8000, 10000, 15000]
 CELEBRATES = [5000, 8000, 10000, 15000]
 
 
 def build(case, dwell=10_000, celebrate=8_000):
-    cfg = Config(case.get("short_name"), dwell, celebrate)
+    cfg = Config(case.get("short_name"), dwell, celebrate, case.get("show_forks", True),
+                 case.get("show_prs", True), case.get("show_ci", True))
     if case["kind"] == "ambient":
-        return ambient(case["reading"], cfg, case.get("token", True))
+        return ambient(case["reading"], cfg, case.get("token", True), case.get("problem"))
     return celebration(case["kind"], case["count"], case["who"], cfg, tuple(case.get("prs", ())))
 
 

@@ -34,5 +34,16 @@ extension PixelFont {
         // The CI failure's hero `ci`, lowercase at x-height like `m`.
         "c": (5, [0b00000, 0b00000, 0b00000, 0b01110, 0b10001, 0b00001, 0b00001, 0b10001, 0b01110]),
         "i": (1, [0b0, 0b1, 0b0, 0b1, 0b1, 0b1, 0b1, 0b1, 0b1]),
+        // The Main watch's hero marks, the star's width: the fork (two tips
+        // joining into a base) and the pull request (a branch beside a base,
+        // the arrow coming in), their commits as 3×3 rings.
+        "⑂": (9, [
+            0b111000111, 0b101000101, 0b111000111, 0b010000010, 0b001000100,
+            0b000101000, 0b000111000, 0b000101000, 0b000111000,
+        ]),
+        "⎇": (9, [
+            0b000100111, 0b011110101, 0b010100111, 0b010000010, 0b010000010,
+            0b010000010, 0b111000111, 0b101000101, 0b111000111,
+        ]),
     ]
 }

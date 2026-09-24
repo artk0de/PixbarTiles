@@ -25,6 +25,8 @@ public struct GitHubTileConfig: Codable, Sendable, Equatable {
     public var notifyForks = true
     public var notifyPRs = true
     public var notifyCI = true
+    /// Which metric holds the hero — always shown, whatever its Show toggle.
+    public var mainWatch = GitHubMainWatch.stars
 
     /// The lengths the settings offer.
     public static let celebrationChoices = [5, 8, 10, 15]
@@ -37,7 +39,7 @@ public struct GitHubTileConfig: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case repo, shortName, celebrationSeconds
-        case showForks, showPRs, showCI, notifyStars, notifyForks, notifyPRs, notifyCI
+        case showForks, showPRs, showCI, notifyStars, notifyForks, notifyPRs, notifyCI, mainWatch
     }
 
     /// A record written without a setting reads its default, so a setting
@@ -55,5 +57,21 @@ public struct GitHubTileConfig: Codable, Sendable, Equatable {
         notifyForks = try flag(.notifyForks)
         notifyPRs = try flag(.notifyPRs)
         notifyCI = try flag(.notifyCI)
+        mainWatch = try container.decodeIfPresent(GitHubMainWatch.self, forKey: .mainWatch) ?? .stars
+    }
+}
+
+/// The Main watch: the metric that holds the hero — ggen's `Config.main`.
+public enum GitHubMainWatch: String, Codable, Sendable, CaseIterable {
+    case stars, prs, forks, ci
+
+    /// What the settings' picker calls it.
+    public var title: String {
+        switch self {
+        case .stars: "Stars"
+        case .prs: "PRs"
+        case .forks: "Forks"
+        case .ci: "CI"
+        }
     }
 }

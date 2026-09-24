@@ -45,6 +45,8 @@ public enum GitHubAwtrixFace {
     static let prColour = "#3FB950"
     /// GitHub's failed-check red, the TC002 badge's.
     static let ciFailColour = "#F85149"
+    /// GitHub's pending amber, the TC002 lamp's.
+    static let ciPendingColour = "#D29922"
     /// The TC002 labels' grey: `no token` / `no data` are a state, not a
     /// figure, and must not look like one.
     static let quietColour = "#606060"
@@ -58,7 +60,7 @@ public enum GitHubAwtrixFace {
         case .noToken: ("no token", quietColour)
         // The TC002's label words: which failure it is, not one for all.
         case .badToken, .noRepo, .noData: (reading.content.problem?.label ?? "no data", quietColour)
-        case let .state(state): (GitHubFace.compact(state.stars), starColour)
+        case let .state(state): mainLine(state, reading.config.mainWatch)
         }
         let seconds = reading.config.celebrationSeconds
         func notification(_ line: String, jingle: String, colour: String) -> Interruption<AwtrixScene> {
@@ -88,6 +90,24 @@ public enum GitHubAwtrixFace {
             lifetime: 1_800,
             interruptions: interruptions
         )
+    }
+
+    /// The app's one line: the Main watch's metric — a count in its colour,
+    /// or the CI in words (the firmware's font has capitals, so `CI` is
+    /// spelled as the user wrote it).
+    static func mainLine(_ state: GitHubRepoState, _ watch: GitHubMainWatch) -> (String, String) {
+        switch watch {
+        case .stars: return (GitHubFace.compact(state.stars), starColour)
+        case .prs: return (GitHubFace.compact(state.openPRs), prColour)
+        case .forks: return (GitHubFace.compact(state.forks), forkColour)
+        case .ci:
+            switch state.ci?.state {
+            case .success?: return ("CI passed", prColour)
+            case .pending?: return ("CI processed", ciPendingColour)
+            case .failure?: return ("CI failed", ciFailColour)
+            case GitHubCI.State.none?, nil: return ("no CI", quietColour)
+            }
+        }
     }
 
     /// `stars +2 @alice +1 more`: what happened, how many, and who — the

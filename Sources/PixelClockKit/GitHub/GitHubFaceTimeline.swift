@@ -179,9 +179,14 @@ extension GitHubFace {
     /// hidden the name holds the line alone. A read with no state says why in
     /// the label slot: `no data` with its own icon, `bad token` and `no repo`
     /// with the dim mark.
+    ///
+    /// The Main watch picks the hero: the stars (as shipped), or the forks or
+    /// the open PRs with their own mark — the stars then join the ticker, and
+    /// the hero's own count leaves it whatever its Show toggle says — or the
+    /// CI in words, with no lamp beside it.
     static func ambient(
         _ state: GitHubRepoState?, shortName: String?, hasToken: Bool, problem: GitHubProblem? = nil,
-        show: Shown = Shown(), changeMilliseconds: Int
+        show: Shown = Shown(), main: GitHubMainWatch = .stars, changeMilliseconds: Int
     ) -> [Frame] {
         let blank = PixelCanvas(width: areaWidth, height: height)
         guard hasToken else {
@@ -205,17 +210,89 @@ extension GitHubFace {
                 )
             ),
         ]
-        if show.forks {
+        if main != .stars {
+            states.append(TickerState(icon: Loop(id: 3, cels: starIcon().loop),
+                                      lines: lineState([part("\(state.stars)", starInk)], changeMilliseconds)))
+        }
+        if show.forks, main != .forks {
             states.append(TickerState(icon: Loop(id: 1, cels: forkIcon()),
                                       lines: lineState([part("\(state.forks)", forkInk)], changeMilliseconds)))
         }
-        if show.prs {
+        if show.prs, main != .prs {
             states.append(TickerState(icon: Loop(id: 2, cels: prIcon()),
                                       lines: lineState([part("\(state.openPRs)", prInk)], changeMilliseconds)))
         }
-        let frames = lace(tickerSegments(hero(compact(state.stars), starInk, star: true), states))
+        let top: PixelCanvas
+        switch main {
+        case .ci:
+            let (text, ink) = ciHero(state.ci?.state)
+            let parts = [part(text, ink)]
+            guard WeatherFace.partsWidth(parts) > areaWidth else {
+                var still = PixelCanvas(width: areaWidth, height: height)
+                WeatherFace.drawRuns(parts, on: &still, x: 0, y: ciHeroY)
+                return lace(tickerSegments(still, states))
+            }
+            return withHero(
+                lace(tickerSegments(PixelCanvas(width: areaWidth, height: height), states)),
+                edgeMarquee(parts, 0)
+            )
+        case .stars: top = hero(compact(state.stars), starInk, star: true)
+        case .forks: top = hero(compact(state.forks), forkInk, mark: "⑂")
+        case .prs: top = hero(compact(state.openPRs), prInk, mark: "⎇")
+        }
+        let frames = lace(tickerSegments(top, states))
         guard show.ci, let loop = lampLoop(state.ci?.state) else { return frames }
         return withLamp(frames, loop)
+    }
+
+    // MARK: - The CI hero
+
+    /// The row the CI hero's 5 px line sits on: centred on the hero's 9.
+    static let ciHeroY = 2
+
+    /// The default branch's checks in words, in GitHub's check colours — the
+    /// pending state called "processed" (the user's word) — and a repo
+    /// without checks saying so, dim.
+    static func ciHero(_ state: GitHubCI.State?) -> (text: String, ink: Pixel) {
+        switch state {
+        case .success?: ("ci passed", prInk)
+        case .pending?: ("ci processed", ciPendingInk)
+        case .failure?: ("ci failed", ciFailInk)
+        case GitHubCI.State.none?, nil: ("no ci", WeatherFace.dim)
+        }
+    }
+
+    /// An edge-marqueeing hero line painted over a whole timeline, looping,
+    /// its phase running on across every frame — `withLamp`'s cut: a frame
+    /// that spans a step of the marquee is cut there.
+    static func withHero(_ frames: [Frame], _ loop: [(line: PixelCanvas, milliseconds: Int)]) -> [Frame] {
+        let total = loop.reduce(0) { $0 + $1.milliseconds }
+        var out: [Frame] = [], elapsed = 0
+        for frame in frames {
+            var left = frame.milliseconds
+            while left > 0 {
+                let position = elapsed % total
+                var start = 0, step = loop[loop.count - 1]
+                for candidate in loop {
+                    if position < start + candidate.milliseconds {
+                        step = candidate
+                        break
+                    }
+                    start += candidate.milliseconds
+                }
+                let span = min(start + step.milliseconds - position, left)
+                var canvas = frame.canvas
+                for y in 0..<5 {
+                    for x in 0..<areaWidth {
+                        canvas[WeatherFace.areaX + x, ciHeroY + y] = step.line[x, y]
+                    }
+                }
+                out.append(Frame(canvas: canvas, milliseconds: span))
+                elapsed += span
+                left -= span
+            }
+        }
+        return out
     }
 
     // MARK: - The CI lamp

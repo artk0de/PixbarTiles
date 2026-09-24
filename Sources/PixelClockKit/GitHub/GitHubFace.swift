@@ -74,7 +74,7 @@ public enum GitHubFace {
         )
         return ambient(
             state, shortName: config.shortName, hasToken: !noToken, problem: problem, show: show,
-            changeMilliseconds: dwellMilliseconds
+            main: config.mainWatch, changeMilliseconds: dwellMilliseconds
         )
     }
 
@@ -211,14 +211,14 @@ public enum GitHubFace {
 
     // MARK: - The right area
 
-    /// Rows 0–8 of the right area: `text` in the 5×9 face, after the big
-    /// star and a 2 px gap when `star`.
-    static func hero(_ text: String, _ ink: Pixel, star: Bool = false) -> PixelCanvas {
+    /// Rows 0–8 of the right area: `text` in the 5×9 face, after its mark —
+    /// the big star when `star` — and a 2 px gap.
+    static func hero(_ text: String, _ ink: Pixel, star: Bool = false, mark: Character? = nil) -> PixelCanvas {
         var area = PixelCanvas(width: areaWidth, height: height)
         var x = 0
-        if star {
-            area.drawText("★", at: .zero, ink: ink, font: PixelFont.big)
-            x = PixelFont.big.advance(for: "★") + 1
+        if let mark = star ? "★" : mark {
+            area.drawText(String(mark), at: .zero, ink: ink, font: PixelFont.big)
+            x = PixelFont.big.advance(for: mark) + 1
         }
         area.drawText(text, at: PixelPoint(x: x, y: 0), ink: ink, font: PixelFont.big)
         return area

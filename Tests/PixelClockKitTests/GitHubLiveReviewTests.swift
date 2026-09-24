@@ -144,7 +144,7 @@ private let refusedStargazers = """
         for (content, note) in notes {
             let reading = GitHubReading(content: content, config: config)
             #expect(reading.previewNote == note, "\(content)")
-            #expect(reading.diagnosis?.isQuiet ?? false == false, "\(content)")
+            #expect(reading.diagnosis.map { $0.severity == .blocking } ?? true, "\(content)")
         }
     }
 
@@ -160,7 +160,7 @@ private let refusedStargazers = """
         )
         _ = try await failing.read()
         #expect(diagnoses.diagnosis(for: failing.tile)
-            == GitHubDiagnosis(message: "GitHub refused the token (401) — paste a new one", isQuiet: false))
+            == GitHubDiagnosis(message: "GitHub refused the token (401) — paste a new one", severity: .blocking))
 
         let clean = GitHubConnector(
             tile: record(GitHubTileConfig(repo: "a/x")),
@@ -214,7 +214,7 @@ private let refusedStargazers = """
         )
         let reading = GitHubReading(content: .state(state), config: GitHubTileConfig(repo: "a/x"))
         #expect(reading.diagnosis == GitHubDiagnosis(
-            message: "Who starred needs Contents: write — stars are counted instead", isQuiet: true
+            message: "Star authors are hidden until the token gets Contents: write", severity: .partial
         ))
     }
 
@@ -222,15 +222,17 @@ private let refusedStargazers = """
     /// the permission named.
     @Test func aForbiddenFieldNamesThePermissionItWants() throws {
         let cases: [([String], GitHubWithheld, String)] = [
-            (["repository", "openPRs"], .pullRequests, "Token lacks Pull requests: read"),
-            (["repository", "pullRequests"], .pullRequests, "Token lacks Pull requests: read"),
+            (["repository", "openPRs"], .pullRequests, "Open PRs are hidden until the token gets Pull requests: read"),
+            (["repository", "pullRequests"], .pullRequests,
+             "Open PRs are hidden until the token gets Pull requests: read"),
             (["repository", "defaultBranchRef", "target", "statusCheckRollup"], .checks,
-             "Token lacks Commit statuses: read and Checks: read"),
-            (["repository", "defaultBranchRef", "target", "author"], .contents, "Token lacks Contents: read"),
-            (["repository", "forks"], .metadata, "Token lacks Metadata: read"),
-            (["repository", "forkCount"], .metadata, "Token lacks Metadata: read"),
+             "CI is hidden until the token gets Commit statuses: read and Checks: read"),
+            (["repository", "defaultBranchRef", "target", "author"], .contents,
+             "The CI failure author is hidden until the token gets Contents: read"),
+            (["repository", "forks"], .metadata, "Forks are hidden until the token gets Metadata: read"),
+            (["repository", "forkCount"], .metadata, "Forks are hidden until the token gets Metadata: read"),
             (["repository", "watchers"], .other("repository.watchers"),
-             "Token lacks a permission for repository.watchers"),
+             "repository.watchers is hidden until the token gets the permission for it"),
         ]
         for (path, part, sentence) in cases {
             let pathJSON = "[" + path.map { "\"\($0)\"" }.joined(separator: ",") + "]"
@@ -241,7 +243,7 @@ private let refusedStargazers = """
             #expect(state.withheld == [part], "\(path)")
             #expect(state.stars == 12, "\(path)")
             let reading = GitHubReading(content: .state(state), config: GitHubTileConfig(repo: "a/x"))
-            #expect(reading.diagnosis == GitHubDiagnosis(message: sentence, isQuiet: false), "\(path)")
+            #expect(reading.diagnosis == GitHubDiagnosis(message: sentence, severity: .partial), "\(path)")
         }
     }
 
@@ -295,7 +297,7 @@ private let refusedStargazers = """
         var state = GitHubRepoState(nameWithOwner: "a/x", stars: 12, forks: 3, openPRs: 1)
         state.stargazersRefused = true
         let reading = GitHubReading(content: .state(state), config: GitHubTileConfig(repo: "a/x"))
-        #expect(reading.previewNote == "Who starred needs Contents: write — stars are counted instead")
+        #expect(reading.previewNote == "Star authors are hidden until the token gets Contents: write")
     }
 
     /// A rise celebrates by count, with no logins to name.

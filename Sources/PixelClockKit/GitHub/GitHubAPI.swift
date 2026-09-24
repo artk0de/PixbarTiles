@@ -97,20 +97,18 @@ public enum GitHubWithheld: Hashable, Sendable {
         }
     }
 
-    /// What the tile list and the settings preview say.
+    /// What the tile list and the settings preview say: what is hidden, and
+    /// the permission that unlocks it. The tile works without it.
     public var sentence: String {
         switch self {
-        case .stargazers: "Who starred needs Contents: write — stars are counted instead"
-        case .pullRequests: "Token lacks Pull requests: read"
-        case .checks: "Token lacks Commit statuses: read and Checks: read"
-        case .contents: "Token lacks Contents: read"
-        case .metadata: "Token lacks Metadata: read"
-        case let .other(path): "Token lacks a permission for \(path)"
+        case .stargazers: "Star authors are hidden until the token gets Contents: write"
+        case .pullRequests: "Open PRs are hidden until the token gets Pull requests: read"
+        case .checks: "CI is hidden until the token gets Commit statuses: read and Checks: read"
+        case .contents: "The CI failure author is hidden until the token gets Contents: read"
+        case .metadata: "Forks are hidden until the token gets Metadata: read"
+        case let .other(path): "\(path) is hidden until the token gets the permission for it"
         }
     }
-
-    /// Said quietly: the tile works as designed without it.
-    public var isQuiet: Bool { self == .stargazers }
 }
 
 /// A repository as one read found it: the three counts the face shows, and the
@@ -209,12 +207,11 @@ public struct GitHubAPI: GitHubReporting {
         if has(.pullRequests) {
             fields.append("openPRs: pullRequests(states: OPEN, last: 20) { nodes { number author { login } } }")
         }
-        if has(.contents) {
-            let rollup = has(.checks) ? " statusCheckRollup { state }" : ""
-            fields.append(
-                "defaultBranchRef { name target { ... on Commit { oid author { user { login } }\(rollup) } } }"
-            )
-        }
+        // Contents covers the commit's author, the checks its rollup: each
+        // dropped alone, so the lamp still reads without the author.
+        let author = has(.contents) ? " author { user { login } }" : ""
+        let rollup = has(.checks) ? " statusCheckRollup { state }" : ""
+        fields.append("defaultBranchRef { name target { ... on Commit { oid\(author)\(rollup) } } }")
         return """
         query($owner: String!, $name: String!) {
           repository(owner: $owner, name: $name) {

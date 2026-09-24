@@ -132,7 +132,7 @@ private let repo = "artk0de/TeaRAGs-MCP"
         }
         #expect(state.stars == 12)
         #expect(reading.diagnosis == GitHubDiagnosis(
-            message: "Who starred needs Contents: write — stars are counted instead", isQuiet: true
+            message: "Star authors are hidden until the token gets Contents: write", severity: .partial
         ))
     }
 
@@ -187,7 +187,8 @@ private let repo = "artk0de/TeaRAGs-MCP"
             (["repository", "pullRequests"], .pullRequests, ["openPRs:", "pullRequests("]),
             (["repository", "forks"], .metadata, ["forks(", "forkCount"]),
             (["repository", "defaultBranchRef", "target", "statusCheckRollup"], .checks, ["statusCheckRollup"]),
-            (["repository", "defaultBranchRef", "target", "author"], .contents, ["defaultBranchRef"]),
+            // Only the commit's author: the CI lamp itself still reads.
+            (["repository", "defaultBranchRef", "target", "author"], .contents, ["author { user"]),
         ]
         for (path, part, dropped) in cases {
             let transport = ScriptedTransport([refusal(path), reducedAnswer])
@@ -270,6 +271,50 @@ private let repo = "artk0de/TeaRAGs-MCP"
             }
             #expect(transport.queries.count == 1)
         }
+    }
+}
+
+// MARK: - Severity
+
+/// A diagnosis is blocking (the tile does not work) or partial (it works
+/// without a withheld part) — explicit, where it was a quiet flag.
+@Suite struct GitHubDiagnosisSeverityTests {
+    private let config = GitHubTileConfig(repo: "a/x")
+
+    @Test func everyFailureIsBlocking() {
+        for content in [GitHubReading.Content.badToken, .noRepo, .noData] {
+            #expect(GitHubReading(content: content, config: config).diagnosis?.severity == .blocking, "\(content)")
+        }
+    }
+
+    /// Every withheld part is partial, the stargazers too — no longer
+    /// quiet — and each sentence names what is hidden and what unlocks it.
+    @Test func everyWithheldPartIsPartialAndSaysWhatUnlocksIt() {
+        var state = GitHubRepoState(nameWithOwner: "a/x", stars: 1, forks: 0, openPRs: 0)
+        state.withheld = [.stargazers, .pullRequests]
+        let diagnosis = GitHubReading(content: .state(state), config: config).diagnosis
+        #expect(diagnosis == GitHubDiagnosis(
+            message: "Star authors are hidden until the token gets Contents: write\n"
+                + "Open PRs are hidden until the token gets Pull requests: read",
+            severity: .partial
+        ))
+    }
+
+    @Test func aDiagnosisRoundTrips() throws {
+        let diagnosis = GitHubDiagnosis(message: "m", severity: .partial)
+        let data = try JSONEncoder().encode(diagnosis)
+        #expect(try JSONDecoder().decode(GitHubDiagnosis.self, from: data) == diagnosis)
+    }
+
+    /// A diagnosis stored before the severity: quiet was the stargazers
+    /// case, which is partial; anything else was said as a problem.
+    @Test func theOldStoredShapeStillDecodes() throws {
+        let quiet = Data(#"{"message":"q","isQuiet":true}"#.utf8)
+        let loud = Data(#"{"message":"l","isQuiet":false}"#.utf8)
+        #expect(try JSONDecoder().decode(GitHubDiagnosis.self, from: quiet)
+            == GitHubDiagnosis(message: "q", severity: .partial))
+        #expect(try JSONDecoder().decode(GitHubDiagnosis.self, from: loud)
+            == GitHubDiagnosis(message: "l", severity: .blocking))
     }
 }
 

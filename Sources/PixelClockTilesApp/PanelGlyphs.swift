@@ -496,12 +496,17 @@ enum PanelGlyph {
         "TTTTTTTTT",
     ]
 
-    /// The sign's tint by what it says — a failed push red, a diagnosis
-    /// orange — and the `!` in white, the way a badge's mark is knocked out.
+    /// The panel's warning yellow — the status LED's "checking" yellow, so a
+    /// partial refusal reads as the same caution the panel already says.
+    static let warningYellow: UInt32 = checkingTint
+
+    /// The sign's tint by severity — red when the tile does not work, the
+    /// warning yellow when a part is withheld. The `!` is knocked out white on
+    /// red and near-black on yellow, where white would not read.
     static func warningPalette(_ sign: TileCardTrouble.Sign) -> Palette {
         switch sign {
-        case .failing: ["T": criticalTint, "G": 0xFFFFFF]
-        case .diagnosis: ["T": lowTint, "G": 0xFFFFFF]
+        case .blocking: ["T": criticalTint, "G": 0xFFFFFF]
+        case .partial: ["T": warningYellow, "G": 0x1C1C1E]
         }
     }
 

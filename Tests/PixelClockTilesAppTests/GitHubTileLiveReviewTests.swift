@@ -267,7 +267,7 @@ private struct NoSnapshots: GitHubSnapshotStoring {
         _ = try await #require(registry.connector(for: a) as? GitHubConnector).read()
 
         #expect(model.gitHubDiagnosis(of: a.key)
-            == GitHubDiagnosis(message: "GitHub refused the token (401) — paste a new one", isQuiet: false))
+            == GitHubDiagnosis(message: "GitHub refused the token (401) — paste a new one", severity: .blocking))
         await model.teardown()
     }
 }

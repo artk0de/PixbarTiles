@@ -44,12 +44,11 @@ public struct GitHubReading: Sendable, Equatable {
     /// One answer for the tile list, the settings preview and the face.
     public var diagnosis: GitHubDiagnosis? {
         if let problem = content.problem {
-            return GitHubDiagnosis(message: problem.sentence, isQuiet: false)
+            return GitHubDiagnosis(message: problem.sentence, severity: .blocking)
         }
         guard case let .state(state) = content, !state.withheld.isEmpty else { return nil }
         return GitHubDiagnosis(
-            message: state.withheld.map(\.sentence).joined(separator: "\n"),
-            isQuiet: state.withheld.allSatisfy(\.isQuiet)
+            message: state.withheld.map(\.sentence).joined(separator: "\n"), severity: .partial
         )
     }
 
@@ -80,15 +79,43 @@ public enum GitHubProblem: String, Sendable, CaseIterable {
     }
 }
 
-/// What a read found wrong, in one sentence, and whether it is only worth a
-/// quiet word — the tile works as designed without what is missing.
+/// What a read found wrong, in one sentence, and how badly.
 public struct GitHubDiagnosis: Codable, Sendable, Equatable {
-    public var message: String
-    public var isQuiet: Bool
+    public enum Severity: String, Codable, Sendable {
+        /// The tile does not work: a refused token, no repo, no data.
+        case blocking
+        /// The tile works without a part GitHub withheld from the token.
+        case partial
+    }
 
-    public init(message: String, isQuiet: Bool) {
+    public var message: String
+    public var severity: Severity
+
+    public init(message: String, severity: Severity) {
         self.message = message
-        self.isQuiet = isQuiet
+        self.severity = severity
+    }
+
+    private enum CodingKeys: String, CodingKey { case message, severity, isQuiet }
+
+    /// Tolerant of the shape stored before the severity: `isQuiet` was the
+    /// stargazers refusal alone, which is partial; anything else was said as
+    /// a problem. The next read rewrites it in the new shape.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        message = try container.decode(String.self, forKey: .message)
+        if let severity = try container.decodeIfPresent(Severity.self, forKey: .severity) {
+            self.severity = severity
+        } else {
+            let quiet = try container.decodeIfPresent(Bool.self, forKey: .isQuiet) ?? false
+            severity = quiet ? .partial : .blocking
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(message, forKey: .message)
+        try container.encode(severity, forKey: .severity)
     }
 }
 

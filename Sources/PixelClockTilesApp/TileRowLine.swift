@@ -94,14 +94,14 @@ struct TileRowLine: Equatable {
 /// the failure first because it is why the clock may be showing an older page.
 struct TileCardTrouble: Equatable {
     enum Sign: Equatable {
-        /// The last push did not reach the clock: red.
-        case failing
-        /// The push went through, and the page says what is wrong: orange.
-        case diagnosis
+        /// The tile does not work — a failed push, a refused token, no repo,
+        /// no data: red.
+        case blocking
+        /// The tile works, a part is withheld from the token: yellow.
+        case partial
     }
 
-    /// Nil for the quiet diagnosis: said on the line, worth no sign.
-    let sign: Sign?
+    let sign: Sign
     let line: String
     /// The popover's text: the raw error behind the words, and the diagnosis.
     let detail: String
@@ -112,13 +112,15 @@ struct TileCardTrouble: Equatable {
             let said = [words, diagnosis?.message].compactMap(\.self)
             let detail = [words, failure, diagnosis?.message].compactMap(\.self)
             return TileCardTrouble(
-                sign: .failing, line: said.joined(separator: "\n"), detail: detail.joined(separator: "\n\n")
+                sign: .blocking, line: said.joined(separator: "\n"), detail: detail.joined(separator: "\n\n")
             )
         }
         guard let diagnosis else { return nil }
-        return TileCardTrouble(
-            sign: diagnosis.isQuiet ? nil : .diagnosis, line: diagnosis.message, detail: diagnosis.message
-        )
+        let sign: Sign = switch diagnosis.severity {
+        case .blocking: .blocking
+        case .partial: .partial
+        }
+        return TileCardTrouble(sign: sign, line: diagnosis.message, detail: diagnosis.message)
     }
 }
 

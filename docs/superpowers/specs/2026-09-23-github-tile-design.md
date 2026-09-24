@@ -385,30 +385,36 @@ the mockup was waived by the user for this round; `ggen.py` cases
 
 ### Why a part is missing (added 2026-09-24)
 
-A read carries a structured diagnosis (`GitHubReading.diagnosis`): the
-failure, or the parts GitHub withheld from the token, each named by the
-permission it wants — GitHub's fine-grained table and the
-`x-accepted-github-permissions` header measured live. The same sentence goes
+A read carries a structured diagnosis (`GitHubReading.diagnosis`): a message
+and an explicit severity. **Blocking** — the tile does not work: `bad token`,
+`no repo`, `no data`. **Partial** — the tile works without a part GitHub
+withheld from the token; the sentence names what is hidden and the permission
+that unlocks it (GitHub's fine-grained table and the
+`x-accepted-github-permissions` header measured live). The same sentence goes
 to the settings preview (under the picture), to the clock's tile list (the
-card's result line, with an orange sign unless it is only the quiet one), and
-the failure picks the face's label. When the last push to the clock failed
-too, the card says both — `failing — <cause>` and the diagnosis under it —
-behind the red sign (`TileCardTrouble`). The sign is a pixel triangle
-(`PanelGlyph.warning`, red for a failed push, orange for a diagnosis); hovering
-it opens the whole text — the raw error and the diagnosis — in a popover, with
-the pointing hand, the way the token's `?` does.
+card's result line), and a blocking failure picks the face's label. The card
+wears a pixel triangle (`PanelGlyph.warning`): red (`criticalTint`) for a
+failed push or a blocking diagnosis, the panel's warning yellow
+(`PanelGlyph.warningYellow`, the status LED's `#FFD60A`, with a near-black `!`)
+for a partial refusal — the stargazers refusal included, which used to show no
+sign at all. When the last push failed too, the card says both —
+`failing — <cause>` and the diagnosis under it — behind the red sign
+(`TileCardTrouble`); hovering the sign opens the whole text — the raw error
+and the diagnosis — in a popover, with the pointing hand, the way the token's
+`?` does. A diagnosis stored before the severity (`isQuiet`) still decodes:
+quiet reads partial, anything else blocking, until the next read rewrites it.
 
 | What GitHub answered | Said | Tile |
 |---|---|---|
-| `FORBIDDEN` on `repository.stargazers` | "Who starred needs Contents: write — stars are counted instead" (quiet) | works |
-| `FORBIDDEN` on `pullRequests` / `openPRs` | "Token lacks Pull requests: read" | works; PRs leave the ticker |
-| `FORBIDDEN` under `defaultBranchRef` … `statusCheckRollup` | "Token lacks Commit statuses: read and Checks: read" | works; no lamp |
-| `FORBIDDEN` elsewhere under `defaultBranchRef` (`target`, `author`) | "Token lacks Contents: read" | works |
-| `FORBIDDEN` on `forks` / the counts | "Token lacks Metadata: read" | works; forks leave the ticker |
-| `FORBIDDEN` on any other path | "Token lacks a permission for <path>" | works |
-| `NOT_FOUND`, or the repository itself withheld | "Repository not found, or the token can't see it (Repository access)" | `no repo` |
-| HTTP 401 | "GitHub refused the token (401) — paste a new one" | `bad token` |
-| anything else | "GitHub could not be reached" | `no data` |
+| `FORBIDDEN` on `repository.stargazers` | "Star authors are hidden until the token gets Contents: write" (partial) | works; stars counted |
+| `FORBIDDEN` on `pullRequests` / `openPRs` | "Open PRs are hidden until the token gets Pull requests: read" (partial) | works; PRs leave the ticker |
+| `FORBIDDEN` under `defaultBranchRef` … `statusCheckRollup` | "CI is hidden until the token gets Commit statuses: read and Checks: read" (partial) | works; no lamp |
+| `FORBIDDEN` elsewhere under `defaultBranchRef` (`target`, `author`) | "The CI failure author is hidden until the token gets Contents: read" (partial) | works |
+| `FORBIDDEN` on `forks` / the counts | "Forks are hidden until the token gets Metadata: read" (partial) | works; forks leave the ticker |
+| `FORBIDDEN` on any other path | "<path> is hidden until the token gets the permission for it" (partial) | works |
+| `NOT_FOUND`, or the repository itself withheld | "Repository not found, or the token can't see it (Repository access)" (blocking) | `no repo` |
+| HTTP 401 | "GitHub refused the token (401) — paste a new one" (blocking) | `bad token` |
+| anything else | "GitHub could not be reached" (blocking) | `no data` |
 
 A withheld part reads empty and is not taken for data: withheld counts do not
 move the snapshot's totals and withheld PRs do not move its set, so granting

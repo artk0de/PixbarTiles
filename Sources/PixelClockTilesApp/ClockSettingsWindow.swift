@@ -252,13 +252,12 @@ private struct ClockTileCard: View {
                 )
                 .accessibilityLabel(name)
                 Spacer()
-                // A failed push is THIS tile's error, said where the tile
-                // lives: the red sign. A push that went through while the
-                // face says what is wrong — a refused token, a repository it
-                // cannot see, a permission it lacks — is the orange one. The
-                // whole text in a popover on hover.
-                if let trouble, let sign = trouble.sign {
-                    TileTroubleMark(sign: sign, detail: trouble.detail)
+                // Red when the tile does not work — a failed push, a refused
+                // token, a repository it cannot see, no data; yellow when it
+                // works without a part the token is not allowed. The whole
+                // text in a popover on hover.
+                if let trouble {
+                    TileTroubleMark(sign: trouble.sign, detail: trouble.detail)
                 }
                 Button {
                     model.openDetail(for: key)
@@ -385,7 +384,7 @@ struct TileTroubleMark: View {
             .onTapGesture { showing.toggle() }
             .pointerStyle(.link)
             .accessibilityElement()
-            .accessibilityLabel(sign == .failing ? "Failing" : "Needs attention")
+            .accessibilityLabel(sign == .blocking ? "Not working" : "Partly hidden")
             .accessibilityValue(detail)
             .accessibilityAddTraits(.isButton)
             .popover(isPresented: $showing, arrowEdge: .bottom) {

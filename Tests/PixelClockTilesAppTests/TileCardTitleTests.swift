@@ -3,44 +3,25 @@ import PixelClockKit
 import Testing
 @testable import PixelClockTilesApp
 
-// A tile card's title names an instanced tile's instance — `GitHub
-// (TeaRAGs)` — with the parenthesised part in italic pixels: the same face,
-// each row sheared right by one column per two rows from the bottom.
+// A tile card's title names an instanced tile's instance — `GitHub -
+// TeaRAGs` — upright, in the card's pixel face. (An italic, parenthesised
+// form was tried and was unreadable live.)
 
 @MainActor
 @Suite struct TileCardTitleTests {
     private let face = PixelFont.standard
 
-    /// Italic is the upright word with each row shifted: the bottom two rows
-    /// not at all, the top row the most — and every row the same width.
-    @Test func italicShearsTheUprightRows() {
-        let upright = PanelGlyph.text("(Ab)", in: face, lit: "G")
-        let italic = PanelGlyph.text("(Ab)", in: face, lit: "G", italic: true)
-        #expect(face.height == 7)
-        let shifts = [3, 2, 2, 1, 1, 0, 0]
-        #expect(italic.count == upright.count)
-        for (row, shift) in shifts.enumerated() {
-            let expected = String(repeating: ".", count: shift) + upright[row]
-                + String(repeating: ".", count: 3 - shift)
-            #expect(italic[row] == expected, "row \(row)")
-        }
-        #expect(PanelGlyph.text("(Ab)", in: face, lit: "G", italic: false) == upright)
-    }
-
-    /// The title map: the name upright, a space, the secondary name in
-    /// parentheses and italic.
-    @Test func theTitleIsTheNameThenTheItalicSecondaryName() {
+    /// The title map: the name and the secondary name upright, joined by a
+    /// spaced hyphen — the italic parenthesised form was unreadable live.
+    @Test func theTitleIsTheNameAHyphenAndTheSecondaryName() {
         let map = PanelGlyph.title("GitHub", secondary: "TeaRAGs", in: face, lit: "G")
-        let name = PanelGlyph.text("GitHub ", in: face, lit: "G")
-        let tail = PanelGlyph.text("(TeaRAGs)", in: face, lit: "G", italic: true)
-        let gap = String(repeating: ".", count: face.gap)
-        #expect(map == zip(name, tail).map { $0 + gap + $1 })
+        #expect(map == PanelGlyph.text("GitHub - TeaRAGs", in: face, lit: "G"))
         #expect(PanelGlyph.title("Weather", secondary: nil, in: face, lit: "G")
             == PanelGlyph.text("Weather", in: face, lit: "G"))
     }
 
     @Test func theTitleSaysItInWordsToo() {
-        #expect(TileTitle(name: "GitHub", secondary: "TeaRAGs").text == "GitHub (TeaRAGs)")
+        #expect(TileTitle(name: "GitHub", secondary: "TeaRAGs").text == "GitHub - TeaRAGs")
         #expect(TileTitle(name: "Weather", secondary: nil).text == "Weather")
     }
 
@@ -67,7 +48,7 @@ import Testing
     }
 
     /// The card's bottom-left line: the ordinary outcome — `delivered`,
-    /// `running…`, `held` — in italic pixels; a trouble keeps its sentence
+    /// `running…`, `held` — in upright pixels; a trouble keeps its sentence
     /// line.
     @Test func theOutcomeLineIsTheResultWhenNothingIsWrong() {
         #expect(TileCardOutcome.of(trouble: nil, held: false, result: "delivered") == "delivered")

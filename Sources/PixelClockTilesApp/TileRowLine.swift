@@ -130,9 +130,10 @@ struct TileTitle: Equatable {
     let name: String
     let secondary: String?
 
-    /// In words, where there are no pixels to slant — the window's title.
+    /// In words — the card draws them in pixels, the window's title says
+    /// them: `GitHub - TeaRAGs`, or the name alone for a single tile.
     var text: String {
-        secondary.map { "\(name) (\($0))" } ?? name
+        secondary.map { "\(name) - \($0)" } ?? name
     }
 }
 

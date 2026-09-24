@@ -425,18 +425,18 @@ read clears it, and a re-key clears the old and the new key's.
 ### The tile card's title and outcome (added 2026-09-24)
 
 - An instanced tile names its instance on the clock's tile card:
-  `<tile name> (<secondary name>)`, e.g. `GitHub (TeaRAGs)`, the
-  parenthesised part in italic pixels — the same `PixelFont.standard` face,
-  each row sheared right by one column per two rows from the bottom
-  (`PanelGlyph.text(_:in:lit:italic:)`, `PanelGlyph.title`). The secondary
-  name comes from the kit, `TilePresentation.secondaryName(of:)`, keyed by
-  connector: GitHub answers the tile's short name if set, else the repo's
-  `name` as typed (a record with no config: its instance's); VPN answers its
-  VPN's name (`VPN (Pritunl)`); every single tile answers nil and shows no
-  parentheses. The tile settings window's title says the same words
+  `<tile name> - <secondary name>`, e.g. `GitHub - TeaRAGs`, all in upright
+  `PixelFont.standard` pixels (`PanelGlyph.title`). An italic,
+  parenthesised form (`GitHub (TeaRAGs)`) was tried and was unreadable live,
+  so it was removed. The secondary name comes from the kit,
+  `TilePresentation.secondaryName(of:)`, keyed by connector: GitHub answers
+  the tile's short name if set, else the repo's `name` as typed (a record
+  with no config: its instance's); VPN answers its VPN's name
+  (`VPN - Pritunl`); every single tile answers nil and shows its name alone,
+  with no hyphen. The tile settings window's title says the same words
   (`TileTitle.text`).
 - The card's outcome — `delivered`, `running…`, `held` — moves to the card's
-  bottom-left corner, in italic pixels, so it no longer runs on from the
+  bottom-left corner, in upright pixels, so it no longer runs on from the
   description. Its words and timing are unchanged. A trouble keeps its
   sentence line under the description, where it can wrap.
 

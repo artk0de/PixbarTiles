@@ -246,8 +246,8 @@ private struct ClockTileCard: View {
                 )
                 // The name set in the clock's own face, at twice the pixel —
                 // which is what makes it read bold beside the line under it.
-                // An instanced tile names its instance after it, slanted:
-                // `GitHub (TeaRAGs)`.
+                // An instanced tile names its instance after a spaced
+                // hyphen: `GitHub - TeaRAGs`.
                 PixelArt(
                     map: PanelGlyph.title(title.name, secondary: title.secondary, in: PixelFont.standard, lit: "G"),
                     palette: PanelGlyph.inkPalette(nameInk),
@@ -306,12 +306,12 @@ private struct ClockTileCard: View {
                 )
             } else {
                 HStack(alignment: .bottom) {
-                    // What the tile last did, in the clock's face and slanted
-                    // — a status, not a sentence, so it reads apart from the
-                    // description above it.
+                    // What the tile last did, in the clock's face in the
+                    // corner — a status, not a sentence, so it reads apart
+                    // from the description above it.
                     if let outcome = outcomeLine {
                         PixelArt(
-                            map: PanelGlyph.text(outcome, in: PixelFont.standard, lit: "G", italic: true),
+                            map: PanelGlyph.text(outcome, in: PixelFont.standard, lit: "G"),
                             palette: PanelGlyph.inkPalette(chromeInk),
                             pixel: 1.5
                         )
@@ -374,7 +374,7 @@ private struct ClockTileCard: View {
         // and on the selected one it repeated what the line above had said.
         // A GitHub tile's last read beside it: which failure, or which
         // permission the token lacks, said even when the push failed too.
-        // The ordinary outcome is not said here: it is the italic line in
+        // The ordinary outcome is not said here: it is the pixel line in
         // the bottom-left corner (`outcomeLine`).
         trouble?.line
     }

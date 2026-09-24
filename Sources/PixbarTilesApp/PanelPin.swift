@@ -41,6 +41,12 @@ final class PanelPin {
         set(true)
     }
 
+    /// Pinned by the popover's own pin: the panel stays where it is and only
+    /// becomes free to move — the window opens at the popover's top-left.
+    func pinInPlace(frame: CGRect) {
+        detach(at: CGPoint(x: frame.minX, y: frame.maxY))
+    }
+
     /// Whether a drag has just pinned the panel and its window has not opened
     /// yet — the popover the drag came from is then to be closed, not shown.
     var isDetaching: Bool { detachedOrigin != nil }

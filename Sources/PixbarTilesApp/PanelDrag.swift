@@ -51,7 +51,15 @@ enum WindowFocus {
 
     static func bringOnly(_ window: NSWindow) {
         window.makeKeyAndOrderFront(nil)
-        NSRunningApplication.current.activate(options: activation)
+        let activated = NSRunningApplication.current.activate(options: activation)
+        AppLog.panel.info(
+            """
+            focus pinned window: activated=\(activated, privacy: .public) \
+            key=\(window.isKeyWindow, privacy: .public) \
+            screen=\(String(describing: window.screen?.localizedName), privacy: .public) \
+            frame=\(String(describing: window.frame), privacy: .public)
+            """
+        )
     }
 
     /// Closes the pinned window. The unpin button sits INSIDE that window,

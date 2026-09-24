@@ -194,13 +194,22 @@ struct MenuPanel: View {
     /// key, and the app only ever hears about it afterwards.
     private var pinButton: some View {
         Button {
-            pin.toggle()
-            if pin.isPinned {
+            if pin.isPinned == false {
+                // Pinned where the popover is: the panel only becomes free to
+                // move, it does not jump to wherever the scene last left a
+                // window. The popover is the key window while its pin is
+                // clicked.
+                if let frame = NSApp.keyWindow?.frame {
+                    pin.pinInPlace(frame: frame)
+                } else {
+                    pin.set(true)
+                }
                 // Not `openAndFocus`: activating the app raises every window
                 // it has. The pinned window focuses itself, alone, as it
                 // appears.
                 openWindow(id: PinnedPanelWindow.id)
             } else {
+                pin.set(false)
                 dismissWindow(id: PinnedPanelWindow.id)
                 WindowFocus.closePinned(among: NSApp.windows)
             }

@@ -14,37 +14,13 @@ struct PixbarTilesApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            // While the panel is pinned it lives in a window, and the item
-            // stays in the menu bar as the way BACK to it — not as a second
-            // live copy of one surface.
-            if delegate.panelPin.isPinned {
-                PinnedElsewherePanel(pin: delegate.panelPin)
-                    .glassPanel()
-            } else {
-            MenuPanel(
+            MenuBarContent(
                 model: delegate.model,
                 panel: delegate.panelModel,
                 settings: delegate.settingsModel,
-                pin: delegate.panelPin
+                pin: delegate.panelPin,
+                windowMoved: { delegate.panelMoved(to: $0) }
             )
-            // The panel's material, laid on by the SCENE rather than the
-            // view: Liquid Glass is the navigation layer's own, and a view
-            // that carried it could not be drawn without it — every pixel
-            // test draws this content straight.
-            .glassPanel()
-            // Behind the panel rather than inside `MenuPanel`, because it is
-            // not the panel's business which window it is on — it is the
-            // delegate's, and this scene is where the two already meet.
-            //
-            // Taken out of hit testing, because an `NSView` is in it by
-            // default: this one is laid out across the whole panel and answers
-            // no click, so anywhere the panel does not draw a control it would
-            // be what the click reached.
-            .background(
-                PanelWindowReader { delegate.panelMoved(to: $0) }
-                    .allowsHitTesting(false)
-            )
-            }
         } label: {
             MenuBarGlyph(model: delegate.model)
         }

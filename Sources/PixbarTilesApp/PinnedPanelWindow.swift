@@ -61,17 +61,21 @@ struct PinnedElsewherePanel: View {
     let pin: PanelPin
 
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Color.clear
             .frame(width: 1, height: 1)
             // Opening one already open raises it. A window that appears
-            // focuses itself, alone; one already open is focused here.
+            // focuses itself, alone; one already open is focused here, a turn
+            // later, so the popover's own opening does not take the focus
+            // back. The popover is not dismissed by hand: closing it handed
+            // the focus back to the app before, and the focus moving to the
+            // pinned window is what closes it.
             .task {
+                guard pin.isPinned else { return }
                 AppLog.panel.info("pinned-elsewhere content appeared — opening the window")
                 openWindow(id: PinnedPanelWindow.id)
-                dismiss()
+                await Task.yield()
                 if let window = WindowFocus.pinnedWindow(among: NSApp.windows) {
                     WindowFocus.bringOnly(window)
                 }

@@ -8,11 +8,18 @@ import SwiftUI
 /// What the `?` beside the token field says, and where its link goes.
 ///
 /// The link is GitHub's own prefilled form for a fine-grained token: the name,
-/// the description, a year's expiry and the read permissions the tile needs.
-/// Repository access cannot be preset by a link, so the text says to pick it.
+/// the description, a year's expiry and the read permissions a private
+/// repository needs. Repository access cannot be preset by a link, so the
+/// text says to pick it.
+///
+/// What it says was measured live on 2026-09-24 against GitHub's permission
+/// table: with Public repositories the form shows no repository permissions
+/// and none are needed; listing stargazers needs Contents: write, so a
+/// read-only token never learns who starred — the `Starring` account
+/// permission is about the user's own stars, not a repository's.
 enum GitHubTokenHelp {
     static let createURL = URL(
-        string: "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read"
+        string: "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read"
     )!
 
     static let text = """
@@ -20,8 +27,11 @@ enum GitHubTokenHelp {
         Public repositories. No permissions needed.
 
         Private repositories: Only select repositories, with Metadata: read, \
-        Pull requests: read, Commit statuses: read and Checks: read — the last \
-        two feed the CI badge.
+        Pull requests: read, Commit statuses: read, Checks: read (the CI \
+        badge) and Contents: read (the default branch's commit and its author).
+
+        Who starred is not visible to a read-only token (it needs Contents: \
+        write); stars are counted instead.
 
         A link cannot preset the repository access: pick it on the page.
         """
@@ -33,11 +43,39 @@ enum GitHubRepoName {
     /// static under strict concurrency.
     private static var shape: Regex<Substring> { /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/ }
 
-    /// The typed repository without the whitespace around it, or nil when it
-    /// is not `owner/name`.
+    /// The typed repository without the whitespace around it, a pasted
+    /// GitHub URL reduced to its `owner/name`, or nil when it is not one.
     static func repo(from typed: String) -> String? {
+        let reduced = normalised(typed)
+        return reduced.wholeMatch(of: shape) == nil ? nil : reduced
+    }
+
+    /// What the field shows once a paste or a commit is read: a GitHub URL —
+    /// `https://github.com/o/n`, `github.com/o/n/pull/12`, `…/o/n.git`,
+    /// `git@github.com:o/n.git`, with or without `www.` — as `o/n`, the case
+    /// kept (the instance lowercases it). Anything else comes back trimmed,
+    /// for `repo(from:)` to refuse.
+    static func normalised(_ typed: String) -> String {
         let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.wholeMatch(of: shape) == nil ? nil : trimmed
+        var rest = Substring(trimmed)
+        let ssh = "git@github.com:"
+        if rest.lowercased().hasPrefix(ssh) {
+            rest = rest.dropFirst(ssh.count)
+        } else {
+            for scheme in ["https://", "http://"] where rest.lowercased().hasPrefix(scheme) {
+                rest = rest.dropFirst(scheme.count)
+            }
+            if rest.lowercased().hasPrefix("www.") { rest = rest.dropFirst(4) }
+            guard rest.lowercased().hasPrefix("github.com/") else { return trimmed }
+            rest = rest.dropFirst("github.com/".count)
+        }
+        // A query or a fragment is not part of the path.
+        rest = rest.prefix { $0 != "?" && $0 != "#" }
+        let segments = rest.split(separator: "/", omittingEmptySubsequences: true)
+        guard segments.count >= 2 else { return trimmed }
+        var name = segments[1]
+        if name.lowercased().hasSuffix(".git") { name = name.dropLast(4) }
+        return "\(segments[0])/\(name)"
     }
 
     /// The tile's instance: the repository lowercased, because GitHub reads
@@ -48,7 +86,8 @@ enum GitHubRepoName {
     }
 }
 
-/// The repository, the short name, the celebration, and the shared token.
+/// The repository, the short name, the celebration, what the face shows and
+/// what interrupts, and the shared token.
 ///
 /// The token field is a SECURE field cleared once handled, as z.ai's is: what
 /// stays on screen is a sentence about presence, and it is the same sentence
@@ -59,21 +98,30 @@ struct GitHubTileBlock: View {
     let hasToken: Bool
     /// What the last save did, when there is something to say.
     let outcome: AppModel.TokenOutcome?
-    /// Writes the tile's own settings; the repository is not the block's to
-    /// change.
+    /// Writes the tile's own settings; the repository goes through `onRepo`.
     let onConfig: (GitHubTileConfig) -> Void
+    /// Points the tile at another repository — a re-key the model may
+    /// refuse, and says why in the window.
+    let onRepo: (String) -> Void
     /// Hands the token to the model, which files it for every GitHub tile.
     let onSaveToken: (String) -> Void
 
     @State private var typedToken = ""
+    @State private var typedRepo = ""
     @State private var shortName = ""
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Section("Repository") {
-            // Read-only: the repository is the tile's identity — its key —
-            // and another one is another tile.
-            LabeledContent("Repository", value: config.repo)
+            // Committed on Return, not per keystroke: every commit is a
+            // re-key, and a half-typed name is another repository.
+            TextField("Repository", text: $typedRepo, prompt: Text("owner/name"))
+                .onSubmit(commitRepo)
+            if typedRepo.isEmpty == false, GitHubRepoName.repo(from: typedRepo) == nil {
+                Text("Type it as owner/name, or paste its GitHub URL.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             // Written as it is typed, like every other control here, so the
             // preview beside it follows the name.
             TextField("Short name", text: $shortName, prompt: Text("optional"))
@@ -96,9 +144,46 @@ struct GitHubTileBlock: View {
                 }
             }
         }
-        .onAppear { shortName = config.shortName ?? "" }
-        .onChange(of: config.repo) { shortName = config.shortName ?? "" }
+        .onAppear {
+            shortName = config.shortName ?? ""
+            typedRepo = config.repo
+        }
+        .onChange(of: config.repo) {
+            shortName = config.shortName ?? ""
+            typedRepo = config.repo
+        }
         .onChange(of: shortName) { saveShortName() }
+        // A pasted URL reads as the repository at once.
+        .onChange(of: typedRepo) {
+            let reduced = GitHubRepoName.normalised(typedRepo)
+            if reduced != typedRepo.trimmingCharacters(in: .whitespacesAndNewlines),
+                GitHubRepoName.repo(from: reduced) != nil {
+                typedRepo = reduced
+            }
+        }
+        Section("On the clock") {
+            // The hero's metric — always shown, whatever its Show toggle.
+            Picker("Main watch", selection: binding(\.mainWatch)) {
+                ForEach(GitHubMainWatch.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            // Show: what the TC002 ticker carries beside the hero.
+            LabeledContent("Show") {
+                HStack {
+                    Toggle("Forks", isOn: binding(\.showForks))
+                    Toggle("PRs", isOn: binding(\.showPRs))
+                    Toggle("CI", isOn: binding(\.showCI))
+                }
+            }
+            // Notify: what interrupts the clock, on both models.
+            LabeledContent("Notify") {
+                HStack {
+                    Toggle("Stars", isOn: binding(\.notifyStars))
+                    Toggle("Forks", isOn: binding(\.notifyForks))
+                    Toggle("PRs", isOn: binding(\.notifyPRs))
+                    Toggle("CI failures", isOn: binding(\.notifyCI))
+                }
+            }
+        }
         Section {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
@@ -135,6 +220,25 @@ struct GitHubTileBlock: View {
         hasToken
             ? "Token saved — shared by every GitHub tile. Save a blank to remove it."
             : "No token yet — every GitHub tile reads through one."
+    }
+
+    /// One setting of the config, written through `onConfig` as it moves.
+    private func binding<Value>(_ path: WritableKeyPath<GitHubTileConfig, Value>) -> Binding<Value> {
+        Binding(
+            get: { config[keyPath: path] },
+            set: { value in
+                var edited = config
+                edited[keyPath: path] = value
+                onConfig(edited)
+            }
+        )
+    }
+
+    private func commitRepo() {
+        let reduced = GitHubRepoName.normalised(typedRepo)
+        typedRepo = reduced
+        guard reduced != config.repo else { return }
+        onRepo(reduced)
     }
 
     private func saveShortName() {
@@ -207,6 +311,14 @@ struct GitHubRepoSheet: View {
             TextField("Repository", text: $typed, prompt: Text("owner/name"))
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(add)
+                // A pasted URL reads as the repository at once.
+                .onChange(of: typed) {
+                    let reduced = GitHubRepoName.normalised(typed)
+                    if reduced != typed.trimmingCharacters(in: .whitespacesAndNewlines),
+                        GitHubRepoName.repo(from: reduced) != nil {
+                        typed = reduced
+                    }
+                }
             if let refusal {
                 Label(refusal, systemImage: "exclamationmark.triangle")
                     .font(.caption)

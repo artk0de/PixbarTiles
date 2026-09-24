@@ -258,6 +258,13 @@ private struct ClockTileCard: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                         .help(failure)
+                } else if let diagnosis = model.gitHubDiagnosis(of: key), diagnosis.isQuiet == false {
+                    // The push went through, and the face says what is wrong
+                    // — a refused token, a repository it cannot see, a
+                    // permission it lacks. The sign says it here too.
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .help(diagnosis.message)
                 }
                 Button {
                     model.openDetail(for: key)
@@ -355,6 +362,9 @@ private struct ClockTileCard: View {
         if let failure = model.lastFailure(of: key) {
             return TileRowLine.failureWords(failure)
         }
+        // A GitHub tile's last read: which failure, or which permission the
+        // token lacks — the quiet one (who starred) as plainly as the rest.
+        if let diagnosis = model.gitHubDiagnosis(of: key) { return diagnosis.message }
         if model.hold(of: key) != nil { return "held" }
         return model.lastResult(of: key)
     }

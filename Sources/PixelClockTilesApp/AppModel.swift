@@ -1404,6 +1404,51 @@ final class AppModel: ObservableObject {
         return outcome == .saved
     }
 
+    /// Points a GitHub tile at another repository — the block's Repository
+    /// field. A re-key, like `changeLampVPN`, because the repository is the
+    /// key's instance: the tile keeps its place in the clock's order and its
+    /// settings, the old repository's page leaves the clock, and the new one
+    /// starts from a baseline, so nothing it already has is celebrated.
+    func changeGitHubRepo(_ key: TileKey, to typed: String) -> TileSaveOutcome {
+        guard let record = storedTile(key), let policy = storedPolicy(of: key) else {
+            return .refused("this tile is no longer on the clock")
+        }
+        guard let repo = GitHubRepoName.repo(from: typed), let instance = GitHubRepoName.instance(from: typed)
+        else { return .refused("type the repository as owner/name") }
+        var config = record.config?.github ?? GitHubTileConfig(repo: key.instance)
+        config.repo = repo
+        // Another spelling of the same repository is the same tile.
+        guard instance != key.instance else { return saveTile(key: key, policy: policy, config: .github(config)) }
+        let moved = TileKey(clockId: key.clockId, connectorId: key.connectorId, instance: instance)
+        if tiles.all().contains(where: { $0.key == moved }) {
+            return .refused("\(instance) is already on \(clocks.first { $0.id == key.clockId }?.name ?? "this clock")")
+        }
+        // `removeTile`'s device half, without filing the config away: it is
+        // moving house, not being put away.
+        timers.removeValue(forKey: key)?.cancel()
+        retract(key)
+        let tc002 = ulanziSession(for: key.clockId)
+        Task { await tc002?.tileRemoved(key.tileId) }
+        for stale in [key, moved] {
+            defaults.removeObject(forKey: UserDefaultsGitHubSnapshots.key(for: stale))
+            defaults.removeObject(forKey: UserDefaultsGitHubDiagnoses.key(for: stale))
+        }
+        try? tiles.replaceAll(tiles.all().map {
+            $0.key == key ? TileRecord(key: moved, policy: $0.policy, config: .github(config)) : $0
+        })
+        let outcome = saveTile(key: moved, policy: policy, config: .github(config))
+        if case .saved = outcome, detailTileKey == key { openDetail(for: moved) }
+        return outcome
+    }
+
+    /// What the tile's last read found wrong, for the clock's tile list —
+    /// the failure, or the permission the token lacks. Written by the
+    /// connector at every read.
+    func gitHubDiagnosis(of key: TileKey) -> GitHubDiagnosis? {
+        guard key.connectorId == GitHubConnector.connectorId else { return nil }
+        return UserDefaultsGitHubDiagnoses(defaults: defaults).diagnosis(for: key)
+    }
+
     func removeTile(_ key: TileKey) {
         timers.removeValue(forKey: key)?.cancel()
         // The tile's own settings survive its removal: re-adding the same

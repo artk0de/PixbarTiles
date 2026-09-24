@@ -274,7 +274,10 @@ struct TileSettingsWindow: View {
                 hasToken: model.hasGitHubToken,
                 outcome: model.lastGitHubTokenOutcome,
                 onConfig: { settings.setGitHubConfig($0) },
-                onSaveToken: { model.saveGitHubToken($0) }
+                onRepo: { settings.setGitHubRepo($0) },
+                // Through the facade, so the open preview is redrawn with
+                // the new token at once.
+                onSaveToken: { settings.saveGitHubToken($0) }
             )
         } else if key.connectorId == VPNConnector.id {
             // Keyed on the connector id, not on `connector is VPNConnector`:
@@ -390,6 +393,16 @@ struct TileSettingsWindow: View {
                 }
             }
             .frame(width: previewSize.width, height: previewSize.height)
+            // A picture that comes with a sentence — the GitHub tile saying
+            // why it has no reading, or which permission its token lacks —
+            // says it under the picture.
+            if settings.preview != nil, let note = settings.previewNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let clock = model.clocks.first(where: { $0.id == model.detailTileKey?.clockId }) {
                 Text("\(clock.name) · \(clock.model.spokenName) · \(panelWords(of: clock.model))")
                     .font(.caption)

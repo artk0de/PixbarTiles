@@ -318,6 +318,36 @@ final class TileSettingsModel {
         schedulePreview()
     }
 
+    /// The GitHub block's Repository field: a re-key the model may refuse —
+    /// a malformed name, a repository already on this clock — and the
+    /// refusal is said like any other save's. On success the window follows
+    /// the tile to its new key, and that move redraws the preview.
+    @discardableResult
+    func setGitHubRepo(_ typed: String) -> Bool {
+        guard let key, key.connectorId == GitHubConnector.connectorId else { return false }
+        switch model.changeGitHubRepo(key, to: typed) {
+        case .saved:
+            lastRefusal = nil
+            // Another spelling of the same repository keeps the key, so
+            // nothing moves the window: redraw here.
+            if model.detailTileKey == key { schedulePreview() }
+            return true
+        case let .refused(reason):
+            lastRefusal = reason
+            return false
+        }
+    }
+
+    /// The GitHub block's token save, through the model, then the open
+    /// preview redrawn with the token it now reads; the running tiles pick
+    /// it up at their next poll.
+    @discardableResult
+    func saveGitHubToken(_ token: String) -> AppModel.TokenOutcome {
+        let outcome = model.saveGitHubToken(token)
+        if outcome != .refused { schedulePreview() }
+        return outcome
+    }
+
     /// Keyed on the connector id, like the lamp block: the settings are the
     /// tile's, whatever instance is running it.
     private static func isCodeUsageTile(_ key: TileKey) -> Bool {
@@ -519,32 +549,51 @@ final class TileSettingsModel {
             }
         }
 
+        // The GitHub tile's face says why it has no reading, or which
+        // permission the token lacks, in the label slot; the preview says it
+        // in a sentence under the same picture — one read feeds both.
+        if let github = connector as? GitHubConnector {
+            guard let reading = try? await github.read() else {
+                return .nothing("The tile could not be read — check its key and connection.")
+            }
+            let picture = switch clockModel {
+            case .ulanziTC002: page(github.ulanziFace?.draw(reading))
+            case .awtrix3: frames(of: github.awtrixFace.draw(reading).scene)
+            }
+            return Rendered(gif: picture.gif, note: reading.previewNote ?? picture.note)
+        }
+
         switch clockModel {
         case .ulanziTC002:
             guard let delivery = try? await connector.previewUlanzi() else {
                 return .nothing("The tile could not be read — check its key and connection.")
             }
-            guard let frame = delivery.scene.frames.first else {
-                return .nothing("This tile draws no page on a TC002.")
-            }
-            // A page that ships as ONE full-panel GIF — the usage face's
-            // timeline — previews as that GIF: the very bytes the clock is
-            // sent, every frame with its own delay, not a redraw of them.
-            if frame.draw.isEmpty, frame.image.count == 1, let image = frame.image.first,
-                image.position.x == 0, image.position.y == 0,
-                let gif = Data(base64Encoded: image.base64)
-            {
-                return Rendered(gif: gif, note: nil)
-            }
-            var canvas = PixelCanvas()
-            canvas.apply(frame.draw)
-            return .picture([canvas], delay: stillFrameDelay)
+            return page(delivery)
         case .awtrix3:
             guard let delivery = try? await connector.preview() else {
                 return .nothing("The tile could not be read — check its key and connection.")
             }
             return frames(of: delivery.scene)
         }
+    }
+
+    /// A TC002 delivery's page as the clock plays it.
+    private static func page(_ delivery: UlanziDelivery?) -> Rendered {
+        guard let frame = delivery?.scene.frames.first else {
+            return .nothing("This tile draws no page on a TC002.")
+        }
+        // A page that ships as ONE full-panel GIF — the usage face's
+        // timeline — previews as that GIF: the very bytes the clock is
+        // sent, every frame with its own delay, not a redraw of them.
+        if frame.draw.isEmpty, frame.image.count == 1, let image = frame.image.first,
+            image.position.x == 0, image.position.y == 0,
+            let gif = Data(base64Encoded: image.base64)
+        {
+            return Rendered(gif: gif, note: nil)
+        }
+        var canvas = PixelCanvas()
+        canvas.apply(frame.draw)
+        return .picture([canvas], delay: stillFrameDelay)
     }
 
     /// An AWTRIX scene as the clock plays it: one frame when the line fits,

@@ -95,7 +95,10 @@ struct ConnectorFactories {
         // up at every read like the z.ai key. The snapshot is per tile, so
         // each repository celebrates only what is new to itself; the store
         // keys them by tile, so one store serves every tile on the clock.
+        // What each read found wrong goes beside the snapshot, for the
+        // clock's tile list to say (`AppModel.gitHubDiagnosis(of:)`).
         let snapshots = UserDefaultsGitHubSnapshots(defaults: defaults)
+        let diagnoses = UserDefaultsGitHubDiagnoses(defaults: defaults)
         registry.register(
             factory: { tile in
                 GitHubConnector(
@@ -104,7 +107,8 @@ struct ConnectorFactories {
                         transport: transport,
                         token: { secrets.secret(for: .connector(GitHubConnector.connectorId)) }
                     ),
-                    snapshots: snapshots
+                    snapshots: snapshots,
+                    diagnoses: diagnoses
                 )
             },
             for: GitHubConnector.connectorId

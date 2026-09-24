@@ -21,7 +21,7 @@ import gen  # noqa: E402
 
 HOST = os.environ.get("TC002_HOST", "192.168.1.72")
 PAGES = {"claude": "demo-claude", "zai": "demo-zai"}
-STATUS = os.path.expanduser("~/Library/Application Support/PixelClockTiles/claude-status.json")
+STATUS = os.path.expanduser("~/Library/Application Support/PixbarTiles/claude-status.json")
 INTERVALS = {"5": 5, "10": 10, "15": 15, "30": 30, "1m": 60, "2m": 120, "5m": 300}
 
 

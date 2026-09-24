@@ -13,7 +13,7 @@ push, one question, one answer — never by describing them or by trying them on
 push at a time.
 
 You may do this on your own initiative. It touches only a `demo-*` page; the
-app's `pct-*` pages are never written.
+app's `pbt-*` (and legacy `pct-*`) pages are never written.
 
 ## Procedure
 

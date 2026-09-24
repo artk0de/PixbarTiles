@@ -28,14 +28,14 @@ a black or wrong page:
 
 1. Push a known-good frame to a PROBE page under its own name
    (`POST /api/custom?name=probe-…`), then `POST /api/switchDiyApp?name=probe-…`
-   (POST only — GET is 404). Never reuse a `pct-*` name: the app owns those and
+   (POST only — GET is 404). Never reuse a `pbt-*` (or legacy `pct-*`) name: the app owns those and
    overwrites them.
 2. Change ONE thing between two probes (the differential) and ask a human what
    the panel shows. That is the only oracle.
 3. Delete probes with an EMPTY-body POST to the same name (a `{}` body keeps the
    page in the knob cycle — `UlanziDevice.removeApp`).
 
-`pct-*` pages stay on the clock after a Quit, by design: the app quits with
+`pbt-*` pages stay on the clock after a Quit, by design: the app quits with
 `.terminateNow` (`AppDelegate.applicationShouldTerminate`, the user's call of
 2026-09-21 — a teardown wait against an unreachable clock made the panel read
 as broken), so `UlanziClockSession.shutdown` never runs on Quit. Leftovers are

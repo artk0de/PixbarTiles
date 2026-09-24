@@ -72,7 +72,7 @@ timeline.
 
 ## Verifying motion
 
-1. Push the candidate under a demo name (`demo-*`, never `pct-*`) with the
+1. Push the candidate under a demo name (`demo-*`, never `pbt-*` or legacy `pct-*`) with the
    face's demo script and switch the clock to it.
 2. Ask ONE question about ONE thing: in step or not; smooth or not; which leads.
    "Что именно тормозит?" separated lag ("смена иконки запаздывает") from speed.

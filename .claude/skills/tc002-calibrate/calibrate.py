@@ -16,7 +16,7 @@
 
   --dry-run   render the PNG (calibrate.png beside this script) and push nothing
   --remove    delete the demo page
-  --page      demo page name (default demo-calibrate; never a pct-* name)
+  --page      demo page name (default demo-calibrate; never a pbt-* or pct-* name)
 
 Glyph tables are the faces' own (github/ggen.py extends weather/wgen.py), so a
 candidate that wins here is drawn exactly the same once it moves into a face.
@@ -88,7 +88,7 @@ def main():
     ap.add_argument("--remove", action="store_true")
     a = ap.parse_args()
     if not a.page.startswith("demo-"):
-        raise SystemExit("calibration pages are demo-* — pct-* belong to the app")
+        raise SystemExit("calibration pages are demo-* — pbt-* (and legacy pct-*) belong to the app")
     if a.remove:
         print(a.page, post(f"/api/custom?name={a.page}", b""))
         return

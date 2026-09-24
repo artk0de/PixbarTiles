@@ -39,10 +39,10 @@ rather than logic: `theProducersPacingIsObeyedPerClipNotAveraged`,
 `theShippedPlayerWaitsOutRealAudioForAsLongAsItLasts`. Read a red run against
 what else the machine was doing before treating it as a defect.
 
-The app is installed at `~/Applications/PixelClockTiles.app` (until the first
-install of the renamed build, the old `~/Applications/AwtrixConnectors.app`).
+The app is installed at `~/Applications/PixbarTiles.app` (until the first
+install of the renamed build, the old `~/Applications/PixelClockTiles.app`).
 Rebuild it with `./Scripts/bundle.sh debug` and it lands in
-`build/PixelClockTiles.app`. The package is `PixelClockTiles`: the kit is
+`build/PixbarTiles.app`. The package is `PixbarTiles`: the kit is
 `PixbarKit`, the executable target `PixbarTilesApp`, and their tests
 `PixbarKitTests` and `PixbarTilesAppTests`.
 
@@ -507,8 +507,8 @@ as much about whether it can be FOUND as about whether it works.
 24. If a surface ever opens at a size you cannot work with:
 
     ```sh
-    defaults write dev.artk0re.pixelclocktiles panelWidth -int 320
-    defaults write dev.artk0re.pixelclocktiles historyHeight -int 280
+    defaults write dev.artk0re.pixbartiles panelWidth -int 320
+    defaults write dev.artk0re.pixbartiles historyHeight -int 280
     ```
 
     then relaunch. Deleting either key does the same. Both are read back through
@@ -638,11 +638,12 @@ and this one is not trusted — trust is needed to VERIFY a signature, not to ma
 one. Sign by its SHA-1 instead:
 
 ```bash
-codesign --force --deep --sign 6417A281BC7E103BB9B4A4EA69F831F5211A89A5 build/PixelClockTiles.app
+codesign --force --deep --sign 6417A281BC7E103BB9B4A4EA69F831F5211A89A5 build/PixbarTiles.app
 ```
 
 **Since 2026-09-23 `bundle.sh` runs this step itself** whenever the identity is
-in the keychain (override the SHA-1 with `PIXELCLOCK_SIGN_ID`), and warns when
+in the keychain (override the SHA-1 with `PIXBAR_SIGN_ID`; the older
+`PIXELCLOCK_SIGN_ID` is still honoured), and warns when
 it is not. The manual step was skipped often enough to cost: a worktree build
 left ad-hoc saved the z.ai key, the key's ACL pinned that build's cdhash, and
 every other build — the properly signed one included — met a keychain prompt
@@ -737,6 +738,42 @@ there is none, which is the case under `swift test` and `swift run`. Any new
 kit resource goes through `KitResources.bundle`, never `Bundle.module`
 directly. Phase 3's TC002 images included.
 
+## The rename to PixbarTiles
+
+The bundle is `PixbarTiles.app`, its identifier `dev.artk0re.pixbartiles`; the
+package is `PixbarTiles`, the kit `PixbarKit`, the executable
+`PixbarTilesApp`. Four things an existing installation would lose are carried
+over by the app itself, each pinned by tests:
+
+| What | How |
+| --- | --- |
+| Defaults (`dev.artk0re.pixelclocktiles`) | `DefaultsCarryOver.chain`, newest first: the PixelClockTiles domain (marker `carriedOverFromPixelClockTiles`), then AwtrixConnectors (unchanged step). The PixelClockTiles domain brings its own AwtrixConnectors marker, so the oldest domain is not read twice; a user who never ran PixelClockTiles still arrives from AwtrixConnectors. Gaps only, once per step, marker last |
+| `Application Support/PixelClockTiles` | `SupportFolder.carryOver()` in `AppDelegate.init()`, before `.live()` opens the secret store: renamed to `PixbarTiles` when that folder does not exist yet; both left alone when it does |
+| Claude Code's `statusLine` command | `ClaudeCodeStatusLine.legacyDirectories`: a command running the hook under `PixelClockTiles` is still ours; the launch's `refreshHookIfConnected()` (and Connect) swaps its base for the new hook's and keeps the chained previous command as text |
+| TC002 pages `pct-<tile>` | `UlanziCustody.legacyPagePrefixes`: the startup sweep deletes every listed `pct-` page no live tile uses, with or without a record; the tiles' next deliveries push `pbt-<tile>`. Foreign pages are untouched |
+
+Kept under the old name on purpose:
+
+| Where | Why |
+| --- | --- |
+| `EncryptedFileSecretStore.info`, `"PixelClockTiles secrets v1"` | HKDF input: a new string derives a new key and `secrets.enc` stops opening |
+| `LoginKeychainStore.service`, `"PixelClockTiles tile keys"` | Where `SecretsMigration` finds the legacy keychain items |
+| The `"PCTS"` magic of `secrets.enc` | File format, not a name |
+| `Application Support/AwtrixConnectors/anecdotes.json` | Unchanged since the first rename |
+
+Renamed with nothing persisted: dispatch queue labels, the log subsystem
+fallback, the GitHub `User-Agent` and token name, the TC002 battery helper
+(`pbt-batt`, `/tmp/pbt-req`, `/tmp/pbt-out`; the device's `/tmp` is RAM, so
+old `pct-*` helper files go at its next reboot). AWTRIX needs nothing: its app
+names carry no prefix and live in RAM.
+
+**Paid once by the user**, because TCC and login items are bound to the bundle
+id: location, notifications, Focus and Local Network are asked for again (Full
+Disk Access, if granted, is re-added by hand for `PixbarTiles.app`); "Open at
+login" is turned on again from the settings. Quit and remove
+`~/Applications/PixelClockTiles.app` once the new build runs — it retires its
+login item, and two apps pushing to one clock would fight over its pages.
+
 ## Deferred findings
 
 The ledger carries roughly forty deferred minor findings from the task reviews,
@@ -786,7 +823,7 @@ worth sampling for that frame before anything else is suspected.
 
 The Claude figure no longer comes from `/api/oauth/usage` with a token taken
 from the keychain. Connect Claude Code (in the settings) sets Claude Code's
-`statusLine` to `/bin/sh '<Application Support>/PixelClockTiles/claude-statusline.sh'`,
+`statusLine` to `/bin/sh '<Application Support>/PixbarTiles/claude-statusline.sh'`,
 followed by the previous command as a quoted argument when there was one. After
 each reply the hook stores the document, if it carries `rate_limits`, as
 `claude-status.json` beside itself, then runs the previous command. The

@@ -1,4 +1,5 @@
 // Sources/PixelClockKit/GitHub/GitHubAPI.swift
+import CryptoKit
 import Foundation
 
 /// One stargazer as the repository lists it: who, and when they starred.
@@ -187,20 +188,59 @@ public struct GitHubAPI: GitHubReporting {
     /// unaliased `pullRequests` already carries the count. The default
     /// branch's head commit carries the CI: its checks' rollup, its oid (a
     /// failure's identity) and its author's account.
-    static let query = """
-    query($owner: String!, $name: String!) {
-      repository(owner: $owner, name: $name) {
-        nameWithOwner
-        stargazerCount
-        forkCount
-        pullRequests(states: OPEN) { totalCount }
-        stargazers(last: 20) { edges { starredAt node { login } } }
-        forks(last: 20, orderBy: {field: CREATED_AT, direction: ASC}) { nodes { createdAt owner { login } } }
-        openPRs: pullRequests(states: OPEN, last: 20) { nodes { number author { login } } }
-        defaultBranchRef { name target { ... on Commit { oid author { user { login } } statusCheckRollup { state } } } }
-      }
+    static let query = query(omitting: [])
+
+    /// The query without the selections GitHub refused the token — each
+    /// part dropped as a whole, so what is left reads exactly as before.
+    ///
+    /// `stargazerCount` and `nameWithOwner` stay whatever is refused: they
+    /// need no permission, and without them there is no tile to draw.
+    static func query(omitting omitted: [GitHubWithheld]) -> String {
+        let has = { (part: GitHubWithheld) in !omitted.contains(part) }
+        var fields = ["nameWithOwner", "stargazerCount"]
+        if has(.metadata) { fields.append("forkCount") }
+        if has(.pullRequests) { fields.append("pullRequests(states: OPEN) { totalCount }") }
+        if has(.stargazers) { fields.append("stargazers(last: 20) { edges { starredAt node { login } } }") }
+        if has(.metadata) {
+            fields.append(
+                "forks(last: 20, orderBy: {field: CREATED_AT, direction: ASC}) { nodes { createdAt owner { login } } }"
+            )
+        }
+        if has(.pullRequests) {
+            fields.append("openPRs: pullRequests(states: OPEN, last: 20) { nodes { number author { login } } }")
+        }
+        if has(.contents) {
+            let rollup = has(.checks) ? " statusCheckRollup { state }" : ""
+            fields.append(
+                "defaultBranchRef { name target { ... on Commit { oid author { user { login } }\(rollup) } } }"
+            )
+        }
+        return """
+        query($owner: String!, $name: String!) {
+          repository(owner: $owner, name: $name) {
+        \(fields.map { "    " + $0 }.joined(separator: "\n"))
+          }
+        }
+        """
     }
-    """
+
+    /// The parts whose selection `query(omitting:)` can drop; a refusal of
+    /// anything else cannot be asked around.
+    static func canOmit(_ part: GitHubWithheld) -> Bool {
+        switch part {
+        case .stargazers, .pullRequests, .checks, .contents, .metadata: true
+        case .other: false
+        }
+    }
+
+    /// A refusal that nulled the whole repository: GraphQL propagates a
+    /// `FORBIDDEN` on a non-null field (`stargazers`, `forks`,
+    /// `pullRequests`) up to the nearest nullable parent, which is
+    /// `repository` itself — so the answer is `repository: null` beside the
+    /// error, with nothing to keep. Asked again without those parts.
+    struct Refusal: Error, Equatable {
+        var parts: [GitHubWithheld]
+    }
 
     public enum Failure: Error, Equatable, Sendable {
         /// The endpoint answered, and the answer was no — 401 for a refused
@@ -222,9 +262,17 @@ public struct GitHubAPI: GitHubReporting {
     /// sits in a long-lived struct.
     private let token: @Sendable () -> String?
 
-    public init(transport: any Transport, token: @escaping @Sendable () -> String?) {
+    /// What GitHub refused this token, so a later read asks the reduced query
+    /// straight away rather than being refused first at every poll.
+    private let refusals: GitHubRefusals
+
+    public init(
+        transport: any Transport, token: @escaping @Sendable () -> String?,
+        refusals: GitHubRefusals = GitHubRefusals()
+    ) {
         self.transport = transport
         self.token = token
+        self.refusals = refusals
     }
 
     public func state(of repo: String) async throws -> GitHubRepoState? {
@@ -235,7 +283,32 @@ public struct GitHubAPI: GitHubReporting {
         guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else {
             throw Failure.badRepo(repo)
         }
+        let owner = String(parts[0]), name = String(parts[1])
 
+        // Each refusal drops at least one more part, so this ends within as
+        // many retries as there are parts to drop.
+        var omitted = refusals.omitted(for: token)
+        while true {
+            do {
+                let state = try await ask(owner: owner, name: name, token: token, omitting: omitted, repo: repo)
+                refusals.remember(omitted, for: token)
+                return state
+            } catch let refusal as Refusal {
+                let fresh = refusal.parts.filter { !omitted.contains($0) }
+                guard !fresh.isEmpty, fresh.allSatisfy(Self.canOmit) else {
+                    // Refused again on what was already dropped, or on a part
+                    // no selection covers: the repository is there, the read
+                    // is not — a failure, not a missing repository.
+                    throw Failure.graphQL("Resource not accessible by personal access token")
+                }
+                omitted += fresh
+            }
+        }
+    }
+
+    private func ask(
+        owner: String, name: String, token: String, omitting omitted: [GitHubWithheld], repo: String
+    ) async throws -> GitHubRepoState {
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -243,20 +316,22 @@ public struct GitHubAPI: GitHubReporting {
         // GitHub refuses a request without a User-Agent.
         request.setValue("PixelClockTiles", forHTTPHeaderField: "User-Agent")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "query": Self.query,
-            "variables": ["owner": String(parts[0]), "name": String(parts[1])],
+            "query": Self.query(omitting: omitted),
+            "variables": ["owner": owner, "name": name],
         ])
 
         let (data, response) = try await transport.send(request)
         guard (200..<300).contains(response.statusCode) else {
             throw Failure.status(response.statusCode)
         }
-        return try Self.decode(data, repo: repo)
+        return try Self.decode(data, repo: repo, omitted: omitted)
     }
 
     // MARK: - The answer
 
-    static func decode(_ data: Data, repo: String) throws -> GitHubRepoState {
+    /// `omitted` are the parts the query did not ask for because GitHub
+    /// refused them before: they read empty and are marked withheld.
+    static func decode(_ data: Data, repo: String, omitted: [GitHubWithheld] = []) throws -> GitHubRepoState {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
@@ -286,10 +361,23 @@ public struct GitHubAPI: GitHubReporting {
                 $0.type == "FORBIDDEN" && ($0.path?.count ?? 0) > 1 && $0.path?.first == "repository"
             }
             guard partial else {
-                // The repository itself withheld is a repository the token
-                // cannot see.
-                if repository == nil, errors.contains(where: { $0.type == "FORBIDDEN" }) {
-                    throw Failure.notFound(first.message)
+                let forbidden = errors.filter { $0.type == "FORBIDDEN" }
+                if repository == nil, !forbidden.isEmpty {
+                    // The repository itself withheld is a repository the
+                    // token cannot see.
+                    if forbidden.contains(where: { ($0.path?.count ?? 0) <= 1 }) {
+                        throw Failure.notFound(first.message)
+                    }
+                    // A refused field nulled the repository on its way up:
+                    // the repository is there, ask around the refused parts.
+                    if forbidden.count == errors.count {
+                        var parts: [GitHubWithheld] = []
+                        for error in forbidden {
+                            let part = GitHubWithheld(path: error.path ?? [])
+                            if !parts.contains(part) { parts.append(part) }
+                        }
+                        throw Refusal(parts: parts)
+                    }
                 }
                 throw Failure.graphQL(first.message)
             }
@@ -299,7 +387,7 @@ public struct GitHubAPI: GitHubReporting {
         guard let repository else {
             throw Failure.badRepo(repo)
         }
-        var withheld: [GitHubWithheld] = []
+        var withheld = omitted
         for error in errors {
             let part = GitHubWithheld(path: error.path ?? [])
             if !withheld.contains(part) { withheld.append(part) }
@@ -416,5 +504,40 @@ public struct GitHubAPI: GitHubReporting {
         /// Null for an empty repository; absent from an answer recorded
         /// before the query asked for it.
         let defaultBranchRef: BranchRef?
+    }
+}
+
+/// What GitHub refused one token, remembered so every later read sends the
+/// reduced query at once — one request a poll, not a refused one and then
+/// the reduced one.
+///
+/// Keyed by a SHA-256 of the token, never the token itself, and holding only
+/// the latest token's refusals: a new token is asked the full query once, in
+/// case it may read what the old one could not. In memory only — a restart
+/// asks the full query once again, which is one extra request.
+public final class GitHubRefusals: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokenDigest: String?
+    private var parts: [GitHubWithheld] = []
+
+    public init() {}
+
+    /// The parts to leave out of the query for this token.
+    func omitted(for token: String) -> [GitHubWithheld] {
+        let digest = Self.digest(token)
+        return lock.withLock { tokenDigest == digest ? parts : [] }
+    }
+
+    /// The parts a read for this token got through without.
+    func remember(_ omitted: [GitHubWithheld], for token: String) {
+        let digest = Self.digest(token)
+        lock.withLock {
+            tokenDigest = digest
+            parts = omitted
+        }
+    }
+
+    private static func digest(_ token: String) -> String {
+        SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }

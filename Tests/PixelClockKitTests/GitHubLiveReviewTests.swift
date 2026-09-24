@@ -47,11 +47,12 @@ private func body(repository: String?, errors: String?) -> Data {
     return Data("{\(fields.joined(separator: ","))}".utf8)
 }
 
-/// The repository with `stargazers` as given — null when refused.
-private func repository(stargazers: String) -> String {
-    """
+/// The repository with `stargazers` as given — absent when not asked.
+private func repository(stargazers: String?) -> String {
+    let stargazersField = stargazers.map { "\"stargazers\":\($0)," } ?? ""
+    return """
     {"nameWithOwner":"a/x","stargazerCount":12,"forkCount":3,"pullRequests":{"totalCount":1},
-     "stargazers":\(stargazers),"forks":{"nodes":[]},"openPRs":{"nodes":[{"number":7,"author":{"login":"dave"}}]},
+     \(stargazersField)"forks":{"nodes":[]},"openPRs":{"nodes":[{"number":7,"author":{"login":"dave"}}]},
      "defaultBranchRef":null}
     """
 }
@@ -174,9 +175,20 @@ private let refusedStargazers = """
 // MARK: - Partial answers
 
 @Suite struct GitHubPartialAnswerTests {
+    /// GitHub never sends data beside a refusal of `stargazers`: the field
+    /// is non-null, so the refusal nulls the whole repository (measured live
+    /// 2026-09-24). That answer is a refusal to ask around, not a state.
+    @Test func theLiveStargazersRefusalIsARefusalNotAState() throws {
+        #expect(throws: GitHubAPI.Refusal(parts: [.stargazers])) {
+            _ = try GitHubAPI.decode(body(repository: nil, errors: refusedStargazers), repo: "a/x")
+        }
+    }
+
+    /// The reduced query's answer — no `stargazers` asked — keeps the counts
+    /// and marks who starred as withheld.
     @Test func aStargazersOnlyRefusalKeepsTheCounts() throws {
         let state = try GitHubAPI.decode(
-            body(repository: repository(stargazers: "null"), errors: refusedStargazers), repo: "a/x"
+            body(repository: repository(stargazers: nil), errors: nil), repo: "a/x", omitted: [.stargazers]
         )
         #expect(state.stars == 12)
         #expect(state.forks == 3)
@@ -198,7 +210,7 @@ private let refusedStargazers = """
     /// `repository.stargazers`. The tile works, and says so quietly.
     @Test func theLiveReadOnlyAnswerIsQuiet() throws {
         let state = try GitHubAPI.decode(
-            body(repository: repository(stargazers: "null"), errors: refusedStargazers), repo: "a/x"
+            body(repository: repository(stargazers: nil), errors: nil), repo: "a/x", omitted: [.stargazers]
         )
         let reading = GitHubReading(content: .state(state), config: GitHubTileConfig(repo: "a/x"))
         #expect(reading.diagnosis == GitHubDiagnosis(

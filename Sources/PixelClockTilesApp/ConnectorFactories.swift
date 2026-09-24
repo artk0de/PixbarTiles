@@ -99,13 +99,17 @@ struct ConnectorFactories {
         // clock's tile list to say (`AppModel.gitHubDiagnosis(of:)`).
         let snapshots = UserDefaultsGitHubSnapshots(defaults: defaults)
         let diagnoses = UserDefaultsGitHubDiagnoses(defaults: defaults)
+        // What GitHub refused the one token, shared by every tile's reads so
+        // a rebuilt connector does not ask the refused query again.
+        let refusals = GitHubRefusals()
         registry.register(
             factory: { tile in
                 GitHubConnector(
                     tile: tile,
                     source: GitHubAPI(
                         transport: transport,
-                        token: { secrets.secret(for: .connector(GitHubConnector.connectorId)) }
+                        token: { secrets.secret(for: .connector(GitHubConnector.connectorId)) },
+                        refusals: refusals
                     ),
                     snapshots: snapshots,
                     diagnoses: diagnoses

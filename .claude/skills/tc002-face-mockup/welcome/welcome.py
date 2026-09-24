@@ -300,10 +300,17 @@ def tc002(t, full, rel, stars, font=BOLD):
 # ---------------------------------------------------------------- AWTRIX 32x8
 # PIXBAR 23x5 whose own P carries the flow, a plain 3x3 plus off its top
 # right that folds like the TC002 sparkle (plus, dot, out, dot) and flows
-# white -> cyan with it; the version takes the last 3 s by a push up.
-A_WORD = (2, 2)
-A_PLUS = (26, 0)
-A_VERSION_AT = 7_000
+# white -> cyan with it; the version takes the second half by a push up.
+# PIXBAR (23 wide) centred: 4 columns left, 5 right; the plus sits in the
+# right margin, clear of the R. A_Y is the text row (wordmark and version):
+# 8 - 5 leaves an odd 3, so it is 1 over 2 or 2 over 1.
+A_Y = int(os.environ.get("A_Y", "2"))
+A_WORD = (4, A_Y)
+A_PLUS = (28, 0)
+A_VERSION_AT = 5_000
+# AWTRIX 3 (fw 0.98) plays a 32x8 GIF no faster than ~8-10 fps: measured on
+# the TC001, 80 ms frames ran ~20 % late, 160 ms frames ~2.6 %.
+A_FRAME_MS = 160
 PLUS_FOLD = {3: PLUS3, 2: SPARK1, 1: SPARK1, 0: []}
 
 
@@ -316,7 +323,7 @@ def awtrix(t, dy=0, version=False):
         o = (3 - len(rows)) // 2
         cv.bitmap(rows, A_PLUS[0] + o, A_PLUS[1] + o + dy, spark_colour(t))
     if version:
-        x, y = (32 - text_width(VERSION)) // 2, 2 + dy + 8
+        x, y = (32 - text_width(VERSION)) // 2, A_Y + dy + 8
         for ch in VERSION:   # the same diagonal wave as the TC002 version
             cv.bitmap(G[ch], x, y, lambda cx, cy, x=x: version_colour(x + cx, y + cy, t))
             x += len(G[ch][0]) + 1
@@ -325,16 +332,17 @@ def awtrix(t, dy=0, version=False):
 
 def timeline(panel, full=None, rel=None, stars=(), font=None):
     tl = []
-    for n in range(SHOW_MS // FRAME_MS + 1):
-        t = n * FRAME_MS
+    step = FRAME_MS if panel == "tc" else A_FRAME_MS
+    for n in range(SHOW_MS // step + 1):
+        t = n * step
         if panel == "tc":
             cv = tc002(t, full, rel, stars, font or BOLD)
         elif t < A_VERSION_AT:
             cv = awtrix(t)
         else:
-            dy = -min(8, ((t - A_VERSION_AT) // FRAME_MS + 1) * 2)   # 8 rows in 4 frames
+            dy = -min(8, ((t - A_VERSION_AT) // step + 1) * 2)   # 8 rows in 4 frames
             cv = awtrix(t, dy=dy, version=True)
-        tl.append((cv, FRAME_MS))
+        tl.append((cv, step))
     out = []
     for cv, ms in tl:   # identical neighbours become one frame with the summed delay
         if out and out[-1][0].px == cv.px:

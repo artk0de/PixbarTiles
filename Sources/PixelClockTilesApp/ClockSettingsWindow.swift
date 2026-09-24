@@ -150,6 +150,9 @@ private struct TilesGrid: View {
             .scrollContentBackground(.hidden)
             addCard
         }
+        // Which card's eye is open: asked once when the list appears (and
+        // when it turns to another clock), never polled.
+        .task(id: clock.id) { model.refreshTileOnScreen(clockId: clock.id) }
     }
 
     /// The way to a new tile, and the biggest thing on the surface.
@@ -215,6 +218,23 @@ private struct ClockTileCard: View {
         TilePresentation.of(connectorId: key.connectorId)
     }
 
+    /// Open on the tile the clock is showing, closed on the rest; a click on
+    /// either brings the tile's page up. Every eye stays closed on a clock
+    /// that cannot say which page is up (the TC002) — the click still works.
+    private var eye: some View {
+        let open = model.tileOnScreen[key.clockId] == key
+        return Button { model.showOnClock(key) } label: {
+            PixelArt(
+                map: open ? PanelGlyph.eyeOpen : PanelGlyph.eyeClosed,
+                palette: PanelGlyph.inkPalette(PanelGlyph.eyeInk(open: open, dark: scheme == .dark))
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+        .help("Show on the clock")
+        .accessibilityLabel(open ? "\(name) is on the clock" : "Show \(name) on the clock")
+    }
+
     /// The ink a name is set in — the panel's primary, so a name here and a
     /// name on the panel are the same weight.
     private var nameInk: UInt32 { PixelInk.primary(dark: scheme == .dark) }
@@ -235,6 +255,8 @@ private struct ClockTileCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
+                // First on the card: whether the clock is showing this tile.
+                if model.ownsPage(key) { eye }
                 // The tile's own mark, in the app's pixel vocabulary rather
                 // than the system's: this list, the panel and the clock's
                 // matrix are one app, and an SF Symbol in `.secondary` beside

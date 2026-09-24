@@ -1646,14 +1646,77 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The slot that can show this tile's page: a tile that owns one (not the
-    /// lamp, not a paused tile holding the idle frame), on a clock whose slot
-    /// can switch.
+    /// Whether the tile has a page of its own to show: not the lamp, which
+    /// lights a corner of whatever is up, and not a paused tile, whose page is
+    /// the idle frame (TC002) or gone (AWTRIX). The card's eye is drawn for
+    /// these and no others.
+    func ownsPage(_ key: TileKey) -> Bool {
+        guard key.connectorId != VPNConnector.id, let policy = policy(of: key) else { return false }
+        return policy.isPaused == false
+    }
+
+    /// The slot that can show this tile's page: a tile that owns one, on a
+    /// clock whose slot can switch.
     private func pageShowing(for key: TileKey) -> (any ClockPageShowing)? {
-        guard key.connectorId != VPNConnector.id,
-            let policy = policy(of: key), policy.isPaused == false
-        else { return nil }
+        guard ownsPage(key) else { return nil }
         return sessions[key.clockId] as? any ClockPageShowing
+    }
+
+    /// The tile whose page each clock is showing, as far as the clock has
+    /// said: absent for a clock that cannot say (the TC002), one on a page of
+    /// its own, or one not asked yet. The tile cards' open eye.
+    @Published private(set) var tileOnScreen: [UUID: TileKey] = [:]
+
+    /// Asks the clock which page is up and finds the tile it belongs to.
+    /// Called when the clock's tile list appears — no polling beyond that.
+    func refreshTileOnScreen(clockId: UUID) {
+        queuePageWork { [weak self] in await self?.readTileOnScreen(clockId: clockId) }
+    }
+
+    /// The card's eye clicked: the tile's page brought up, by the user's own
+    /// hand (D3 allows it). An open settings window stops following — the
+    /// page is the user's choice now, and closing must not take it back.
+    func showOnClock(_ key: TileKey) {
+        queuePageWork { [weak self] in
+            guard let self else { return }
+            if pageFollow?.clockId == key.clockId { pageFollow = nil }
+            guard let clock = pageShowing(for: key) else { return }
+            do {
+                guard let page = try await clock.page(forTile: key.tileId) else { return }
+                try await clock.showPage(page)
+            } catch {
+                AppLog.clocks.notice(
+                    "switch to \(key.tileId, privacy: .public)'s page failed: \(String(describing: error), privacy: .public)"
+                )
+            }
+            await readTileOnScreen(clockId: key.clockId)
+        }
+    }
+
+    private func readTileOnScreen(clockId: UUID) async {
+        guard let clock = sessions[clockId] as? any ClockPageShowing else {
+            tileOnScreen[clockId] = nil
+            return
+        }
+        do {
+            guard let current = try await clock.currentPage() else {
+                tileOnScreen[clockId] = nil
+                return
+            }
+            var showing: TileKey?
+            for record in tiles.all() where record.key.clockId == clockId && ownsPage(record.key) {
+                if try await clock.page(forTile: record.key.tileId) == current {
+                    showing = record.key
+                    break
+                }
+            }
+            tileOnScreen[clockId] = showing
+        } catch {
+            tileOnScreen[clockId] = nil
+            AppLog.clocks.notice(
+                "page on screen unreadable: \(String(describing: error), privacy: .public)"
+            )
+        }
     }
 
     private func followPage(to key: TileKey) async {

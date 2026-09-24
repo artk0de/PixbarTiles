@@ -41,6 +41,8 @@ private final class SpyPageClock: ConnectorRunning, ClockPageShowing, @unchecked
         try lock.withLock {
             switches.append(page)
             if refuseSwitch { throw URLError(.cannotConnectToHost) }
+            // A clock that reports its page reports the one it was moved to.
+            if onScreen != nil { onScreen = page }
         }
     }
 
@@ -200,5 +202,96 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
     await subject.pageSwitchesSettled()
 
     #expect(clock.shown == ["weather"])
+    await subject.teardown()
+}
+
+// MARK: - The eye on a tile card
+
+// The card's eye is open on the tile whose page the clock is showing, read
+// when the list appears.
+@Test @MainActor func theListLearnsWhichTileIsOnScreen() async {
+    let clock = SpyPageClock(pages: ["weather": "weather", "claude": "claude"], onScreen: "claude")
+    let weather = tile("weather")
+    let claude = tile("claude")
+    let subject = model(clock, tiles: [weather, claude])
+
+    subject.refreshTileOnScreen(clockId: desk.id)
+    await subject.pageSwitchesSettled()
+
+    #expect(subject.tileOnScreen[desk.id] == claude.key)
+    #expect(clock.shown.isEmpty)
+    await subject.teardown()
+}
+
+// A page that is none of ours — the clock's own Time — opens no eye.
+@Test @MainActor func aPageOfTheClocksOwnOpensNoEye() async {
+    let clock = SpyPageClock(pages: ["weather": "weather"], onScreen: "Time")
+    let subject = model(clock, tiles: [tile("weather")])
+
+    subject.refreshTileOnScreen(clockId: desk.id)
+    await subject.pageSwitchesSettled()
+
+    #expect(subject.tileOnScreen[desk.id] == nil)
+    await subject.teardown()
+}
+
+// Clicking a closed eye brings that tile's page up, and the eye opens.
+@Test @MainActor func clickingAnEyeShowsThatTileAndOpensItsEye() async {
+    let clock = SpyPageClock(pages: ["weather": "weather", "claude": "claude"], onScreen: "weather")
+    let weather = tile("weather")
+    let claude = tile("claude")
+    let subject = model(clock, tiles: [weather, claude])
+
+    subject.showOnClock(claude.key)
+    await subject.pageSwitchesSettled()
+
+    #expect(clock.shown == ["claude"])
+    #expect(subject.tileOnScreen[desk.id] == claude.key)
+    await subject.teardown()
+}
+
+// The TC002 cannot say what is on screen: the click still switches, and every
+// eye stays closed rather than claiming a page the clock never confirmed.
+@Test @MainActor func onAClockThatCannotSayEveryEyeStaysClosed() async {
+    let clock = SpyPageClock(pages: ["weather": "pct-weather"], onScreen: nil)
+    let weather = tile("weather")
+    let subject = model(clock, tiles: [weather])
+
+    subject.showOnClock(weather.key)
+    await subject.pageSwitchesSettled()
+
+    #expect(clock.shown == ["pct-weather"])
+    #expect(subject.tileOnScreen[desk.id] == nil)
+    await subject.teardown()
+}
+
+// The lamp and a paused tile own no page, so their cards carry no eye.
+@Test @MainActor func onlyTilesWithAPageCarryAnEye() async {
+    let clock = SpyPageClock(pages: [:], onScreen: nil)
+    let weather = tile("weather")
+    let paused = tile("claude", paused: true)
+    let lamp = tile(VPNConnector.id)
+    let subject = model(clock, tiles: [weather, paused, lamp])
+
+    #expect(subject.ownsPage(weather.key))
+    #expect(subject.ownsPage(paused.key) == false)
+    #expect(subject.ownsPage(lamp.key) == false)
+    await subject.teardown()
+}
+
+// An eye clicked while a tile's settings are open is the user choosing the
+// page: closing the window afterwards does not take it back.
+@Test @MainActor func anEyeClickWhileSettingsAreOpenIsNotUndoneByTheClose() async {
+    let clock = SpyPageClock(pages: ["weather": "weather", "claude": "claude"], onScreen: "Time")
+    let weather = tile("weather")
+    let claude = tile("claude")
+    let subject = model(clock, tiles: [weather, claude])
+
+    subject.openDetail(for: weather.key)
+    subject.showOnClock(claude.key)
+    subject.closeDetail()
+    await subject.pageSwitchesSettled()
+
+    #expect(clock.shown == ["weather", "claude"])
     await subject.teardown()
 }

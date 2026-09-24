@@ -337,3 +337,41 @@ private func reading(
     #expect(palette["G"] == 0xFFFFFF)
     #expect(palette["B"] == PanelGlyph.categoryTint(.dev))
 }
+
+// MARK: - The eye
+
+// The card's eye: open on the tile the clock is showing, closed on every
+// other tile with a page. One canvas for both, so the card does not shift
+// when an eye opens.
+@Test func bothEyesShareOneRectangularCanvas() {
+    #expect(PanelGlyph.eyeOpen.count == PanelGlyph.eyeClosed.count)
+    for map in [PanelGlyph.eyeOpen, PanelGlyph.eyeClosed] {
+        #expect(map.allSatisfy { $0.count == PanelGlyph.eyeOpen[0].count })
+    }
+}
+
+// Open is an almond with a lit pupil in its middle; closed is a lid drawn
+// in the lower half with nothing lit above it — the upper lid is gone.
+@Test func theOpenEyeHasAPupilAndTheClosedOneOnlyALowerLid() {
+    let open = PanelGlyph.eyeOpen
+    let closed = PanelGlyph.eyeClosed
+    let middle = open.count / 2
+    let centre = open[middle].index(open[middle].startIndex, offsetBy: open[middle].count / 2)
+    #expect(open[middle][centre] != ".")
+    // Lit at the top and the bottom: both lids.
+    #expect(open.first?.contains { $0 != "." } == true)
+    #expect(open.last?.contains { $0 != "." } == true)
+    // Closed: nothing lit above the middle row.
+    #expect(closed[..<middle].allSatisfy { $0.allSatisfy { $0 == "." } })
+    #expect(closed.contains { $0.contains { $0 != "." } })
+}
+
+// Two inks: the open eye light, the closed one the card's grey.
+@Test func theOpenEyeIsLightAndTheClosedOneGrey() {
+    #expect(PanelGlyph.eyeInk(open: true, dark: true) == PanelGlyph.eyeInk(open: true, dark: false))
+    #expect(PanelGlyph.eyeInk(open: false, dark: true) == PixelInk.secondary(dark: true))
+    #expect(PanelGlyph.eyeInk(open: false, dark: false) == PixelInk.secondary(dark: false))
+    let light = PanelGlyph.eyeInk(open: true, dark: true)
+    let grey = PanelGlyph.eyeInk(open: false, dark: true)
+    #expect((light & 0xFF) > (grey & 0xFF))
+}

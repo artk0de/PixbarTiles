@@ -313,6 +313,37 @@ enum PanelGlyph {
         "...GGG...",
     ]
 
+    /// On the clock now: an almond with a lit pupil, on the card of the tile
+    /// whose page the clock is showing.
+    static let eyeOpen = [
+        "..GGGGG..",
+        ".G.....G.",
+        "G..GGG..G",
+        "G..GGG..G",
+        "G..GGG..G",
+        ".G.....G.",
+        "..GGGGG..",
+    ]
+
+    /// Not on the clock: the lower lid alone with its lashes, on every other
+    /// tile with a page — click it to bring that page up. Same canvas as the
+    /// open eye, so the card does not shift when one opens.
+    static let eyeClosed = [
+        ".........",
+        ".........",
+        ".........",
+        "G.......G",
+        ".GG...GG.",
+        "...GGG...",
+        ".G..G..G.",
+    ]
+
+    /// The open eye is a light ink in either appearance — it is the one lit
+    /// thing on the list; the closed eyes are the card chrome's grey.
+    static func eyeInk(open: Bool, dark: Bool) -> UInt32 {
+        open ? 0xF4F5F8 : PixelInk.secondary(dark: dark)
+    }
+
     /// Remove: a wastebasket read head-on — handle, a lid that overhangs, and
     /// a tapering body with staves down it. The overhang is what makes it a
     /// bin; drawn flush the mark reads as a glass.

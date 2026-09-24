@@ -53,4 +53,18 @@ enum WindowFocus {
         window.makeKeyAndOrderFront(nil)
         NSRunningApplication.current.activate(options: activation)
     }
+
+    /// Closes the pinned window. The unpin button sits INSIDE that window,
+    /// and a SwiftUI `dismissWindow` from there left it open beside the
+    /// popover — two panels again.
+    static func closePinned(among windows: [NSWindow]) {
+        pinnedWindow(among: windows)?.close()
+    }
+
+    /// The pinned window floats over other apps, so a text editor cannot bury
+    /// it — and only over them: while this app is active, its Settings and a
+    /// clock's settings must be able to come in front of it.
+    static func pinnedLevel(appIsActive: Bool) -> NSWindow.Level {
+        appIsActive ? .normal : .floating
+    }
 }

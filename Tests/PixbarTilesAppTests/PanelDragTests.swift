@@ -56,6 +56,28 @@ import Testing
     #expect(WindowFocus.activation.contains(.activateAllWindows) == false)
 }
 
+/// The pinned window floats over OTHER apps' windows, so a text editor cannot
+/// bury it — but not over this app's own: while the app is active its
+/// Settings and a clock's settings must be able to come in front of it.
+@MainActor @Test func thePinnedWindowFloatsOnlyWhileTheAppIsInTheBackground() {
+    #expect(WindowFocus.pinnedLevel(appIsActive: false) == .floating)
+    #expect(WindowFocus.pinnedLevel(appIsActive: true) == .normal)
+}
+
+/// Unpinning closes the pinned window: a SwiftUI `dismissWindow` from a
+/// button inside that same window left it open, beside the popover — two
+/// panels again.
+@MainActor @Test func unpinningClosesThePinnedWindow() {
+    let window = NSWindow()
+    window.identifier = NSUserInterfaceItemIdentifier("\(PinnedPanelWindow.id)-AppWindow-1")
+    window.isReleasedWhenClosed = false
+    window.orderFront(nil)
+
+    WindowFocus.closePinned(among: [window])
+
+    #expect(window.isVisible == false)
+}
+
 @MainActor @Test func thePinnedWindowIsFoundByItsSceneIdAmongTheAppsWindows() {
     let window = { (id: String) -> NSWindow in
         let window = NSWindow()

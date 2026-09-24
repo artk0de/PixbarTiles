@@ -50,8 +50,11 @@ struct PixbarTilesApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        // The panel pinned to a window of its own. Floating, because a pinned
-        // panel that a text editor can cover is a pin that did not take.
+        // The panel pinned to a window of its own. Floating while the app is
+        // in the background, because a pinned panel that a text editor can
+        // cover is a pin that did not take; normal while it is active, so the
+        // app's own Settings can come in front of it
+        // (`AppDelegate.levelThePinnedWindow`).
         Window("PixbarTiles", id: PinnedPanelWindow.id) {
             PinnedPanelWindow(
                 model: delegate.model,
@@ -60,7 +63,6 @@ struct PixbarTilesApp: App {
                 pin: delegate.panelPin
             )
         }
-        .windowLevel(.floating)
         .windowResizability(.contentSize)
         // Present at launch only when the pin was left in. Suppressed by
         // default an app would otherwise open a panel window nobody asked for;
@@ -557,6 +559,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The panel is on screen: browse if there is anything to look for.
     private func panelDidOpen() {
+        // Pinned, the menu bar item is only the way back to the window: the
+        // click focuses it, and the popover — nothing to see in it — goes as
+        // the focus leaves.
+        if panelPin.isPinned, let pinned = WindowFocus.pinnedWindow(among: NSApp.windows) {
+            WindowFocus.bringOnly(pinned)
+            return
+        }
         panelIsOpen = true
         // One full repaint per open, because the window is shared by three
         // surfaces of three different heights: the settings (615) leaves the
@@ -673,7 +682,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 delegate.panelDidClose()
             },
             whenThePanelsWindow(NSWindow.didMoveNotification) { $0.panelWasDragged() },
+            notifications.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in MainActor.assumeIsolated { self?.levelThePinnedWindow() } },
+            notifications.addObserver(
+                forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in MainActor.assumeIsolated { self?.levelThePinnedWindow() } },
         ]
+    }
+
+    /// The pinned window floats over other apps and not over this one's own
+    /// windows (`WindowFocus.pinnedLevel`), re-levelled whenever the app
+    /// comes to the front or leaves it.
+    func levelThePinnedWindow() {
+        WindowFocus.pinnedWindow(among: NSApp.windows)?.level =
+            WindowFocus.pinnedLevel(appIsActive: NSApp.isActive)
     }
 
     /// The panel's window moved. If a mouse button is DOWN it was the user

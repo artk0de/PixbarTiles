@@ -36,6 +36,7 @@ struct PinnedPanelWindow: View {
                         window.setFrameTopLeftPoint(origin)
                     }
                     WindowFocus.bringOnly(window)
+                    window.level = WindowFocus.pinnedLevel(appIsActive: NSApp.isActive)
                 }
                 .allowsHitTesting(false)
             )
@@ -47,67 +48,33 @@ struct PinnedPanelWindow: View {
     }
 }
 
-/// What the menu bar item shows while the panel is pinned.
+/// What the menu bar item's popover holds while the panel is pinned: nothing
+/// to see. The item is only the way back to the window — a click focuses it
+/// (`AppDelegate.panelDidOpen`), and the focus moving away is what dismisses
+/// this popover. A card saying "pinned to its own window" was one more window
+/// between the user and the one they asked for; unpinning is the window's own
+/// pin, or its close button.
 ///
-/// Not the panel again: two live copies of one surface is a reader deciding
-/// which is the real one. The item stays in the menu bar because it is the way
-/// back — the window may be behind everything, or on another Space.
+/// Its one job is the drag: the pin flips in the delegate, this content
+/// replaces the panel, and there is nowhere else with an `openWindow` to call.
 struct PinnedElsewherePanel: View {
     let pin: PanelPin
 
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                PixelArt(
-                    map: PanelGlyph.pin,
-                    palette: PanelGlyph.pinPalette(pinned: true, ink: PanelGlyph.pinnedTint)
-                )
-                Wordmark()
-            }
-            Text("Pinned to its own window.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                Button("Bring it forward") {
-                    openWindow(id: PinnedPanelWindow.id)
-                    focusThePinnedWindow()
-                }
-                .buttonStyle(.glass)
-                Button("Unpin") {
-                    pin.set(false)
-                    dismissWindow(id: PinnedPanelWindow.id)
-                }
-                .buttonStyle(.glass)
-            }
-        }
-        .padding(14)
-        .frame(width: 240)
-        // Opening is how a DRAG becomes a window: the pin flips in the
-        // delegate, this content replaces the panel, and there is nowhere
-        // else with an `openWindow` to call. After a drag the popover it came
-        // from closes — the window, where the drag let go, is the one panel
-        // on screen, and it takes the focus alone. Opened from the menu bar
-        // item instead, the popover stays: it is where Unpin is.
-        .task {
-            AppLog.panel.info("pinned-elsewhere content appeared — opening the window")
-            let fromADrag = pin.isDetaching
-            openWindow(id: PinnedPanelWindow.id)
-            if fromADrag {
-                dismiss()
-            } else {
-                focusThePinnedWindow()
-            }
-        }
-    }
-
     @Environment(\.dismiss) private var dismiss
 
-    private func focusThePinnedWindow() {
-        guard let window = WindowFocus.pinnedWindow(among: NSApp.windows) else { return }
-        WindowFocus.bringOnly(window)
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            // Opening one already open raises it. A window that appears
+            // focuses itself, alone; one already open is focused here.
+            .task {
+                AppLog.panel.info("pinned-elsewhere content appeared — opening the window")
+                openWindow(id: PinnedPanelWindow.id)
+                dismiss()
+                if let window = WindowFocus.pinnedWindow(among: NSApp.windows) {
+                    WindowFocus.bringOnly(window)
+                }
+            }
     }
 }

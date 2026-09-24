@@ -202,6 +202,7 @@ struct MenuPanel: View {
                 openWindow(id: PinnedPanelWindow.id)
             } else {
                 dismissWindow(id: PinnedPanelWindow.id)
+                WindowFocus.closePinned(among: NSApp.windows)
             }
         } label: {
             PixelArt(

@@ -52,4 +52,16 @@ private func fitting(_ view: some View) -> CGSize {
         #expect(size.width.isFinite)
         #expect(size.width < 1_000)
     }
+
+    // While the panel is pinned, the menu bar item is only the way back to
+    // the window: a click focuses the pinned window, and the popover it would
+    // have opened shows nothing of its own — no "Pinned to its own window".
+    @Test func thePopoverOfAPinnedPanelDrawsNothing() {
+        let (_, _, _, pin, _) = parts()
+
+        let size = fitting(PinnedElsewherePanel(pin: pin))
+
+        #expect(size.width <= 1)
+        #expect(size.height <= 1)
+    }
 }

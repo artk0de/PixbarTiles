@@ -64,6 +64,14 @@ public extension CodeUsage {
             return chosen.isEmpty ? WindowKind.allCases : chosen
         }
 
+        /// Whether the dwell picker has anything to set. The Circle spends it
+        /// on the move from one window to the next, so with one window
+        /// selected nothing changes and the picker is disabled; Compact's
+        /// "Show reset every" stands whatever is selected.
+        public var dwellIsAdjustable: Bool {
+            layout == .compact || windows.count > 1
+        }
+
         /// Ten seconds, eighty percent — the first warning band's own threshold,
         /// so by default a row names its reset exactly when its colour starts to
         /// warn.

@@ -134,6 +134,21 @@ private let tuned = CodeUsage.Parameters(resetEvery: 30, resetAfter: 65)
 
         #expect(stored.parameters?.windows == [.fiveHour, .weekly])
     }
+
+    // The Circle's "Change every" is the time between one window and the
+    // next: with one window selected nothing changes, so there is nothing to
+    // set. Compact's "Show reset every" stands whatever is selected.
+    @Test func theDwellIsAdjustableOnlyWhereSomethingRotates() {
+        func parameters(_ layout: CodeUsage.Layout, _ windows: [CodeUsage.WindowKind]) -> CodeUsage.Parameters {
+            CodeUsage.Parameters(resetEvery: 10, resetAfter: 80, layout: layout, windows: windows)
+        }
+
+        #expect(parameters(.circle, [.fiveHour, .weekly]).dwellIsAdjustable)
+        #expect(parameters(.circle, [.weekly]).dwellIsAdjustable == false)
+        #expect(parameters(.circle, [.fiveHour]).dwellIsAdjustable == false)
+        #expect(parameters(.compact, [.fiveHour, .weekly]).dwellIsAdjustable)
+        #expect(parameters(.compact, [.weekly]).dwellIsAdjustable)
+    }
 }
 
 @Suite struct ZaiTileUsageFaceTests {

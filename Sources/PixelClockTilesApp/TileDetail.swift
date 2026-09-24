@@ -558,6 +558,8 @@ struct CodeUsageBlock: View {
                 )) {
                     ForEach(everySteps, id: \.self) { Text(Self.everyCaption($0)).tag($0) }
                 }
+                // A Circle showing one window has nothing to change to.
+                .disabled(config.dwellIsAdjustable == false)
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Reset").font(.caption).foregroundStyle(.secondary)

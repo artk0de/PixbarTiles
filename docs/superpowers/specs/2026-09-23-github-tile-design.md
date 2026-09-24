@@ -234,10 +234,14 @@ A `GitHubTileBlock` beside the existing blocks in `TileSettingsWindow`:
   - Public repositories: a fine-grained token with *Repository access →
     Public repositories*; no permissions needed.
   - Private repositories: *Only select repositories*, and `Metadata: read`,
-    `Pull requests: read`.
+    `Pull requests: read`, `Commit statuses: read`, `Checks: read` (the last
+    two feed the CI badge; GitHub documents them for the REST status and
+    check-run endpoints, and GraphQL's `statusCheckRollup` is assumed to follow
+    them — confirmed live in Task 12, where `Contents: read` is tried if the
+    rollup still comes back empty).
   - Repository access cannot be preset by a link; pick it on the page.
   - A link to
-    `https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks+and+PRs+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read`
+    `https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read`
     — GitHub documents prefilling the form by these parameters.
 
 ## CI of the default branch (added 2026-09-24)

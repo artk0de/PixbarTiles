@@ -134,8 +134,8 @@ private func slotTile(_ connectorId: String) -> TileRecord {
         let record = UserDefaultsAppRecord(defaults: try defaults())
         // Both pages are recorded as ours — the live one and the stale one a
         // crash left behind — and the clock still lists both.
-        record.save(["pct-weather", "pct-stale"], forClock: "slot")
-        transport.lists(["pct-weather", "pct-stale"])
+        record.save(["pbt-weather", "pbt-stale"], forClock: "slot")
+        transport.lists(["pbt-weather", "pbt-stale"])
         let device = UlanziDevice(host: "192.0.2.9", transport: transport)
         let host = UlanziClockHost(
             session: UlanziClockSession(
@@ -156,8 +156,8 @@ private func slotTile(_ connectorId: String) -> TileRecord {
         // delete (D10) beside the live page's upsert.
         let customLists = transport.requests.filter { $0.url?.path == "/api/customList" }
         #expect(customLists.count == 1)
-        #expect(upserts(on: transport).contains { $0.name == "pct-stale" && $0.empty })
-        #expect(drewPage(named: "pct-weather", on: transport))
+        #expect(upserts(on: transport).contains { $0.name == "pbt-stale" && $0.empty })
+        #expect(drewPage(named: "pbt-weather", on: transport))
     }
 
     // A connector with no TC002 face is a skip, not a failure — nothing
@@ -266,7 +266,7 @@ private func slotTile(_ connectorId: String) -> TileRecord {
         #expect(subject.statusLine(of: desk) == "Connected")
         #expect(
             await waitUntil {
-                upserts(on: transport).contains { $0.name == "pct-weather" && $0.empty == false }
+                upserts(on: transport).contains { $0.name == "pbt-weather" && $0.empty == false }
             }
         )
 
@@ -282,7 +282,7 @@ private func slotTile(_ connectorId: String) -> TileRecord {
         // empty-body delete (D4).
         await subject.teardown()
         #expect(await waitUntil {
-            upserts(on: transport).contains { $0.name == "pct-weather" && $0.empty }
+            upserts(on: transport).contains { $0.name == "pbt-weather" && $0.empty }
         })
     }
 
@@ -303,7 +303,7 @@ private func slotTile(_ connectorId: String) -> TileRecord {
             clocks: [desk]
         )
         func weatherPages() -> Int {
-            upserts(on: transport).filter { $0.name == "pct-weather" && $0.empty == false }.count
+            upserts(on: transport).filter { $0.name == "pbt-weather" && $0.empty == false }.count
         }
 
         subject.start()
@@ -334,7 +334,7 @@ private func slotTile(_ connectorId: String) -> TileRecord {
         #expect(subject.addTile("weather", to: desk.id) == .saved)
         subject.runNow(key)
 
-        #expect(await waitUntil { drewPage(named: "pct-weather", on: transport) })
+        #expect(await waitUntil { drewPage(named: "pbt-weather", on: transport) })
     }
 
     // A TC002 that stops answering is said to have stopped, and its tiles'

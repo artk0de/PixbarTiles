@@ -45,14 +45,14 @@ private func openWiringDefaults() throws -> (UserDefaults, String) {
         #expect(await waitUntil {
             transport.requests.contains { request in
                 request.httpMethod == "POST"
-                    && request.url?.query == "name=pct-weather"
+                    && request.url?.query == "name=pbt-weather"
                     && (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())
                         as? [String: Any])?["draw"] != nil
             }
         })
         // The idle frame is the single dim dot: one filled circle.
         let idle = transport.requests.last {
-            $0.httpMethod == "POST" && $0.url?.query == "name=pct-weather"
+            $0.httpMethod == "POST" && $0.url?.query == "name=pbt-weather"
         }
         let body = try #require(idle?.httpBody)
         let json = try #require(

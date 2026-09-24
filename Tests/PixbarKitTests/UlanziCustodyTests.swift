@@ -26,8 +26,8 @@ final class MemoryAppRecord: UlanziAppRecord, @unchecked Sendable {
         recorder.body = Self.listAnswer(listed)
         let custody = makeCustody()
         for name in names {
-            // Claim by tile id: "pct-weather" is tile "weather"'s name.
-            _ = try? await custody.appName(forTile: String(name.dropFirst("pct-".count)))
+            // Claim by tile id: "pbt-weather" is tile "weather"'s name.
+            _ = try? await custody.appName(forTile: String(name.dropFirst("pbt-".count)))
         }
         return custody
     }
@@ -38,13 +38,13 @@ final class MemoryAppRecord: UlanziAppRecord, @unchecked Sendable {
     }
 
     @Test func appNameIsPrefixedTileId() async throws {
-        #expect(try await makeCustody().appName(forTile: "weather") == "pct-weather")
+        #expect(try await makeCustody().appName(forTile: "weather") == "pbt-weather")
     }
 
     @Test func theSameTileClaimsTheSameNameTwice() async throws {
         let custody = makeCustody()
-        #expect(try await custody.appName(forTile: "weather") == "pct-weather")
-        #expect(try await custody.appName(forTile: "weather") == "pct-weather")
+        #expect(try await custody.appName(forTile: "weather") == "pbt-weather")
+        #expect(try await custody.appName(forTile: "weather") == "pbt-weather")
         let owned = await custody.ownedNames
         #expect(owned.count == 1)
     }
@@ -61,38 +61,38 @@ final class MemoryAppRecord: UlanziAppRecord, @unchecked Sendable {
     }
 
     @Test func sweepRemovesStaleNamesTheDeviceStillLists() async throws {
-        recorder.body = Self.listAnswer(["pct-a", "pct-b", "pct-z"])
-        let custody = await custodyHolding(["pct-a", "pct-b", "pct-z"], listed: ["pct-a", "pct-b", "pct-z"])
+        recorder.body = Self.listAnswer(["pbt-a", "pbt-b", "pbt-z"])
+        let custody = await custodyHolding(["pbt-a", "pbt-b", "pbt-z"], listed: ["pbt-a", "pbt-b", "pbt-z"])
 
         try await custody.sweep(liveTiles: ["a", "b"])
 
         let requests = recorder.requests
         #expect(requests.count == 2)   // one customList read, one delete
-        #expect(requests.last?.url?.query == "name=pct-z")
+        #expect(requests.last?.url?.query == "name=pbt-z")
         let owned = await custody.ownedNames
-        #expect(owned == ["pct-a", "pct-b"])
+        #expect(owned == ["pbt-a", "pbt-b"])
     }
 
     @Test func sweepDropsLostNamesWithoutDelete() async throws {
-        // a reboot wiped every app but pct-a (E9): there is nothing left to
+        // a reboot wiped every app but pbt-a (E9): there is nothing left to
         // delete, so the sweep deletes nothing
-        recorder.body = Self.listAnswer(["pct-a"])
-        let custody = await custodyHolding(["pct-a", "pct-b", "pct-z"], listed: ["pct-a"])
+        recorder.body = Self.listAnswer(["pbt-a"])
+        let custody = await custodyHolding(["pbt-a", "pbt-b", "pbt-z"], listed: ["pbt-a"])
 
         try await custody.sweep(liveTiles: ["a", "b", "z"])
 
         #expect(recorder.requests.count == 1)   // the customList read alone
         let owned = await custody.ownedNames
-        #expect(owned == ["pct-a"])
+        #expect(owned == ["pbt-a"])
     }
 
     @Test func releaseAllEmptiesEveryPage() async throws {
-        let custody = await custodyHolding(["pct-a", "pct-b"], listed: ["pct-a", "pct-b"])
+        let custody = await custodyHolding(["pbt-a", "pbt-b"], listed: ["pbt-a", "pbt-b"])
 
         try await custody.releaseAll()
 
         let queries = recorder.requests.compactMap(\.url?.query)
-        #expect(queries == ["name=pct-a", "name=pct-b"])
+        #expect(queries == ["name=pbt-a", "name=pbt-b"])
         let owned = await custody.ownedNames
         #expect(owned == [])
     }

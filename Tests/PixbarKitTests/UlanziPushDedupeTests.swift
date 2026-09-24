@@ -47,7 +47,7 @@ private let refusal = Data(#"{"code":500,"message":"busy"}"#.utf8)
         // The page shows it: the delivery has landed as far as anyone waiting
         // on it is concerned.
         #expect(second == .delivered)
-        #expect(posts("pct-github") == 1)
+        #expect(posts("pbt-github") == 1)
     }
 
     @Test func aChangedBodyIsPushed() async {
@@ -56,7 +56,7 @@ private let refusal = Data(#"{"code":500,"message":"busy"}"#.utf8)
         _ = await session.deliver(UlanziDelivery(scene: scene(11)), toTile: "github")
         _ = await session.deliver(UlanziDelivery(scene: scene(12)), toTile: "github")
 
-        #expect(posts("pct-github") == 2)
+        #expect(posts("pbt-github") == 2)
     }
 
     @Test func theSameBodyOnAnotherPageIsNotADuplicate() async {
@@ -65,8 +65,8 @@ private let refusal = Data(#"{"code":500,"message":"busy"}"#.utf8)
         _ = await session.deliver(UlanziDelivery(scene: scene(11)), toTile: "github")
         _ = await session.deliver(UlanziDelivery(scene: scene(11)), toTile: "weather")
 
-        #expect(posts("pct-github") == 1)
-        #expect(posts("pct-weather") == 1)
+        #expect(posts("pbt-github") == 1)
+        #expect(posts("pbt-weather") == 1)
     }
 
     /// A failed push says nothing reliable about what the page shows, so the
@@ -83,7 +83,7 @@ private let refusal = Data(#"{"code":500,"message":"busy"}"#.utf8)
 
         // 11, the refused 12, 11 again (the refusal forgot the page), and no
         // fourth: that one is a duplicate again.
-        #expect(posts("pct-github") == 3)
+        #expect(posts("pbt-github") == 3)
     }
 
     @Test func anIdleMarkTwiceIsPushedOnce() async {
@@ -92,7 +92,7 @@ private let refusal = Data(#"{"code":500,"message":"busy"}"#.utf8)
         _ = await session.markIdle(tileId: "zai")
         _ = await session.markIdle(tileId: "zai")
 
-        #expect(posts("pct-zai") == 1)
+        #expect(posts("pbt-zai") == 1)
     }
 
     /// A removed page is gone from the clock; the same body delivered to a
@@ -104,7 +104,7 @@ private let refusal = Data(#"{"code":500,"message":"busy"}"#.utf8)
         await session.tileRemoved("github")
         _ = await session.deliver(UlanziDelivery(scene: scene(11)), toTile: "github")
 
-        #expect(posts("pct-github") == 2)
+        #expect(posts("pbt-github") == 2)
     }
 
     /// A celebration changes the page, and so does its restore: both go out
@@ -149,14 +149,14 @@ private let refusal = Data(#"{"code":500,"message":"busy"}"#.utf8)
             toTile: "github"
         )
         let deadline = Date().addingTimeInterval(waitBudget(nil))
-        while Date() < deadline, posts("pct-github") < 3 {
+        while Date() < deadline, posts("pbt-github") < 3 {
             try await Task.sleep(nanoseconds: 1_000_000)
         }
         try await Task.sleep(nanoseconds: 20_000_000)
-        let settled = posts("pct-github")
+        let settled = posts("pbt-github")
 
         _ = await session.deliver(UlanziDelivery(scene: scene(11)), toTile: "github")
 
-        #expect(posts("pct-github") == settled)
+        #expect(posts("pbt-github") == settled)
     }
 }

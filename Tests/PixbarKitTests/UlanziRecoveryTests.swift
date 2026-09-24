@@ -108,14 +108,14 @@ final class TestClock: @unchecked Sendable {
         let session = makeSession()
         await boardOfThree(session)
 
-        transport.refusals = ["pct-c"]
+        transport.refusals = ["pbt-c"]
         _ = await session.deliver(UlanziDelivery(scene: scene(2)), toTile: "c")
         transport.refusals = []
         _ = await session.deliver(UlanziDelivery(scene: scene(2)), toTile: "a")
 
         // No sweep: b is not re-pushed, and c only by its own next delivery.
-        #expect(transport.posts("pct-b") == 1)
-        #expect(transport.posts("pct-c") == 2)
+        #expect(transport.posts("pbt-b") == 1)
+        #expect(transport.posts("pbt-c") == 2)
     }
 
     @Test func aTimeoutIsAnOutageAndTheNextAnswerSweeps() async {
@@ -127,8 +127,8 @@ final class TestClock: @unchecked Sendable {
         transport.down = false
         _ = await session.deliver(UlanziDelivery(scene: scene(2)), toTile: "a")
 
-        #expect(transport.posts("pct-b") == 2)
-        #expect(transport.posts("pct-c") == 3)
+        #expect(transport.posts("pbt-b") == 2)
+        #expect(transport.posts("pbt-c") == 3)
     }
 
     /// A sweep that fails does not start another at the next answer: the next
@@ -139,16 +139,16 @@ final class TestClock: @unchecked Sendable {
         transport.down = true
         _ = await session.deliver(UlanziDelivery(scene: scene(2)), toTile: "a")
         transport.down = false
-        transport.timeouts = ["pct-c"]
+        transport.timeouts = ["pbt-c"]
 
         var tag = 10
         /// One answered push from a at `offset`; true when it set off a sweep.
         func answerAt(_ offset: TimeInterval) async -> Bool {
             clock.set(offset)
-            let before = transport.posts("pct-b")
+            let before = transport.posts("pbt-b")
             tag += 1
             _ = await session.deliver(UlanziDelivery(scene: scene(tag)), toTile: "a")
-            return transport.posts("pct-b") > before
+            return transport.posts("pbt-b") > before
         }
 
         #expect(await answerAt(0))          // sweep 1, c times out
@@ -176,12 +176,12 @@ final class TestClock: @unchecked Sendable {
         transport.down = true
         _ = await session.deliver(UlanziDelivery(scene: scene(2)), toTile: "a")
         transport.down = false
-        transport.timeouts = ["pct-b"]
+        transport.timeouts = ["pbt-b"]
 
         _ = await session.deliver(UlanziDelivery(scene: scene(3)), toTile: "a")
 
         // b attempted once by the sweep, c re-pushed once — nothing repeated.
-        #expect(transport.posts("pct-b") == 2)
-        #expect(transport.posts("pct-c") == 2)
+        #expect(transport.posts("pbt-b") == 2)
+        #expect(transport.posts("pbt-c") == 2)
     }
 }

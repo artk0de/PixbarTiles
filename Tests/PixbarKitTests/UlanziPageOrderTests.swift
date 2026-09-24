@@ -47,7 +47,7 @@ private func scene(_ tag: Int) -> UlanziScene {
     @Test func aReorderReCreatesThePagesFromTheFirstOneOutOfPlace() async {
         let session = makeSession()
         await deliver(["a", "b", "c"], to: session)
-        transport.list = ["pct-a", "pct-b", "pct-c"]
+        transport.list = ["pbt-a", "pbt-b", "pbt-c"]
         let before = transport.requests.count
 
         await session.arrange(order: ["a", "c", "b"])
@@ -55,14 +55,14 @@ private func scene(_ tag: Int) -> UlanziScene {
         // a is already first; from c onwards each page is deleted and pushed
         // again, which puts it last — in the app's order.
         #expect(wire(after: before) == [
-            "list", "delete pct-c", "push pct-c", "delete pct-b", "push pct-b",
+            "list", "delete pbt-c", "push pbt-c", "delete pbt-b", "push pbt-b",
         ])
     }
 
     @Test func aClockAlreadyInOrderCostsOnlyTheListRead() async {
         let session = makeSession()
         await deliver(["a", "b", "c"], to: session)
-        transport.list = ["pct-a", "pct-b", "pct-c"]
+        transport.list = ["pbt-a", "pbt-b", "pbt-c"]
         let before = transport.requests.count
 
         await session.arrange(order: ["a", "b", "c"])
@@ -74,7 +74,7 @@ private func scene(_ tag: Int) -> UlanziScene {
     @Test func aForeignPageIsNoneOfTheOrdersBusiness() async {
         let session = makeSession()
         await deliver(["a", "b"], to: session)
-        transport.list = ["pct-a", "probe-x", "pct-b"]
+        transport.list = ["pbt-a", "probe-x", "pbt-b"]
         let before = transport.requests.count
 
         await session.arrange(order: ["a", "b"])
@@ -88,13 +88,13 @@ private func scene(_ tag: Int) -> UlanziScene {
     @Test func aPageWithUnknownContentIsNotReCreated() async {
         let session = makeSession()
         await deliver(["a", "c"], to: session)
-        transport.list = ["pct-b", "pct-c", "pct-a"]
+        transport.list = ["pbt-b", "pbt-c", "pbt-a"]
         let before = transport.requests.count
 
         await session.arrange(order: ["a", "b", "c"])
 
         #expect(wire(after: before) == [
-            "list", "delete pct-a", "push pct-a", "delete pct-c", "push pct-c",
+            "list", "delete pbt-a", "push pbt-a", "delete pbt-c", "push pbt-c",
         ])
     }
 
@@ -105,13 +105,13 @@ private func scene(_ tag: Int) -> UlanziScene {
         transport.list = []
         await session.sweep(liveTiles: ["a", "b"])
         await deliver(["b", "a"], to: session)
-        transport.list = ["pct-b", "pct-a"]
+        transport.list = ["pbt-b", "pbt-a"]
         let before = transport.requests.count
 
         await session.verifyPages()
 
         #expect(wire(after: before) == [
-            "list", "delete pct-a", "push pct-a", "delete pct-b", "push pct-b",
+            "list", "delete pbt-a", "push pbt-a", "delete pbt-b", "push pbt-b",
         ])
     }
 
@@ -120,13 +120,13 @@ private func scene(_ tag: Int) -> UlanziScene {
     @Test func anOutageMidWayStopsTheReCreation() async {
         let session = makeSession()
         await deliver(["a", "b", "c"], to: session)
-        transport.list = ["pct-c", "pct-b", "pct-a"]
-        transport.timeouts = ["pct-a"]
+        transport.list = ["pbt-c", "pbt-b", "pbt-a"]
+        transport.timeouts = ["pbt-a"]
         let before = transport.requests.count
 
         await session.arrange(order: ["a", "b", "c"])
 
-        #expect(wire(after: before) == ["list", "delete pct-a"])
+        #expect(wire(after: before) == ["list", "delete pbt-a"])
     }
 
     /// A missing page is pushed back first; that push lands at the end, so the
@@ -134,11 +134,11 @@ private func scene(_ tag: Int) -> UlanziScene {
     @Test func aMissingPageIsPutBackBeforeAnythingIsReordered() async {
         let session = makeSession()
         await deliver(["a", "b", "c"], to: session)
-        transport.list = ["pct-c", "pct-a"]
+        transport.list = ["pbt-c", "pbt-a"]
         let before = transport.requests.count
 
         await session.arrange(order: ["a", "b", "c"])
 
-        #expect(wire(after: before) == ["list", "push pct-b"])
+        #expect(wire(after: before) == ["list", "push pbt-b"])
     }
 }

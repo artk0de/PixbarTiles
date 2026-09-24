@@ -49,12 +49,25 @@ public actor UlanziCustody {
         self.clockId = clockId
     }
 
-    /// The tile's page name: `pct-<tileId>` (D10).
+    /// The tile's page name: `pbt-<tileId>` (D10).
     private func tileName(_ tileId: String) -> String { Self.pageName(forTile: tileId) }
 
     /// The name a tile's page lives under, without claiming it — for reading
     /// the clock's page list against.
-    public static func pageName(forTile tileId: String) -> String { "pct-\(tileId)" }
+    public static func pageName(forTile tileId: String) -> String { "\(pagePrefix)\(tileId)" }
+
+    /// What every page of this app is named with — PixbarTiles.
+    public static let pagePrefix = "pbt-"
+
+    /// What this app's pages were named with under an earlier name of the app —
+    /// `pct-` as PixelClockTiles. Kept as it was: TC002 pages outlive the
+    /// process, so a clock can still carry them, and they are ours to take back.
+    public static let legacyPagePrefixes = ["pct-"]
+
+    /// Whether `name` is one of this app's pages from before the rename.
+    static func isLegacyPage(_ name: String) -> Bool {
+        legacyPagePrefixes.contains { name.hasPrefix($0) }
+    }
 
     /// The name this tile's page lives under, claiming it on first use. The
     /// claim is bookkeeping only — the device hears the name at the first
@@ -90,13 +103,19 @@ public actor UlanziCustody {
     /// names the device still lists but no live tile uses get an empty-body
     /// delete. Stale names from crashes or older builds leave the knob cycle
     /// here (D4, D10).
+    ///
+    /// Pages named with a `legacyPagePrefixes` prefix are ours from before the
+    /// rename and are taken back the same way, whether the record names them
+    /// or not: the record may not have come across with the defaults, and the
+    /// prefix says whose they are. Anybody else's page is never touched.
     public func sweep(liveTiles: [String]) async throws {
         let listed = try await device.customApps()
         let expected = Set(liveTiles.map(tileName))
         let owned = record.names(forClock: clockId)
+        let legacy = listed.filter { Self.isLegacyPage($0) && !owned.contains($0) }
 
         // Still on the device but no live tile behind it: take the page back.
-        for name in owned where listed.contains(name) && !expected.contains(name) {
+        for name in owned + legacy where listed.contains(name) && !expected.contains(name) {
             try await device.removeApp(named: name)
         }
 

@@ -163,7 +163,7 @@ private let emptyIdentity = UlanziIdentity(
     #expect(await waitUntil {
         transport.requests.contains { request in
             request.httpMethod == "POST"
-                && request.url?.query == "name=pct-weather"
+                && request.url?.query == "name=pbt-weather"
                 && (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())
                     as? [String: Any])?["draw"] != nil
         }
@@ -174,7 +174,7 @@ private let emptyIdentity = UlanziIdentity(
     #expect(await waitUntil {
         transport.requests.contains { request in
             request.httpMethod == "POST"
-                && request.url?.query == "name=pct-weather"
+                && request.url?.query == "name=pbt-weather"
                 && (request.httpBody ?? Data()).isEmpty
         }
     })

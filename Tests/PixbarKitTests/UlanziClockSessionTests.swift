@@ -37,11 +37,11 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
         #expect(result == .delivered)
         #expect(recorder.requests.count == 1)
         let request = try #require(recorder.requests.first)
-        #expect(request.url?.query == "name=pct-weather")
+        #expect(request.url?.query == "name=pbt-weather")
         let body = try #require(request.httpBody)
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
         #expect((json["draw"] as? [[String: Any]])?.count == 1)
-        #expect(record.names(forClock: "clock-1") == ["pct-weather"])
+        #expect(record.names(forClock: "clock-1") == ["pbt-weather"])
     }
 
     @Test func theTwentySecondTileFailsAndTheDeviceHearsNothing() async throws {
@@ -90,11 +90,11 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
             UlanziDelivery(scene: drawnScene(colour: .white)), toTile: "weather"
         )
 
-        let claudePosts = recorder.requests.filter { $0.url?.query == "name=pct-claude" }
+        let claudePosts = recorder.requests.filter { $0.url?.query == "name=pbt-claude" }
         // The previously failed tile: its failed attempt, then the recovery
         // re-push that pulled it back in — the page is not left behind.
         #expect(claudePosts.count == 2)
-        let weatherPosts = recorder.requests.filter { $0.url?.query == "name=pct-weather" }
+        let weatherPosts = recorder.requests.filter { $0.url?.query == "name=pbt-weather" }
         // First deliver and post-recovery deliver — no sweep re-push of its
         // own: weather is the tile whose successful push ended the outage.
         #expect(weatherPosts.count == 2)
@@ -132,7 +132,7 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
         await session.tileRemoved("weather")
 
         let request = try #require(recorder.requests.last)
-        #expect(request.url?.query == "name=pct-weather")
+        #expect(request.url?.query == "name=pbt-weather")
         // The empty body IS the delete (research §2.2) — a `{}` body would
         // leave the app in the knob cycle.
         #expect(request.httpBody ?? Data() == Data())
@@ -157,13 +157,13 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
             #expect(request.httpBody ?? Data() == Data())
         }
         let named = Set(deletes.compactMap { $0.url?.query })
-        #expect(named == ["name=pct-weather", "name=pct-claude"])
+        #expect(named == ["name=pbt-weather", "name=pbt-claude"])
         #expect(record.names(forClock: "clock-1") == [])
     }
 
     @Test func sweepDeletesTheStaleNameBeforeLiveTilesPush() async throws {
-        record.save(["pct-stale", "pct-weather"], forClock: "clock-1")
-        recorder.body = UlanziCustodyTests.listAnswer(["pct-stale", "pct-weather"])
+        record.save(["pbt-stale", "pbt-weather"], forClock: "clock-1")
+        recorder.body = UlanziCustodyTests.listAnswer(["pbt-stale", "pbt-weather"])
         let session = makeSession()
 
         await session.sweep(liveTiles: ["weather"])
@@ -178,10 +178,10 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
         // customList GET the sweep reads, which carries no query.)
         let posts = recorder.requests.filter { $0.httpMethod == "POST" }
         let first = try #require(posts.first)
-        #expect(first.url?.query == "name=pct-stale")
+        #expect(first.url?.query == "name=pbt-stale")
         #expect(first.httpBody ?? Data() == Data())
         let last = try #require(posts.last)
-        #expect(last.url?.query == "name=pct-weather")
+        #expect(last.url?.query == "name=pbt-weather")
     }
 }
 
@@ -204,10 +204,10 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
     }
 
     @Test func aTileTheClockListsHasItsPageName() async throws {
-        recorder.body = Data(#"{"apps":["pct-weather","pct-zai"],"count":2}"#.utf8)
+        recorder.body = Data(#"{"apps":["pbt-weather","pbt-zai"],"count":2}"#.utf8)
         let session = makeSession()
 
-        #expect(try await session.page(forTile: "weather") == "pct-weather")
+        #expect(try await session.page(forTile: "weather") == "pbt-weather")
         #expect(recorder.requests.map { $0.url?.path } == ["/api/customList"])
     }
 
@@ -215,22 +215,22 @@ private func drawnScene(colour: Pixel) -> UlanziScene {
     /// page: switching to a name the clock does not carry would do nothing
     /// useful at best.
     @Test func aTileTheClockDoesNotListHasNoPage() async throws {
-        recorder.body = Data(#"{"apps":["pct-zai"],"count":1}"#.utf8)
+        recorder.body = Data(#"{"apps":["pbt-zai"],"count":1}"#.utf8)
         let session = makeSession()
 
         #expect(try await session.page(forTile: "weather") == nil)
     }
 
     @Test func showPagePostsTheSwitch() async throws {
-        recorder.body = Data(#"{"message":"app switch requested","data":{"name":"pct-weather","index":100}}"#.utf8)
+        recorder.body = Data(#"{"message":"app switch requested","data":{"name":"pbt-weather","index":100}}"#.utf8)
         let session = makeSession()
 
-        try await session.showPage("pct-weather")
+        try await session.showPage("pbt-weather")
 
         let request = try #require(recorder.requests.last)
         #expect(request.httpMethod == "POST")
         #expect(request.url?.path == "/api/switchDiyApp")
-        #expect(request.url?.query == "name=pct-weather")
+        #expect(request.url?.query == "name=pbt-weather")
     }
 
     /// The firmware cannot report which app is on screen (research §0), so

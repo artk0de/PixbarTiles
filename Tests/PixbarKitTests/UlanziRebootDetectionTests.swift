@@ -40,30 +40,30 @@ private func scene(_ tag: Int) -> UlanziScene {
 
         await session.clockReturned()
 
-        for page in ["pct-a", "pct-b", "pct-c"] {
+        for page in ["pbt-a", "pbt-b", "pbt-c"] {
             #expect(transport.posts(page) == 2)
         }
         // And the pages are known again: the next identical push is skipped.
         _ = await session.deliver(UlanziDelivery(scene: scene(1)), toTile: "a")
-        #expect(transport.posts("pct-a") == 2)
+        #expect(transport.posts("pbt-a") == 2)
     }
 
     @Test func aPageMissingFromTheListIsTheOnlyOneRePushed() async {
         let session = makeSession()
         await boardOfThree(session)
-        transport.list = ["pct-a", "pct-c", "somebody-else"]
+        transport.list = ["pbt-a", "pbt-c", "somebody-else"]
 
         await session.verifyPages()
 
-        #expect(transport.posts("pct-a") == 1)
-        #expect(transport.posts("pct-b") == 2)
-        #expect(transport.posts("pct-c") == 1)
+        #expect(transport.posts("pbt-a") == 1)
+        #expect(transport.posts("pbt-b") == 2)
+        #expect(transport.posts("pbt-c") == 1)
     }
 
     @Test func aFullListPushesNothing() async {
         let session = makeSession()
         await boardOfThree(session)
-        transport.list = ["pct-a", "pct-b", "pct-c"]
+        transport.list = ["pbt-a", "pbt-b", "pbt-c"]
         let before = transport.requests.count
 
         await session.verifyPages()
@@ -94,8 +94,8 @@ private func scene(_ tag: Int) -> UlanziScene {
         await session.verifyPages()
 
         #expect(transport.listReads == 0)
-        #expect(transport.posts("pct-b") == 2)
-        #expect(transport.posts("pct-c") == 2)
+        #expect(transport.posts("pbt-b") == 2)
+        #expect(transport.posts("pbt-c") == 2)
     }
 
     /// A page the app took back is meant to be missing.
@@ -103,10 +103,10 @@ private func scene(_ tag: Int) -> UlanziScene {
         let session = makeSession()
         await boardOfThree(session)
         await session.tileRemoved("b")
-        transport.list = ["pct-a", "pct-c"]
+        transport.list = ["pbt-a", "pbt-c"]
 
         await session.verifyPages()
 
-        #expect(transport.posts("pct-b") == 1)
+        #expect(transport.posts("pbt-b") == 1)
     }
 }

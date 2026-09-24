@@ -128,7 +128,7 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
 // A clock that cannot say what it showed — the TC002 — is switched and then
 // left where the window put it: there is nothing known to go back to.
 @Test @MainActor func anUnknownPageBeforeIsNotRestored() async {
-    let clock = SpyPageClock(pages: ["weather": "pct-weather"], onScreen: nil)
+    let clock = SpyPageClock(pages: ["weather": "pbt-weather"], onScreen: nil)
     let weather = tile("weather")
     let subject = model(clock, tiles: [weather])
 
@@ -136,7 +136,7 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
     subject.closeDetail()
     await subject.pageSwitchesSettled()
 
-    #expect(clock.shown == ["pct-weather"])
+    #expect(clock.shown == ["pbt-weather"])
     await subject.teardown()
 }
 
@@ -262,7 +262,7 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
 // The TC002 cannot say what is on screen, so the app believes what it last put
 // there itself: the clicked tile's eye opens, the others stay closed.
 @Test @MainActor func onAClockThatCannotSayTheClickedEyeOpens() async {
-    let clock = SpyPageClock(pages: ["weather": "pct-weather", "claude": "pct-claude"], onScreen: nil)
+    let clock = SpyPageClock(pages: ["weather": "pbt-weather", "claude": "pbt-claude"], onScreen: nil)
     let weather = tile("weather")
     let claude = tile("claude")
     let subject = model(clock, tiles: [weather, claude])
@@ -270,14 +270,14 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
     subject.showOnClock(weather.key)
     await subject.pageSwitchesSettled()
 
-    #expect(clock.shown == ["pct-weather"])
+    #expect(clock.shown == ["pbt-weather"])
     #expect(subject.tileOnScreen[desk.id] == weather.key)
     await subject.teardown()
 }
 
 // A second click moves the belief — and the open eye — to the other tile.
 @Test @MainActor func onAClockThatCannotSayASecondClickMovesTheEye() async {
-    let clock = SpyPageClock(pages: ["weather": "pct-weather", "claude": "pct-claude"], onScreen: nil)
+    let clock = SpyPageClock(pages: ["weather": "pbt-weather", "claude": "pbt-claude"], onScreen: nil)
     let weather = tile("weather")
     let claude = tile("claude")
     let subject = model(clock, tiles: [weather, claude])
@@ -286,7 +286,7 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
     subject.showOnClock(claude.key)
     await subject.pageSwitchesSettled()
 
-    #expect(clock.shown == ["pct-weather", "pct-claude"])
+    #expect(clock.shown == ["pbt-weather", "pbt-claude"])
     #expect(subject.tileOnScreen[desk.id] == claude.key)
     // The list appearing again reads the same belief, not nothing.
     subject.refreshTileOnScreen(clockId: desk.id)
@@ -299,7 +299,7 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
 // that cannot say, the followed tile's eye opens, and stays open after the
 // close — the TC002 is left where the window put it.
 @Test @MainActor func onAClockThatCannotSayTheFollowedTilesEyeOpens() async {
-    let clock = SpyPageClock(pages: ["weather": "pct-weather"], onScreen: nil)
+    let clock = SpyPageClock(pages: ["weather": "pbt-weather"], onScreen: nil)
     let weather = tile("weather")
     let subject = model(clock, tiles: [weather])
 
@@ -313,7 +313,7 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
 
 // A switch the clock refused put nothing up: no belief, no open eye.
 @Test @MainActor func aRefusedClickOpensNoEye() async {
-    let clock = SpyPageClock(pages: ["weather": "pct-weather"], onScreen: nil, refuseSwitch: true)
+    let clock = SpyPageClock(pages: ["weather": "pbt-weather"], onScreen: nil, refuseSwitch: true)
     let weather = tile("weather")
     let subject = model(clock, tiles: [weather])
 
@@ -328,7 +328,7 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
 // page set and shows whatever it booted to: the belief is forgotten, every eye
 // closes. Heard through the same watcher the reachability poll tells.
 @Test @MainActor func aReturnedClockForgetsWhichPageTheAppPutUp() async throws {
-    let clock = SpyPageClock(pages: ["weather": "pct-weather"], onScreen: nil)
+    let clock = SpyPageClock(pages: ["weather": "pbt-weather"], onScreen: nil)
     let weather = tile("weather")
     let subject = model(clock, tiles: [weather])
     subject.showOnClock(weather.key)

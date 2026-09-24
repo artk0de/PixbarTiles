@@ -59,7 +59,7 @@ private let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5
     #expect(await waitUntil {
         transport.requests.contains { request in
             request.httpMethod == "POST"
-                && request.url?.query == "name=pct-weather"
+                && request.url?.query == "name=pbt-weather"
                 && (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())
                     as? [String: Any])?["draw"] != nil
         }
@@ -67,7 +67,7 @@ private let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5
     #expect(
         transport.requests.contains { request in
             request.httpMethod == "POST"
-                && request.url?.query == "name=pct-weather"
+                && request.url?.query == "name=pbt-weather"
                 && (request.httpBody ?? Data()).isEmpty
         } == false
     )
@@ -84,7 +84,7 @@ private let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5
     #expect(await waitUntil {
         transport.requests.contains { request in
             request.httpMethod == "POST"
-                && request.url?.query == "name=pct-weather"
+                && request.url?.query == "name=pbt-weather"
                 && (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())
                     as? [String: Any])?["draw"] != nil
         }
@@ -95,7 +95,7 @@ private let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5
     #expect(await waitUntil {
         transport.requests.contains { request in
             request.httpMethod == "POST"
-                && request.url?.query == "name=pct-weather"
+                && request.url?.query == "name=pbt-weather"
                 && (request.httpBody ?? Data()).isEmpty
                 && request.httpBodyStream == nil
         }

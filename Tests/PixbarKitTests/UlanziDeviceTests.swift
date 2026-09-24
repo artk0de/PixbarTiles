@@ -19,12 +19,12 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
         canvas.fill(.white)
         let frame = UlanziFrame(duration: 5, draw: [canvas.drawCommands()])
         let (device, recorder) = makeDevice(status: 200, body: ok)
-        try await device.showApp(frame, named: "pct-weather")
+        try await device.showApp(frame, named: "pbt-weather")
 
         let request = try #require(recorder.requests.last)
         #expect(request.httpMethod == "POST")
         #expect(request.url?.path == "/api/custom")
-        #expect(request.url?.query == "name=pct-weather")
+        #expect(request.url?.query == "name=pbt-weather")
         // The body is the frame JSON — draw[] carries the single db command.
         let body = try #require(request.httpBody)
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -37,10 +37,10 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
 
     @Test func removeAppPostsEmptyBody() async throws {
         let (device, recorder) = makeDevice(status: 200, body: ok)
-        try await device.removeApp(named: "pct-weather")
+        try await device.removeApp(named: "pbt-weather")
 
         let request = try #require(recorder.requests.last)
-        #expect(request.url?.query == "name=pct-weather")
+        #expect(request.url?.query == "name=pbt-weather")
         // AWTRIX-family delete: an EMPTY body. The absence of a body IS the
         // contract — the send test pins it (research §2.2).
         #expect(request.httpBody ?? Data() == Data())
@@ -53,7 +53,7 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
             let (device, _) = makeDevice(
                 status: 200, body: Data(#"{"code":101,"message":"busy"}"#.utf8)
             )
-            try await device.showApp(UlanziScene.idle.frames[0], named: "pct-x")
+            try await device.showApp(UlanziScene.idle.frames[0], named: "pbt-x")
             Issue.record("expected throw")
         } catch let error as UlanziError {
             #expect(error == .deviceRejected(code: 101, message: "busy"))
@@ -65,7 +65,7 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
     @Test func httpFailureIsAFailure() async {
         do {
             let (device, _) = makeDevice(status: 500, body: ok)
-            try await device.showApp(UlanziScene.idle.frames[0], named: "pct-x")
+            try await device.showApp(UlanziScene.idle.frames[0], named: "pbt-x")
             Issue.record("expected throw")
         } catch let error as UlanziError {
             #expect(error == .unexpectedStatus(500))
@@ -78,7 +78,7 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
     /// capture it mirrors is the payload the decoder must survive; the exact
     /// schema is re-confirmed on hardware before release (Task 11 checklist).
     static let customListBody = Data(
-        #"{"code":200,"message":"ok","data":["ani_partly_cloudy","weather","pct-weather"]}"#.utf8
+        #"{"code":200,"message":"ok","data":["ani_partly_cloudy","weather","pbt-weather"]}"#.utf8
     )
 
     @Test func customListDecodesTheCapturedBody() async throws {
@@ -86,7 +86,7 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
         let names = try await device.customApps()
         #expect(recorder.requests.first?.url?.path == "/api/customList")
         #expect(!names.isEmpty)
-        #expect(names.contains("pct-weather"))
+        #expect(names.contains("pbt-weather"))
     }
 
     /// What appVer 1.1.1 actually answers, captured from the clock on
@@ -96,9 +96,9 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
     @Test func customListDecodesTheBodyTheClockAnswersBare() async throws {
         let (device, _) = makeDevice(
             status: 200,
-            body: Data(#"{"apps":["pct-claude","pct-weather","pct-zai"],"count":3}"#.utf8)
+            body: Data(#"{"apps":["pbt-claude","pbt-weather","pbt-zai"],"count":3}"#.utf8)
         )
-        #expect(try await device.customApps() == ["pct-claude", "pct-weather", "pct-zai"])
+        #expect(try await device.customApps() == ["pbt-claude", "pbt-weather", "pbt-zai"])
     }
 
     /// The page switch is a POST with the name in the query and nothing in the
@@ -108,22 +108,22 @@ private func makeDevice(status: Int, body: Data) -> (UlanziDevice, RecordingTran
         let (device, recorder) = makeDevice(
             status: 200,
             body: Data(
-                #"{"message":"app switch requested","data":{"name":"pct-weather","index":100}}"#.utf8
+                #"{"message":"app switch requested","data":{"name":"pbt-weather","index":100}}"#.utf8
             )
         )
-        try await device.switchToApp(named: "pct-weather")
+        try await device.switchToApp(named: "pbt-weather")
 
         let request = try #require(recorder.requests.last)
         #expect(request.httpMethod == "POST")
         #expect(request.url?.path == "/api/switchDiyApp")
-        #expect(request.url?.query == "name=pct-weather")
+        #expect(request.url?.query == "name=pbt-weather")
         #expect(request.httpBody ?? Data() == Data())
     }
 
     @Test func aSwitchTheClockRefusesThrows() async {
         do {
             let (device, _) = makeDevice(status: 404, body: Data("Error 404: Not Found".utf8))
-            try await device.switchToApp(named: "pct-gone")
+            try await device.switchToApp(named: "pbt-gone")
             Issue.record("expected throw")
         } catch let error as UlanziError {
             #expect(error == .unexpectedStatus(404))

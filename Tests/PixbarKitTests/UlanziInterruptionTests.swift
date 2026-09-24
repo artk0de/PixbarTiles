@@ -119,9 +119,9 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
         )
 
         let expected = [
-            "pct-github=G",
-            "pct-weather=C", "pct-zai=C", "pct-github=C",
-            "pct-weather=W", "pct-zai=Z", "pct-github=G",
+            "pbt-github=G",
+            "pbt-weather=C", "pbt-zai=C", "pbt-github=C",
+            "pbt-weather=W", "pbt-zai=Z", "pbt-github=G",
         ]
         try await waitUntil { pushes(after: before).count >= expected.count }
         #expect(pushes(after: before) == expected)
@@ -138,7 +138,7 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
             toTile: "github"
         )
 
-        let expected = ["pct-github=G", "pct-github=C", "pct-github=G"]
+        let expected = ["pbt-github=G", "pbt-github=C", "pbt-github=G"]
         try await waitUntil { pushes(after: before).count >= expected.count }
         // A beat longer, so a stray push to another page has the time to show.
         try await Task.sleep(nanoseconds: 50_000_000)
@@ -157,10 +157,10 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
         )
 
         let expected = [
-            "pct-zai=idle",
-            "pct-github=G",
-            "pct-weather=C", "pct-zai=C", "pct-github=C",
-            "pct-weather=W", "pct-zai=idle", "pct-github=G",
+            "pbt-zai=idle",
+            "pbt-github=G",
+            "pbt-weather=C", "pbt-zai=C", "pbt-github=C",
+            "pbt-weather=W", "pbt-zai=idle", "pbt-github=G",
         ]
         try await waitUntil { pushes(after: before).count >= expected.count }
         #expect(pushes(after: before) == expected)
@@ -180,10 +180,10 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
         )
 
         let expected = [
-            "pct-github=G",
-            "pct-weather=S", "pct-zai=S", "pct-github=S",
-            "pct-github=F",
-            "pct-weather=W", "pct-zai=Z", "pct-github=G",
+            "pbt-github=G",
+            "pbt-weather=S", "pbt-zai=S", "pbt-github=S",
+            "pbt-github=F",
+            "pbt-weather=W", "pbt-zai=Z", "pbt-github=G",
         ]
         try await waitUntil { pushes(after: before).count >= expected.count }
         #expect(pushes(after: before) == expected)
@@ -204,10 +204,10 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
         #expect(result == .delivered)
 
         try await waitUntil { sleep.parkedCount == 1 }
-        #expect(pushes(after: before) == ["pct-github=G", "pct-github=C"])
+        #expect(pushes(after: before) == ["pbt-github=G", "pbt-github=C"])
         sleep.releaseNext()
         try await waitUntil { pushes(after: before).count >= 3 }
-        #expect(pushes(after: before) == ["pct-github=G", "pct-github=C", "pct-github=G"])
+        #expect(pushes(after: before) == ["pbt-github=G", "pbt-github=C", "pbt-github=G"])
     }
 
     @Test func aSecondInterruptionInsideTheWindowExtendsIt() async throws {
@@ -234,11 +234,11 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
         sleep.releaseNext()
 
         let expected = [
-            "pct-github=G",
-            "pct-weather=S", "pct-zai=S", "pct-github=S",
+            "pbt-github=G",
+            "pbt-weather=S", "pbt-zai=S", "pbt-github=S",
             // weather's own push is deferred — its page is covered.
-            "pct-weather=F",
-            "pct-weather=W", "pct-zai=Z", "pct-github=G",
+            "pbt-weather=F",
+            "pbt-weather=W", "pbt-zai=Z", "pbt-github=G",
         ]
         try await waitUntil { pushes(after: before).count >= expected.count }
         try await Task.sleep(nanoseconds: 50_000_000)
@@ -265,13 +265,13 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
         )
         #expect(covered == .delivered)
         #expect(uncovered == .delivered)
-        #expect(pushes(after: before) == ["pct-github=G", "pct-github=C", "pct-zai=F"])
+        #expect(pushes(after: before) == ["pbt-github=G", "pbt-github=C", "pbt-zai=F"])
 
         sleep.releaseNext()
         try await waitUntil { pushes(after: before).count >= 4 }
         // The restore carries the newest board frame, not the one the window
         // opened over.
-        #expect(pushes(after: before).last == "pct-github=S")
+        #expect(pushes(after: before).last == "pbt-github=S")
     }
 
     @Test func theRecoverySweepLeavesACoveredPageAlone() async throws {
@@ -292,10 +292,10 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
         recorder.failure = nil
         _ = await session.deliver(UlanziDelivery(scene: scene(zaiTag)), toTile: "zai")
 
-        #expect(!pushes(after: before).dropFirst(2).contains { $0.hasPrefix("pct-github=") })
+        #expect(!pushes(after: before).dropFirst(2).contains { $0.hasPrefix("pbt-github=") })
         sleep.releaseNext()
-        try await waitUntil { pushes(after: before).last == "pct-github=G" }
-        #expect(pushes(after: before).last == "pct-github=G")
+        try await waitUntil { pushes(after: before).last == "pbt-github=G" }
+        #expect(pushes(after: before).last == "pbt-github=G")
     }
 
     @Test func aRemovedTileIsNotRestored() async throws {
@@ -312,14 +312,14 @@ private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
         sleep.releaseNext()
 
         let expected = [
-            "pct-github=G",
-            "pct-weather=C", "pct-zai=C", "pct-github=C",
-            "pct-weather=W", "pct-github=G",
+            "pbt-github=G",
+            "pbt-weather=C", "pbt-zai=C", "pbt-github=C",
+            "pbt-weather=W", "pbt-github=G",
         ]
         try await waitUntil { pushes(after: before).count >= expected.count }
         try await Task.sleep(nanoseconds: 50_000_000)
         #expect(pushes(after: before) == expected)
-        #expect(record.names(forClock: "clock-1").contains("pct-zai") == false)
+        #expect(record.names(forClock: "clock-1").contains("pbt-zai") == false)
     }
 
     @Test func shutdownStopsTheWindowWithoutAnotherPush() async throws {

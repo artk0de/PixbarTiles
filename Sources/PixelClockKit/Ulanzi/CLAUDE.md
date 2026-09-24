@@ -68,6 +68,37 @@ runs when a clock is removed in the app.
   drift and a Mac re-push is not frame-accurate. The measurements, slide
   constants and marquee timing are owned by the `tc002-ticker-motion` skill.
 
+## Device load budget
+
+The TC002 froze and then rebooted under this app's load (2026-09-24). Every
+upsert makes it decode and replace a whole page, so the budget is counted in
+upserts and in bytes, not in requests alone. The user's setup is 4 pages:
+GitHub every 60 s, z.ai 600 s, weather 600 s, Claude 900 s.
+
+| Per minute, steady state | Before | Now |
+|---|---|---|
+| HTTP requests | ~2.3: `/getBase` 1, GitHub 1, others ≤ 0.27 | ~2.3: `/getBase` 1, `customList` 1, others ≤ 0.27 |
+| Upserts (page decodes) | ~1.27 | ≤ 0.27 |
+| Bytes to the clock | ~85–90 KB (GitHub's 73–92 KB GIF = 93–96%) | ~4–7 KB typical, ≤ ~36 KB worst case |
+| ADB streams (battery) | 9, plus a `cat` fork per process (~50–150 forks) | 3, no /proc sweep |
+
+- "Others" means z.ai, weather and Claude, counted as changing on every tick
+  (0.1 + 0.1 + 0.067 upserts/min). The typical figure comes from their share
+  of the pre-fix traffic (4–7%). The worst case assumes all three at the
+  136 000-byte ceiling. Any of them left unchanged costs nothing now.
+- GitHub pushes only when its page changes. A star with Celebrate on all app
+  pages on costs one forced ambient push, 4 celebration pushes and 4 restores.
+- These are the arithmetic of the send paths, not a measurement on the
+  panel. Re-derive them when a cadence, the poll or the battery read changes.
+- What keeps the budget: `UlanziClockSession` skips a byte-identical upsert
+  (`onDevice`), only a transport failure owes a sweep, a sweep runs one at a
+  time with 60/120/300 s backoff, and `UlanziBattery` keeps the zkgui
+  pid/base/monitor between reads.
+- A reboot is found by the 60 s health poll, not by pushing. The poll sees
+  the clock come back from unreachable, sees a new zkgui pid, or reads
+  `customList` without one of our pages (`UlanziClockSession.clockReturned`
+  / `verifyPages`). Only the lost pages are re-pushed.
+
 ## Faces
 
 - Designs are approved in the browser and on the clock first, via the

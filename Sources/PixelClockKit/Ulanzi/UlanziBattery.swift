@@ -141,6 +141,22 @@ public actor UlanziBattery {
         guard let appVersion, let layout = Self.layouts[appVersion] else {
             return UlanziBatteryPoll(sample: nil, zkguiRestarted: false)
         }
+        // THE CACHE INVARIANT. What is kept is only what locates the monitor
+        // — the pid, the load base, the monitor's address. What is READ, every
+        // poll, cached or walked, is the same thing the walk's second hop reads:
+        // the monitor's whole window, vtable, charging flag, percent and
+        // millivolts together. The firmware has no other battery state to read
+        // — every word past the millivolts is zero or a tick counter, there is
+        // no "full" flag — so a cached read loses nothing a walk would see.
+        // Verified on the live clock 2026-09-24: a fresh walk and the running
+        // app's cached read both gave charging=1, percent=89, 4167 mV.
+        //
+        // Never cache a FIELD (percent, charging, millivolts) or skip the
+        // window on a "nothing changed" guess: the panel's Full is derived from
+        // all three read together (`UlanziBatteryTrajectory.shown`), and a
+        // stale one of them is a wrong figure. A finished charge that reads
+        // below 100 is the trajectory's rule, not this cache — see
+        // `UlanziBatteryTrajectory.ceilingPercent` before touching either.
         if let found {
             let out = try? await window(
                 at: found.monitor, length: UInt32(Self.windowLength), in: "/proc/\(found.pid)/mem"

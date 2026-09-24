@@ -23,8 +23,8 @@ public struct UlanziBatteryTrajectory: Sendable {
     /// needs before its slope outgrows the quantisation.
     public static let retention: TimeInterval = 24 * 60 * 60
 
-    /// Where the firmware's percent scale stops, and the cell voltage that goes
-    /// with a charge that has finished.
+    /// The bottom of the band where the firmware's percent scale stops, and the
+    /// cell voltage that goes with a charge that has finished.
     ///
     /// Measured on appVer 1.1.1, 2026-09-23: with the charger's own LED green —
     /// the charge terminated — `BatteryMonitor` read percent 90 at 4174 mV, and
@@ -38,7 +38,24 @@ public struct UlanziBatteryTrajectory: Sendable {
     /// voltage→percent curve: below the ceiling the firmware's figure is drawn
     /// untouched, and off the charger nothing is corrected at all. It is one
     /// saturation point, not a mapping.
-    static let ceilingPercent = 90
+    ///
+    /// DO NOT key this on the firmware's exact top figure. The top is a BAND,
+    /// not one number: near it the firmware's percent tracks the cell voltage,
+    /// and a finished cell resting on the charger sags a few millivolts and
+    /// takes the percent down with it. Measured on the live clock 2026-09-24,
+    /// charger LED green after a full day on the charger, by a fresh full walk
+    /// (new pid, base and monitor pointer — no cache): charging=1, percent=89,
+    /// 4167 mV. The 2026-09-23 pair was 90 at 4174 mV — one point per ~7 mV.
+    /// With the ceiling at exactly 90 the panel showed "89% · Charging" on a
+    /// finished charge, which is the regression this constant fixed.
+    ///
+    /// 85 is the bottom of that band: 4150 mV, the plateau floor below,
+    /// extrapolates to 86–87 at that slope, so any figure the firmware gives a
+    /// cell that is still on the plateau clears it — while a percent well below
+    /// the top next to a plateau voltage (the firmware disagreeing with the
+    /// cell) is still drawn as read. The plateau voltage is what says the
+    /// charge finished; the percent floor only says the firmware agrees.
+    static let ceilingPercent = 85
     static let fullMillivolts = 4150
 
     private var samples: [UlanziBatterySample] = []

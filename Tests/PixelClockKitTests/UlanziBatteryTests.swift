@@ -191,6 +191,29 @@ private func sweeps(_ streams: [String]) -> Int { streams.filter { $0.contains("
     #expect(lastRequest.bytes.prefix(4) == le32(monitorAddress))
 }
 
+// The cache is only allowed because it reads the SAME window the walk's second
+// hop reads: the monitor object, all three fields, every poll. A finished
+// charge must come through a cached read exactly as through a walk — and the
+// panel must say Full off it. Live 2026-09-24: a full walk read charging=1,
+// percent=89, 4167 mV with the charger's LED green, which is what the running
+// app's cached read showed too.
+@Test func aCachedReadOfAFinishedChargeIsTheWalksSampleAndShowsFull() async throws {
+    let adb = fake(monitor(percent: 89, charging: 1, mv: 4167))
+    await adb.queue([monitor(percent: 89, charging: 1, mv: 4167)])
+    let battery = UlanziBattery(adb: adb, helper: Data("ELF".utf8))
+    let at = Date(timeIntervalSince1970: 0)
+    let walked = await battery.read(appVersion: "1.1.1", at: at)
+    let cached = await battery.read(appVersion: "1.1.1", at: at)
+
+    #expect(sweeps(await adb.streams) == 1)          // the second read was the cached one
+    #expect(walked == UlanziBatterySample(percent: 89, charging: true, millivolts: 4167, at: at))
+    #expect(cached == walked)
+
+    var trajectory = UlanziBatteryTrajectory()
+    trajectory.accept(try #require(cached))
+    #expect(trajectory.reading?.shownPercent == 100)
+}
+
 @Test func aCachedReadThatFailsItsCheckSweepsAgain() async {
     let adb = fake(monitor(percent: 90, charging: 1, mv: 4167))
     // The cached window reads something that is not the monitor; the re-walk

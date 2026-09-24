@@ -97,6 +97,20 @@ private func charged(_ percent: Int, _ charging: Bool, mv: Int) -> UlanziBattery
     #expect(t.reading?.percent == 90)
 }
 
+// The top of the firmware's scale is not one number. Measured on the live clock
+// 2026-09-24, charger LED green after a day on the charger, read by a FULL walk
+// (fresh pid, base and monitor pointer — no cache involved): charging=1,
+// percent=89, 4167 mV. A cell resting on the charger after termination sags a
+// few millivolts and the firmware's voltage-tracking percent follows it down
+// from 90 to 89; a rule keyed on exactly 90 left the panel on "89% · Charging".
+@Test func aFinishedChargeTheFirmwareHasLetSagTo89IsStillFull() {
+    var t = UlanziBatteryTrajectory()
+    t.accept(charged(89, true, mv: 4167))
+
+    #expect(t.reading?.shownPercent == 100)
+    #expect(t.reading?.percent == 89)
+}
+
 @Test func aChargeStillClimbingIsNotFull() {
     var t = UlanziBatteryTrajectory()
     t.accept(charged(90, true, mv: 3900))

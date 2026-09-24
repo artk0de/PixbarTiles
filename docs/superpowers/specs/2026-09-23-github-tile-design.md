@@ -231,8 +231,13 @@ A `GitHubTileBlock` beside the existing blocks in `TileSettingsWindow`:
 - PAT field, shared: saving it on any GitHub tile saves `.connector("github")`;
   every GitHub tile's block shows the same presence line. Beside it a pixel
   `?` glyph (a new `PanelGlyph`), whose hover card says:
+  - Every token: the ACCOUNT permission `Starring: read`. Without it a
+    fine-grained token is refused the `stargazers` connection — even
+    `totalCount` — on public repositories too (measured live 2026-09-24:
+    `FORBIDDEN: Resource not accessible by personal access token`, every other
+    field of the query read fine). It is what names who starred.
   - Public repositories: a fine-grained token with *Repository access →
-    Public repositories*; no permissions needed.
+    Public repositories*; no repository permissions needed.
   - Private repositories: *Only select repositories*, and `Metadata: read`,
     `Pull requests: read`, `Commit statuses: read`, `Checks: read` (the last
     two feed the CI badge; GitHub documents them for the REST status and
@@ -241,8 +246,16 @@ A `GitHubTileBlock` beside the existing blocks in `TileSettingsWindow`:
     rollup still comes back empty).
   - Repository access cannot be preset by a link; pick it on the page.
   - A link to
-    `https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read`
-    — GitHub documents prefilling the form by these parameters.
+    `https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&starring=read`
+    — GitHub documents prefilling the form by these parameters (`starring` is
+    in its account-permission table).
+  - **Partial answers are kept.** GraphQL returns `data` beside `errors`; a
+    `FORBIDDEN` confined to `repository.stargazers` still yields the counts
+    (`stargazerCount` needs no permission). The tile then shows the repo
+    normally; a star rise celebrates by count with no logins, and the
+    settings preview says "Add the Starring: read account permission to see
+    who starred". Any other error, or no `data.repository`, is a failure as
+    in the live-review amendments below.
 
 ## CI of the default branch (added 2026-09-24)
 

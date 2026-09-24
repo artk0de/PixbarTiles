@@ -7,9 +7,12 @@ import SwiftUI
 
 /// What the `?` beside the token field says, and where its link goes.
 ///
-/// The link is GitHub's own prefilled form for a fine-grained token: the name,
-/// the description, a year's expiry and the read permissions a private
-/// repository needs. Repository access cannot be preset by a link, so the
+/// The links are GitHub's own prefilled form for a fine-grained token — the
+/// name, the description, a year's expiry and the resource owner
+/// (`target_name`, the tile repository's owner) — one with no permissions for
+/// public repositories and one with the reads a private repository needs.
+/// GitHub documents `name`, `description`, `target_name`, `expires_in` and the
+/// permission parameters; repository access cannot be preset by a link, so the
 /// text says to pick it.
 ///
 /// What it says was measured live on 2026-09-24 against GitHub's permission
@@ -18,9 +21,45 @@ import SwiftUI
 /// read-only token never learns who starred — the `Starring` account
 /// permission is about the user's own stars, not a repository's.
 enum GitHubTokenHelp {
-    static let createURL = URL(
-        string: "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read"
-    )!
+    enum Kind: CaseIterable {
+        case publicRepos, privateRepos
+
+        /// The link's words in the popover.
+        var title: String {
+            switch self {
+            case .publicRepos: "Token for public repos"
+            case .privateRepos: "Token for private repos"
+            }
+        }
+
+        /// The repository permissions the form is prefilled with.
+        fileprivate var permissions: String {
+            switch self {
+            case .publicRepos: ""
+            case .privateRepos: "&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read"
+            }
+        }
+    }
+
+    /// The prefilled form, aimed at `owner` when there is one.
+    static func createURL(_ kind: Kind, owner: String?) -> URL {
+        var text = "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles"
+            + "&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366"
+        if let owner {
+            // Only unreserved characters pass: an owner must not be able to
+            // end the parameter or start another.
+            let encoded = owner.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(["-", "_", ".", "~"]))
+            text += "&target_name=\(encoded ?? "")"
+        }
+        return URL(string: text + kind.permissions)!
+    }
+
+    /// The owner of an `owner/name` repository, or nil while it is not one.
+    static func owner(ofRepo repo: String) -> String? {
+        let parts = repo.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
+        return String(parts[0])
+    }
 
     static let text = """
         Public repositories: a fine-grained token with Repository access → \
@@ -188,7 +227,7 @@ struct GitHubTileBlock: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Text("Token").font(.caption).foregroundStyle(.secondary)
-                    GitHubTokenHelpMark(ink: PixelInk.secondary(dark: scheme == .dark))
+                    GitHubTokenHelpMark(ink: PixelInk.secondary(dark: scheme == .dark), repo: config.repo)
                 }
                 Text(presenceLine)
                     .font(.caption)
@@ -271,6 +310,8 @@ struct GitHubTileBlock: View {
 /// popover, because the help carries a link and `.help` cannot.
 struct GitHubTokenHelpMark: View {
     let ink: UInt32
+    /// The tile's repository, whose owner the forms are aimed at.
+    let repo: String
     @State private var showing = false
 
     var body: some View {
@@ -280,6 +321,7 @@ struct GitHubTokenHelpMark: View {
             .contentShape(Rectangle())
             .onHover { inside in if inside { showing = true } }
             .onTapGesture { showing.toggle() }
+            .pointerStyle(.link)
             .accessibilityElement()
             .accessibilityLabel("How to make a token")
             .accessibilityAddTraits(.isButton)
@@ -288,7 +330,12 @@ struct GitHubTokenHelpMark: View {
                     Text(GitHubTokenHelp.text)
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
-                    Link("Create a token", destination: GitHubTokenHelp.createURL)
+                    ForEach(GitHubTokenHelp.Kind.allCases, id: \.self) { kind in
+                        Link(
+                            kind.title,
+                            destination: GitHubTokenHelp.createURL(kind, owner: GitHubTokenHelp.owner(ofRepo: repo))
+                        )
+                    }
                 }
                 .padding(14)
                 .frame(width: 320)

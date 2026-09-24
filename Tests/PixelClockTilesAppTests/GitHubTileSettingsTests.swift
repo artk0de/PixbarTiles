@@ -173,7 +173,7 @@ import Testing
     // MARK: - The help
 
     @Test func theHelpLinkIsThePrefilledForm() {
-        #expect(GitHubTokenHelp.createURL.absoluteString
+        #expect(GitHubTokenHelp.createURL(.privateRepos, owner: nil).absoluteString
             == "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read")
         for phrase in [
             "Public repositories", "Metadata: read", "Pull requests: read",
@@ -193,6 +193,35 @@ import Testing
         #expect(badge.allSatisfy { $0.count == 11 })
         #expect(Set(badge.joined()) == ["B", "G"])
         #expect(TilePresentation.of(connectorId: GitHubConnector.connectorId).category == .dev)
+    }
+
+    /// Two prefilled forms, both aimed at the tile repository's owner: public
+    /// repositories need no permission (the Public repositories option is
+    /// picked on the page), private ones the five reads.
+    @Test func theHelpOffersAFormForPublicAndOneForPrivateRepos() {
+        let base = "https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles"
+            + "&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366"
+        #expect(GitHubTokenHelp.createURL(.publicRepos, owner: "artk0de").absoluteString
+            == base + "&target_name=artk0de")
+        #expect(GitHubTokenHelp.createURL(.privateRepos, owner: "artk0de").absoluteString
+            == base + "&target_name=artk0de"
+            + "&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read")
+        #expect(GitHubTokenHelp.createURL(.publicRepos, owner: nil).absoluteString == base)
+        #expect(GitHubTokenHelp.Kind.publicRepos.title == "Token for public repos")
+        #expect(GitHubTokenHelp.Kind.privateRepos.title == "Token for private repos")
+        #expect(GitHubTokenHelp.text.contains("pick it on the page"))
+    }
+
+    /// The owner is read off the tile's repository, and none is sent until
+    /// it is `owner/name`.
+    @Test func theFormsOwnerIsTheTileRepositorysOwner() {
+        #expect(GitHubTokenHelp.owner(ofRepo: "artk0de/TeaRAGs-MCP") == "artk0de")
+        for unfinished in ["", "artk0de", "artk0de/", "/TeaRAGs-MCP", "a/b/c"] {
+            #expect(GitHubTokenHelp.owner(ofRepo: unfinished) == nil, "\(unfinished)")
+        }
+        // Percent-encoded, so an owner cannot end the parameter.
+        #expect(GitHubTokenHelp.createURL(.publicRepos, owner: "a&b c").absoluteString
+            .hasSuffix("&target_name=a%26b%20c"))
     }
 
     @Test func theQuestionMarkIsDrawnInThePanelsPixels() {

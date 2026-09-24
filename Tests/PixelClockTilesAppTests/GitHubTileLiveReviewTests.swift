@@ -77,7 +77,7 @@ private struct NoSnapshots: GitHubSnapshotStoring {
 
     /// The link itself is `GitHubTileSettingsTests.theHelpLinkIsThePrefilledForm`.
     @Test func theHelpSaysWhatAReadOnlyTokenSees() {
-        #expect(GitHubTokenHelp.createURL.absoluteString.hasSuffix("&contents=read"))
+        #expect(GitHubTokenHelp.createURL(.privateRepos, owner: nil).absoluteString.hasSuffix("&contents=read"))
         for phrase in [
             "Public repositories", "Only select repositories", "Metadata: read", "Pull requests: read",
             "Commit statuses: read", "Checks: read", "Contents: read", "Who starred",

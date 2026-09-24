@@ -248,9 +248,17 @@ A `GitHubTileBlock` beside the existing blocks in `TileSettingsWindow`:
     unauthenticated the list is 401. So the stars are counted, not named,
     and that is the normal path.
   - Repository access cannot be preset by a link; pick it on the page.
-  - A link to
-    `https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read`
-    — GitHub documents prefilling the form by these parameters.
+  - Two links to GitHub's prefilled form, both aimed at the tile
+    repository's owner by `target_name` (percent-encoded; left out while
+    the repo is not `owner/name` yet). GitHub documents `name`,
+    `description`, `target_name`, `expires_in` and the permission
+    parameters; repository access itself cannot be preset.
+    - "Token for public repos":
+      `https://github.com/settings/personal-access-tokens/new?name=PixelClockTiles&description=Read-only+stars,+forks,+PRs+and+CI+for+the+GitHub+tile&expires_in=366&target_name=<owner>`
+      — no permission parameters: public repositories need none, and the
+      Public repositories option is picked on the page.
+    - "Token for private repos": the same plus
+      `&metadata=read&pull_requests=read&statuses=read&checks=read&contents=read`.
   - **Partial answers are kept.** GraphQL returns `data` beside `errors`.
     When every error is a `FORBIDDEN` on a field inside the repository, the
     rest of the answer is kept and each withheld part is named by the
@@ -261,6 +269,20 @@ A `GitHubTileBlock` beside the existing blocks in `TileSettingsWindow`:
     with no logins, and the first read that sees the stargazers again names
     only the total's rise, never the whole page. Only a `NOT_FOUND`, a 401,
     another kind of error, or no `data.repository` fails the tile.
+  - **A refusal on a non-null field nulls the repository** (added
+    2026-09-24, measured live). `stargazers`, `forks` and `pullRequests` are
+    non-null, so GraphQL propagates a `FORBIDDEN` on them up to the nearest
+    nullable parent: the live answer for a read-only token is
+    `{"data":{"repository":null},"errors":[{"type":"FORBIDDEN","path":["repository","stargazers"],…}]}`
+    — nothing beside the error to keep. The client asks again without the
+    refused selections (`stargazerCount` stays), marks them withheld, and
+    remembers them for the token (a SHA-256 of it, in memory, the latest
+    token only) so later polls send the reduced query directly — one request
+    a poll. A new token tries the full query once. A refusal the reduced
+    query cannot avoid (the same part again, or a path no selection covers)
+    is `no data`, never `no repo`; `no repo` is only `NOT_FOUND`, a
+    `FORBIDDEN` on `repository` itself, or a null repository with no
+    refusal.
 
 ## CI of the default branch (added 2026-09-24)
 
@@ -369,7 +391,12 @@ permission it wants — GitHub's fine-grained table and the
 `x-accepted-github-permissions` header measured live. The same sentence goes
 to the settings preview (under the picture), to the clock's tile list (the
 card's result line, with an orange sign unless it is only the quiet one), and
-the failure picks the face's label.
+the failure picks the face's label. When the last push to the clock failed
+too, the card says both — `failing — <cause>` and the diagnosis under it —
+behind the red sign (`TileCardTrouble`). The sign is a pixel triangle
+(`PanelGlyph.warning`, red for a failed push, orange for a diagnosis); hovering
+it opens the whole text — the raw error and the diagnosis — in a popover, with
+the pointing hand, the way the token's `?` does.
 
 | What GitHub answered | Said | Tile |
 |---|---|---|

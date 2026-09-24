@@ -63,6 +63,55 @@ public struct GitHubCI: Sendable, Equatable {
     }
 }
 
+/// A part of the answer GitHub withheld from the token — a `FORBIDDEN` on one
+/// field while the rest of the repository read fine — named by the permission
+/// GitHub documents for it (the fine-grained table, and the
+/// `x-accepted-github-permissions` header measured live on 2026-09-24).
+public enum GitHubWithheld: Hashable, Sendable {
+    /// Who starred: listing stargazers needs Contents: write, which a
+    /// read-only token never has — so this is the normal case, and the stars
+    /// are counted instead of named.
+    case stargazers
+    case pullRequests
+    case checks
+    case contents
+    case metadata
+    /// A field no row above names, by its GraphQL path.
+    case other(String)
+
+    /// The GraphQL path of a `FORBIDDEN` error, as the permission it names.
+    public init(path: [String]) {
+        let field = path.count > 1 ? path[1] : path.first ?? ""
+        switch field {
+        case "stargazers":
+            self = .stargazers
+        case "pullRequests", "openPRs":
+            self = .pullRequests
+        case "defaultBranchRef":
+            self = path.contains("statusCheckRollup") ? .checks : .contents
+        case "forks", "forkCount", "stargazerCount", "nameWithOwner":
+            self = .metadata
+        default:
+            self = .other(path.joined(separator: "."))
+        }
+    }
+
+    /// What the tile list and the settings preview say.
+    public var sentence: String {
+        switch self {
+        case .stargazers: "Who starred needs Contents: write — stars are counted instead"
+        case .pullRequests: "Token lacks Pull requests: read"
+        case .checks: "Token lacks Commit statuses: read and Checks: read"
+        case .contents: "Token lacks Contents: read"
+        case .metadata: "Token lacks Metadata: read"
+        case let .other(path): "Token lacks a permission for \(path)"
+        }
+    }
+
+    /// Said quietly: the tile works as designed without it.
+    public var isQuiet: Bool { self == .stargazers }
+}
+
 /// A repository as one read found it: the three counts the face shows, and the
 /// newest few stargazers, forks and open PRs the event detector compares
 /// against the last snapshot.
@@ -81,11 +130,14 @@ public struct GitHubRepoState: Sendable, Equatable {
     /// The default branch's CI; nil when the repository has no default
     /// branch (an empty one) to ask about.
     public var ci: GitHubCI?
+    /// The parts GitHub withheld from the token; the fields they cover read
+    /// empty and are not to be taken for data.
+    public var withheld: [GitHubWithheld]
 
     public init(
         nameWithOwner: String, stars: Int, forks: Int, openPRs: Int,
         stargazers: [Stargazer] = [], forkEvents: [ForkEvent] = [], openPRNumbers: [OpenPR] = [],
-        ci: GitHubCI? = nil
+        ci: GitHubCI? = nil, withheld: [GitHubWithheld] = []
     ) {
         self.nameWithOwner = nameWithOwner
         self.stars = stars
@@ -95,6 +147,17 @@ public struct GitHubRepoState: Sendable, Equatable {
         self.forkEvents = forkEvents
         self.openPRNumbers = openPRNumbers
         self.ci = ci
+        self.withheld = withheld
+    }
+
+    /// Whether who starred was withheld — the stars are then counted, not
+    /// named.
+    public var stargazersRefused: Bool {
+        get { withheld.contains(.stargazers) }
+        set {
+            withheld.removeAll { $0 == .stargazers }
+            if newValue { withheld.append(.stargazers) }
+        }
     }
 }
 
@@ -146,6 +209,9 @@ public struct GitHubAPI: GitHubReporting {
         /// A 200 carrying an `errors` array: the first message, as GitHub
         /// words it ("Could not resolve to a Repository …").
         case graphQL(String)
+        /// GraphQL's `NOT_FOUND`, or a repository withheld outright: a typo,
+        /// or a private repository outside the token's access.
+        case notFound(String)
         /// A repo that is not `owner/name`, refused before the wire.
         case badRepo(String)
     }
@@ -205,33 +271,58 @@ public struct GitHubAPI: GitHubReporting {
         let envelope = try decoder.decode(Envelope.self, from: data)
 
         // GraphQL reports a missing repository as a 200 with `errors` — the
-        // status line says nothing, the body says everything.
-        if let first = envelope.errors?.first {
-            throw Failure.graphQL(first.message)
+        // status line says nothing, the body says everything. A partial
+        // answer is kept: `data` beside `errors` that are all `FORBIDDEN` on
+        // a field inside the repository is the repository minus those
+        // fields, each named by the permission it wants. Anything else
+        // beside the data fails the read.
+        let errors = envelope.errors ?? []
+        let repository = envelope.data?.repository
+        if let first = errors.first {
+            if let notFound = errors.first(where: { $0.type == "NOT_FOUND" }) {
+                throw Failure.notFound(notFound.message)
+            }
+            let partial = repository != nil && errors.allSatisfy {
+                $0.type == "FORBIDDEN" && ($0.path?.count ?? 0) > 1 && $0.path?.first == "repository"
+            }
+            guard partial else {
+                // The repository itself withheld is a repository the token
+                // cannot see.
+                if repository == nil, errors.contains(where: { $0.type == "FORBIDDEN" }) {
+                    throw Failure.notFound(first.message)
+                }
+                throw Failure.graphQL(first.message)
+            }
         }
         // No errors and no repository is not a shape GitHub documents; it is
         // still a repo that did not resolve.
-        guard let repository = envelope.data?.repository else {
+        guard let repository else {
             throw Failure.badRepo(repo)
+        }
+        var withheld: [GitHubWithheld] = []
+        for error in errors {
+            let part = GitHubWithheld(path: error.path ?? [])
+            if !withheld.contains(part) { withheld.append(part) }
         }
 
         return GitHubRepoState(
-            nameWithOwner: repository.nameWithOwner,
-            stars: repository.stargazerCount,
-            forks: repository.forkCount,
-            openPRs: repository.pullRequests.totalCount,
-            stargazers: repository.stargazers.edges.map {
+            nameWithOwner: repository.nameWithOwner ?? repo,
+            stars: repository.stargazerCount ?? 0,
+            forks: repository.forkCount ?? 0,
+            openPRs: repository.pullRequests?.totalCount ?? 0,
+            stargazers: (repository.stargazers?.edges ?? []).map {
                 Stargazer(login: $0.node.login, starredAt: $0.starredAt)
             },
-            forkEvents: repository.forks.nodes.map {
+            forkEvents: (repository.forks?.nodes ?? []).map {
                 ForkEvent(login: $0.owner.login, createdAt: $0.createdAt)
             },
             // A deleted account's PR has a null author; GitHub's own UI
             // calls it "ghost".
-            openPRNumbers: repository.openPRs.nodes.map {
+            openPRNumbers: (repository.openPRs?.nodes ?? []).map {
                 OpenPR(number: $0.number, author: $0.author?.login ?? "ghost")
             },
-            ci: repository.defaultBranchRef.flatMap(Self.ci)
+            ci: repository.defaultBranchRef.flatMap(Self.ci),
+            withheld: withheld
         )
     }
 
@@ -260,7 +351,31 @@ public struct GitHubAPI: GitHubReporting {
 
     private struct Envelope: Decodable {
         struct Payload: Decodable { let repository: Repository? }
-        struct Message: Decodable { let message: String }
+        /// One GraphQL error: GitHub's `type` (`NOT_FOUND`, `FORBIDDEN`, …)
+        /// and the path of the field it withheld, both absent from some.
+        struct Message: Decodable {
+            let message: String
+            let type: String?
+            let path: [String]?
+
+            private enum CodingKeys: String, CodingKey { case message, type, path }
+
+            init(from decoder: any Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                message = try container.decode(String.self, forKey: .message)
+                type = try container.decodeIfPresent(String.self, forKey: .type)
+                // A path mixes names with list indices; the indices are not
+                // what names a permission.
+                path = try? container.decodeIfPresent([PathStep].self, forKey: .path)?.compactMap(\.name)
+            }
+        }
+
+        struct PathStep: Decodable {
+            let name: String?
+            init(from decoder: any Decoder) throws {
+                name = try? decoder.singleValueContainer().decode(String.self)
+            }
+        }
         let data: Payload?
         let errors: [Message]?
     }
@@ -289,13 +404,15 @@ public struct GitHubAPI: GitHubReporting {
             let target: Target?
         }
 
-        let nameWithOwner: String
-        let stargazerCount: Int
-        let forkCount: Int
-        let pullRequests: Count
-        let stargazers: Stars
-        let forks: Forks
-        let openPRs: PRs
+        // Optional, every one: a field GitHub withholds from the token comes
+        // back null beside a `FORBIDDEN` naming it.
+        let nameWithOwner: String?
+        let stargazerCount: Int?
+        let forkCount: Int?
+        let pullRequests: Count?
+        let stargazers: Stars?
+        let forks: Forks?
+        let openPRs: PRs?
         /// Null for an empty repository; absent from an answer recorded
         /// before the query asked for it.
         let defaultBranchRef: BranchRef?

@@ -56,7 +56,8 @@ public enum GitHubAwtrixFace {
     public static func draw(_ reading: GitHubReading, appName: String) -> AwtrixDelivery {
         let (text, colour) = switch reading.content {
         case .noToken: ("no token", quietColour)
-        case .noData: ("no data", quietColour)
+        // The TC002's label words: which failure it is, not one for all.
+        case .badToken, .noRepo, .noData: (reading.content.problem?.label ?? "no data", quietColour)
         case let .state(state): (GitHubFace.compact(state.stars), starColour)
         }
         let seconds = reading.config.celebrationSeconds

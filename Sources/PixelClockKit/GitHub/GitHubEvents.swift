@@ -31,10 +31,16 @@ public struct GitHubSnapshot: Codable, Sendable, Equatable {
     /// same commit again finds it here. Kept through green reads for that
     /// last reason; optional so an older snapshot still decodes.
     public var lastFailedOid: String?
+    /// True when the last read could not see who starred (the token was
+    /// refused the stargazers): `lastStarAt` then says nothing about the
+    /// stars since, and the first read that sees them again names only the
+    /// total's rise instead of the whole page. Nil otherwise.
+    public var starsUnnamed: Bool?
 
     public init(
         lastStarAt: Date?, lastForkAt: Date?, openPRs: Set<Int>,
-        stars: Int? = nil, forks: Int? = nil, lastPRNumber: Int? = nil, lastFailedOid: String? = nil
+        stars: Int? = nil, forks: Int? = nil, lastPRNumber: Int? = nil, lastFailedOid: String? = nil,
+        starsUnnamed: Bool? = nil
     ) {
         self.lastStarAt = lastStarAt
         self.lastForkAt = lastForkAt
@@ -43,6 +49,7 @@ public struct GitHubSnapshot: Codable, Sendable, Equatable {
         self.stars = stars
         self.forks = forks
         self.lastFailedOid = lastFailedOid
+        self.starsUnnamed = starsUnnamed
     }
 
     public var isBaseline: Bool { lastStarAt == nil && lastForkAt == nil && openPRs.isEmpty }
@@ -83,6 +90,23 @@ public struct GitHubEvents: Sendable, Equatable {
 
     public init() {}
 
+    /// The events the tile's Notify toggles let through; the rest are
+    /// dropped here, before either face sees them.
+    public func notifying(_ config: GitHubTileConfig) -> GitHubEvents {
+        var kept = self
+        if !config.notifyStars {
+            kept.newStars = []
+            kept.newStarCount = 0
+        }
+        if !config.notifyForks {
+            kept.newForks = []
+            kept.newForkCount = 0
+        }
+        if !config.notifyPRs { kept.newPRs = [] }
+        if !config.notifyCI { kept.ciFailure = nil }
+        return kept
+    }
+
     /// Counts, not only logins: a burst the page could not name is still an
     /// event.
     public var isEmpty: Bool {
@@ -111,21 +135,35 @@ public enum GitHubEventDetector {
         // The head commit failing now, if it is; a baseline records it
         // without celebrating, like the stars already there.
         let failing = state.ci.flatMap { $0.state == .failure ? $0 : nil }
+        // What GitHub withheld reads empty, and empty is not data: withheld
+        // counts do not move the totals, withheld PRs do not move the set.
+        let starsUnnamed: Bool? = state.stargazersRefused ? true : nil
+        let countsWithheld = state.withheld.contains(.metadata)
+        let prsWithheld = state.withheld.contains(.pullRequests)
 
         guard let snapshot else {
             return (
                 GitHubEvents(),
                 GitHubSnapshot(
-                    lastStarAt: newestStar, lastForkAt: newestFork, openPRs: current,
-                    stars: state.stars, forks: state.forks, lastPRNumber: highestPR,
-                    lastFailedOid: failing?.headOid
+                    lastStarAt: newestStar, lastForkAt: newestFork, openPRs: prsWithheld ? [] : current,
+                    stars: countsWithheld ? nil : state.stars, forks: countsWithheld ? nil : state.forks,
+                    lastPRNumber: highestPR, lastFailedOid: failing?.headOid, starsUnnamed: starsUnnamed
                 )
             )
         }
+        let previousStars = countsWithheld ? nil : snapshot.stars
+        let previousForks = countsWithheld ? nil : snapshot.forks
 
-        let stars = state.stargazers
+        var stars = state.stargazers
             .filter { isNewer($0.starredAt, than: snapshot.lastStarAt) }
             .sorted { $0.starredAt > $1.starredAt }
+        // The first read to see who starred after reads that could not: the
+        // page's timestamps have nothing to be compared against, so only the
+        // total's rise since the last read is news, named from the newest.
+        if snapshot.starsUnnamed == true, !state.stargazersRefused {
+            let rise = previousStars.map { max(0, state.stars - $0) } ?? 0
+            stars = Array(stars.prefix(rise))
+        }
         let forks = state.forkEvents
             .filter { isNewer($0.createdAt, than: snapshot.lastForkAt) }
             .sorted { $0.createdAt > $1.createdAt }
@@ -133,11 +171,11 @@ public enum GitHubEventDetector {
         var events = GitHubEvents()
         events.newStars = stars.map(\.login)
         events.newForks = forks.map(\.login)
-        events.newPRs = state.openPRNumbers
+        events.newPRs = prsWithheld ? [] : state.openPRNumbers
             .filter { isNewPR($0.number, in: snapshot) }
             .sorted { $0.number > $1.number }
-        events.newStarCount = count(pageNew: stars.count, total: state.stars, previous: snapshot.stars)
-        events.newForkCount = count(pageNew: forks.count, total: state.forks, previous: snapshot.forks)
+        events.newStarCount = count(pageNew: stars.count, total: state.stars, previous: previousStars)
+        events.newForkCount = count(pageNew: forks.count, total: state.forks, previous: previousForks)
         // By commit, not by transition: pending → failure on one commit is
         // one event, and the same failing commit read again is none.
         if let failing, failing.headOid != snapshot.lastFailedOid {
@@ -150,10 +188,12 @@ public enum GitHubEventDetector {
         let next = GitHubSnapshot(
             lastStarAt: latest(snapshot.lastStarAt, newestStar),
             lastForkAt: latest(snapshot.lastForkAt, newestFork),
-            openPRs: current,
-            stars: state.stars, forks: state.forks,
+            openPRs: prsWithheld ? snapshot.openPRs : current,
+            stars: countsWithheld ? snapshot.stars : state.stars,
+            forks: countsWithheld ? snapshot.forks : state.forks,
             lastPRNumber: [snapshot.lastPRNumber, highestPR].compactMap { $0 }.max(),
-            lastFailedOid: failing?.headOid ?? snapshot.lastFailedOid
+            lastFailedOid: failing?.headOid ?? snapshot.lastFailedOid,
+            starsUnnamed: starsUnnamed
         )
         return (events, next)
     }

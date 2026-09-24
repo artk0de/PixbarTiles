@@ -7,10 +7,26 @@ public struct GitHubReading: Sendable, Equatable {
     public enum Content: Sendable, Equatable {
         /// No token saved: nothing was asked.
         case noToken
-        /// Asked and not answered — an outage, a refused token, a repository
-        /// that does not resolve — or a tile with no repository to ask about.
+        /// GitHub answered 401: a wrong, revoked or expired token.
+        case badToken
+        /// The repository is not there, or the token cannot see it — a typo,
+        /// or a private repository outside the token's access.
+        case noRepo
+        /// Asked and not answered — an outage, a rate limit, anything else —
+        /// or a tile with no repository to ask about.
         case noData
         case state(GitHubRepoState)
+
+        /// Why there is no reading, as the face's label slot says it; nil
+        /// for a state and for no token (which has its own page).
+        public var problem: GitHubProblem? {
+            switch self {
+            case .badToken: .token
+            case .noRepo: .repo
+            case .noData: .data
+            case .noToken, .state: nil
+            }
+        }
     }
 
     public var content: Content
@@ -21,6 +37,92 @@ public struct GitHubReading: Sendable, Equatable {
         self.content = content
         self.events = events
         self.config = config
+    }
+
+    /// What is wrong with this read, when anything is: the failure, or the
+    /// parts GitHub withheld from the token, each by the permission it wants.
+    /// One answer for the tile list, the settings preview and the face.
+    public var diagnosis: GitHubDiagnosis? {
+        if let problem = content.problem {
+            return GitHubDiagnosis(message: problem.sentence, isQuiet: false)
+        }
+        guard case let .state(state) = content, !state.withheld.isEmpty else { return nil }
+        return GitHubDiagnosis(
+            message: state.withheld.map(\.sentence).joined(separator: "\n"),
+            isQuiet: state.withheld.allSatisfy(\.isQuiet)
+        )
+    }
+
+    /// The settings preview's sentence under the picture.
+    public var previewNote: String? { diagnosis?.message }
+}
+
+/// Why a GitHub tile has no reading — ggen's `PROBLEMS`.
+public enum GitHubProblem: String, Sendable, CaseIterable {
+    case token, repo, data
+
+    /// What the face's label slot says — the TC002 and the TC001 alike.
+    public var label: String {
+        switch self {
+        case .token: "bad token"
+        case .repo: "no repo"
+        case .data: "no data"
+        }
+    }
+
+    /// The sentence the tile list and the settings preview say.
+    public var sentence: String {
+        switch self {
+        case .token: "GitHub refused the token (401) — paste a new one"
+        case .repo: "Repository not found, or the token can't see it (Repository access)"
+        case .data: "GitHub could not be reached"
+        }
+    }
+}
+
+/// What a read found wrong, in one sentence, and whether it is only worth a
+/// quiet word — the tile works as designed without what is missing.
+public struct GitHubDiagnosis: Codable, Sendable, Equatable {
+    public var message: String
+    public var isQuiet: Bool
+
+    public init(message: String, isQuiet: Bool) {
+        self.message = message
+        self.isQuiet = isQuiet
+    }
+}
+
+/// Where each tile's last diagnosis is kept for the tile list to say.
+public protocol GitHubDiagnosisStoring: Sendable {
+    func diagnosis(for tile: TileKey) -> GitHubDiagnosis?
+    func save(_ diagnosis: GitHubDiagnosis?, for tile: TileKey)
+}
+
+/// One JSON-encoded diagnosis per tile in `UserDefaults`, beside the
+/// snapshots: the connector writes it at every read, the app's tile list
+/// reads it.
+public struct UserDefaultsGitHubDiagnoses: GitHubDiagnosisStoring, @unchecked Sendable {
+    public static func key(for tile: TileKey) -> String {
+        "githubDiagnosis.\(tile.tileId).\(tile.clockId.uuidString)"
+    }
+
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    public func diagnosis(for tile: TileKey) -> GitHubDiagnosis? {
+        guard let data = defaults.data(forKey: Self.key(for: tile)) else { return nil }
+        return try? JSONDecoder().decode(GitHubDiagnosis.self, from: data)
+    }
+
+    public func save(_ diagnosis: GitHubDiagnosis?, for tile: TileKey) {
+        guard let diagnosis, let data = try? JSONEncoder().encode(diagnosis) else {
+            defaults.removeObject(forKey: Self.key(for: tile))
+            return
+        }
+        defaults.set(data, forKey: Self.key(for: tile))
     }
 }
 
@@ -85,6 +187,7 @@ public struct GitHubConnector: Connector {
 
     private let source: any GitHubReporting
     private let snapshots: any GitHubSnapshotStoring
+    private let diagnoses: (any GitHubDiagnosisStoring)?
     private let faces: GitHubFaces
 
     /// A record with no GitHub config falls back to its instance, which is
@@ -92,12 +195,13 @@ public struct GitHubConnector: Connector {
     /// repository and reads `.noData`.
     public init(
         tile: TileRecord, source: any GitHubReporting, snapshots: any GitHubSnapshotStoring,
-        faces: GitHubFaces = .standard
+        diagnoses: (any GitHubDiagnosisStoring)? = nil, faces: GitHubFaces = .standard
     ) {
         self.tile = tile.key
         self.config = tile.config?.github ?? GitHubTileConfig(repo: tile.key.instance)
         self.source = source
         self.snapshots = snapshots
+        self.diagnoses = diagnoses
         self.faces = faces
     }
 
@@ -107,8 +211,16 @@ public struct GitHubConnector: Connector {
     ///
     /// The snapshot moves only on an answer. No token and a failure leave it
     /// as it was, so an outage celebrates what it missed, once, at the first
-    /// read that gets through.
+    /// read that gets through. The events the tile's Notify toggles turn off
+    /// are dropped AFTER the snapshot moved: a toggle turned back on replays
+    /// nothing.
     public func read() async throws -> GitHubReading {
+        let reading = try await readState()
+        diagnoses?.save(reading.diagnosis, for: tile)
+        return reading
+    }
+
+    private func readState() async throws -> GitHubReading {
         guard !config.repo.isEmpty else { return GitHubReading(content: .noData, config: config) }
         let state: GitHubRepoState?
         do {
@@ -116,12 +228,23 @@ public struct GitHubConnector: Connector {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            return GitHubReading(content: .noData, config: config)
+            return GitHubReading(content: Self.content(failing: error), config: config)
         }
         guard let state else { return GitHubReading(content: .noToken, config: config) }
         let (events, snapshot) = GitHubEventDetector.detect(state, since: snapshots.snapshot(for: tile))
         snapshots.save(snapshot, for: tile)
-        return GitHubReading(content: .state(state), events: events, config: config)
+        return GitHubReading(content: .state(state), events: events.notifying(config), config: config)
+    }
+
+    /// A failed read, by name: 401 is the token, a repository GitHub will
+    /// not show is the repo, and everything else — network, rate limit,
+    /// outage — is no data.
+    static func content(failing error: any Error) -> GitHubReading.Content {
+        switch error as? GitHubAPI.Failure {
+        case .status(401): .badToken
+        case .notFound, .badRepo: .noRepo
+        default: .noData
+        }
     }
 
     public var awtrixFace: AwtrixFace<GitHubReading> {

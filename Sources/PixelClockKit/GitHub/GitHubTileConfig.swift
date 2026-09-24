@@ -13,6 +13,18 @@ public struct GitHubTileConfig: Codable, Sendable, Equatable {
     /// How long a new star, fork or PR holds the clock, one of
     /// `celebrationChoices`.
     public var celebrationSeconds: Int = 8
+    /// Show: whether the TC002 ticker carries the forks and the open PRs, and
+    /// whether the CI badge is drawn. The stars are the hero and always shown.
+    public var showForks = true
+    public var showPRs = true
+    public var showCI = true
+    /// Notify: whether each kind of arrival interrupts the clock. Off drops
+    /// the event on both models; the snapshot still advances, so turning a
+    /// toggle back on replays nothing.
+    public var notifyStars = true
+    public var notifyForks = true
+    public var notifyPRs = true
+    public var notifyCI = true
 
     /// The lengths the settings offer.
     public static let celebrationChoices = [5, 8, 10, 15]
@@ -25,14 +37,23 @@ public struct GitHubTileConfig: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case repo, shortName, celebrationSeconds
+        case showForks, showPRs, showCI, notifyStars, notifyForks, notifyPRs, notifyCI
     }
 
-    /// A record written without a celebration length reads the default, so a
-    /// setting added later never makes an older record undecodable.
+    /// A record written without a setting reads its default, so a setting
+    /// added later never makes an older record undecodable.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         repo = try container.decode(String.self, forKey: .repo)
         shortName = try container.decodeIfPresent(String.self, forKey: .shortName)
         celebrationSeconds = try container.decodeIfPresent(Int.self, forKey: .celebrationSeconds) ?? 8
+        func flag(_ key: CodingKeys) throws -> Bool { try container.decodeIfPresent(Bool.self, forKey: key) ?? true }
+        showForks = try flag(.showForks)
+        showPRs = try flag(.showPRs)
+        showCI = try flag(.showCI)
+        notifyStars = try flag(.notifyStars)
+        notifyForks = try flag(.notifyForks)
+        notifyPRs = try flag(.notifyPRs)
+        notifyCI = try flag(.notifyCI)
     }
 }

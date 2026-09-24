@@ -57,12 +57,33 @@ public enum GitHubFace {
     // MARK: - The timelines
 
     /// The ambient page: the repository as `state` has it, `no token` when
-    /// there is no token to ask with, `no data` when there is no state.
+    /// there is no token to ask with, and, when there is no state, why —
+    /// `problem`'s label, `no data` when none is given. The tile's Show
+    /// toggles decide which counts the ticker carries and whether the CI
+    /// badge is drawn; a part GitHub withheld from the token is hidden the
+    /// same way, rather than drawn as a zero.
     public static func timeline(
         ambient state: GitHubRepoState?, noToken: Bool, config: GitHubTileConfig,
-        dwellMilliseconds: Int = ambientDwellMilliseconds
+        dwellMilliseconds: Int = ambientDwellMilliseconds, problem: GitHubProblem? = nil
     ) -> [Frame] {
-        ambient(state, shortName: config.shortName, hasToken: !noToken, changeMilliseconds: dwellMilliseconds)
+        let withheld = state?.withheld ?? []
+        let show = Shown(
+            forks: config.showForks && !withheld.contains(.metadata),
+            prs: config.showPRs && !withheld.contains(.pullRequests),
+            ci: config.showCI && !withheld.contains(.checks)
+        )
+        return ambient(
+            state, shortName: config.shortName, hasToken: !noToken, problem: problem, show: show,
+            changeMilliseconds: dwellMilliseconds
+        )
+    }
+
+    /// What the ambient ticker carries beside the name and the hero — ggen's
+    /// `Config.show_*`.
+    struct Shown {
+        var forks = true
+        var prs = true
+        var ci = true
     }
 
     /// A celebration of `count` arrivals of `kind`. `who` are the logins,
@@ -116,7 +137,8 @@ public enum GitHubFace {
     public static func delivery(for reading: GitHubReading) -> UlanziDelivery {
         let ambient: [Frame] = switch reading.content {
         case .noToken: timeline(ambient: nil, noToken: true, config: reading.config)
-        case .noData: timeline(ambient: nil, noToken: false, config: reading.config)
+        case .badToken, .noRepo, .noData:
+            timeline(ambient: nil, noToken: false, config: reading.config, problem: reading.content.problem)
         case let .state(state): timeline(ambient: state, noToken: false, config: reading.config)
         }
         func interruption(_ frames: [Frame], _ scope: Interruption<UlanziScene>.Scope) -> Interruption<UlanziScene> {

@@ -175,9 +175,14 @@ extension GitHubFace {
     /// Hybrid: the stars hold the hero; each ticker line brings its own icon
     /// — the mark with the name, the fork glyph with the forks, the PR glyph
     /// with the open PRs — so a count is named by its icon, not a word.
-    static func ambient(_ state: GitHubRepoState?, shortName: String?, hasToken: Bool, changeMilliseconds: Int)
-        -> [Frame]
-    {
+    /// A hidden count (Show) leaves the rotation; with forks and PRs both
+    /// hidden the name holds the line alone. A read with no state says why in
+    /// the label slot: `no data` with its own icon, `bad token` and `no repo`
+    /// with the dim mark.
+    static func ambient(
+        _ state: GitHubRepoState?, shortName: String?, hasToken: Bool, problem: GitHubProblem? = nil,
+        show: Shown = Shown(), changeMilliseconds: Int
+    ) -> [Frame] {
         let blank = PixelCanvas(width: areaWidth, height: height)
         guard hasToken else {
             return lace(tickerSegments(blank, [TickerState(
@@ -185,26 +190,31 @@ extension GitHubFace {
                 lines: [(lineArea([part("no token", WeatherFace.dim)]), 1000)]
             )]))
         }
-        guard let state else {
+        guard let state, problem == nil else {
+            let problem = problem ?? .data
             return lace(tickerSegments(blank, [TickerState(
-                icon: Loop(id: 0, cels: WeatherIcon.nodata.frames),
-                lines: [(lineArea([part("no data", WeatherFace.dim)]), 1000)]
+                icon: Loop(id: 0, cels: problem == .data ? WeatherIcon.nodata.frames : octocat(dim: true)),
+                lines: [(lineArea([part(problem.label, WeatherFace.dim)]), 1000)]
             )]))
         }
-        let states = [
+        var states = [
             TickerState(
                 icon: Loop(id: 0, cels: octocat()),
                 lines: lineState(
                     [part(displayName(state.nameWithOwner, shortName: shortName), whiteInk)], changeMilliseconds
                 )
             ),
-            TickerState(icon: Loop(id: 1, cels: forkIcon()),
-                        lines: lineState([part("\(state.forks)", forkInk)], changeMilliseconds)),
-            TickerState(icon: Loop(id: 2, cels: prIcon()),
-                        lines: lineState([part("\(state.openPRs)", prInk)], changeMilliseconds)),
         ]
+        if show.forks {
+            states.append(TickerState(icon: Loop(id: 1, cels: forkIcon()),
+                                      lines: lineState([part("\(state.forks)", forkInk)], changeMilliseconds)))
+        }
+        if show.prs {
+            states.append(TickerState(icon: Loop(id: 2, cels: prIcon()),
+                                      lines: lineState([part("\(state.openPRs)", prInk)], changeMilliseconds)))
+        }
         let frames = lace(tickerSegments(hero(compact(state.stars), starInk, star: true), states))
-        guard let loop = lampLoop(state.ci?.state) else { return frames }
+        guard show.ci, let loop = lampLoop(state.ci?.state) else { return frames }
         return withLamp(frames, loop)
     }
 

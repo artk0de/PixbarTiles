@@ -11,7 +11,7 @@ kit's canvas paints `bits & (1 << column)` at `cursor + column`, so bit 0 is
 the LEFTMOST column. Each row is reversed on the way out.
 
     ./Scripts/MakeFontTable.py Scripts/font5x7-cyrillic.bdf \
-        Sources/PixelClockKit/Ulanzi/X11Glyphs.swift
+        Sources/PixbarKit/Ulanzi/X11Glyphs.swift
 """
 
 import sys

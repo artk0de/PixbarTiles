@@ -1,0 +1,779 @@
+import Foundation
+import Testing
+@testable import PixbarKit
+
+// The weather end to end: what the connector produces, and what the host does
+// to the device with it.
+//
+// `OVERLAY` is GLOBAL device state — not scoped to an app, written to flash,
+// and changeable by hand from the device's own web interface — so the rules
+// here are about borrowing rather than about drawing. Read what was there
+// first, write only on a change, and put it back.
+
+// MARK: - Doubles
+
+/// Answers the weather service and the clock from one door, because the app
+/// has one: `Transport` is the only way either is reached.
+private final class SkyAndClock: Transport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [URLRequest] = []
+    private var sky: Data
+    private var skyStatus = 200
+    private var settingsWriteStatus = 200
+    /// What the clock's `OVERLAY` setting currently holds. Written by a POST,
+    /// answered by a GET — as it is on the device.
+    private var overlayOnDevice: String
+
+    init(sky: Data = weatherBody(), overlayOnDevice: String = "clear") {
+        self.sky = sky
+        self.overlayOnDevice = overlayOnDevice
+    }
+
+    var requests: [URLRequest] { lock.withLock { recorded } }
+
+    /// Every request that reached the clock's settings, in order, with the
+    /// overlay each one carried — nil for the read.
+    var overlayWrites: [String] {
+        requests
+            .filter { $0.url?.path == "/api/settings" && $0.httpMethod == "POST" }
+            .compactMap {
+                (try? JSONSerialization.jsonObject(with: $0.httpBody ?? Data()))
+                    .flatMap { $0 as? [String: Any] }?["OVERLAY"] as? String
+            }
+    }
+
+    var customAppPosts: [[String: Any]] {
+        requests
+            .filter { $0.url?.path == "/api/custom" }
+            .map {
+                ((try? JSONSerialization.jsonObject(with: $0.httpBody ?? Data()))
+                    as? [String: Any]) ?? [:]
+            }
+    }
+
+    /// What the clock's overlay setting holds right now.
+    var currentOverlay: String { lock.withLock { overlayOnDevice } }
+
+    func changeSky(to body: Data) { lock.withLock { sky = body } }
+    func breakTheSky(status: Int = 503) { lock.withLock { skyStatus = status } }
+    func mendTheSky() { lock.withLock { skyStatus = 200 } }
+    /// Refuses writes to the settings, and changes nothing when it does.
+    func refuseSettingsWrites() { lock.withLock { settingsWriteStatus = 500 } }
+    func acceptSettingsWrites() { lock.withLock { settingsWriteStatus = 200 } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (body, status) = lock.withLock { () -> (Data, Int) in
+            recorded.append(request)
+            guard request.url?.host != "api.open-meteo.com" else { return (sky, skyStatus) }
+            guard request.url?.path == "/api/settings" else { return (Data("OK".utf8), 200) }
+            // A written overlay is what the next read answers with, because
+            // that is what the device does — `OVERLAY` is one setting in flash,
+            // not a value per caller. A double that kept answering the ORIGINAL
+            // would let a custody that read the prior value AFTER writing over
+            // it pass every test in this file, while on real hardware the value
+            // it promised to put back was already gone.
+            if request.httpMethod == "POST" {
+                guard settingsWriteStatus == 200 else {
+                    // A refused write changes nothing, which is the whole point
+                    // of posing one.
+                    return (Data("no".utf8), settingsWriteStatus)
+                }
+                let written = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()))
+                    .flatMap { $0 as? [String: Any] }?["OVERLAY"] as? String
+                if let written { overlayOnDevice = written }
+                return (Data("OK".utf8), 200)
+            }
+            return (Data(#"{"BRI":2,"SOUND":true,"OVERLAY":"\#(overlayOnDevice)"}"#.utf8), 200)
+        }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil
+        )!
+        return (body, response)
+    }
+}
+
+private func weatherBody(
+    code: Int = 61, isDay: Int = 1, temperature: Double = 4.2, apparent: Double? = nil
+) -> Data {
+    // Absent unless a test asks for one, and absent means the key is missing
+    // rather than null — a service that stops answering with a field drops it.
+    let felt = apparent.map { ",\"apparent_temperature\":\($0)" } ?? ""
+    return Data("""
+    {"current":{"time":"2026-08-19T02:45","interval":900,"weather_code":\(code),
+      "is_day":\(isDay),"precipitation":0.4,"temperature_2m":\(temperature)\(felt),
+      "wind_speed_10m":9.0}}
+    """.utf8)
+}
+
+private let desk = Coordinates(latitude: 55.7558, longitude: 37.6173)
+
+/// A clock a test turns by hand, so the source's own interval can be stepped
+/// over without waiting fifteen minutes for it.
+private final class Clock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var moment = Date(timeIntervalSince1970: 1_700_000_000)
+
+    var now: @Sendable () -> Date { { self.lock.withLock { self.moment } } }
+    func advance(_ seconds: TimeInterval) {
+        lock.withLock { moment = moment.addingTimeInterval(seconds) }
+    }
+}
+
+private func weatherHost(
+    transport: SkyAndClock,
+    clock: Clock = Clock(),
+    store: any SettingsStore = InMemorySettingsStore(),
+    /// Handed in so a test can outlive the host that wrote it — which is how a
+    /// relaunch is posed here: a second host over the same store and the same
+    /// device, with nothing in between.
+    borrowedOverlays: any BorrowedOverlayStore = InMemoryBorrowedOverlayStore()
+) -> (host: AwtrixClockSession, connector: WeatherConnector) {
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport, now: clock.now),
+        location: { desk },
+        config: { WeatherTileConfig(place: desk) }
+    )
+    let registry = ConnectorRegistry()
+    registry.register(connector)
+    let host = AwtrixClockSession(
+        device: AwtrixDevice(host: "10.0.0.5", transport: transport),
+        registry: registry,
+        store: store,
+        audio: SilentAudio(),
+        iconInstaller: PassThroughIcons(),
+        borrowedOverlays: borrowedOverlays
+    )
+    return (host, connector)
+}
+
+private struct SilentAudio: AudioPlaying {
+    func play(_ clips: [SpokenClip]) async {}
+}
+
+private struct PassThroughIcons: IconInstalling {
+    func ensureInstalled(_ ref: IconReference) async throws -> String {
+        switch ref {
+        case let .installed(name): return name
+        case let .catalogue(id): return String(id)
+        case let .bundled(name): return name
+        }
+    }
+}
+
+// MARK: - What the connector produces
+
+@Test func theWeatherIsDrawnInTheClocksOwnLoopRatherThanOverIt() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61, temperature: 4.2))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
+    )
+
+    let output = try await connector.produce()
+
+    // An app, not a notification. Weather is ambient: it should be there when
+    // you glance at the clock, not interrupt what is on it.
+    #expect(output.surface == .app(WeatherConnector.appName))
+    #expect(output.overlay == .rain)
+    #expect(output.text == "4°C")
+    #expect(output.color == TemperatureColour(celsius: 4.2).hex)
+    // Nothing is spoken and nothing is held: an app has no banner to release.
+    #expect(output.localAudio.isEmpty)
+    #expect(output.holdUntilAudioEnds == false)
+}
+
+// The reading takes itself off the clock if this app stops feeding it. An hour
+// against the connector's 600-second cadence is six refreshes, so five in a row
+// have to fail before the app leaves the loop: a network hiccup or one slow
+// answer from a free public service must not strip it out while this app is
+// perfectly alive, and an hour is where a temperature stops being weather.
+@Test func theReadingIsGivenAnHourBeforeTheClockDropsIt() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
+    )
+
+    let output = try await connector.produce()
+
+    #expect(output.lifetime == 3_600)
+}
+
+// Two quantities in one element, which is the whole point of it: the digits
+// answer how many degrees it is, the colour answers how that feels. A 4.2° in a
+// wind stands in like a -2°, and the reading is drawn as a -2 would be while
+// still saying 4.
+@Test func theColourIsChosenFromWhatItFeelsLikeRatherThanFromTheAirTemperature() async throws {
+    let transport = SkyAndClock(sky: weatherBody(temperature: 4.2, apparent: -2))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
+    )
+
+    let output = try await connector.produce()
+
+    #expect(output.color == TemperatureColour(celsius: -2).hex)
+    #expect(output.color != TemperatureColour(celsius: 4.2).hex)
+    // The reading itself is untouched. Showing the apparent temperature would
+    // be a clock that disagrees with every other thermometer in the room.
+    #expect(output.text == "4°C")
+}
+
+// And the sky is not what the colour says any more, which is the change: an
+// overcast 25° and a clear 25° are drawn the same, because what is being
+// coloured is the temperature. The sky is on the overlay.
+@Test func twoSkiesAtTheSameTemperatureAreDrawnInTheSameColour() async throws {
+    var drawn: Set<String> = []
+    for code in [0, 3, 61, 71] {
+        let transport = SkyAndClock(sky: weatherBody(code: code, temperature: 25, apparent: 25))
+        let connector = WeatherConnector(
+            source: OpenMeteoSource(transport: transport), location: { desk },
+            config: { WeatherTileConfig(place: desk) }
+        )
+
+        let output = try await connector.produce()
+        drawn.insert(try #require(output.color))
+        // The sky still reaches the device; it reaches it as the overlay.
+        #expect(output.overlay == WeatherTheme(code: code, isDay: true).overlay)
+    }
+
+    #expect(drawn == [TemperatureColour(celsius: 25).hex])
+}
+
+// A response that stopped carrying the apparent temperature must not cost the
+// reading its colour — the air temperature is the honest second answer, and a
+// weather app drawn in the previous app's colour is the alternative.
+@Test func aReadingWithoutAnApparentTemperatureIsColouredFromTheAirTemperature() async throws {
+    let transport = SkyAndClock(sky: weatherBody(temperature: 27.5, apparent: nil))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
+    )
+
+    let output = try await connector.produce()
+
+    #expect(output.color == TemperatureColour(celsius: 27.5).hex)
+    #expect(output.text == "28°C")
+}
+
+@Test func theTemperatureIsRoundedToWholeDegreesEitherSideOfZero() async throws {
+    for (reading, shown) in [(4.2, "4°C"), (4.6, "5°C"), (-3.4, "-3°C"), (-3.6, "-4°C"), (0.2, "0°C")] {
+        let transport = SkyAndClock(sky: weatherBody(temperature: reading))
+        let connector = WeatherConnector(
+            source: OpenMeteoSource(transport: transport), location: { desk },
+            config: { WeatherTileConfig(place: desk) }
+        )
+
+        #expect(try await connector.produce().text == shown)
+    }
+}
+
+// MARK: - Borrowing the overlay
+
+@Test func theOverlayTheWeatherAsksForIsWrittenToTheDevice() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 71))
+    let (host, _) = weatherHost(transport: transport)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+
+    #expect(transport.overlayWrites == ["snow"])
+    #expect(transport.customAppPosts.count == 1)
+    // The reading goes in the loop; nothing goes over it. And the order is
+    // load-bearing rather than incidental: the overlay draws over everything on
+    // screen, so setting it after the app has appeared is a visible flicker of
+    // the old weather under the new number. Read, write, then show.
+    #expect(transport.requests.compactMap { $0.url?.path }.filter { $0.hasPrefix("/api/") }
+        == ["/api/settings", "/api/settings", "/api/custom"])
+}
+
+// A restore the clock refused is still owed. Forgetting on failure would drop
+// the only record of what the device had — the next quit would find nothing to
+// put back, and the user's own overlay would be gone for good.
+@Test func aRestoreTheClockRefusedIsStillOwedAtTheNextOne() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
+    let (host, _) = weatherHost(transport: transport)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    transport.refuseSettingsWrites()
+    await host.restoreDeviceState(borrowedBy: nil)
+    #expect(transport.currentOverlay == "rain")
+
+    transport.acceptSettingsWrites()
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(transport.overlayWrites == ["rain", "snow", "snow"])
+    #expect(transport.currentOverlay == "snow")
+}
+
+@Test func theOverlayIsNotRewrittenWhenTheWeatherHasNotChanged() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61))
+    let clock = Clock()
+    let (host, _) = weatherHost(transport: transport, clock: clock)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    // Past the source's own interval, so the second run really does fetch and
+    // really does decide — a cached reading would make this pass for the wrong
+    // reason entirely.
+    clock.advance(1_000)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+
+    #expect(transport.requests.filter { $0.url?.host == "api.open-meteo.com" }.count == 2)
+    // One write, not two. The setting is in flash on a device that lives on a
+    // shelf for years, and an identical rewrite buys nothing at all.
+    #expect(transport.overlayWrites == ["rain"])
+    // The app in the loop IS rewritten, and that is not the same question: it
+    // lives in RAM, so a clock that reboots comes back without it and a
+    // skip-if-unchanged would never put it back.
+    #expect(transport.customAppPosts.count == 2)
+}
+
+@Test func theOverlayIsRewrittenWhenTheWeatherChanges() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61))
+    let clock = Clock()
+    let (host, _) = weatherHost(transport: transport, clock: clock)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    transport.changeSky(to: weatherBody(code: 95))
+    clock.advance(1_000)
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+
+    #expect(transport.overlayWrites == ["rain", "thunder"])
+}
+
+@Test func theOverlayThatWasThereBeforeIsWhatIsPutBack() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
+    let (host, _) = weatherHost(transport: transport)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    // Not `clear`: what is put back is what the device actually had, which the
+    // user may well have set by hand.
+    #expect(transport.overlayWrites == ["rain", "snow"])
+}
+
+// A value this app does not know is still the user's. Restoring `clear` over a
+// name a newer firmware understands would destroy the setting rather than
+// return it.
+@Test func anOverlayNameThisAppDoesNotKnowIsStillPutBackVerbatim() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "aurora")
+    let (host, _) = weatherHost(transport: transport)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(transport.overlayWrites == ["rain", "aurora"])
+    #expect(DeviceOverlay.namesTheFirmwareAccepts.contains("aurora") == false)
+}
+
+// MARK: - Across an unclean exit
+
+// The launch that borrows is not always the launch that gives back. A force
+// quit, a logout, a crash, or a teardown that outruns the 15-second quit budget
+// while a synthesis is wedged all end a launch with the overlay still on loan
+// and `restoreDeviceState` never reached.
+//
+// With the record in memory only, the next launch read the device, found this
+// app's own `rain` sitting there, and wrote it down as what the user had —
+// after which every clean quit restored `rain` and the real setting was
+// recoverable from nowhere. Weather ships enabled at a 600-second cadence and
+// now delivers at launch, so this armed itself on the first launch itself.
+@Test func aLaunchAfterAnUncleanExitStillPutsBackTheOverlayTheUserHad() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "clear")
+    // The one thing that survives the process below.
+    let borrowed = InMemoryBorrowedOverlayStore()
+
+    let first = weatherHost(transport: transport, borrowedOverlays: borrowed)
+    #expect(await first.host.runOnce(tile: singleTile("weather")) == .delivered)
+    #expect(transport.currentOverlay == "rain")
+    // The process dies here. No teardown, no restore — `first` is simply gone.
+
+    let second = weatherHost(transport: transport, borrowedOverlays: borrowed)
+    #expect(await second.host.runOnce(tile: singleTile("weather")) == .delivered)
+    await second.host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(transport.currentOverlay == "clear")
+    // And the relaunch rewrote nothing: the device already held `rain`, which
+    // is a flash write saved as well as a correctness claim.
+    #expect(transport.overlayWrites == ["rain", "clear"])
+}
+
+// The precise mechanism, read off the record rather than off the outcome: what
+// a relaunch writes down as the displaced value is the USER's, never the one
+// this app put there. An unclean exit is the only way the two differ, and it is
+// the ordinary way this app ends.
+@Test func theOverlayThisAppWroteIsNeverRecordedAsTheOneItDisplaced() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
+    let borrowed = InMemoryBorrowedOverlayStore()
+
+    let first = weatherHost(transport: transport, borrowedOverlays: borrowed)
+    #expect(await first.host.runOnce(tile: singleTile("weather")) == .delivered)
+
+    // Relaunch into weather that has since changed, so the second run really
+    // does write and really does decide what it displaced.
+    transport.changeSky(to: weatherBody(code: 71))
+    let second = weatherHost(transport: transport, borrowedOverlays: borrowed)
+    #expect(await second.host.runOnce(tile: singleTile("weather")) == .delivered)
+
+    #expect(
+        borrowed.borrowedOverlay()
+            == BorrowedOverlay(before: "snow", applied: "snow", borrower: "weather")
+    )
+}
+
+// A restore that got through clears the record, or the launch after it would
+// write a stale overlay back over whatever the user has set since.
+@Test func anOverlayGivenBackIsNoLongerOnLoan() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "clear")
+    let borrowed = InMemoryBorrowedOverlayStore()
+    let (host, _) = weatherHost(transport: transport, borrowedOverlays: borrowed)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    #expect(borrowed.borrowedOverlay() != nil)
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(borrowed.borrowedOverlay() == nil)
+}
+
+// A refused restore keeps the record, on the durable store as much as on the
+// actor: dropping it there is the same defect as dropping it here, one launch
+// later.
+@Test func aRefusedRestoreLeavesTheBorrowOnTheRecord() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
+    let borrowed = InMemoryBorrowedOverlayStore()
+    let (host, _) = weatherHost(transport: transport, borrowedOverlays: borrowed)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    transport.refuseSettingsWrites()
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(
+        borrowed.borrowedOverlay()
+            == BorrowedOverlay(before: "snow", applied: "rain", borrower: "weather")
+    )
+}
+
+// The record has to survive the process, and the store that ships is the only
+// one that can. Written by one instance, read by another over the same
+// defaults — which is what two launches are.
+@Test func aBorrowedOverlaySurvivesTheProcessThatWroteItDown() throws {
+    let suite = "borrowed-overlay-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let borrowed = BorrowedOverlay(before: "aurora", applied: "rain", borrower: "weather")
+
+    UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).record(borrowed)
+
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).borrowedOverlay() == borrowed)
+    UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).forget()
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).borrowedOverlay() == nil)
+}
+
+// A half-written record is no record. Reading a `before` with nothing beside it
+// would restore a value without being able to tell whether this app is the one
+// that displaced it.
+@Test func aPartialRecordReadsAsNothingOnLoan() throws {
+    let suite = "borrowed-overlay-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    defaults.set(["before": "snow"], forKey: "borrowedOverlay")
+
+    #expect(UserDefaultsBorrowedOverlayStore(defaults: defaults, clockId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!).borrowedOverlay() == nil)
+}
+
+@Test func restoringSomethingThatWasNeverTakenWritesNothing() async throws {
+    let transport = SkyAndClock()
+    let (host, _) = weatherHost(transport: transport)
+
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(transport.requests.isEmpty)
+}
+
+@Test func restoringTwiceOverWritesTheDeviceOnce() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
+    let (host, _) = weatherHost(transport: transport)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    await host.restoreDeviceState(borrowedBy: nil)
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    #expect(transport.overlayWrites == ["rain", "snow"])
+}
+
+// The overlay is one global setting, so it has one borrower. Switching off a
+// connector that never touched it must not put back an overlay another one is
+// still using.
+@Test func aConnectorThatNeverTookTheOverlayDoesNotGiveItBack() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61), overlayOnDevice: "snow")
+    let (host, _) = weatherHost(transport: transport)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    await host.restoreDeviceState(borrowedBy: "anecdotes")
+
+    #expect(transport.overlayWrites == ["rain"])
+}
+
+// Anything the app added to the loop goes with it: the constraint is that the
+// app removes what it created, and a stale reading left in the rotation for
+// ever is exactly what that forbids.
+@Test func theAppTheConnectorAddedToTheLoopIsRemovedOnRestore() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61))
+    let (host, _) = weatherHost(transport: transport)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    await host.restoreDeviceState(borrowedBy: nil)
+
+    let removals = transport.requests.filter {
+        $0.url?.path == "/api/custom" && ($0.httpBody ?? Data()).isEmpty
+    }
+    #expect(removals.count == 1)
+    #expect(removals.first?.url?.query == "name=\(WeatherConnector.appName)")
+}
+
+@Test func aFailedWeatherFetchLeavesThePreviousOverlayInPlace() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 71))
+    let clock = Clock()
+    let (host, _) = weatherHost(transport: transport, clock: clock)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    transport.breakTheSky()
+    clock.advance(1_000)
+    let result = await host.runOnce(tile: singleTile("weather"))
+
+    #expect(result == .failed(String(describing: WeatherError.http(status: 503))))
+    // Still `snow`, and nothing after it. An outage is not a change in the
+    // weather, and clearing the overlay on one would wipe the clock every time
+    // the wifi hiccupped.
+    #expect(transport.overlayWrites == ["snow"])
+}
+
+// Whatever else goes wrong, the one thing that must never reach the device is a
+// name outside the six: it is answered 200, silently coerced to `clear`, and
+// there is nothing anywhere to say the overlay was rejected.
+@Test func everyOverlayEverWrittenIsOneTheFirmwareAccepts() async throws {
+    let clock = Clock()
+    let transport = SkyAndClock(sky: weatherBody(code: 0))
+    let (host, _) = weatherHost(transport: transport, clock: clock)
+
+    for code in [0, 3, 48, 51, 61, 71, 80, 85, 95, 96, 4_242] {
+        transport.changeSky(to: weatherBody(code: code))
+        clock.advance(1_000)
+        #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+    }
+
+    #expect(transport.overlayWrites.isEmpty == false)
+    for written in transport.overlayWrites {
+        #expect(DeviceOverlay.namesTheFirmwareAccepts.contains(written), "sent \(written)")
+    }
+}
+
+// The connector is a source of content and nothing else. It reaches the
+// weather service, and the device is the host's business — so a produce with
+// nothing behind the clock still asks nobody about the overlay.
+@Test func theConnectorItselfNeverTalksToTheDevice() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
+    )
+
+    _ = try await connector.produce()
+
+    #expect(transport.requests.allSatisfy { $0.url?.host == "api.open-meteo.com" })
+}
+
+// Nothing this connector produces can be heard, and it says so. The two quiet
+// rules — a macOS Focus, and the window that stands in for it — exist to stop
+// the app SPEAKING; holding a drawing through the shipped 23:00–08:00 default
+// froze the temperature on the matrix for nine hours a night, and left the sky
+// raining until morning if it had been raining at 22:55.
+@Test func theWeatherIsSilentAndSaysSo() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 61))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
+    )
+
+    #expect(connector.isAudible == false)
+    // And the claim is honest about the output: no clips, no jingle. A
+    // connector that declared silence and then spoke would be silenced by
+    // nothing at three in the morning.
+    let output = try await connector.produce()
+    #expect(output.localAudio.isEmpty)
+    #expect(output.jingle == nil)
+}
+
+// Two numbers that were one, and the split is the point rather than a drift.
+// 900 is the SERVICE's cadence and stays inside `OpenMeteoSource` as the window
+// its cache answers from, which is what keeps this app off a free public API
+// between updates. 600 is how often the CLOCK is refreshed. A poll that finds
+// the cache still warm re-pushes the same reading and reaches no network at
+// all, and that is not waste: it is what keeps `lifetime` from expiring the app
+// out of the device's loop.
+//
+// Pinned as an inequality as well as as two values, because that is the
+// relationship somebody changing either of them has to preserve: refreshing the
+// clock less often than the service updates would show a stale reading, and it
+// is the failure neither number states on its own.
+@Test func theClockIsRefreshedMoreOftenThanTheServiceUpdates() {
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: SkyAndClock()), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
+    )
+
+    #expect(connector.defaultInterval == 600)
+    #expect(OpenMeteoSource.defaultInterval == 900)
+    #expect(connector.defaultInterval < OpenMeteoSource.defaultInterval)
+}
+
+// MARK: - The picture beside the number
+
+// The reading is digits in a 32-by-8 matrix, and the sky is on an overlay that
+// draws over the whole screen rather than inside the app. The icon is what says
+// which sky at a glance, in the app itself, next to the number it belongs to.
+@Test func theSkyIsDrawnAsAnIconBesideTheReading() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 71))
+    let connector = WeatherConnector(
+        source: OpenMeteoSource(transport: transport), location: { desk },
+        config: { WeatherTileConfig(place: desk) }
+    )
+
+    let output = try await connector.produce()
+
+    #expect(output.icon == WeatherTheme.snow.icon)
+}
+
+// Every sky, including the ones borrowing a neighbour's picture and the
+// fallback an unknown code lands on. An output with no icon is an app drawn
+// beside whatever the previous app in the loop left behind.
+@Test func everySkyPutsAPictureOnTheOutput() async throws {
+    for code in [0, 3, 45, 48, 51, 61, 71, 95, 96, 4_242] {
+        let transport = SkyAndClock(sky: weatherBody(code: code))
+        let connector = WeatherConnector(
+            source: OpenMeteoSource(transport: transport), location: { desk },
+            config: { WeatherTileConfig(place: desk) }
+        )
+
+        let output = try await connector.produce()
+
+        #expect(output.icon == WeatherTheme(code: code, isDay: true).icon, "WMO \(code)")
+    }
+}
+
+// And it reaches the loop, which is a separate claim from being on the output:
+// the app payload carries the icon by the name the installer answered with, and
+// an icon installed but never named in the payload is bytes on the flash that
+// nothing draws.
+@Test func theIconTravelsWithTheReadingIntoTheLoop() async throws {
+    let transport = SkyAndClock(sky: weatherBody(code: 71))
+    let (host, _) = weatherHost(transport: transport)
+
+    #expect(await host.runOnce(tile: singleTile("weather")) == .delivered)
+
+    #expect(transport.customAppPosts.first?["icon"] as? String == "2289")
+}
+
+// MARK: - The TC002 face
+
+// The TC002 has no text rendering and no icon catalogue to reach into: the
+// face rasters the reading here, on the Mac, and ships one full-screen db
+// bitmap (D2). The glyphs are the 3×5 font at scale 2, which is what fits the
+// panel's 16 rows and reads from a room.
+
+@Suite struct WeatherTC002FaceTests {
+    func makeWeatherConnector() -> WeatherConnector {
+        // The humidity-and-feels band off: these tests pin the DIGITS' raster
+        // — the sign, the rounding, the colour — and the band's own rasters
+        // are pinned by the canvas tests with it on.
+        WeatherConnector(
+            source: OpenMeteoSource(transport: SkyAndClock()), location: { desk },
+            config: { WeatherTileConfig(place: desk, showsHumidity: false, showsFeelsLike: false) }
+        )
+    }
+
+    /// The still raster `canvas(for:config:)` draws — what the settings
+    /// preview still shows until it plays the face's GIFs. The TC002 page
+    /// itself is `WeatherFace.delivery`, pinned by `WeatherFaceDeliveryTests`.
+    func still(_ reading: WeatherReading) -> UlanziDraw {
+        WeatherConnector.canvas(
+            for: reading, config: WeatherTileConfig(place: desk, showsHumidity: false, showsFeelsLike: false)
+        ).drawCommands()
+    }
+
+    func reading(temperatureCelsius: Double) -> WeatherReading {
+        WeatherReading(
+            code: 0, isDay: true, temperature: temperatureCelsius, apparentTemperature: nil,
+            precipitation: 0, windSpeed: 0, interval: 900
+        )
+    }
+
+    @Test func negativeTemperatureRendersWithDegreeAndMinus() throws {
+        // The raster is the reading itself, whole degrees, and the scale is
+        // named: -12.4 → "-12°C" — the letter the picker puts there, so a
+        // bare number is never misread as the other scale.
+        let draw = still(reading(temperatureCelsius: -12.4))
+        #expect(
+            goldenASCII(of: draw)
+                == [
+                    // The trailing C is re-pinned: its glyph used to be
+                    // mirrored, so the scale it names opened the wrong way.
+                    "........####....######..####......####",
+                    "........####....######..####......####",
+                    "..........##........##..####....##....",
+                    "..........##........##..####....##....",
+                    "######....##....######..........##....",
+                    "######....##....######..........##....",
+                    "..........##....##..............##....",
+                    "..........##....##..............##....",
+                    "........######..######............####",
+                    "........######..######............####",
+                ]
+        )
+    }
+
+    @Test func themeColourInksTheDigits() throws {
+        // A warm reading is drawn in the warm end of the same gradient the
+        // AWTRIX face names in hex — red dominant for 30°.
+        let draw = still(reading(temperatureCelsius: 30))
+        guard case let .bitmap(_, _, pixels, _) = draw else {
+            Issue.record("not a bitmap")
+            return
+        }
+        let lit = try #require(pixels.first(where: { $0 != 0 }))
+        let red = (lit >> 16) & 0xFF, green = (lit >> 8) & 0xFF, blue = lit & 0xFF
+        #expect(red > 200)
+        #expect(red > green)
+        #expect(red > blue)
+    }
+
+    /// The same rounding rule as the AWTRIX face: -3.6 is -4, not -3 — the
+    /// wrong direction on the side of the scale where it matters.
+    @Test func halfDegreesRoundAwayFromZeroEitherSideOfZero() throws {
+        // The "4°" head of the first golden row — the digit's own pattern,
+        // sought rather than prefixed so the minus and the scale letter
+        // beside it stay the test's business, not the layout's.
+        for celsius in [4.2, -3.6] {
+            let rows = goldenASCII(of: still(reading(temperatureCelsius: celsius)))
+            #expect(
+                rows.first?.contains("##..##..####") == true,
+                "\(celsius) → \(rows.first ?? "?")"
+            )
+        }
+    }
+
+    /// The TC002 page is the weather face: the connector's `ulanziFace`
+    /// hands the reading to `WeatherFace.delivery` under the tile's config —
+    /// Anchor by default, so two GIFs, the icon and the right area.
+    @Test func theTC002PageIsTheWeatherFace() throws {
+        let face = try #require(makeWeatherConnector().ulanziFace)
+        let delivery = face.draw(reading(temperatureCelsius: 18))
+        let images = delivery.scene.frames[0].image
+        #expect(images.count == 2)
+        #expect(images.map(\.pixelSize.width) == [16, 34])
+        #expect(images.map(\.position.x) == [0, 18])
+        #expect(delivery.scene.frames[0].draw.isEmpty)
+        _ = try delivery.scene.jsonObject()
+    }
+}

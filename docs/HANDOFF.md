@@ -43,8 +43,8 @@ The app is installed at `~/Applications/PixelClockTiles.app` (until the first
 install of the renamed build, the old `~/Applications/AwtrixConnectors.app`).
 Rebuild it with `./Scripts/bundle.sh debug` and it lands in
 `build/PixelClockTiles.app`. The package is `PixelClockTiles`: the kit is
-`PixelClockKit`, the executable target `PixelClockTilesApp`, and their tests
-`PixelClockKitTests` and `PixelClockTilesAppTests`.
+`PixbarKit`, the executable target `PixbarTilesApp`, and their tests
+`PixbarKitTests` and `PixbarTilesAppTests`.
 
 What it does now: prepares ten anecdotes ahead, refreshed daily and played
 best-first by feed rank; speaks them in five cloned voices with the female one
@@ -169,7 +169,7 @@ drift apart — on the dark circular badge its source art sits on, the badge
 having been dropped only for the tiny bar. Everything is generated at bundle
 time into git-ignored `build/`, which keeps binary art out of the repository
 and makes the design reviewable as code. Run it with
-`swiftc Sources/PixelClockTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift
+`swiftc Sources/PixbarTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift
 -o build/icon-maker && build/icon-maker` and look at
 `build/icon/preview-appicon-*.png`.
 
@@ -368,7 +368,7 @@ Recorded so they are not deferred a fourth time. All are in the plan already.
 and must NOT advance the failure counter. A run the app tore down is not evidence
 the feed is sick.
 
-**Also open, with no owner yet:** `public enum PixelClockKit` (`AwtrixKit` before
+**Also open, with no owner yet:** `public enum PixbarKit` (`AwtrixKit` before
 the rename) shadows the module name,
 which is why `IconRef` had to be renamed `IconReference` (LaunchServices declares
 its own `IconRef`). Pre-1.0, compile-time only, fails loudly. Its own task.
@@ -730,7 +730,7 @@ reading rather than ⏳.
 found the bundled GIFs through the absolute build path compiled into the
 binary, and `fatalError`ed once that directory was gone, so a build installed
 from a worktree died with the worktree. This predated the rename, and is now
-fixed. `Scripts/bundle.sh` copies `PixelClockTiles_PixelClockKit.bundle` into
+fixed. `Scripts/bundle.sh` copies `PixbarTiles_PixbarKit.bundle` into
 `Contents/Resources` (not the `.app` root, which codesign refuses), and
 `KitResources.bundle` reads that copy first, touching `Bundle.module` only when
 there is none, which is the case under `swift test` and `swift run`. Any new
@@ -857,7 +857,7 @@ phase 4's multi-clock work, not here.
 - `switchDiyApp`: no matches in `Sources/` (D3).
 - `URLSession()` constructed in tests: no matches (D13). Every test drives an
   injected `Transport`.
-- `Sources/PixelClockKit/Awtrix/`: byte-identical to the phase-3b base
+- `Sources/PixbarKit/Awtrix/`: byte-identical to the phase-3b base
   (`eeb87fd`).
 - Test functions: 835 at the base, 879 at close. The full suite runs 795 tests
   with the anecdote-sound test skipped (796 total in the tree, that one run
@@ -1039,7 +1039,7 @@ phase-3b checklist carried open:
 
 What later tasks owe:
 
-- The bundled weather art in `Sources/PixelClockKit/Resources` is 8×8
+- The bundled weather art in `Sources/PixbarKit/Resources` is 8×8
   AWTRIX-era GIFs; the TC002 weather face wants 16×16 art. The new art is owed
   before that face ships — drawn by a person, not generated in passing.
 - The TC002 banner face (anecdotes, z.ai rows) builds on the full-frame
@@ -1262,11 +1262,11 @@ the same 52×16 frame both ways: the flat spelling is answered
 TC002 face that shipped through the encoder (the weather's, the old usage
 rows) was black on the panel for that reason alone. The encoder now writes the
 measured spelling and encodes the `at` point it used to drop. A 200 from this
-clock proves nothing about the pixels; `Sources/PixelClockKit/Ulanzi/CLAUDE.md`
+clock proves nothing about the pixels; `Sources/PixbarKit/Ulanzi/CLAUDE.md`
 carries that rule for whoever edits the adapter next.
 
 **The usage face.** Claude and z.ai share one TC002 face, `UsageFace`
-(`Sources/PixelClockKit/Usage/`): the vendor's mark in the corner, a session
+(`Sources/PixbarKit/Usage/`): the vendor's mark in the corner, a session
 row (`s`, the five-hour window) and a weekly row (`w`), each a figure over a
 one-pixel bar in the shared `UsageBand` colours — each vendor below 80 % in its
 own brand colour, the three warnings common to both. It replaces the
@@ -1276,7 +1276,7 @@ clock through the `tc002-face-mockup` skill, and its `gen.py` is the pixel
 oracle: `Scripts/make_usage_face_oracle.py` records gen.py's timelines for
 fourteen cases (steady, one row hot, both hot, spent past 100 %, 0 % and 3 %,
 no data, partial data, the threshold at 60/70/80/100) into
-`Tests/PixelClockKitTests/Fixtures/usage_face_oracle.json`, and
+`Tests/PixbarKitTests/Fixtures/usage_face_oracle.json`, and
 `UsageFaceOracleTests` holds the Swift face to it frame for frame and delay for
 delay. A design change starts in gen.py, then the fixture, then Swift — never
 the fixture by hand.
@@ -1329,7 +1329,7 @@ What only a person at the hardware can settle:
 
 What later tasks owe:
 
-- `Sources/PixelClockKit/Ulanzi/CLAUDE.md` and the `.claude/skills/tc002-face-mockup/`
+- `Sources/PixbarKit/Ulanzi/CLAUDE.md` and the `.claude/skills/tc002-face-mockup/`
   skill (gen.py, template.html, tc002_demo.py, SKILL.md) were left untracked in
   this worktree — they are the oracle's source and the adapter's navigator,
   and belong in the repository. Until the CLAUDE.md is tracked or excluded,
@@ -1349,19 +1349,19 @@ Spec: `docs/superpowers/specs/2026-09-23-tc002-weather-face-design.md`.
 Plan: `docs/superpowers/plans/2026-09-23-tc002-weather-face.md`.
 
 The TC002 weather page is no longer a still raster. `WeatherFace`
-(`Sources/PixelClockKit/Weather/`) draws a 16×16 animated icon (46 approved
+(`Sources/PixbarKit/Weather/`) draws a 16×16 animated icon (46 approved
 animations plus `nodata`), the temperature in the 5×9 digits, and a rotating
 detail line — feels-like, humidity, wind, hi/lo, rain chance, UV,
 sunrise/sunset, an hourly chart — in one of three layouts: **Anchor** (two
 GIFs, the icon looping on its own beside a fixed temperature), **Pages** and
 **Hybrid** (one 52×16 GIF each, because there the icon changes with the text).
 Why the deliveries differ, and the measured GIF ceilings behind them, are
-stated once in `Sources/PixelClockKit/Ulanzi/CLAUDE.md`; `UlanziScene` now
+stated once in `Sources/PixbarKit/Ulanzi/CLAUDE.md`; `UlanziScene` now
 enforces 480 frames / 136 000 bytes of base64.
 
 The pixels come from the `tc002-face-mockup` skill's `weather/wgen.py` and
 `weather/icons.py`. `Scripts/make_weather_face_oracle.py` records them into
-`Tests/PixelClockKitTests/Fixtures/weather_icons_oracle.json` and
+`Tests/PixbarKitTests/Fixtures/weather_icons_oracle.json` and
 `weather_face_oracle.json`, and the Swift face is tested against those
 fixtures pixel for pixel and delay for delay. A design change starts in the
 Python, then the fixtures are re-recorded, then Swift changes. The skill's

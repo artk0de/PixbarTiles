@@ -7,7 +7,7 @@ those files are the only source of the design. The Swift face is held to them
 by comparing against their own output, never against values typed from a
 screenshot.
 
-This writes two fixtures under `Tests/PixelClockKitTests/Fixtures/`:
+This writes two fixtures under `Tests/PixbarKitTests/Fixtures/`:
 
 - `weather_icons_oracle.json` — every icon's animation, palette-indexed:
   `{"icons": {name: {"palette": ["rrggbb"], "frames": [{"ms", "rows"}]}}}`,
@@ -47,7 +47,7 @@ from datetime import timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DIR = os.path.join(ROOT, ".claude", "skills", "tc002-face-mockup", "weather")
-FIXTURES = os.path.join(ROOT, "Tests", "PixelClockKitTests", "Fixtures")
+FIXTURES = os.path.join(ROOT, "Tests", "PixbarKitTests", "Fixtures")
 ICONS_OUT = os.path.join(FIXTURES, "weather_icons_oracle.json")
 FACE_OUT = os.path.join(FIXTURES, "weather_face_oracle.json")
 DIGITS36 = "0123456789abcdefghijklmnopqrstuvwxyz"

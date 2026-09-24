@@ -8,7 +8,7 @@ coverage in `github/octicons.py` and the building blocks it takes from
 `GitHubFace` is held to them by comparing against their own output, never
 against values typed from a screenshot.
 
-This writes `Tests/PixelClockKitTests/Fixtures/github_face_oracle.json`:
+This writes `Tests/PixbarKitTests/Fixtures/github_face_oracle.json`:
 
 - `glyphs`: the rows ggen ADDS to wgen's tables — `small` (`G`: `j _ + # ☺`)
   and `big` (`B`: `+ k m ★ c i ⑂ ⎇`) — as strings of `#` / `.`.
@@ -44,7 +44,7 @@ import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DIR = os.path.join(ROOT, ".claude", "skills", "tc002-face-mockup", "github")
-OUT = os.path.join(ROOT, "Tests", "PixelClockKitTests", "Fixtures", "github_face_oracle.json")
+OUT = os.path.join(ROOT, "Tests", "PixbarKitTests", "Fixtures", "github_face_oracle.json")
 SMALL_ADDED = ["j", "_", "+", "#", "☺"]
 BIG_ADDED = ["+", "k", "m", "★", "c", "i", "⑂", "⎇"]
 

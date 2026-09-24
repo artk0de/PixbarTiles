@@ -114,7 +114,7 @@ Live demo: `TC002_HOST=<ip> python3 weather/weather_demo.py [flags]`.
   (0 loops the icons through every dwell);
 - `--remove` — delete the demo page.
 
-The Swift face (`Sources/PixelClockKit/Weather/`) is held to wgen's frames
+The Swift face (`Sources/PixbarKit/Weather/`) is held to wgen's frames
 pixel for pixel and delay for delay. A design change starts in `wgen.py` /
 `icons.py`; then re-record the fixtures from the repository root with
 `python3 Scripts/make_weather_face_oracle.py`, then change Swift. Never edit
@@ -138,4 +138,4 @@ pixel for pixel and delay for delay. A design change starts in `wgen.py` /
 - `tc002-ticker-motion` — tickers, slides, marquees, one-GIF sync, budget.
 - `tc002-calibrate` — when a colour or a small shape is the question, push the
   candidates side by side on the clock and let the user pick by letter.
-- `Sources/PixelClockKit/Ulanzi/CLAUDE.md` — wire facts (black pages, probes).
+- `Sources/PixbarKit/Ulanzi/CLAUDE.md` — wire facts (black pages, probes).

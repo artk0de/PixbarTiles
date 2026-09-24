@@ -1,0 +1,371 @@
+import Foundation
+import PixbarKit
+import Testing
+@testable import PixbarKit
+
+// The weather tile's own settings: what they decode from, what they change,
+// and the one rule that keeps the preview honest — every control's answer is
+// visible in the canvas the face draws, because the preview IS that canvas.
+
+private let moscow = Coordinates(latitude: 55.7558, longitude: 37.6173)
+
+private func reading(
+    temperature: Double = 4.2, apparent: Double? = nil, humidity: Double? = nil
+) -> WeatherReading {
+    WeatherReading(
+        code: 61, isDay: true, temperature: temperature, apparentTemperature: apparent,
+        precipitation: 0, windSpeed: 0, interval: 900, relativeHumidity: humidity
+    )
+}
+
+// MARK: - What a stored config decodes from
+
+@Test func aConfigWrittenBeforeTheSettingsExistedDecodesWithTheShippedDefaults() throws {
+    // The shape the weather config carried for its whole life before the tile
+    // settings existed: the place and nothing else.
+    let json = Data(#"{"latitude":55.7558,"longitude":37.6173}"#.utf8)
+    let decoded = try JSONDecoder().decode(WeatherTileConfig.self, from: json)
+
+    #expect(decoded == WeatherTileConfig(place: moscow))
+    #expect(decoded.units == .celsius)
+    #expect(decoded.showsHumidity)
+    #expect(decoded.showsFeelsLike)
+}
+
+// The TC002 face's settings arrived after every one of those records was
+// written, and after the ones that carry units and the two switches: each is
+// defaulted when absent, so a stored tile reads as the shipped face.
+@Test func aRecordWrittenBeforeTheFaceSettingsDecodesToTheirDefaults() throws {
+    for json in [
+        #"{"latitude":55.7,"longitude":37.6}"#,
+        #"{"latitude":55.7,"longitude":37.6,"units":"celsius","showsHumidity":true,"showsFeelsLike":true}"#,
+    ] {
+        let decoded = try JSONDecoder().decode(WeatherTileConfig.self, from: Data(json.utf8))
+
+        #expect(decoded.place == Coordinates(latitude: 55.7, longitude: 37.6))
+        #expect(decoded.units == .celsius)
+        #expect(decoded.showsHumidity)
+        #expect(decoded.showsFeelsLike)
+        #expect(decoded.layout == .anchor)
+        #expect(decoded.changeEvery == 10)
+        #expect(decoded.feelsLikeColour)
+        #expect(decoded.showsWind)
+        #expect(decoded.windUnit == .metresPerSecond)
+        #expect(decoded.showsHiLo)
+        #expect(decoded.showsRainChance)
+        #expect(decoded.showsUV == false)
+        #expect(decoded.showsSunEvents == false)
+        #expect(decoded.showsMoon == false)
+        #expect(decoded.showsHourly)
+        #expect(decoded == WeatherTileConfig(place: Coordinates(latitude: 55.7, longitude: 37.6)))
+    }
+}
+
+@Test func everyFaceSettingRoundTripsThroughTheStore() throws {
+    var config = WeatherTileConfig(place: moscow, units: .fahrenheit)
+    config.layout = .hybrid
+    config.changeEvery = 5
+    config.feelsLikeColour = false
+    config.showsWind = false
+    config.windUnit = .milesPerHour
+    config.showsHiLo = false
+    config.showsRainChance = false
+    config.showsUV = true
+    config.showsSunEvents = true
+    config.showsMoon = true
+    config.showsHourly = false
+
+    let roundTripped = try JSONDecoder().decode(
+        WeatherTileConfig.self, from: JSONEncoder().encode(config)
+    )
+
+    #expect(roundTripped == config)
+}
+
+@Test func theChangeIntervalsAreTheFaceSteps() {
+    #expect(WeatherTileConfig.changeEverySteps == [3, 5, 8, 10, 15])
+}
+
+// The rotation's order is the spec's table, whatever order the switches are
+// flipped in; a switch off drops its line and nothing else.
+@Test func theDetailsFollowTheSwitchesInTheSpecsOrder() {
+    var config = WeatherTileConfig(place: moscow)
+    #expect(config.details == [.feels, .humidity, .wind, .hilo, .rain, .hourly])
+
+    config.showsUV = true
+    config.showsSunEvents = true
+    config.showsMoon = true
+    #expect(config.details == WeatherTileConfig.Detail.allCases)
+    #expect(WeatherTileConfig.Detail.allCases == [.feels, .humidity, .wind, .hilo, .rain, .uv, .sun, .moon, .hourly])
+
+    config.showsFeelsLike = false
+    config.showsHumidity = false
+    config.showsWind = false
+    config.showsHiLo = false
+    #expect(config.details == [.rain, .uv, .sun, .moon, .hourly])
+
+    config.showsRainChance = false
+    config.showsUV = false
+    config.showsSunEvents = false
+    config.showsMoon = false
+    config.showsHourly = false
+    #expect(config.details.isEmpty)
+}
+
+// The oracle's configs spell every setting the way the store does, so a case's
+// config is the tile's config with nothing translated.
+@Test func everyOracleConfigIsATileConfig() throws {
+    for c in try WeatherOracle.load().cases {
+        let config = try c.config.tileConfig()
+        #expect(config.layout.rawValue == c.config.layout, "\(c.id)")
+        #expect(config.units.rawValue == c.config.units, "\(c.id)")
+        #expect(config.windUnit.rawValue == c.config.windUnit, "\(c.id)")
+        #expect(config.changeEvery == TimeInterval(c.config.changeEvery), "\(c.id)")
+    }
+}
+
+@Test func everySettingRoundTripsThroughTheStore() throws {
+    let config = WeatherTileConfig(
+        place: moscow, units: .fahrenheit, showsHumidity: false, showsFeelsLike: false
+    )
+    let roundTripped = try JSONDecoder().decode(
+        WeatherTileConfig.self, from: JSONEncoder().encode(config)
+    )
+
+    #expect(roundTripped == config)
+    // And the place reads the way every pre-settings reader read it.
+    #expect(TileConfig.weather(config).location == moscow)
+}
+
+// MARK: - What each control changes
+
+// The scale names itself now, because a picker chooses it: a bare number was
+// the reading a person could misread as the other scale without ever
+// noticing. The conversion rounds the way the Celsius one always has.
+@Test func fahrenheitIsTheConvertedScaleAndItsOwnLetter() {
+    #expect(WeatherConnector.degrees(4.2, units: .celsius) == "4°C")
+    #expect(WeatherConnector.degrees(12.2, units: .fahrenheit) == "54°F")
+    // -3.6 rounds away from zero, on the side where it matters.
+    #expect(WeatherConnector.degrees(-3.6, units: .fahrenheit) == "26°F")
+}
+
+// The AWTRIX face: the digits' colour is its own setting now, the one the
+// TC002 face reads too — one switch means one thing on both clocks. The
+// felt line's switch no longer moves it either way.
+@Test func theDigitColourFollowsTheFeelsLikeColourSettingAlone() throws {
+    let reading = reading(temperature: 4.2, apparent: -2)
+    for showsFeelsLike in [true, false] {
+        var coloured = WeatherTileConfig(place: moscow)
+        coloured.showsFeelsLike = showsFeelsLike
+        var plain = coloured
+        plain.feelsLikeColour = false
+
+        #expect(
+            WeatherConnector.output(for: reading, config: coloured).color
+                == TemperatureColour(celsius: -2).hex, "showsFeelsLike \(showsFeelsLike)"
+        )
+        #expect(
+            WeatherConnector.output(for: reading, config: plain).color
+                == TemperatureColour(celsius: 4.2).hex, "showsFeelsLike \(showsFeelsLike)"
+        )
+    }
+}
+
+// The TC002 canvas's ink follows the same setting, whatever the felt line does.
+@Test func theCanvasInkFollowsTheFeelsLikeColourSettingAlone() {
+    let reading = reading(temperature: 4.2, apparent: -2)
+    func inks(_ config: WeatherTileConfig) -> Set<Pixel> {
+        let canvas = WeatherConnector.canvas(for: reading, config: config)
+        var seen: Set<Pixel> = []
+        for x in 0..<PixelCanvas.width {
+            for y in 0..<10 where canvas[x, y] != .black { seen.insert(canvas[x, y]) }
+        }
+        return seen
+    }
+    let felt = Pixel(colour: UlanziColour(hex: TemperatureColour(celsius: -2).hex))
+    let air = Pixel(colour: UlanziColour(hex: TemperatureColour(celsius: 4.2).hex))
+    for showsFeelsLike in [true, false] {
+        var coloured = WeatherTileConfig(place: moscow, showsHumidity: false)
+        coloured.showsFeelsLike = showsFeelsLike
+        var plain = coloured
+        plain.feelsLikeColour = false
+        #expect(inks(coloured) == [felt], "showsFeelsLike \(showsFeelsLike)")
+        #expect(inks(plain) == [air], "showsFeelsLike \(showsFeelsLike)")
+    }
+}
+
+// The TC002 canvas, the preview's own pixels. Each control's answer is a
+// different drawing — the three comparisons below are the requirement that
+// flipping a control flips the preview.
+@Test func eachControlFlipsTheCanvasThePreviewDraws() {
+    let config = WeatherTileConfig(place: moscow)
+    let answer = reading(humidity: 54)
+    let canvas = WeatherConnector.canvas(for: answer, config: config)
+
+    // Units: the same sky at the other scale is another drawing.
+    var fahrenheit = config
+    fahrenheit.units = .fahrenheit
+    #expect(canvas != WeatherConnector.canvas(for: answer, config: fahrenheit))
+
+    // Humidity off: no small band on the left. The dry reading is the same
+    // canvas as the humid one with the tile's answer off — nothing is drawn
+    // where nothing is asked for.
+    var dry = config
+    dry.showsHumidity = false
+    let dryCanvas = WeatherConnector.canvas(for: answer, config: dry)
+    #expect(canvas != dryCanvas)
+    #expect(
+        dryCanvas == WeatherConnector.canvas(for: reading(humidity: nil), config: config)
+    )
+
+    // Feels like off: the right-hand line goes. (The ink's colour is
+    // `feelsLikeColour`'s now, pinned above.)
+    var unfelt = config
+    unfelt.showsFeelsLike = false
+    #expect(canvas != WeatherConnector.canvas(for: answer, config: unfelt))
+}
+
+// And with every answer off, the panel is the temperature alone — nothing is
+// drawn in the small band under it, where the answers would have ridden.
+@Test func aTileWithEveryAnswerOffDrawsTheBareTemperature() {
+    let config = WeatherTileConfig(
+        place: moscow, units: .celsius, showsHumidity: false, showsFeelsLike: false
+    )
+    let canvas = WeatherConnector.canvas(for: reading(humidity: 54), config: config)
+
+    // The bottom band is black: nothing small is drawn under the digits. The
+    // rows that settle it are the last two — the centred digits reach into
+    // row 12, but a scale-1 band would paint down to 15.
+    var bandInk = false
+    for x in 0..<PixelCanvas.width {
+        for y in 14..<PixelCanvas.height where canvas[x, y] != .black {
+            bandInk = true
+        }
+    }
+    #expect(bandInk == false)
+    // But the digits themselves are there.
+    #expect(canvas != PixelCanvas())
+}
+
+// The band's two answers stay two. They sit on one 52-pixel row, and the
+// felt temperature used to be spelled "feels 18°" — thirty-five pixels that
+// left one column between it and "H78%", and at "feels -12°" ran straight
+// over the humidity. The widest pair the band can be handed has to read as
+// two groups with clear black between them.
+@Test func theBandsTwoAnswersNeverTouch() {
+    let config = WeatherTileConfig(place: moscow)
+    for (humidity, felt) in [(78.0, 18.0), (100, -12), (100, -40), (5, 104)] {
+        let canvas = WeatherConnector.canvas(
+            for: reading(temperature: felt, apparent: felt, humidity: humidity), config: config
+        )
+        let inked = (0..<PixelCanvas.width).filter { x in
+            (11..<PixelCanvas.height).contains { canvas[x, $0] != .black }
+        }
+        // Runs of inked columns, split wherever three or more columns in a
+        // row are black: a glyph's own spacing, a narrow glyph's blank side
+        // included, never reaches three; a word space always does.
+        var runs: [ClosedRange<Int>] = []
+        for x in inked {
+            if let last = runs.last, x - last.upperBound <= 3 {
+                runs[runs.count - 1] = last.lowerBound...x
+            } else {
+                runs.append(x...x)
+            }
+        }
+        let label = "humidity \(humidity), felt \(felt): \(runs)"
+        // Exactly two: the humidity, then the felt temperature as ONE word.
+        #expect(runs.count == 2, "\(label)")
+        guard runs.count == 2 else { continue }
+        // The first run is the humidity and nothing else — it ends inside the
+        // humidity's own cells, 4 pixels per mark from x = 1.
+        let humidityEnd = 1 + "H\(Int(humidity))%".unicodeScalars.count * 4 - 2
+        #expect(runs[0].upperBound <= humidityEnd, "\(label)")
+        // Clear black between the two, and the right one on the panel.
+        #expect(runs[1].lowerBound - runs[0].upperBound > 3, "\(label)")
+        #expect(runs[1].upperBound < PixelCanvas.width, "\(label)")
+    }
+}
+
+// MARK: - The oracle's config as the tile's
+
+extension WeatherOracle.Config {
+    enum Mismatch: Error { case layout(String), units(String), windUnit(String) }
+
+    /// The tile config a case was recorded under. The oracle carries no place;
+    /// the face never reads it.
+    func tileConfig(place: Coordinates = Coordinates(latitude: 0, longitude: 0)) throws -> WeatherTileConfig {
+        guard let layout = WeatherTileConfig.Layout(rawValue: layout) else { throw Mismatch.layout(layout) }
+        guard let units = WeatherTileConfig.Units(rawValue: units) else { throw Mismatch.units(units) }
+        guard let windUnit = WindUnit(rawValue: windUnit) else { throw Mismatch.windUnit(windUnit) }
+        var config = WeatherTileConfig(
+            place: place, units: units, showsHumidity: showsHumidity, showsFeelsLike: showsFeelsLike
+        )
+        config.layout = layout
+        config.changeEvery = TimeInterval(changeEvery)
+        config.feelsLikeColour = feelsLikeColour
+        config.showsWind = showsWind
+        config.windUnit = windUnit
+        config.showsHiLo = showsHiLo
+        config.showsRainChance = showsRainChance
+        config.showsUV = showsUV
+        config.showsSunEvents = showsSunEvents
+        config.showsMoon = showsMoon
+        config.showsHourly = showsHourly
+        return config
+    }
+}
+
+// MARK: - The place's name
+
+// A pair of coordinates is not a place a reader recognises. What the search
+// already knows at the moment somebody picks a row — the city and the country
+// — is kept, so the surface can say where the clock is rather than where it is
+// in degrees.
+@Test func aPlaceKeepsTheNameItWasChosenBy() {
+    let config = WeatherTileConfig(
+        place: Coordinates(latitude: 55.7558, longitude: 37.6173),
+        placeName: "Москва",
+        placeCountry: "Россия"
+    )
+
+    #expect(config.placeName == "Москва")
+    #expect(config.placeCountry == "Россия")
+}
+
+// Typed rather than chosen, which is the case the name must NOT survive: a
+// name kept beside coordinates it no longer describes is the one way this
+// surface could say Moscow over a reading from somewhere else.
+@Test func aPlaceWithNoNameIsTheDefault() {
+    let config = WeatherTileConfig(place: Coordinates(latitude: 0, longitude: 0))
+
+    #expect(config.placeName == nil)
+    #expect(config.placeCountry == nil)
+}
+
+@Test func aNamedPlaceSurvivesARoundTripThroughTheStore() throws {
+    let config = WeatherTileConfig(
+        place: Coordinates(latitude: 51.5074, longitude: -0.1278),
+        placeName: "London",
+        placeCountry: "United Kingdom"
+    )
+
+    let back = try JSONDecoder().decode(
+        WeatherTileConfig.self, from: try JSONEncoder().encode(config)
+    )
+
+    #expect(back == config)
+    #expect(back.placeName == "London")
+    #expect(back.placeCountry == "United Kingdom")
+}
+
+// A record written before the name existed. It decodes to a place with no
+// name, not to a failure — every other field of this type reads the same way.
+@Test func aRecordFromBeforeTheNameDecodesWithoutOne() throws {
+    let old = Data(#"{"latitude": 55.7558, "longitude": 37.6173}"#.utf8)
+
+    let back = try JSONDecoder().decode(WeatherTileConfig.self, from: old)
+
+    #expect(back.placeName == nil)
+    #expect(back.placeCountry == nil)
+    #expect(back.place.latitude == 55.7558)
+}

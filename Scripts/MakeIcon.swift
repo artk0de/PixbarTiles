@@ -1,11 +1,11 @@
-// swiftc Sources/PixelClockTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift -o build/icon-maker && build/icon-maker
+// swiftc Sources/PixbarTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift -o build/icon-maker && build/icon-maker
 //
 // Renders the app icon set and the menu bar glyph from code.
 //
 //     Scripts/bundle.sh            # compiles and runs this as part of bundling
 //
 // Both marks are the user's own pixel-art clock, rasterized from the approved
-// map in `Sources/PixelClockTilesApp/MenuBarUserclock.swift` — that file is
+// map in `Sources/PixbarTilesApp/MenuBarUserclock.swift` — that file is
 // compiled into this tool AND into the app target, so the art the bundle ships
 // and the art the tests pin cannot drift apart. The app icon sets the clock on
 // the dark circular badge its source art sits on (the badge was dropped only

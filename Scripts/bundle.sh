@@ -15,9 +15,9 @@ cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 APP="build/PixelClockTiles.app"
 
-swift build -c "$CONFIG" --product PixelClockTilesApp
+swift build -c "$CONFIG" --product PixbarTilesApp
 BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)"
-BINARY="$BIN_PATH/PixelClockTilesApp"
+BINARY="$BIN_PATH/PixbarTilesApp"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -31,7 +31,7 @@ cp "$BINARY" "$APP/Contents/MacOS/PixelClockTiles"
 # `.app` root, where SwiftPM would look on its own: codesign refuses anything
 # at the root but `Contents`. The name is SwiftPM's, package then target; a
 # rename makes this `cp` fail rather than ship an app with no art.
-cp -R "$BIN_PATH/PixelClockTiles_PixelClockKit.bundle" "$APP/Contents/Resources/"
+cp -R "$BIN_PATH/PixbarTiles_PixbarKit.bundle" "$APP/Contents/Resources/"
 
 # The artwork is generated, never committed: build/ is git-ignored, so the only
 # thing under version control is the code that draws it. Deterministic by
@@ -41,7 +41,7 @@ cp -R "$BIN_PATH/PixelClockTiles_PixelClockKit.bundle" "$APP/Contents/Resources/
 # The generator compiles the app target's MenuBarUserclock.swift alongside
 # itself: the map is that file's, and this is what keeps the shipped PNGs and
 # the tested map one thing.
-swiftc Sources/PixelClockTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift -o build/icon-maker
+swiftc Sources/PixbarTilesApp/MenuBarUserclock.swift Scripts/MakeIcon.swift -o build/icon-maker
 build/icon-maker
 iconutil -c icns build/icon/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 # The menu bar glyph, at 1x/2x/3x, in both appearances and both device states.

@@ -35,7 +35,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_GEN = os.path.join(ROOT, ".claude", "skills", "tc002-face-mockup", "gen.py")
-FIXTURES = os.path.join(ROOT, "Tests", "PixelClockKitTests", "Fixtures")
+FIXTURES = os.path.join(ROOT, "Tests", "PixbarKitTests", "Fixtures")
 OUT = os.path.join(FIXTURES, "usage_face_oracle.json")
 CIRCLE_OUT = os.path.join(FIXTURES, "usage_circle_oracle.json")
 MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split()

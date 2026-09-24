@@ -31,7 +31,7 @@ x: 0        15 16 17 18                                   51
 
 ## Fonts — pick by job
 
-All faces live in `Sources/PixelClockKit/Ulanzi/` as `PixelFont.<face>`;
+All faces live in `Sources/PixbarKit/Ulanzi/` as `PixelFont.<face>`;
 measure with the SAME face you draw with (`PixelFontFace.advance(for:)`).
 
 | Face | Cell | Use for | Never for |
@@ -115,4 +115,4 @@ The area is 34 columns. Plan every string at its widest value:
 2. Every data-missing combination rendered as a case.
 3. Key frames Read as PNG by you, then shown to the user, then pushed live.
 4. The user looked at the panel — a 200 from the clock proves nothing
-   (`Sources/PixelClockKit/Ulanzi/CLAUDE.md`).
+   (`Sources/PixbarKit/Ulanzi/CLAUDE.md`).

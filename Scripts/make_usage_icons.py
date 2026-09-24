@@ -28,9 +28,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDORS = os.path.join(
-    ROOT, "Sources", "PixelClockKit", "TileTemplates", "CodeUsage", "CodeUsage.swift"
+    ROOT, "Sources", "PixbarKit", "TileTemplates", "CodeUsage", "CodeUsage.swift"
 )
-RESOURCES = os.path.join(ROOT, "Sources", "PixelClockKit", "Resources")
+RESOURCES = os.path.join(ROOT, "Sources", "PixbarKit", "Resources")
 SIZE = 8
 
 # The one vendor whose mark is drawn here. Claude's `ClaudeStar` is art that
@@ -59,11 +59,11 @@ def vendors(source: str) -> dict[str, dict]:
 
 
 def brand_colour(module: str) -> int:
-    path = os.path.join(ROOT, "Sources", "PixelClockKit", module[:-5] if False else "", "")
+    path = os.path.join(ROOT, "Sources", "PixbarKit", module[:-5] if False else "", "")
     # `ClaudeUsage` lives in Claude/, `ZaiUsage` in Zai/ — the directory is the
     # type's prefix.
     folder = "Claude" if module.startswith("Claude") else "Zai"
-    text = open(os.path.join(ROOT, "Sources", "PixelClockKit", folder, f"{module}.swift")).read()
+    text = open(os.path.join(ROOT, "Sources", "PixbarKit", folder, f"{module}.swift")).read()
     return int(re.search(r'brandColour = "#([0-9A-Fa-f]{6})"', text).group(1), 16)
 
 

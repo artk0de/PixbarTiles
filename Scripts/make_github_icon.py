@@ -27,7 +27,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DIR = os.path.join(ROOT, ".claude", "skills", "tc002-face-mockup", "github")
-OUT = os.path.join(ROOT, "Sources", "PixelClockKit", "Resources", "GitHubMark.gif")
+OUT = os.path.join(ROOT, "Sources", "PixbarKit", "Resources", "GitHubMark.gif")
 SIZE = 8
 ORIGIN = (16 - SIZE) // 2   # a half-scale draw about the centre covers 4..11
 

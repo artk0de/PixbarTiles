@@ -41,7 +41,7 @@ class MakePctBatt(unittest.TestCase):
     def test_committed_bytes_match_generator(self):
         # The shipped artifact must be exactly what the generator emits, so a
         # stale prebuilt binary is caught in CI.
-        shipped = (ROOT / "Sources/PixelClockKit/Resources/pct-batt").read_bytes()
+        shipped = (ROOT / "Sources/PixbarKit/Resources/pct-batt").read_bytes()
         self.assertEqual(shipped, self._build())
 
 

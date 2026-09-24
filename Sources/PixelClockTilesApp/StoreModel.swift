@@ -48,7 +48,30 @@ final class StoreModel {
     /// `.perKey` and so never reach the `.notListed` that draws an "Added"
     /// card: pressing one twice was a silent no-op for ever.
     private(set) var lastRefusal: String?
+    /// The whole shelf, whatever the grid is filtering: every card the
+    /// catalogue offers under the showing category, each with its action.
     private(set) var cards: [StoreCard] = []
+    /// The search box's text. Matched against a card's name and its blurb,
+    /// ignoring case; blank is no search at all.
+    var query = ""
+    /// Whether the grid also shows the tiles the aimed clock has no face for
+    /// — Anecdotes and VPN on a TC002. Off by default: a store full of
+    /// "not supported" cards buries the ones the clock can take.
+    var showsUnavailable = false
+
+    /// What the grid draws: the shelf, less what the clock cannot take
+    /// (unless asked for), less what the search does not match.
+    ///
+    /// Only the FACE rule hides a card. "Already speaking through Desk" is a
+    /// refusal about where other tiles are, not about this clock, and stays
+    /// on the grid with its reason.
+    var shownCards: [StoreCard] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cards.filter { card in
+            (showsUnavailable || card.isSupported) && card.matches(needle)
+        }
+    }
+
     /// The GitHub card whose repository sheet is up, or nil. Set by the
     /// window's binding to nil when the sheet is dismissed.
     var askingForRepo: StoreCard?
@@ -77,6 +100,25 @@ final class StoreModel {
         let candidate: TileCandidate
         let title: String
         let action: Action
+        /// Whether the aimed clock has a face for this tile at all — the
+        /// catalogue's first rule, read off the candidate and the clock's
+        /// model rather than out of the reason's wording.
+        let isSupported: Bool
+
+        /// What hovering an Added card says. Added is a single-instance
+        /// tile's state only — `.notListed` is never answered for a tile a
+        /// clock carries once per key — so the reason is always this one.
+        var hint: String? {
+            action == .added ? "Only one \(title) can be on a clock" : nil
+        }
+
+        /// Whether the card's name or its blurb contains `needle`, ignoring
+        /// case. An empty needle matches everything.
+        func matches(_ needle: String) -> Bool {
+            needle.isEmpty
+                || title.range(of: needle, options: .caseInsensitive) != nil
+                || candidate.blurb.range(of: needle, options: .caseInsensitive) != nil
+        }
     }
 
     /// Aims the store at a clock and puts it on All — the state a gear's
@@ -86,6 +128,9 @@ final class StoreModel {
         // A repository asked for on behalf of another clock is not this
         // clock's question.
         askingForRepo = nil
+        // The last clock's search is not this one's. Whether unavailable
+        // tiles show is a preference, and survives the re-aim.
+        query = ""
         // The assignment itself refiles the cards through `didSet` — even
         // when nil was already showing, so a re-aim never keeps the cards
         // of the clock the store has just left.
@@ -158,6 +203,7 @@ final class StoreModel {
             cards = []
             return
         }
+        let clockModel = model.clocks.first { $0.id == clockId }?.model
         cards = model.tileCandidates().compactMap { offer in
             guard let candidate = model.candidate(for: offer.connectorId),
                 category == nil || candidate.category == category
@@ -171,7 +217,10 @@ final class StoreModel {
             case let .unavailable(reason):
                 action = .refused(reason: reason)
             }
-            return StoreCard(candidate: candidate, title: offer.name, action: action)
+            return StoreCard(
+                candidate: candidate, title: offer.name, action: action,
+                isSupported: clockModel.map(candidate.models.contains) ?? false
+            )
         }
     }
 

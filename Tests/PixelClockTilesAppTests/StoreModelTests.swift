@@ -182,3 +182,151 @@ private func tile(_ connector: String, on clock: ClockRecord) -> TileRecord {
     #expect(subject.lastRefusal == nil)
     #expect(await waitUntil { model.tileRecords.count == WatchedVPN.catalogue.count + 1 })
 }
+
+// MARK: - Search and the unavailable filter
+
+private struct NoClaudeReading: ClaudeUsageReporting {
+    func read() async throws -> ClaudeUsageReading? { nil }
+}
+
+/// Claude has a TC002 face; Anecdotes and the lamp do not — so on Kitchen
+/// the shelf holds one card the clock can take and two it cannot.
+@MainActor private func mixedStore() -> StoreModel {
+    let model = testModel(
+        connectors: [
+            ClaudeUsageConnector(reporter: NoClaudeReading()),
+            StubConnector(id: "anecdotes", displayName: "Anecdotes"),
+        ],
+        clocks: [desk, kitchen],
+        tiles: [],
+        sessions: [desk.id: SpyHost(), kitchen.id: SpyHost()]
+    )
+    return StoreModel(model: model)
+}
+
+// The grid shows only what the aimed clock can take until the box is ticked:
+// a TC002's store full of "not supported" cards buries the ones it can add.
+// `cards` stays the whole shelf — the filter is the grid's, not the shelf's.
+@Test @MainActor func theGridHidesTilesTheClockCannotTakeUntilAskedToShowThem() {
+    let subject = mixedStore()
+    subject.show(kitchen.id)
+
+    #expect(subject.showsUnavailable == false)
+    #expect(subject.cards.map(\.title) == ["Claude usage", "Anecdotes", "VPN"])
+    #expect(subject.shownCards.map(\.title) == ["Claude usage"])
+
+    subject.showsUnavailable = true
+    #expect(subject.shownCards.map(\.title) == ["Claude usage", "Anecdotes", "VPN"])
+    #expect(
+        subject.shownCards.last?.action == .refused(reason: "not supported on TC-002 Pixbar")
+    )
+
+    // On a clock that takes everything the box hides nothing.
+    subject.showsUnavailable = false
+    subject.show(desk.id)
+    #expect(subject.shownCards.map(\.title) == ["Claude usage", "Anecdotes", "VPN"])
+}
+
+// A refusal that is not about the clock's face is still a card the clock
+// could take another day: "already speaking through Desk" stays on the grid.
+@Test @MainActor func onlyTheFaceRuleHidesACardNotEveryRefusal() {
+    let model = testModel(
+        connectors: [StubConnector(id: "anecdotes", displayName: "Anecdotes")],
+        clocks: [desk, loft],
+        tiles: [tile("anecdotes", on: desk)],
+        sessions: [desk.id: SpyHost(), loft.id: SpyHost()]
+    )
+    let subject = StoreModel(model: model)
+    subject.show(loft.id)
+
+    #expect(subject.shownCards.first?.action == .refused(reason: "already speaking through Desk"))
+}
+
+// The search reads the name and the line under it, in any case.
+@Test @MainActor func theSearchMatchesNameOrBlurbIgnoringCase() {
+    let subject = mixedStore()
+    subject.show(desk.id)
+
+    subject.query = "clAUDE"
+    #expect(subject.shownCards.map(\.title) == ["Claude usage"])
+    // "lamp" is only in the VPN's blurb.
+    subject.query = "LAMP"
+    #expect(subject.shownCards.map(\.title) == ["VPN"])
+    subject.query = "nothing like it"
+    #expect(subject.shownCards.isEmpty)
+    // Blank is no search at all.
+    subject.query = "   "
+    #expect(subject.shownCards.count == 3)
+}
+
+// Both filters at once: a match the clock cannot take stays hidden until the
+// box is ticked.
+@Test @MainActor func theSearchAndTheUnavailableFilterCombine() {
+    let subject = mixedStore()
+    subject.show(kitchen.id)
+
+    subject.query = "anecdotes"
+    #expect(subject.shownCards.isEmpty)
+    subject.showsUnavailable = true
+    #expect(subject.shownCards.map(\.title) == ["Anecdotes"])
+}
+
+// The search runs inside the shelf showing, not across the store.
+@Test @MainActor func theSearchRunsInsideTheShelf() {
+    let subject = mixedStore()
+    subject.show(desk.id)
+
+    subject.query = "the"
+    subject.category = .system
+    #expect(subject.shownCards.map(\.title) == ["Anecdotes"])
+    subject.category = .network
+    #expect(subject.shownCards.map(\.title) == ["VPN"])
+    subject.category = .dev
+    #expect(subject.shownCards.map(\.title) == ["Claude usage"])
+}
+
+// A gear's "Add tile…" opens a fresh store: the last clock's search is not
+// this one's. Whether unavailable tiles show is a preference, and stays.
+@Test @MainActor func aReAimClearsTheSearchButKeepsTheBox() {
+    let subject = mixedStore()
+    subject.show(desk.id)
+    subject.query = "claude"
+    subject.showsUnavailable = true
+
+    subject.show(kitchen.id)
+    #expect(subject.query == "")
+    #expect(subject.showsUnavailable)
+}
+
+// MARK: - Added, and what it says
+
+// Added is a single-instance tile's state only, and it says why the card is
+// shut. A tile a clock carries once per key (a GitHub repository, a VPN)
+// never reads Added — there is always another one to add.
+@Test @MainActor func onlyASingleInstanceTileReadsAddedAndSaysWhy() {
+    let model = testModel(
+        connectors: [
+            StubConnector(id: "claude", displayName: "Claude"),
+            StubConnector(id: "github", displayName: "GitHub", isAudible: false, instancing: .perKey),
+        ],
+        clocks: [desk],
+        tiles: [
+            tile("claude", on: desk),
+            TileRecord(
+                key: TileKey(clockId: desk.id, connectorId: "github", instance: "a/b"),
+                policy: TilePolicyRecord(isPaused: false, refreshSeconds: 600)
+            ),
+        ],
+        sessions: [desk.id: SpyHost()]
+    )
+    let subject = StoreModel(model: model)
+    subject.show(desk.id)
+
+    let byTitle = Dictionary(uniqueKeysWithValues: subject.cards.map { ($0.title, $0) })
+    #expect(byTitle["Claude"]?.action == .added)
+    #expect(byTitle["Claude"]?.hint == "Only one Claude can be on a clock")
+    #expect(byTitle["GitHub"]?.action == .add)
+    #expect(byTitle["GitHub"]?.hint == nil)
+    #expect(byTitle["VPN"]?.action == .add)
+    #expect(byTitle["VPN"]?.hint == nil)
+}

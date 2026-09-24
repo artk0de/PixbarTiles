@@ -375,3 +375,53 @@ private func reading(
     let grey = PanelGlyph.eyeInk(open: false, dark: true)
     #expect((light & 0xFF) > (grey & 0xFF))
 }
+
+// MARK: - The store's shelves
+
+private let everyShelf: [TileCategory?] = [nil] + TileCategory.allCases.map(Optional.some)
+
+// Every shelf row in the store's sidebar wears a mark of its own, all on one
+// nine-by-nine canvas so the labels beside them line up.
+@Test func everyShelfMarkIsTheSameNineBySquareInOneInk() {
+    for shelf in everyShelf {
+        let map = PanelGlyph.shelfMark(shelf)
+        #expect(map.count == 9, "\(String(describing: shelf))")
+        #expect(map.allSatisfy { $0.count == 9 }, "\(String(describing: shelf))")
+        #expect(Set(map.joined()).isSubset(of: [".", "G"]), "\(String(describing: shelf))")
+        let lit = map.joined().filter { $0 == "G" }.count
+        #expect(lit >= 12 && lit <= 81 - 24, "\(String(describing: shelf)): \(lit) lit")
+    }
+}
+
+// Five shelves, five shapes: the colour must not do all the work.
+@Test func noTwoShelvesWearTheSameMark() {
+    let marks = everyShelf.map { PanelGlyph.shelfMark($0).joined() }
+    #expect(Set(marks).count == everyShelf.count)
+}
+
+// A shelf row is drawn in its shelf's own colour — the tint the badges on its
+// cards already wear — and All in a neutral that is none of them.
+@Test func aShelfRowWearsItsShelfsTintAndAllANeutralOne() {
+    for category in TileCategory.allCases {
+        #expect(PanelGlyph.shelfTint(category) == PanelGlyph.categoryTint(category))
+    }
+    let all = PanelGlyph.shelfTint(nil)
+    #expect(TileCategory.allCases.map(PanelGlyph.categoryTint).contains(all) == false)
+    // Neutral: a grey, red, green and blue within a few steps of each other.
+    let channels = [(all >> 16) & 0xFF, (all >> 8) & 0xFF, all & 0xFF]
+    #expect((channels.max() ?? 0) - (channels.min() ?? 0) <= 8)
+}
+
+// Added is the Add button's own green, darkened: the same family, clearly
+// the state after the act rather than the act.
+@Test func theAddedGreenIsTheAddGreenDarkened() {
+    let add = PanelGlyph.addTint
+    let added = PanelGlyph.addedTint
+    #expect(added != add)
+    for shift: UInt32 in [16, 8, 0] {
+        #expect((added >> shift) & 0xFF <= (add >> shift) & 0xFF)
+    }
+    // Still green: its green channel leads.
+    #expect((added >> 8) & 0xFF > (added >> 16) & 0xFF)
+    #expect((added >> 8) & 0xFF > added & 0xFF)
+}

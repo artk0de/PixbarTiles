@@ -556,6 +556,99 @@ enum PanelGlyph {
     /// on that surface, not because green is decorative.
     static let addTint: UInt32 = 0x30D158
 
+    /// The Add green darkened: a store card whose tile is already on the
+    /// clock. The same family as the button it replaces, so it reads as the
+    /// state after the act, not as another act.
+    static let addedTint: UInt32 = 0x1E7A3A
+
+    // MARK: - The store's shelves
+
+    /// All: four blocks, the whole store.
+    static let shelfAll = [
+        ".........",
+        ".GGG.GGG.",
+        ".GGG.GGG.",
+        ".GGG.GGG.",
+        ".........",
+        ".GGG.GGG.",
+        ".GGG.GGG.",
+        ".GGG.GGG.",
+        ".........",
+    ]
+
+    /// Weather: a sun. The tile badge on the shelf's cards is a cloud, so
+    /// the shelf takes the other half of the sky.
+    static let shelfWeather = [
+        "....G....",
+        ".G.....G.",
+        "...GGG...",
+        "..GGGGG..",
+        "G.GGGGG.G",
+        "..GGGGG..",
+        "...GGG...",
+        ".G.....G.",
+        "....G....",
+    ]
+
+    /// System: a monitor on its stand.
+    static let shelfSystem = [
+        "GGGGGGGGG",
+        "G.......G",
+        "G.......G",
+        "G.......G",
+        "G.......G",
+        "GGGGGGGGG",
+        "....G....",
+        "..GGGGG..",
+        ".........",
+    ]
+
+    /// Dev: a pair of braces.
+    static let shelfDev = [
+        ".........",
+        ".GG...GG.",
+        ".G.....G.",
+        ".G.....G.",
+        "G.......G",
+        ".G.....G.",
+        ".G.....G.",
+        ".GG...GG.",
+        ".........",
+    ]
+
+    /// Network: two arcs over a point — a signal.
+    static let shelfNetwork = [
+        ".........",
+        "..GGGGG..",
+        ".G.....G.",
+        "G..GGG..G",
+        "..G...G..",
+        ".........",
+        "....G....",
+        "...GGG...",
+        "....G....",
+    ]
+
+    /// The mark a shelf row wears in the store's sidebar; nil is All.
+    static func shelfMark(_ category: TileCategory?) -> [String] {
+        switch category {
+        case nil: shelfAll
+        case .weather: shelfWeather
+        case .system: shelfSystem
+        case .dev: shelfDev
+        case .network: shelfNetwork
+        }
+    }
+
+    /// The neutral All wears: every shelf's, so none of theirs.
+    static let allShelvesTint: UInt32 = 0x8E8E93
+
+    /// A shelf row's colour — the tint its cards' badges already wear, so a
+    /// row and the cards it files cannot disagree; nil is All.
+    static func shelfTint(_ category: TileCategory?) -> UInt32 {
+        category.map(categoryTint) ?? allShelvesTint
+    }
+
     /// A badge: the shelf's colour as the field, the mark knocked out of it in
     /// white. White rather than the card's ink, because the field is a colour
     /// and a mark in grey on it is a mark nobody sees.

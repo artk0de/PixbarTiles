@@ -170,23 +170,10 @@ private struct TilesGrid: View {
     /// this vocabulary at all.
     private var addCard: some View {
         Button(action: onAdd) {
-            PixelArt(
-                map: PanelGlyph.text("+ ADD TILE", in: PixelFont.standard, lit: "G"),
-                palette: PanelGlyph.inkPalette(0xFFFFFF),
-                pixel: 3
-            )
-            .frame(maxWidth: .infinity, minHeight: 64)
             // Green, and drawn in blocks: the one ADD on the surface, in the
             // colour every other surface in this app uses for "this one is
-            // up". A `LinearGradient` under a pixel wordmark would be the
-            // same mismatch an SF Symbol beside a pixel gear was.
-            .background(PixelGradient(tint: PanelGlyph.addTint, from: 0.95, to: 0.4, pixel: 4))
-            .background(
-                Rectangle().strokeBorder(
-                    Color.white, style: StrokeStyle(lineWidth: 2, dash: [4, 4])
-                )
-            )
-            .contentShape(Rectangle())
+            // up". The same face the store's cards wear on their "+ ADD".
+            PixelButtonFace(word: "+ ADD TILE")
         }
         .buttonStyle(.plain)
         .pointerStyle(.link)
@@ -350,20 +337,11 @@ private struct ClockTileCard: View {
                 }
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
         // The shelf's colour as a block gradient rather than a flat 14% wash:
         // the cards are the pixel surface's own rows, and a flat fill said
-        // nothing about which end of the card the eye should start at.
-        .background(
-            PixelGradient(tint: PanelGlyph.categoryTint(presentation.category))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(accent.opacity(0.35), lineWidth: 1)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        // nothing about which end of the card the eye should start at. The
+        // store's cards wear the same surface.
+        .tileCardSurface(presentation.category)
         .help(cardHelp)
         // No `onDrag` here, and its absence is the fix. The card carried one
         // whose payload had NO drop target anywhere in the app — the decoder

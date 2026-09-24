@@ -593,6 +593,10 @@ final class AppModel: ObservableObject {
     /// each other rather than one replacing the other.
     private var manualRuns: [Int: Task<Void, Never>] = [:]
     private var nextRunKey = 0
+    /// Tiles with a display-settings push on the wire, and those whose look
+    /// changed again while it was — see `pushDisplaySettings(_:)`.
+    private var displayPushes: Set<TileKey> = []
+    private var displayPushOwed: Set<TileKey> = []
     /// Whether each VPN is carrying, read fresh on every trigger.
     private let vpnPresence: VPNPresence
     /// How each watched VPN is read. Built over the presence reader, which is
@@ -1284,6 +1288,7 @@ final class AppModel: ObservableObject {
             return .refused(conflict.message)
         }
         let wasRunning = storedPolicy(of: key).map { !$0.isPaused } ?? false
+        let lookChanged = storedTile(key)?.config != config
         tiles.update(TileRecord(key: key, policy: TilePolicyRecord(policy))) {
             $0.policy = TilePolicyRecord(policy)
             $0.config = config
@@ -1291,8 +1296,46 @@ final class AppModel: ObservableObject {
 
         if wasRunning && policy.isPaused { retract(key) }
         if key.connectorId == VPNConnector.id { refreshLamps() } else { reschedule(key) }
+        if wasRunning && lookChanged { pushDisplaySettings(key) }
         reconcileTiles()
         return .saved
+    }
+
+    /// Puts a tile's new look on its clock now, rather than a whole interval
+    /// after the save — `reschedule` restarts the tile's sleep, so a face
+    /// changed in the settings window used to wait out one full interval from
+    /// the LAST change before the clock showed it.
+    ///
+    /// Only a change of the tile's config: the policy half (the interval, the
+    /// hours, the Focus rule) moves the schedule and not the face, and the
+    /// interval slider must not touch the clock. Only a tile that was running
+    /// and still runs at this hour and Focus — a tile switched back on arrives
+    /// through `reconcileTiles`, and a tile its rule holds keeps holding. Never
+    /// an audible tile, which a settings change must not make speak.
+    ///
+    /// Through `runAndReport`, the "Run now" path, so the run builds the
+    /// tile's connector from the record just stored. One push per tile at a
+    /// time: a change landing while one is on the wire is owed ONE more push,
+    /// made after it, so a slower run drawn from an older record can never be
+    /// the last page on the clock.
+    private func pushDisplaySettings(_ key: TileKey) {
+        guard key.connectorId != VPNConnector.id, !isAudible(key.connectorId),
+            policy(of: key)?.runs(in: currentFocus, atHour: currentHour) == true
+        else { return }
+        guard displayPushes.insert(key).inserted else {
+            displayPushOwed.insert(key)
+            return
+        }
+        let runKey = nextRunKey
+        nextRunKey += 1
+        manualRuns[runKey] = Task { [weak self] in
+            repeat {
+                self?.displayPushOwed.remove(key)
+                await self?.runAndReport(key)
+            } while !Task.isCancelled && self?.displayPushOwed.contains(key) == true
+            self?.displayPushes.remove(key)
+            self?.manualRuns[runKey] = nil
+        }
     }
 
     // MARK: - The z.ai key

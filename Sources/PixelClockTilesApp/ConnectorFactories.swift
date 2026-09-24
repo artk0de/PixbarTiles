@@ -22,16 +22,24 @@ struct ConnectorFactories {
     private let secrets: any SecretStoring
     private let weather: OpenMeteoSource
     private let anecdotes: any Connector
+    /// Where a clock's Claude tile reads its usage — one per clock, since the
+    /// status-line reporter keeps the last window it saw. The shipped one
+    /// reads Claude Code's own document; a test hands in a fixed reading.
+    private let claudeReporter: @Sendable () -> any ClaudeUsageReporting
 
     init(
         transport: any Transport, defaults: UserDefaults, secrets: any SecretStoring,
-        weather: OpenMeteoSource, anecdotes: any Connector
+        weather: OpenMeteoSource, anecdotes: any Connector,
+        claudeReporter: @escaping @Sendable () -> any ClaudeUsageReporting = {
+            StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document)
+        }
     ) {
         self.transport = transport
         self.defaults = defaults
         self.secrets = secrets
         self.weather = weather
         self.anecdotes = anecdotes
+        self.claudeReporter = claudeReporter
     }
 
     // A registry per clock, so each clock's weather reads its own tile's
@@ -63,7 +71,7 @@ struct ConnectorFactories {
         // reaches the next poll rather than the next launch — exactly the
         // way the weather's place does. The tiles take the SAME parameters:
         // what differs between them is how each reaches its account.
-        let reporter = StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document)
+        let reporter = claudeReporter()
         registry.register(
             factory: { tile in
                 ClaudeUsageConnector(

@@ -1677,8 +1677,9 @@ final class AppModel: ObservableObject {
 
     /// The slot that can show this tile's page: a tile that owns one, on a
     /// clock whose slot can switch.
+    /// Nil for a clock the poll has found unreachable, like every other send.
     private func pageShowing(for key: TileKey) -> (any ClockPageShowing)? {
-        guard ownsPage(key) else { return nil }
+        guard ownsPage(key), !clockIsUnreachable(key.clockId) else { return nil }
         return sessions[key.clockId] as? any ClockPageShowing
     }
 
@@ -1744,7 +1745,7 @@ final class AppModel: ObservableObject {
     }
 
     private func readTileOnScreen(clockId: UUID) async {
-        guard let clock = sessions[clockId] as? any ClockPageShowing else {
+        guard !clockIsUnreachable(clockId), let clock = sessions[clockId] as? any ClockPageShowing else {
             tileOnScreen[clockId] = nil
             return
         }
@@ -2273,15 +2274,25 @@ final class AppModel: ObservableObject {
 
     /// The session of the clock carrying the anecdote tile.
     private var anecdoteSession: (any ConnectorRunning)? {
+        anecdoteClock.flatMap { sessions[$0] }
+    }
+
+    /// The clock carrying the anecdote tile.
+    private var anecdoteClock: UUID? {
         guard let anecdotes else { return nil }
-        return tiles.all().first { $0.key.connectorId == anecdotes.id }
-            .flatMap { sessions[$0.key.clockId] }
+        return tiles.all().first { $0.key.connectorId == anecdotes.id }?.key.clockId
     }
 
     func replay(_ anecdote: PreparedAnecdote) {
         guard let anecdotes, anecdote.isPlayable else { return }
         guard let session = anecdoteSession else {
             replayResult = Self.noClockCarriesTheAnecdotes
+            return
+        }
+        // Nothing is sent to a clock the poll has found unreachable; the
+        // History is told why, in the panel's words for the same hold.
+        if let clockId = anecdoteClock, clockIsUnreachable(clockId) {
+            replayResult = Self.deviceUnreachable
             return
         }
         let output = anecdotes.output(for: anecdote)
@@ -2779,6 +2790,7 @@ final class AppModel: ObservableObject {
         }
         healthRevision += 1
         isDeviceOnline = answerForSelectedClock()
+        forgetFailuresOfUnreachableClocks()
         // The clock going down or coming back changes what is holding every
         // schedule, and this is what learns it. Without the refresh the panel
         // kept naming an hour right through an outage until the next beat — up
@@ -3363,7 +3375,19 @@ final class AppModel: ObservableObject {
     /// rather than shared, because the shared version would be a call that
     /// marks a second time — and a count that never returns to zero is a panel
     /// stuck on `running…` for good.
+    ///
+    /// Nothing is sent to a clock the poll has found unreachable, pressed or
+    /// not. The press used to be read as consent to try, and what it bought was
+    /// a red card with a transport's error dictionary in it about a clock the
+    /// panel already called offline. The press is still answered — the line
+    /// says why nothing happened — and the restock after it still runs, because
+    /// an outage of the clock is not an outage of the feed.
     private func runAndReport(_ key: TileKey) async {
+        if clockIsUnreachable(key.clockId) {
+            tileLastResults[key] = Self.deviceUnreachable
+            await restock(key)
+            return
+        }
         markUnderWay(key)
         reportOutcome(
             await session(for: key)?.runOnce(tile: runningTile(key))
@@ -3464,14 +3488,45 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// A failure against a clock that is not answering is the clock's news,
+    /// not the tile's: the panel's status line already says the clock is
+    /// away, and a red card beside it only repeats that in a transport's
+    /// dialect. So it is not kept — and a failure against a clock the poll
+    /// still believes in asks the clock at once, because the minute until the
+    /// next poll is a minute of red cards for an outage nobody has noticed yet.
     private func record(_ result: RunResult, for key: TileKey) {
         switch result {
         case .delivered, .skipped: tileLastFailures[key] = nil
         // Not evidence: the same rule `note` gives its own cancellation.
         case .cancelled: break
-        case let .failed(message): tileLastFailures[key] = message
+        case .failed where clockIsUnreachable(key.clockId):
+            tileLastFailures[key] = nil
+            tileLastResults[key] = Self.deviceUnreachable
+            return
+        case let .failed(message):
+            tileLastFailures[key] = message
+            recheckClocks()
         }
         tileLastResults[key] = Self.words(for: result)
+    }
+
+    /// Polls now, in the panel refresh's slot: one in flight is enough, and
+    /// teardown already waits on it.
+    private func recheckClocks() {
+        guard panelRefresh == nil else { return }
+        panelRefresh = Task { [weak self] in
+            await self?.poll()
+            self?.panelRefresh = nil
+        }
+    }
+
+    /// Drops what the tiles of an unreachable clock last failed with — the
+    /// failures that were recorded before the poll learned the clock had gone.
+    private func forgetFailuresOfUnreachableClocks() {
+        for key in tileLastFailures.keys where clockIsUnreachable(key.clockId) {
+            tileLastFailures[key] = nil
+            tileLastResults[key] = Self.deviceUnreachable
+        }
     }
 
     /// Writes down that this connector has just put something on the clock, for

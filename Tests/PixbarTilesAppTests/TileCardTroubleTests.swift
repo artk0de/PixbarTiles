@@ -24,12 +24,26 @@ private let starAuthors = GitHubDiagnosis(
     }
 
     /// A failed push: the red sign, the cause in words on the line, and the
-    /// raw error kept for the popover.
-    @Test func aFailureAloneIsTheRedSignWithTheRawErrorBehindIt() throws {
+    /// popover says what happened in a sentence. The transport's NSError
+    /// dictionary — domain, code, userInfo, task ids — is not a sentence, and
+    /// the popover used to be nothing but that (reported 2026-09-26).
+    @Test func aFailureAloneIsTheRedSignWithWhatHappenedInWords() throws {
         let trouble = try #require(TileCardTrouble.of(failure: timedOut, diagnosis: nil))
         #expect(trouble.sign == .blocking)
         #expect(trouble.line == "failing — timed out")
-        #expect(trouble.detail == "failing — timed out\n\n\(timedOut)")
+        #expect(trouble.detail == "failing — timed out\n\nNothing answered in time.")
+    }
+
+    /// An error with no known dialect keeps what the system said about it —
+    /// the description, not the dictionary around it.
+    @Test func anUnknownErrorShowsItsDescriptionRatherThanItsDictionary() throws {
+        let raw = "Error Domain=NSURLErrorDomain Code=-1202 \"The certificate for this server is invalid.\" "
+            + "UserInfo={NSErrorFailingURLKey=https://example.com/, _kCFStreamErrorCodeKey=-9813}"
+        let trouble = try #require(TileCardTrouble.of(failure: raw, diagnosis: nil))
+        #expect(trouble.line == "failing — The certificate for this server is invalid.")
+        #expect(trouble.detail.contains("The certificate for this server is invalid."))
+        #expect(!trouble.detail.contains("UserInfo"))
+        #expect(!trouble.detail.contains("Error Domain"))
     }
 
     /// The GitHub diagnosis is said even when the push failed too.
@@ -37,7 +51,7 @@ private let starAuthors = GitHubDiagnosis(
         let trouble = try #require(TileCardTrouble.of(failure: timedOut, diagnosis: noRepo))
         #expect(trouble.sign == .blocking)
         #expect(trouble.line == "failing — timed out\n\(noRepo.message)")
-        #expect(trouble.detail == "failing — timed out\n\n\(timedOut)\n\n\(noRepo.message)")
+        #expect(trouble.detail == "failing — timed out\n\nNothing answered in time.\n\n\(noRepo.message)")
     }
 
     /// Bad token, no repo, no data: the tile does not work — red.
@@ -61,7 +75,7 @@ private let starAuthors = GitHubDiagnosis(
     @Test func aFailedPushBesideAPartialRefusalIsRedAndListsBoth() throws {
         let trouble = try #require(TileCardTrouble.of(failure: timedOut, diagnosis: starAuthors))
         #expect(trouble.sign == .blocking)
-        #expect(trouble.detail == "failing — timed out\n\n\(timedOut)\n\n\(starAuthors.message)")
+        #expect(trouble.detail == "failing — timed out\n\nNothing answered in time.\n\n\(starAuthors.message)")
     }
 
     /// The sign is drawn in the panel's pixels: a triangle with the `!`

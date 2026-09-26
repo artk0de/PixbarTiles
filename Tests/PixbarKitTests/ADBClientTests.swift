@@ -140,3 +140,15 @@ extension Data {
         return found
     }
 }
+
+/// A port nothing listens on refuses the connect, and the connect says so.
+/// `NWConnection` reads a refusal as `.waiting` and retries on its own; the
+/// stream waited for `.ready` or `.failed` only, so a clock back on the
+/// network before its adbd was listening held the connect — and the app's
+/// whole reachability poll behind it — for good (2026-09-26).
+@Test(.timeLimit(.minutes(1)))
+func aRefusedConnectThrowsRatherThanWaiting() async {
+    await #expect(throws: (any Error).self) {
+        _ = try await NWADBStream.connect(host: "127.0.0.1", port: 9)
+    }
+}

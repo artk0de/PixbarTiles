@@ -84,3 +84,49 @@ private func health(
     #expect(gone.isOnline == false)
     #expect(gone.lastKnownBattery == nil)
 }
+
+/// An adb route that never answers — what a clock back on the network with
+/// adbd not listening yet looked like to the app: the connect waited forever.
+private actor SilentADB: ADB {
+    private(set) var asked = 0
+    func shell(_ command: String) async throws -> Data {
+        asked += 1
+        try await Task.sleep(for: .seconds(3_600))
+        return Data()
+    }
+    func push(_ bytes: Data, to path: String, mode: Int) async throws {
+        asked += 1
+        try await Task.sleep(for: .seconds(3_600))
+    }
+    func pull(_ path: String) async throws -> Data {
+        asked += 1
+        try await Task.sleep(for: .seconds(3_600))
+        return Data()
+    }
+}
+
+/// A battery read that hangs does not hang the poll. The poll is what every
+/// clock's reachability, the menu bar glyph and the battery line hang off, and
+/// a read that never came back froze all three after a clock returned
+/// (reported 2026-09-26). The clock answered `/getBase`, so it is online; the
+/// charge is simply not known yet — and the next poll does not start a second
+/// read on top of the one still hanging.
+@MainActor
+@Test(.timeLimit(.minutes(1)))
+func aBatteryReadThatNeverAnswersDoesNotHoldThePoll() async {
+    let adb = SilentADB()
+    let clock = UlanziClockHealth(
+        clockId: UUID(), name: "Desk",
+        device: UlanziDevice(host: "192.168.1.72", transport: StubIdentityTransport(appVer: "1.1.1")),
+        battery: UlanziBattery(adb: adb, helper: Data("ELF".utf8)),
+        batteryDeadline: .milliseconds(100)
+    )
+
+    _ = await clock.poll(at: Date(timeIntervalSince1970: 1_000))
+    #expect(clock.isOnline)
+    #expect(clock.lastKnownBattery == nil)
+
+    _ = await clock.poll(at: Date(timeIntervalSince1970: 1_060))
+    #expect(clock.isOnline)
+    #expect(await adb.asked == 1)
+}

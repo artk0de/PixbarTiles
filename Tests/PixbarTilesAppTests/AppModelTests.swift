@@ -1709,6 +1709,26 @@ private func historyAfterReaping(
     })
 }
 
+// A replay is a send like any other, and an unreachable clock gets none. The
+// History still answers the press, in the words the panel uses for the hold.
+@Test @MainActor func aReplaySendsNothingToAnUnreachableClock() async throws {
+    let host = SpyHost()
+    let here = try playableAnecdote(id: "here", text: "still here")
+    let subject = testModel(
+        host: host,
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        anecdotes: StubAnecdotes(history: [PlayedAnecdote(anecdote: here, playedAt: Date())])
+    )
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+    subject.replay(here)
+
+    #expect(await waitUntil { subject.replayResult == AppModel.deviceUnreachable })
+    #expect(host.calls.contains("deliver:still here") == false)
+    await subject.teardown()
+}
+
 // A replay puts the same held banner on the clock as a run, so the quit has to
 // wait for it too: a process killed during the release leaves the clock on that
 // banner. The task is the button's unless the model owns it, and teardown
@@ -1838,11 +1858,10 @@ private func historyAfterReaping(
 // grew through an outage would have a healthy connector retrying every thirty
 // seconds the moment the clock came back.
 //
-// Read off the shipped host's own count rather than a spy's, and with the
-// control in the same test: the manual run at the end goes through the same
-// wiring against the same unreachable clock and DOES move the count, so the
-// zero above is the schedule declining to run rather than a counter nothing
-// here can reach.
+// Read off the shipped host's own count rather than a spy's. The manual run at
+// the end is held by the same gate since nothing is sent to an unreachable
+// clock at all (2026-09-26): it is answered with the hold's words and leaves
+// the count where the feed left it.
 @Test @MainActor func anOfflinePauseDoesNotAdvanceTheFailureCounter() async {
     let schedule = Metronome()
     let wiring = modelOverRealHost(
@@ -1861,8 +1880,8 @@ private func historyAfterReaping(
 
     wiring.model.runNow("stub")
 
-    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed") == true })
-    #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 1)
+    #expect(await waitUntil { wiring.model.lastResults["stub"] == AppModel.deviceUnreachable })
+    #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 0)
     await wiring.model.teardown()
 }
 
@@ -1927,25 +1946,44 @@ private func historyAfterReaping(
     await subject.teardown()
 }
 
-// The press is the consent. A "Run now" while the clock is down runs, fails,
-// and says why — silence would read as the button being broken, which is
-// precisely the defect this branch already shipped once.
-//
-// Over the shipped host, because half the rule is that the REASON lands where
-// the user is looking, and a spy that answers `.delivered` has no reason to
-// give.
-@Test @MainActor func aManualRunStillRunsWhileTheDeviceIsOffline() async {
-    let schedule = Metronome()
-    let wiring = modelOverRealHost(
-        transport: StubTransport(failure: URLError(.cannotConnectToHost)), sleep: schedule.sleep
-    )
+// Nothing is sent to a clock the poll has found unreachable, and a "Run now"
+// is no exception. It used to be — the press was read as consent to try — and
+// what the user got for it was a red card with an NSError dictionary in its
+// popover about a clock the panel already said was offline (reported
+// 2026-09-26). The press is still answered, so the button does not read as
+// broken: the line says why nothing happened.
+@Test @MainActor func aManualRunSendsNothingToAnUnreachableClock() async {
+    let host = SpyHost()
+    let subject = testModel(host: host, transport: StubTransport(failure: URLError(.cannotConnectToHost)))
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+
+    subject.runNow("stub")
+
+    #expect(await waitUntil { subject.lastResults["stub"] == AppModel.deviceUnreachable })
+    #expect(host.calls.contains("run:stub") == false)
+    #expect(subject.lastFailures["stub"] == nil)
+    await subject.teardown()
+}
+
+// A send that fails because the clock has just gone away is not the tile's
+// failure. The failure asks the clock at once rather than waiting out the
+// minute, and once the answer is "unreachable" the card stops being red: the
+// clock's own status already says where the trouble is.
+@Test @MainActor func aFailureFromAClockThatHasGoneAwayIsNotLeftOnTheTile() async {
+    let clock = SwitchableTransport(answering: true)
+    let wiring = modelOverRealHost(transport: clock)
 
     wiring.model.start()
-    #expect(await waitUntil { isOffline(wiring.model) })
+    #expect(await waitUntil { wiring.model.isDeviceOnline })
 
+    clock.nowFails()
     wiring.model.runNow("stub")
 
-    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed") == true })
+    #expect(await waitUntil { isOffline(wiring.model) })
+    #expect(await waitUntil { wiring.model.lastFailures["stub"] == nil })
+    #expect(wiring.model.lastResults["stub"] == AppModel.deviceUnreachable)
     await wiring.model.teardown()
 }
 
@@ -2102,7 +2140,8 @@ func isDue(_ next: NextRun?) -> Bool {
 // because the clock is unplugged.
 //
 // The manual run at the end is the control: the same wiring, the same
-// unreachable clock, and it DOES move the count.
+// unreachable clock, and it DOES move the count. Its failure is not left on
+// the line: the recheck it triggers finds the clock gone, and the line says so.
 @Test @MainActor func aReplayStillDoesNotMoveTheFailureCounter() async throws {
     let here = try playableAnecdote(id: "here", text: "still here")
     let wiring = modelOverRealHost(
@@ -2117,7 +2156,7 @@ func isDue(_ next: NextRun?) -> Bool {
 
     wiring.model.runNow("stub")
 
-    #expect(await waitUntil { wiring.model.lastResults["stub"]?.hasPrefix("failed") == true })
+    #expect(await waitUntil { wiring.model.lastResults["stub"] == AppModel.deviceUnreachable })
     #expect(await wiring.host.consecutiveFailures(connectorId: "stub") == 1)
     await wiring.model.teardown()
 }

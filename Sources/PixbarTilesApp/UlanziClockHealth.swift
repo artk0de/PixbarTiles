@@ -61,14 +61,21 @@ final class UlanziClockHealth: @unchecked Sendable {
     /// kept so a test can.
     private(set) var watching: Task<Void, Never>?
 
+    /// How long a poll waits for the battery before answering without it.
+    private let batteryDeadline: Duration
+    /// The battery read in flight, until it comes back — however late.
+    private var batteryRead: Task<UlanziBatteryPoll, Never>?
+
     init(
         clockId: UUID, name: String, device: UlanziDevice, battery: UlanziBattery?,
+        batteryDeadline: Duration = .seconds(20),
         watcher: @escaping @MainActor () -> (any UlanziClockWatching)? = { nil }
     ) {
         self.clockId = clockId
         self.name = name
         self.device = device
         self.battery = battery
+        self.batteryDeadline = batteryDeadline
         self.watcher = watcher
     }
 
@@ -101,8 +108,7 @@ final class UlanziClockHealth: @unchecked Sendable {
             let identity = try await device.identity()
             answering = .answering
             var restarted = false
-            if let battery {
-                let read = await battery.poll(appVersion: identity.appVersion, at: now)
+            if let battery, let read = await readBattery(battery, appVersion: identity.appVersion, at: now) {
                 // A new zkgui process is a firmware UI that restarted without
                 // the clock ever going unreachable — its pages are gone too.
                 restarted = read.zkguiRestarted
@@ -116,6 +122,48 @@ final class UlanziClockHealth: @unchecked Sendable {
             answering = .unreachable
         }
         return nil
+    }
+
+    /// The battery, if it answers within the deadline; nil when it does not,
+    /// or when the last read has not come back yet.
+    ///
+    /// The model's poll awaits this one, and every clock's reachability, the
+    /// menu bar glyph and the battery line hang off that poll — so a read
+    /// that never returns must not be awaited. One did: a clock back on the
+    /// network before its adbd was listening left the adb connect waiting
+    /// for good, and the whole poll with it (2026-09-26). A late read is left
+    /// to finish on its own, and no second one is started on top of it.
+    private func readBattery(
+        _ battery: UlanziBattery, appVersion: String?, at now: Date
+    ) async -> UlanziBatteryPoll? {
+        guard batteryRead == nil else { return nil }
+        let read = Task { @MainActor [weak self] in
+            let answer = await battery.poll(appVersion: appVersion, at: now)
+            self?.batteryRead = nil
+            return answer
+        }
+        batteryRead = read
+        return await Self.value(of: read, within: batteryDeadline)
+    }
+
+    /// The task's value, or nil once the deadline passes first.
+    private static func value<T: Sendable>(of task: Task<T, Never>, within deadline: Duration) async -> T? {
+        await withCheckedContinuation { (answer: CheckedContinuation<T?, Never>) in
+            var answered = false
+            let timer = Task { @MainActor in
+                try? await Task.sleep(for: deadline)
+                guard !answered else { return }
+                answered = true
+                answer.resume(returning: nil)
+            }
+            Task { @MainActor in
+                let value = await task.value
+                guard !answered else { return }
+                answered = true
+                timer.cancel()
+                answer.resume(returning: value)
+            }
+        }
     }
 
     private func tellSession(returned: Bool) {

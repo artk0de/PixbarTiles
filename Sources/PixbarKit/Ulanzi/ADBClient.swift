@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import os
 
 /// The byte-level seam `ADBClient` frames over. A fake in tests, a real TCP
 /// socket (`NWADBStream`) in the app — so the wire framing is a pure function
@@ -303,14 +304,31 @@ public actor NWADBStream: ADBStream {
         )
     }
 
+    /// Connects, or throws — never waits on a refusal.
+    ///
+    /// `NWConnection` reads a refused or unroutable connect as `.waiting` and
+    /// retries by itself, indefinitely; waiting for `.failed` alone held the
+    /// caller for good whenever the clock answered HTTP before its adbd was
+    /// listening (2026-09-26). A connect that has to wait is a failed one
+    /// here: the next poll is the retry.
     private func start() async throws {
+        let connection = connection
+        let settled = OSAllocatedUnfairLock(initialState: false)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             connection.stateUpdateHandler = { state in
+                let outcome: Result<Void, Error>?
                 switch state {
-                case .ready: cont.resume()
-                case .failed(let error): cont.resume(throwing: error)
-                default: break
+                case .ready: outcome = .success(())
+                case .failed(let error), .waiting(let error): outcome = .failure(error)
+                case .cancelled: outcome = .failure(ADBError.remoteClosed)
+                default: outcome = nil
                 }
+                guard let outcome, settled.withLock({ done in
+                    defer { done = true }
+                    return !done
+                }) else { return }
+                if case .failure = outcome { connection.cancel() }
+                cont.resume(with: outcome)
             }
             connection.start(queue: .global())
         }

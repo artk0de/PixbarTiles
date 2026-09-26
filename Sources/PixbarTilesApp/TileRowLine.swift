@@ -73,7 +73,35 @@ struct TileRowLine: Equatable {
             || lower.contains("connection refused") {
             return "could not reach the server"
         }
-        return String(raw.prefix(60))
+        return String(description(of: raw).prefix(60))
+    }
+
+    /// What went wrong, said as a sentence — the popover's text under the
+    /// words. Each dialect `cause` names gets one; anything else is what the
+    /// system said about it.
+    static func sentence(from raw: String) -> String {
+        switch cause(from: raw) {
+        case "timed out": "Nothing answered in time."
+        case "offline": "This Mac is not connected to a network."
+        case "connection lost": "The connection dropped before the page was sent."
+        case "server not found": "The address did not resolve to anything."
+        case "could not reach the server": "Nothing at that address accepted the connection."
+        default: description(of: raw)
+        }
+    }
+
+    /// An NSError's own description, without the dictionary it is printed in.
+    ///
+    /// `String(describing:)` of an NSError is `Error Domain=… Code=…
+    /// "description" UserInfo={…}` — the quoted part is the sentence, the rest
+    /// is for a debugger. A failure in any other shape is already its message.
+    static func description(of raw: String) -> String {
+        guard raw.hasPrefix("Error Domain="),
+              let open = raw.firstIndex(of: "\""),
+              let close = raw[raw.index(after: open)...].firstIndex(of: "\"")
+        else { return raw }
+        let quoted = raw[raw.index(after: open)..<close]
+        return quoted.isEmpty ? raw : String(quoted)
     }
 }
 
@@ -103,14 +131,15 @@ struct TileCardTrouble: Equatable {
 
     let sign: Sign
     let line: String
-    /// The popover's text: the raw error behind the words, and the diagnosis.
+    /// The popover's text: the words, what happened as a sentence, and the
+    /// diagnosis.
     let detail: String
 
     static func of(failure: String?, diagnosis: GitHubDiagnosis?) -> TileCardTrouble? {
         if let failure {
             let words = TileRowLine.failureWords(failure)
             let said = [words, diagnosis?.message].compactMap(\.self)
-            let detail = [words, failure, diagnosis?.message].compactMap(\.self)
+            let detail = [words, TileRowLine.sentence(from: failure), diagnosis?.message].compactMap(\.self)
             return TileCardTrouble(
                 sign: .blocking, line: said.joined(separator: "\n"), detail: detail.joined(separator: "\n\n")
             )

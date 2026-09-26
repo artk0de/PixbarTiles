@@ -412,3 +412,28 @@ private func model(_ clock: SpyPageClock, tiles: [TileRecord]) -> AppModel {
     #expect(clock.shown == ["weather", "claude"])
     await subject.teardown()
 }
+
+// A clock the poll has found unreachable is not asked anything — not to switch
+// pages, not which page is up. The eye click would only wait out the
+// transport's timeout and log a failure about a clock the panel already
+// called offline.
+@Test @MainActor func anUnreachableClockIsNeitherSwitchedNorAsked() async {
+    let clock = SpyPageClock(pages: ["weather": "weather"], onScreen: "Time")
+    let weather = tile("weather")
+    let subject = testModel(
+        connectors: [StubConnector(id: "weather", displayName: "Weather")],
+        transport: StubTransport(failure: URLError(.cannotConnectToHost)),
+        clocks: [desk], tiles: [weather], sessions: [desk.id: clock]
+    )
+
+    subject.start()
+    #expect(await waitUntil { isOffline(subject) })
+    subject.showOnClock(weather.key)
+    subject.refreshTileOnScreen(clockId: desk.id)
+    await subject.pageSwitchesSettled()
+
+    #expect(clock.shown.isEmpty)
+    #expect(clock.looked.isEmpty)
+    #expect(subject.tileOnScreen[desk.id] == nil)
+    await subject.teardown()
+}

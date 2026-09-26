@@ -131,10 +131,16 @@ private func discharge(
 // roughly one to two points of charge across the whole logged run, so both ends
 // settle inside the same hour or so. The prediction was wrong and the gate is
 // unchanged by it, which is the useful thing to record.
+//
+// The top of the curve is walked at this clock's own pace: a full charge at
+// rest is raw 655 and the log reached 631 three and three quarter hours later,
+// about eight points an hour. At half that pace the top spends under three raw
+// steps an hour, which the direction rule — in raw steps, by design — reads as
+// a clock sitting still, and nothing is ever said.
 @Test func nothingIsSaidUntilTheFallOutgrowsTheNoise() {
     var atKnee = BatteryTrajectory()
     var kneeOpenedAfter: TimeInterval?
-    for (index, (reading, at)) in discharge(from: 92, to: 82, overHours: 3).enumerated() {
+    for (index, (reading, at)) in discharge(from: 92, to: 72, overHours: 3).enumerated() {
         _ = atKnee.record(reading, at: at)
         if atKnee.reading?.timeRemaining != nil, kneeOpenedAfter == nil {
             kneeOpenedAfter = Double(index) * 60
@@ -178,16 +184,19 @@ private func discharge(
         let charge = 60 + Double(step) / 60 * 30
         _ = subject.record(stats(raw: raw(atCharge: charge)), at: start.addingTimeInterval(Double(step) * 60))
     }
-    // …then five hours of discharge from it.
+    // …then two and a half hours of discharge from it, at this clock's own pace
+    // across the top of its curve — eight points an hour, raw 655 to 631 in
+    // three and three quarter hours. Half that pace spends under three raw
+    // steps an hour up here, which the direction rule reads as standing still.
     var last: TimeInterval?
-    for (reading, at) in discharge(from: 90, to: 70, overHours: 5) {
+    for (reading, at) in discharge(from: 90, to: 70, overHours: 2.5) {
         _ = subject.record(reading, at: at.addingTimeInterval(3_700))
         last = subject.reading?.timeRemaining
     }
 
     let left = try! #require(last)
-    // Seventy points left at four points an hour is about seventeen hours. A
-    // fit dragged through the charging hour would answer several days.
+    // Seventy points left at eight points an hour is about nine hours. A fit
+    // dragged through the charging hour would answer several days.
     #expect(left < 40 * 3_600, "answered \(left / 3_600)h — the charge is still in the fit")
     #expect(left > 6 * 3_600)
 }

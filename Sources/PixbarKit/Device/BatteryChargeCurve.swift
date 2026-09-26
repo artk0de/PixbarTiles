@@ -36,7 +36,15 @@ public enum BatteryChargeCurve {
     /// first. Extrapolating to it is what made every estimate above this
     /// generous, and it is why `bat` cannot be reasoned from.
     public static let rawAtEmpty = 564
-    public static let rawAtFull = 665
+    /// Where a full cell sits at rest, which is not where it sits on the charger.
+    ///
+    /// 655, measured. Under charge the reading climbs to 666–670 — the
+    /// charger's voltage on top of the cell's. The charge on the desk
+    /// terminated at 02:57 on 2026-09-25, the charger's LED went green, and
+    /// over the next seventy minutes the reading relaxed to 655–656 and held.
+    /// The firmware's 665 is a charging voltage; a finished charge read 94%
+    /// against it.
+    public static let rawAtFull = 655
 
     /// Voltage against charge, as `(raw, percent)` in ascending order.
     ///
@@ -53,9 +61,10 @@ public enum BatteryChargeCurve {
     /// the clock died forty-seven.
     ///
     /// The top third is the honest weakness. Logging began three and three
-    /// quarter hours into the run, at raw 631, so everything above that is a
-    /// straight line drawn to a full cell — no measurement stands behind it,
-    /// and a charge watched from full would replace those two entries.
+    /// quarter hours into the run, at raw 631, so everything between that and
+    /// full is a straight line. Both of its ends are measured now — full is
+    /// where a finished charge came to rest (see `rawAtFull`) — but the shape
+    /// between them is not, and a discharge watched from full would replace it.
     static let nodes: [(raw: Int, percent: Double)] = [
         (564, 0),    // the reading it went silent on
         (572, 3),
@@ -67,7 +76,7 @@ public enum BatteryChargeCurve {
         (620, 51),
         (628, 61),
         (631, 65),   // the first reading of the log
-        (665, 100),  // assumed, not measured — see above
+        (655, 100),  // a finished charge at rest — see `rawAtFull`
     ]
 
     /// The charge left at this reading, nought to a hundred.

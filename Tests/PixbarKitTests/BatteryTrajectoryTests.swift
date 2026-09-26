@@ -171,7 +171,7 @@ private func settleOnDischarge(
 @Test func oneReadingIsNotATrend() {
     var subject = BatteryTrajectory()
 
-    subject.record(stats(percent: 50, raw: 570), at: at(0))
+    subject.record(stats(percent: 50, raw: raw(at: 50)), at: at(0))
 
     // The percentage is known and the direction is not. Showing a verdict here
     // would be a guess dressed as a reading.
@@ -183,8 +183,8 @@ private func settleOnDischarge(
 @Test func theReadingCarriesTheLatestPercentage() {
     var subject = BatteryTrajectory()
 
-    subject.record(stats(percent: 50, raw: 570), at: at(0))
-    subject.record(stats(percent: 48, raw: 566), at: at(60))
+    subject.record(stats(percent: 50, raw: raw(at: 50)), at: at(0))
+    subject.record(stats(percent: 48, raw: raw(at: 48)), at: at(60))
 
     #expect(subject.reading?.percent == 48)
 }
@@ -370,7 +370,71 @@ private let dischargingOnBattery = [
     #expect(subject.reading?.timeRemaining == nil)
 }
 
+// A finished charge still on the charger, met by a fresh launch.
+//
+// Measured 2026-09-25: after the charge ended the reading sat at 660–661 for
+// hours, the charger topping it up. A launch that saw none of the climb had no
+// rise to call and no fall either, so it held `.unknown` — an hourglass and
+// grey cells under 100% for as long as the clock stayed plugged in.
+@Test func aFullCellRestingOnTheChargerIsFullFromAFreshLaunch() {
+    var subject = BatteryTrajectory()
+    for (minute, reading) in [660, 661, 660, 661, 661, 660].enumerated() {
+        subject.record(stats(percent: 97, raw: reading), at: at(Double(minute) * 60))
+    }
+
+    #expect(subject.reading?.direction == .charging)
+    #expect(subject.reading?.shownPercent == 100)
+}
+
+/// The same night, the seventy minutes after the charge terminated at 02:57:
+/// one reading a minute as the cell relaxed off the charger's voltage onto its
+/// own. Real readings, from the stored battery history.
+private let relaxingAfterTheCharge = [
+    667, 662, 661, 660, 660, 660, 660, 659, 659, 660, 659, 659, 659, 659, 659,
+    659, 658, 658, 658, 658, 658, 658, 658, 658, 657, 657, 657, 657, 657, 657,
+    657, 657, 656, 656, 657, 657, 656, 656, 657, 656, 656, 657, 656, 657, 656,
+    656, 656, 656, 656, 656, 656, 656, 656, 656, 656, 656, 656, 656, 656, 656,
+    656, 656, 656, 656, 656, 656, 656, 656, 656, 655,
+]
+
+// Twelve raw steps down in seventy minutes, which is four times the fall the
+// direction rule needs — and not a discharge: the clock never left the charger.
+// Anything at or above a full cell's rest is a full cell, whichever way the
+// last hour leaned.
+@Test func theRelaxationAfterAChargeEndsIsNeverReadAsADischarge() {
+    var subject = BatteryTrajectory()
+    var verdicts: [BatteryDirection] = []
+
+    for (minute, reading) in relaxingAfterTheCharge.enumerated() {
+        subject.record(stats(percent: percent(at: reading), raw: reading), at: at(Double(minute) * 60))
+        verdicts.append(subject.reading?.direction ?? .unknown)
+    }
+
+    #expect(!verdicts.contains(.discharging))
+    #expect(subject.reading?.direction == .charging)
+    #expect(subject.reading?.shownPercent == 100)
+}
+
 // MARK: - What the panel is given to print
+
+// The percentage is the MEASURED charge, never the firmware's map.
+//
+// Two readings off this clock, both reported with the firmware's own figure
+// beside them. A finished charge at rest reads 655 and the firmware called it
+// 94 — the panel said 94% under a charger showing green. And 612, which the
+// firmware called 72, is a cell with eleven of its twelve and a half hours
+// already spent: the colour the panel drew from that 72 was the calm one.
+@Test func thePercentageIsTheMeasuredChargeRatherThanTheFirmwaresMap() {
+    var full = BatteryTrajectory()
+    full.record(stats(percent: 94, raw: 655), at: at(0))
+    #expect(full.reading?.percent == 100)
+    #expect(full.reading?.shownPercent == 100)
+
+    var spent = BatteryTrajectory()
+    spent.record(stats(percent: 72, raw: 612), at: at(0))
+    #expect(spent.reading?.percent == 44)
+    #expect(spent.reading?.shownPercent == 44)
+}
 
 @Test func aChargingFlickerDoesNotPullTheShownFigureDown() {
     var subject = BatteryTrajectory()
@@ -379,7 +443,7 @@ private let dischargingOnBattery = [
 
     // 100 to 99 with nothing changing is what the measured window does. While
     // charging, the shown figure never goes down.
-    subject.record(stats(percent: 99, raw: 664), at: at(Double(last + 1) * 60))
+    subject.record(stats(percent: 99, raw: raw(at: 99)), at: at(Double(last + 1) * 60))
 
     #expect(subject.reading?.shownPercent == 100)
     // And the real figure is untouched underneath it: the warnings, the colour
@@ -389,16 +453,16 @@ private let dischargingOnBattery = [
 
 @Test func aDischargingFlickerDoesNotPushTheShownFigureUp() {
     var subject = BatteryTrajectory()
-    let last = settleOnDischarge(&subject, at: 50, raw: 566)
+    let last = settleOnDischarge(&subject, at: 50, raw: raw(at: 50))
     #expect(subject.reading?.direction == .discharging)
 
-    subject.record(stats(percent: 49, raw: 565), at: at(Double(last + 1) * 60))
+    subject.record(stats(percent: 49, raw: raw(at: 49)), at: at(Double(last + 1) * 60))
     #expect(subject.reading?.shownPercent == 49)
 
     // Back up a percent on the same wander. A discharge does not go up, and a
     // figure that climbed and fell back would read as a clock nobody can
     // explain.
-    subject.record(stats(percent: 50, raw: 566), at: at(Double(last + 2) * 60))
+    subject.record(stats(percent: 50, raw: raw(at: 50)), at: at(Double(last + 2) * 60))
 
     #expect(subject.reading?.direction == .discharging)
     #expect(subject.reading?.shownPercent == 49)
@@ -431,7 +495,8 @@ private let dischargingOnBattery = [
 
 @Test func goingBackOnChargeReleasesItInTheOtherDirectionToo() {
     var subject = BatteryTrajectory()
-    let plugged = settleOnDischarge(&subject, at: 34, raw: 540)
+    let bottom = raw(at: 34)
+    let plugged = settleOnDischarge(&subject, at: 34, raw: bottom)
     #expect(subject.reading?.direction == .discharging)
     #expect(subject.reading?.shownPercent == 34)
 
@@ -439,7 +504,7 @@ private let dischargingOnBattery = [
     // hold a clock at the figure it bottomed out at for the whole of the charge
     // that follows.
     for minute in 1...12 {
-        let reading = 540 + 2 * minute
+        let reading = bottom + 2 * minute
         subject.record(
             stats(percent: percent(at: reading), raw: reading),
             at: at(Double(plugged + minute) * 60)
@@ -455,12 +520,14 @@ private let dischargingOnBattery = [
 
 @Test func aRebootDiscardsTheHistory() {
     var subject = BatteryTrajectory()
+    // Ends on the raw reading whose charge is 50, one step past the series.
+    let top = raw(at: 50) + 26
     // Twenty-five minutes of it, because a fall is not believed off less than
     // twenty. Faster than this clock discharges, which only makes the point
     // sharper: even a discharge ten times the measured one needs the span.
     for minute in 0...25 {
         subject.record(
-            stats(percent: 50, raw: 570 - minute, uptime: 9_000 + minute * 60),
+            stats(percent: 50, raw: top - minute, uptime: 9_000 + minute * 60),
             at: at(Double(minute) * 60)
         )
     }
@@ -470,7 +537,7 @@ private let dischargingOnBattery = [
     // would still say discharging — which is the point. A reboot is exactly
     // when somebody unplugged the clock and plugged it in again, and the
     // readings either side of it describe two different situations.
-    subject.record(stats(percent: 50, raw: 544, uptime: 5), at: at(26 * 60))
+    subject.record(stats(percent: 50, raw: top - 26, uptime: 5), at: at(26 * 60))
 
     #expect(subject.reading?.direction == .unknown)
     #expect(subject.reading?.percent == 50)
@@ -808,9 +875,11 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
 
 @Test func aRebootPartWayThroughTheWindowTakesTheEstimateWithTheHistory() {
     var subject = BatteryTrajectory()
+    // Ends on the raw reading whose charge is 50, one step past the series.
+    let top = raw(at: 50) + 31
     for minute in 0...30 {
         subject.record(
-            stats(percent: 50, raw: 600 - minute, uptime: 9_000 + minute * 60),
+            stats(percent: 50, raw: top - minute, uptime: 9_000 + minute * 60),
             at: at(Double(minute) * 60)
         )
     }
@@ -819,7 +888,7 @@ private func lastLaunchWatchedADischarge() throws -> BatteryHistory {
     // Somebody unplugged the clock and plugged it in again. Half an hour of
     // fitted history is exactly the thing that would carry the situation before
     // the reboot across into the one after it.
-    subject.record(stats(percent: 50, raw: 569, uptime: 5), at: at(31 * 60))
+    subject.record(stats(percent: 50, raw: top - 31, uptime: 5), at: at(31 * 60))
 
     #expect(subject.reading?.direction == .unknown)
     #expect(subject.reading?.timeRemaining == nil)
@@ -1183,12 +1252,12 @@ private func fillUpThroughFourPercent(_ subject: inout BatteryTrajectory) -> [Ba
     #expect(subject.reading == nil)
     #expect(subject.history == nil)
 
-    subject.record(stats(percent: 98, raw: 662, uptime: 42), at: at(42))
-    subject.record(stats(percent: 97, raw: 661, uptime: 50), at: at(50))
+    subject.record(stats(percent: 98, raw: raw(at: 98), uptime: 42), at: at(42))
+    subject.record(stats(percent: 97, raw: raw(at: 97), uptime: 50), at: at(50))
 
     #expect(subject.reading?.percent == 97)
     #expect(subject.reading?.direction == .unknown)
-    #expect(subject.history?.samples.map(\.raw) == [662, 661])
+    #expect(subject.history?.samples.map(\.raw) == [raw(at: 98), raw(at: 97)])
 }
 
 @Test func theBootZeroDoesNotReadAsAChargeAgainstTheReadingsThatFollowIt() {
@@ -1202,10 +1271,14 @@ private func fillUpThroughFourPercent(_ subject: inout BatteryTrajectory) -> [Ba
     // steps of rise against a band of three swamps the four steps an hour of
     // this clock's discharge spends, so the fall never clears the band and a
     // draining clock reads as charging for the whole of the fall window.
+    //
+    // Started just under a full cell's rest: at or above it the reading is a
+    // full clock on the charger, whatever it does next.
+    let start = BatteryChargeCurve.rawAtFull - 1
     for minute in 0...30 {
         subject.record(
             stats(
-                percent: percent(at: 662), raw: 662 - (4 * minute) / 30,
+                percent: percent(at: start), raw: start - (4 * minute) / 30,
                 uptime: 42 + minute * 60
             ),
             at: at(42 + Double(minute) * 60)
@@ -1234,7 +1307,7 @@ private func fillUpThroughFourPercent(_ subject: inout BatteryTrajectory) -> [Ba
 
 @Test func aZeroArrivingMidSeriesLeavesTheTrendAndTheReadingsWhereTheyWere() {
     var subject = BatteryTrajectory()
-    let last = settleOnDischarge(&subject, at: 50, raw: 566)
+    let last = settleOnDischarge(&subject, at: 50, raw: raw(at: 50))
     #expect(subject.reading?.direction == .discharging)
     let established = subject.history?.samples
 

@@ -377,8 +377,14 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
 }
 
 @Test @MainActor func aRefreshFeedsTheReadingIntoTheTrajectory() async {
+    // Ends on the raw reading whose MEASURED charge is 50 — the figure the
+    // monitor reports — so the walk starts twenty-five steps above it.
+    let fifty = (BatteryChargeCurve.rawAtEmpty...BatteryChargeCurve.rawAtFull).min {
+        abs(BatteryChargeCurve.percent(atRaw: $0) - 50) < abs(BatteryChargeCurve.percent(atRaw: $1) - 50)
+    }!
+    let top = fifty + 25
     let transport = RecordingTransport()
-    transport.body = trendJSON(bat: 50, raw: 570)
+    transport.body = trendJSON(bat: 50, raw: top)
     let monitor = DeviceMonitor(device: AwtrixDevice(host: "10.0.0.5", transport: transport))
 
     await monitor.refresh(at: origin)
@@ -390,7 +396,7 @@ private let origin = Date(timeIntervalSince1970: 1_700_000_000)
     // fitted across an hour now, so nothing shorter than twenty minutes of it
     // says anything either.
     for minute in 1...25 {
-        transport.body = trendJSON(bat: 50, raw: 570 - minute)
+        transport.body = trendJSON(bat: 50, raw: top - minute)
         await monitor.refresh(at: origin.addingTimeInterval(Double(minute) * 60))
     }
 

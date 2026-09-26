@@ -417,20 +417,26 @@ public struct BatteryTrajectory: Sendable {
             direction = Self.direction(of: samples, holding: direction)
             if direction == .charging { lastSeenRising = now }
         }
-        ratchet(to: stats.bat, wasGoing: before)
-        // On the MEASURED charge, never on `bat`.
-        //
-        // The firmware's percentage cannot reach these lines. Logged to the
-        // moment this clock went flat, it read 47 — so 20, 10, 5 and 1 all sat
-        // below anything it would ever report, and every low-battery warning
-        // this app has was unreachable on real hardware. The tests passed
-        // throughout, because their fixtures were built through the same
-        // firmware map they were asserting against.
-        //
-        // A reading with no raw figure keeps `bat`, which is all such a
-        // firmware offers: a warning on a suspect scale beats none at all.
-        let charge = stats.batRaw.map { Int(BatteryChargeCurve.percent(atRaw: $0).rounded()) }
-        return crossing(at: charge ?? stats.bat)
+        let charge = Self.charge(of: stats)
+        ratchet(to: charge, wasGoing: before)
+        return crossing(at: charge)
+    }
+
+    /// The charge a reading describes: on the MEASURED curve, never on `bat`.
+    ///
+    /// The firmware's percentage is a straight line across a charging voltage
+    /// at the top and a voltage this cell never reaches at the bottom. Logged to
+    /// the moment this clock went flat, it read 47 — so 20, 10, 5 and 1 all sat
+    /// below anything it would ever report, and every low-battery warning this
+    /// app had was unreachable on real hardware. At the other end, a finished
+    /// charge at rest read 94. One figure, read by the warnings, the colour, the
+    /// glyph and the printed number alike: two scales on one panel is a colour
+    /// that disagrees with the warning beside it.
+    ///
+    /// A reading with no raw figure keeps `bat`, which is all such a firmware
+    /// offers: a figure on a suspect scale beats none at all.
+    static func charge(of stats: DeviceStats) -> Int {
+        stats.batRaw.map { Int(BatteryChargeCurve.percent(atRaw: $0).rounded()) } ?? stats.bat
     }
 
     /// Where the battery is, which way it is going, and how long that leaves.
@@ -440,20 +446,21 @@ public struct BatteryTrajectory: Sendable {
     /// does not say.
     public var reading: BatteryReading? {
         guard let latest else { return nil }
+        let charge = Self.charge(of: latest)
         return BatteryReading(
-            percent: latest.bat, shownPercent: shown ?? latest.bat, direction: direction,
+            percent: charge, shownPercent: shown ?? charge, direction: direction,
             timeRemaining: timeRemaining
         )
     }
 
     /// Holds the DISPLAYED percentage to the direction of travel.
     ///
-    /// `bat` flickers on the same wander the raw figure carries — the clock on
-    /// this desk reported 100, 99, 100 with nothing changing behind it — and a
-    /// menu bar figure that walks up and down on its own reads as the app being
-    /// wrong rather than as the battery being still.
+    /// The charge flickers on the same wander the raw figure carries — the
+    /// clock on this desk reported 100, 99, 100 with nothing changing behind
+    /// it — and a menu bar figure that walks up and down on its own reads as the
+    /// app being wrong rather than as the battery being still.
     ///
-    /// The displayed one only. `percent` stays whatever the clock said, and the
+    /// The displayed one only. `percent` stays the charge as read, and the
     /// warnings, the colour, the glyph and the estimate all read that: a
     /// threshold fired off a ratcheted figure would miss a battery falling
     /// through 20% while the ratchet held it above.
@@ -518,13 +525,19 @@ public struct BatteryTrajectory: Sendable {
         else { return previous }
         if rise > Double(steadyBand) { return .charging }
 
-        // Pinned at the top of the scale, which is a charger holding it there:
-        // a cell resting above 4.2 V is being held above it by something. Asked
-        // BEFORE the fall window, and needing only the rise window's two
+        // At or above a full cell's rest, which is a full cell on the charger.
+        // Asked BEFORE the fall window, and needing only the rise window's two
         // minutes, because sitting still at the top is not a trend anybody has
         // to fit — waiting twenty minutes to notice it would blank the glyph
         // for the state the clock spends most of its life in.
-        if samples.last.map({ $0.raw >= BatteryChargeCurve.rawAtFull - 2 }) == true {
+        //
+        // From the full mark, not from the charger's own voltage (666–670), and
+        // measured to need it: a finished charge sits at 660–661 for hours,
+        // which a fresh launch otherwise held as `.unknown` forever, and the
+        // seventy minutes after the charge ends fall twelve steps to 655, which
+        // the fall rule read as a discharge. The cost is a full clock just
+        // unplugged reading full until it drops below 655 — which it is.
+        if samples.last.map({ $0.raw >= BatteryChargeCurve.rawAtFull }) == true {
             return .charging
         }
 

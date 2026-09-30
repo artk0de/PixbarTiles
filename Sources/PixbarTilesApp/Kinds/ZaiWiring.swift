@@ -1,5 +1,6 @@
 import Foundation
 import PixbarKit
+import SwiftUI
 
 struct ZaiWiring: TileKindWiring {
     typealias Kind = ZaiKind
@@ -30,5 +31,17 @@ struct ZaiWiring: TileKindWiring {
     /// Carries no key: no clock produces through it.
     func namingInstance(transport: any Transport) -> (any Connector)? {
         ZaiUsageConnector(source: ZaiUsageAPI(transport: transport, key: { nil }))
+    }
+
+    func block(_ context: TileBlockContext<ZaiTileConfig>) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ZaiTileBlock(
+                hasKey: context.model.hasZaiKey(for: context.key),
+                outcome: context.model.lastZaiKeyOutcome,
+                onSaveKey: { context.model.saveZaiKey($0, for: context.key) }
+            )
+            context.refresh("Refresh every")
+            CodeUsageParametersBlock(settings: context.settings)
+        }
     }
 }

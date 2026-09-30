@@ -348,6 +348,23 @@ final class TileSettingsModel {
         return outcome
     }
 
+    /// One kind's parameters saved into the open tile's record, keeping its
+    /// policy; refused for a tile of another kind. The preview follows.
+    @discardableResult
+    func setParameters<Kind: TileKind>(_ value: Kind.Parameters, kind: Kind.Type) -> Bool {
+        guard let key, key.connectorId == Kind.id, let policy = model.storedPolicy(of: key)
+        else { return false }
+        guard save(policy: policy, config: TileConfig(value, kind: kind)) else { return false }
+        schedulePreview()
+        return true
+    }
+
+    /// The open tile's policy as stored, for a block that saves a config
+    /// beside it.
+    func storedPolicy(of key: TileKey) -> TilePolicy? {
+        model.storedPolicy(of: key)
+    }
+
     /// Keyed on the connector id, like the lamp block: the settings are the
     /// tile's, whatever instance is running it.
     private static func isCodeUsageTile(_ key: TileKey) -> Bool {

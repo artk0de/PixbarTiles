@@ -213,148 +213,31 @@ struct TileSettingsWindow: View {
     }
 
     /// The tile's own block beside the shared policy editor: what this
-    /// connector has that no other does. A connector with nothing of its own
-    /// draws nothing there.
+    /// tile's kind has that no other does, drawn by its wiring. Keyed on the
+    /// connector id, not on the running instance: a tile whose settings are
+    /// being opened may not have one in hand at all (a lamp's is built per
+    /// VPN by the clock's own session), and the block is the tile's.
     @ViewBuilder
     private func connectorBlock(
         for key: TileKey, value: (name: String, config: TileConfig?), stored: TilePolicy
     ) -> some View {
-        // The tile's own clock's connector, so the block a tile shows is
-        // decided by the instance that actually runs it.
-        let connector = model.connector(for: key)
-        let refresh = TileRefreshControl(
-            label: "Fetch weather every",
-            ladder: ladder(for: key),
-            policy: policyBinding(for: key, value: value, stored: stored)
-        )
-        if connector is WeatherConnector {
-            WeatherTileControls(settings: settings, fetchEvery: refresh)
-        } else if connector is AnecdoteConnector {
-            AnecdoteTileBlock(onHistory: {
-                model.loadHistory()
-                showingHistory = true
-            })
-        } else if connector is ClaudeUsageConnector {
-            VStack(alignment: .leading, spacing: 10) {
-                TileRefreshControl(
-                    label: "Refresh every",
-                    ladder: ladder(for: key),
-                    policy: policyBinding(for: key, value: value, stored: stored)
-                )
-                parametersBlock
-                // Machine-wide state, one file, not a tile's: whatever tile's
-                // window it is edited from edits it for every Claude tile.
-                ClaudeCodeSettings(link: claudeCode())
-            }
-        } else if connector is ZaiUsageConnector {
-            VStack(alignment: .leading, spacing: 10) {
-                ZaiTileBlock(
-                    hasKey: model.hasZaiKey(for: key),
-                    outcome: model.lastZaiKeyOutcome,
-                    onSaveKey: { model.saveZaiKey($0, for: key) }
-                )
-                TileRefreshControl(
-                    label: "Refresh every",
-                    ladder: ladder(for: key),
-                    policy: policyBinding(for: key, value: value, stored: stored)
-                )
-                parametersBlock
-            }
-        } else if key.connectorId == GitHubConnector.connectorId {
-            // Keyed on the id, like the lamp: the block is the tile's.
-            GitHubTileBlock(
-                config: value.config?.github ?? GitHubTileConfig(repo: key.instance),
-                hasToken: model.hasGitHubToken,
-                outcome: model.lastGitHubTokenOutcome,
-                onConfig: { settings.setGitHubConfig($0) },
-                onRepo: { settings.setGitHubRepo($0) },
-                // Through the facade, so the open preview is redrawn with
-                // the new token at once.
-                onSaveToken: { settings.saveGitHubToken($0) }
-            )
-        } else if key.connectorId == VPNConnector.id {
-            // Keyed on the connector id, not on `connector is VPNConnector`:
-            // a lamp tile's connector is built per VPN by the clock's own
-            // session, and a tile whose settings are being opened may not
-            // have one in hand at all. The block is the tile's, not the
-            // running instance's.
-            lampBlock(for: key, config: value.config)
-        } else {
-            EmptyView()
-        }
-    }
-
-    /// The shared usage face's two pickers — the same block on the Claude
-    /// tile and the z.ai tile, because the face they tune is one.
-    @ViewBuilder
-    private var parametersBlock: some View {
-        if let usageFace = settings.parameters {
-            CodeUsageBlock(config: usageFace, onChange: { settings.setParameters($0) })
-        }
-    }
-
-    /// The lamp tile's block: which VPN, which corner, which colour, and
-    /// what "down" looks like.
-    ///
-    /// The block itself has existed since the tile did, with its own tests,
-    /// and nothing ever built one — so a VPN tile was the one tile in the
-    /// app whose settings window had no settings in it.
-    @ViewBuilder
-    private func lampBlock(for key: TileKey, config: TileConfig?) -> some View {
-        if let lamp = config?.lamp {
-            VPNTileBlock(
-                presets: WatchedVPN.catalogue.map(\.displayName),
-                preset: WatchedVPN.preset(id: lamp.vpn)?.displayName ?? lamp.vpn,
-                slots: IndicatorSlot.allCases.map(\.lampTitle),
-                slot: lamp.slot.lampTitle,
-                colour: Color(hex: lamp.upColour),
-                downBehaviour: lamp.whenDown == .off ? .off : .blink,
-                onPreset: { name in
-                    guard let chosen = WatchedVPN.catalogue.first(where: { $0.displayName == name })
-                    else { return }
-                    settings.changeLampVPN(to: chosen.id)
+        if let wiring = AppTileKinds.wiring(for: key.connectorId) {
+            wiring.settingsBlock(TileBlockContext(
+                key: key, parameters: value.config?.value, settings: settings, model: model,
+                refresh: { label in
+                    TileRefreshControl(
+                        label: label,
+                        ladder: ladder(for: key),
+                        policy: policyBinding(for: key, value: value, stored: stored)
+                    )
                 },
-                onSlot: { title in
-                    guard let chosen = IndicatorSlot.allCases.first(where: { $0.lampTitle == title })
-                    else { return }
-                    saveLamp(lamp, on: key) { $0.slot = chosen }
+                openHistory: {
+                    model.loadHistory()
+                    showingHistory = true
                 },
-                onColour: { colour in
-                    saveLamp(lamp, on: key) { $0.upColour = colour.hexString }
-                },
-                onDownBehaviour: { behaviour in
-                    saveLamp(lamp, on: key) {
-                        switch behaviour {
-                        case .off:
-                            $0.whenDown = .off
-                        case .blink:
-                            // Its own colour, kept when there already is one:
-                            // a lamp toggled off and back on must not forget
-                            // what it blinked.
-                            if case .blink = $0.whenDown { break }
-                            $0.whenDown = .blink(VPNTilePalette.alarm)
-                        }
-                    }
-                }
-            )
-        } else {
-            // A lamp tile with no lamp on it — a record written before the
-            // config existed, or one whose config failed to decode. Says so
-            // instead of drawing four pickers over nothing.
-            Text("This tile has no lamp settings. Remove it and add it again.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                claudeCode: claudeCode
+            ))
         }
-    }
-
-    private func saveLamp(
-        _ lamp: VPNTileConfig, on key: TileKey, _ change: (inout VPNTileConfig) -> Void
-    ) {
-        guard let stored = model.storedPolicy(of: key) else { return }
-        var edited = lamp
-        change(&edited)
-        settings.save(policy: stored, config: .vpn(edited))
     }
 
     // MARK: - The preview column

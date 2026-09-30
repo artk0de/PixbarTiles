@@ -1,5 +1,6 @@
 import Foundation
 import PixbarKit
+import SwiftUI
 
 struct GitHubWiring: TileKindWiring {
     typealias Kind = GitHubKind
@@ -46,6 +47,19 @@ struct GitHubWiring: TileKindWiring {
             ),
             source: GitHubAPI(transport: transport, token: { nil }),
             snapshots: NoGitHubSnapshots()
+        )
+    }
+
+    func block(_ context: TileBlockContext<GitHubTileConfig>) -> some View {
+        GitHubTileBlock(
+            config: context.parameters ?? GitHubTileConfig(repo: context.key.instance),
+            hasToken: context.model.hasGitHubToken,
+            outcome: context.model.lastGitHubTokenOutcome,
+            onConfig: { context.settings.setGitHubConfig($0) },
+            onRepo: { context.settings.setGitHubRepo($0) },
+            // Through the facade, so the open preview is redrawn with the new
+            // token at once.
+            onSaveToken: { context.settings.saveGitHubToken($0) }
         )
     }
 }

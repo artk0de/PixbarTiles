@@ -1,5 +1,6 @@
 import Foundation
 import PixbarKit
+import SwiftUI
 
 struct WeatherWiring: TileKindWiring {
     typealias Kind = WeatherKind
@@ -24,5 +25,9 @@ struct WeatherWiring: TileKindWiring {
             },
             for: Kind.id
         )
+    }
+
+    func block(_ context: TileBlockContext<WeatherTileConfig>) -> some View {
+        WeatherTileControls(settings: context.settings, fetchEvery: context.refresh("Fetch weather every"))
     }
 }

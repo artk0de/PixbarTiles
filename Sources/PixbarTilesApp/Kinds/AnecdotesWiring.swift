@@ -1,5 +1,6 @@
 import Foundation
 import PixbarKit
+import SwiftUI
 
 struct AnecdotesWiring: TileKindWiring {
     typealias Kind = AnecdotesKind
@@ -9,5 +10,9 @@ struct AnecdotesWiring: TileKindWiring {
     /// (see `AppModel.anecdoteWiring`).
     @MainActor func register(into registry: ConnectorRegistry, for clock: ClockRecord, _ env: TileEnvironment) {
         registry.register(env.anecdotes)
+    }
+
+    func block(_ context: TileBlockContext<NoParameters>) -> some View {
+        AnecdoteTileBlock(onHistory: context.openHistory)
     }
 }

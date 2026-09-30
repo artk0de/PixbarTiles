@@ -1,5 +1,6 @@
 import Foundation
 import PixbarKit
+import SwiftUI
 
 /// What every wiring may build a clock's connectors from: the app's shared
 /// sources, handed in once by the composition root.
@@ -32,6 +33,10 @@ protocol TileKindWiring: Sendable {
     var tileGlyph: [String] { get }
     /// Whether the kind's own settings block carries the refresh control.
     var namesItsOwnRefresh: Bool { get }
+    associatedtype Block: View = EmptyView
+    /// The kind's own block in the tile settings window, beside the shared
+    /// policy editor: what this kind has that no other does.
+    @MainActor @ViewBuilder func block(_ context: TileBlockContext<Kind.Parameters>) -> Block
 }
 
 extension TileKindWiring {

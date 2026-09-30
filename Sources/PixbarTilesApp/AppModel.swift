@@ -511,10 +511,12 @@ final class AppModel: ObservableObject {
                 let tc002 = self.clockSessions.ulanzi(for: key.clockId)
                 Task { await tc002?.markIdle(tileId: key.tileId) }
             },
-            morningTile: { [unowned self] clockId, excluding in
-                self.tiles.all().first {
-                    $0.key.clockId == clockId && $0.key != excluding && self.pageFollower.ownsPage($0.key)
-                }?.key
+            morningTile: { [unowned self] clockId, preferred, excluding in
+                let candidates = self.tiles.all().filter {
+                    $0.key.clockId == clockId && $0.key != excluding
+                        && !$0.policy.isPaused && self.pageFollower.ownsPage($0.key)
+                }
+                return (candidates.first { $0.key.tileId == preferred } ?? candidates.first)?.key
             }
         )
     }

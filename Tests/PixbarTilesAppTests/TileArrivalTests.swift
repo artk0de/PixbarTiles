@@ -57,7 +57,7 @@ import Testing
         var ran: [TileKey] = []
         subject.wirings = { $0 == WeatherKind.id ? Recording(heard: heard) : nil }
         subject.tileArrivalActions = TileArrivalActions(
-            run: { ran.append($0) }, show: { _ in }, idle: { _ in }, morningTile: { _, _ in nil }
+            run: { ran.append($0) }, show: { _ in }, idle: { _ in }, morningTile: { _, _, _ in nil }
         )
 
         subject.reconcileTiles()

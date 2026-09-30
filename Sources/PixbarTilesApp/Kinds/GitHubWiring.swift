@@ -39,13 +39,13 @@ struct GitHubWiring: TileKindWiring {
     }
 
     /// Carries no token and no repository: no clock produces through it.
-    func namingInstance(transport: any Transport) -> (any Connector)? {
+    func namingInstance(_ naming: TileNaming) -> (any Connector)? {
         GitHubConnector(
             tile: TileRecord(
                 key: TileKey(clockId: UUID(), connectorId: Kind.id),
                 policy: TilePolicyRecord(isPaused: false, refreshSeconds: 60)
             ),
-            source: GitHubAPI(transport: transport, token: { nil }),
+            source: GitHubAPI(transport: naming.transport, token: { nil }),
             snapshots: NoGitHubSnapshots()
         )
     }

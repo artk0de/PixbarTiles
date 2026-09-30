@@ -29,8 +29,8 @@ struct ZaiWiring: TileKindWiring {
     }
 
     /// Carries no key: no clock produces through it.
-    func namingInstance(transport: any Transport) -> (any Connector)? {
-        ZaiUsageConnector(source: ZaiUsageAPI(transport: transport, key: { nil }))
+    func namingInstance(_ naming: TileNaming) -> (any Connector)? {
+        ZaiUsageConnector(source: ZaiUsageAPI(transport: naming.transport, key: { nil }))
     }
 
     func block(_ context: TileBlockContext<ZaiTileConfig>) -> some View {

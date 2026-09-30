@@ -119,6 +119,11 @@ extension AppModel {
         // app's folder. Until Claude Code is connected in the settings and has
         // replied once there is no document, and the app never enters the loop.
         let focusStatus = SystemFocusStatus()
+        // Sleep can be named only with Focus access AND the Do Not Disturb
+        // database readable; the night light's default policy hangs on it.
+        let canNameSleep: @Sendable () -> Bool = {
+            focusStatus.access == .authorized && focusStatus.activeMode != .cannotTell
+        }
         registry.register(
             ClaudeUsageConnector(
                 reporter: StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document)
@@ -127,7 +132,8 @@ extension AppModel {
         // z.ai and GitHub, offered so the Add tile menu can name them; each
         // clock's session builds its own from the tile's record.
         let secrets = EncryptedFileSecretStore.live()
-        ConnectorFactories.namingInstances(transport: transport).forEach(registry.register)
+        ConnectorFactories.namingInstances(transport: transport, canNameSleep: canNameSleep)
+            .forEach(registry.register)
 
         // After every connector is registered: one the step does not hear
         // about gets no tile, and runs on its own default until its first
@@ -154,7 +160,8 @@ extension AppModel {
         let audio = SequentialAudioPlayer()
         let factories = ConnectorFactories(
             transport: transport, defaults: defaults, secrets: secrets,
-            weather: OpenMeteoSource(transport: transport), anecdotes: anecdotes.connector
+            weather: OpenMeteoSource(transport: transport), anecdotes: anecdotes.connector,
+            canNameSleep: canNameSleep
         )
         let buildSession: @MainActor (ClockRecord) -> any ConnectorRunning = { clock in
             // The TC002 branch of the runtime route: the schedule's slot IS

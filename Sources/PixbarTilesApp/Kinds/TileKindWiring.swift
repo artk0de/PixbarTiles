@@ -15,6 +15,17 @@ struct TileEnvironment {
     /// Where a clock's Claude tile reads its usage — one per clock, since the
     /// status-line reporter keeps the last window it saw.
     let claudeReporter: @Sendable () -> any ClaudeUsageReporting
+    /// Whether this Mac can tell Sleep from any other Focus.
+    let canNameSleep: @Sendable () -> Bool
+}
+
+/// What a naming instance may be built from: the app-wide registry holds one
+/// per kind before any clock's sources exist.
+struct TileNaming {
+    let transport: any Transport
+    /// Asked by a kind whose default policy depends on it — the one a tile
+    /// added from the store starts from is the naming instance's.
+    let canNameSleep: @Sendable () -> Bool
 }
 
 /// One kind of tile, as the app wires it: the connectors it builds for a
@@ -29,7 +40,7 @@ protocol TileKindWiring: Sendable {
     @MainActor func register(into registry: ConnectorRegistry, for clock: ClockRecord, _ env: TileEnvironment)
     /// The instance the app-wide registry holds only so the store can name
     /// it, or nil when the composition root registers one of its own.
-    func namingInstance(transport: any Transport) -> (any Connector)?
+    func namingInstance(_ naming: TileNaming) -> (any Connector)?
     var tileGlyph: [String] { get }
     /// Whether the kind's own settings block carries the refresh control.
     var namesItsOwnRefresh: Bool { get }
@@ -47,7 +58,7 @@ protocol TileKindWiring: Sendable {
 extension TileKindWiring {
     var kindId: String { Kind.id }
     @MainActor func register(into registry: ConnectorRegistry, for clock: ClockRecord, _ env: TileEnvironment) {}
-    func namingInstance(transport: any Transport) -> (any Connector)? { nil }
+    func namingInstance(_ naming: TileNaming) -> (any Connector)? { nil }
     var namesItsOwnRefresh: Bool { false }
     @MainActor func arrived(_ key: TileKey, _ parameters: Kind.Parameters?, _ actions: TileArrivalActions) {}
     @MainActor func left(_ key: TileKey, _ parameters: Kind.Parameters?, _ actions: TileArrivalActions) {}
@@ -75,16 +86,16 @@ struct TileArrivalActions {
     /// Tells a TC002 the tile has nothing to show, so its page leaves the
     /// rotation.
     let idle: (TileKey) -> Void
-    /// The first tile on that clock, in stored order, that owns a page and
-    /// is not the one excluded — where the clock is sent back to.
-    let morningTile: (_ clockId: UUID, _ excluding: TileKey) -> TileKey?
+    /// Where the clock is sent back to: the tile on that clock with the
+    /// preferred tile id when there is one, else the first unpaused tile in
+    /// stored order that owns a page — never the one excluded.
+    let morningTile: (_ clockId: UUID, _ preferred: String?, _ excluding: TileKey) -> TileKey?
 }
 
 /// Every wiring in the app, one per kind in `TileKinds.all`, listed once.
 enum AppTileKinds {
     static let all: [any TileKindWiring] = [
-        WeatherWiring(), ClaudeWiring(), ZaiWiring(), GitHubWiring(), AnecdotesWiring(), VPNWiring(),
-        NightLightWiring(),
+        WeatherWiring(), ClaudeWiring(), ZaiWiring(), NightLightWiring(), GitHubWiring(), AnecdotesWiring(), VPNWiring(),
     ]
 
     static func wiring(for connectorId: String) -> (any TileKindWiring)? {

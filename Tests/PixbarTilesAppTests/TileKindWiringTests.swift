@@ -48,6 +48,6 @@ import Testing
     }
 
     @Test func theNamingInstancesAreTheWiringsInOrder() {
-        #expect(ConnectorFactories.namingInstances(transport: StubTransport()).map(\.id) == [ZaiKind.id, GitHubKind.id])
+        #expect(ConnectorFactories.namingInstances(transport: StubTransport()).map(\.id) == [ZaiKind.id, NightLightKind.id, GitHubKind.id])
     }
 }

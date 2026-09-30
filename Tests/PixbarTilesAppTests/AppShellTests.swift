@@ -185,7 +185,7 @@ private func scratchStore() -> URL {
     // First, and the order is the order the panel offers them in: the
     // anecdotes are what this app is for, and the ambient set is what it also
     // does while nobody is asking it anything.
-    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude", "zai", "github"])
+    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude", "zai", "nightlight", "github"])
     // Deliberately not asserting the interval here. `AnecdoteConnector`'s own
     // default IS thirty minutes, so every such assertion holds equally through
     // the store's fallback and proves nothing about debt 2. The
@@ -207,7 +207,7 @@ private func scratchStore() -> URL {
         defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore()
     )
 
-    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude", "zai", "github"])
+    #expect(subject.registry.all.map(\.id) == ["anecdotes", "weather", "claude", "zai", "nightlight", "github"])
 }
 
 /// Whether an output would put sound in the room.

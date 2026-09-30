@@ -23,11 +23,13 @@ struct ConnectorFactories {
         weather: OpenMeteoSource, anecdotes: any Connector,
         claudeReporter: @escaping @Sendable () -> any ClaudeUsageReporting = {
             StatusLineClaudeUsageReporter(document: ClaudeCodePaths.document)
-        }
+        },
+        canNameSleep: @escaping @Sendable () -> Bool = { false }
     ) {
         tileEnvironment = TileEnvironment(
             transport: transport, defaults: defaults, secrets: secrets,
-            weather: weather, anecdotes: anecdotes, claudeReporter: claudeReporter
+            weather: weather, anecdotes: anecdotes, claudeReporter: claudeReporter,
+            canNameSleep: canNameSleep
         )
     }
 
@@ -49,7 +51,10 @@ struct ConnectorFactories {
     /// offered. No clock produces through one: each clock's session builds
     /// its own from the tile's record, so these carry no key, no token and no
     /// repository.
-    static func namingInstances(transport: any Transport) -> [any Connector] {
-        AppTileKinds.all.compactMap { $0.namingInstance(transport: transport) }
+    static func namingInstances(
+        transport: any Transport, canNameSleep: @escaping @Sendable () -> Bool = { false }
+    ) -> [any Connector] {
+        let naming = TileNaming(transport: transport, canNameSleep: canNameSleep)
+        return AppTileKinds.all.compactMap { $0.namingInstance(naming) }
     }
 }

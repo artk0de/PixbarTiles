@@ -34,7 +34,7 @@ import Testing
     @Test func theStoreIsOfferedTheGitHubTile() {
         let named = ConnectorFactories.namingInstances(transport: StubTransport())
 
-        #expect(named.map(\.id) == [ZaiUsageConnector.connectorId, GitHubConnector.connectorId])
+        #expect(named.map(\.id) == [ZaiUsageConnector.connectorId, NightLightKind.id, GitHubConnector.connectorId])
         #expect(named.last?.instancing == .perKey)
     }
 

@@ -445,11 +445,14 @@ final class AppModel: ObservableObject {
     /// a browse running for the life of the process.
     func clocksSectionVisibilityChanged(_ visible: Bool) { clocksSectionVisible = visible }
 
-    @Published private(set) var iconStatus: String?
     /// What has played and the History that shows it (`AnecdoteHistory`).
     let anecdoteHistory: AnecdoteHistory
     /// The microphones the schedule waits for (`MicrophoneWatch`).
     let microphoneWatch: MicrophoneWatch
+    /// The icons this app uploaded, taken back on request (`IconMaintenance`).
+    let iconMaintenance: IconMaintenance
+    var iconStatus: String? { iconMaintenance.iconStatus }
+    func removeInstalledIcons() { iconMaintenance.removeInstalledIcons() }
     var watchedMicrophones: [WatchedMicrophone] { microphoneWatch.watchedMicrophones }
     var microphoneListing: [MicrophoneChoice] { microphoneWatch.microphoneListing }
     func setWatched(_ watched: Bool, for input: AudioInput) { microphoneWatch.setWatched(watched, for: input) }
@@ -478,7 +481,6 @@ final class AppModel: ObservableObject {
     /// The dual probe behind Add by address: whichever body decodes names the
     /// model. Nil where no caller adds by address.
     private let probe: (@Sendable (String) async -> UlanziProbe.Detection)?
-    private let installer: CatalogueIconInstaller
     private let defaults: UserDefaults
     /// The delivery cadence, one sleeper per scheduled connector.
     private let scheduleSleep: Sleeping
@@ -504,8 +506,6 @@ final class AppModel: ObservableObject {
     /// The restock the launch fires: a minute of synthesis that a quit would
     /// otherwise kill halfway through a batch.
     private static let launchRestock = "launchRestock"
-    /// The removal of the icons the app uploaded — never two at once.
-    private static let iconRemoval = "iconRemoval"
     /// Tiles with a display-settings push on the wire, and those whose look
     /// changed again while it was — see `pushDisplaySettings(_:)`.
     private var displayPushes: Set<TileKey> = []
@@ -619,6 +619,7 @@ final class AppModel: ObservableObject {
         self.clockHealthMonitor = ClockHealthMonitor(
             device: device, pollSleep: pollSleep, alerts: alerts, taskBag: taskBag
         )
+        self.iconMaintenance = IconMaintenance(installer: installer, taskBag: taskBag)
         self.microphoneWatch = MicrophoneWatch(
             gate: microphone, watching: watching, defaults: defaults, sleep: micSleep, taskBag: taskBag
         )
@@ -640,7 +641,6 @@ final class AppModel: ObservableObject {
         self.makeUlanziDevice = makeUlanziDevice
         self.makeUlanziBattery = makeUlanziBattery
         self.probe = probe
-        self.installer = installer
         self.focusStatus = focusStatus
         self.vpn = vpn
         self.vpnPresence = vpnPresence
@@ -677,6 +677,7 @@ final class AppModel: ObservableObject {
         relay(clockHealthMonitor)
         relay(anecdoteHistory)
         relay(microphoneWatch)
+        relay(iconMaintenance)
     }
 
     /// The composition root: one device host in, every collaborator wired.
@@ -2248,36 +2249,6 @@ final class AppModel: ObservableObject {
         if let key = selectedKey(id) { runNow(key) }
     }
 
-    /// Takes this app's icons back off the flash, because the user asked.
-    ///
-    /// Owned here rather than by the button's action closure, for the same
-    /// reason `runNow` is: teardown can only wait for a task it holds. One at a
-    /// time — a second press while one is running would race two passes over
-    /// the same record.
-    func removeInstalledIcons() {
-        guard !taskBag.isRunning(Self.iconRemoval) else { return }
-        // Said before the work, not after it. `removeUploaded` sends one DELETE
-        // per recorded icon, and against a device that has stopped answering
-        // each one costs the transport's full 15 seconds — the same silence the
-        // run button had, on a button one divider away.
-        iconStatus = "removing…"
-        taskBag.startIfIdle(Self.iconRemoval) { [weak self] in
-            await self?.reportIconRemoval()
-        }
-    }
-
-    private func reportIconRemoval() async {
-        do {
-            let removed = try await installer.removeUploaded()
-            iconStatus = removed.isEmpty
-                ? "nothing this app uploaded"
-                : "removed \(removed.joined(separator: ", "))"
-        } catch let CatalogueIconInstaller.Failure.notRemoved(names) {
-            iconStatus = "could not remove \(names.joined(separator: ", "))"
-        } catch {
-            iconStatus = "failed: \(String(describing: error).prefix(60))"
-        }
-    }
 
     /// Stops the schedules and waits for whatever they were in the middle of.
     ///

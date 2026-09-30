@@ -1,8 +1,9 @@
 <p align="center">
-  <img src="docs/brand/app-icon.svg" width="128" height="128" alt="PixbarTiles icon">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/logo-dark.png">
+    <img src="docs/brand/logo-light.png" width="520" alt="PixbarTiles">
+  </picture>
 </p>
-
-<h1 align="center">PixbarTiles</h1>
 
 <p align="center">A macOS menu bar app that turns Ulanzi pixel clocks into a row of live tiles.</p>
 

@@ -485,14 +485,7 @@ enum PanelGlyph {
     /// stands beside: what a tile looks like is the TILE's question, and a
     /// running instance may not be in hand when a list is being drawn.
     static func tile(forConnectorId id: String) -> [String] {
-        switch id {
-        case WeatherConnector.appName: weatherTile
-        case ClaudeUsageConnector.id, ZaiUsageConnector.connectorId: terminalTile
-        case "anecdotes": anecdoteTile
-        case VPNConnector.id: vpnTile
-        case GitHubConnector.connectorId: githubTile
-        default: unknownTile
-        }
+        AppTileKinds.wiring(for: id)?.tileGlyph ?? unknownTile
     }
 
     /// One hue per SHELF rather than per connector.

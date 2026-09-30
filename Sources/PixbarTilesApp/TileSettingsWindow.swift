@@ -209,8 +209,7 @@ struct TileSettingsWindow: View {
     /// lamp block below: what a tile's surface looks like is the tile's
     /// question, not that of whichever instance happens to be in hand.
     private func namesItsOwnRefresh(_ key: TileKey) -> Bool {
-        [WeatherConnector.appName, ClaudeUsageConnector.id, ZaiUsageConnector.connectorId]
-            .contains(key.connectorId)
+        AppTileKinds.wiring(for: key.connectorId)?.namesItsOwnRefresh ?? false
     }
 
     /// The tile's own block beside the shared policy editor: what this

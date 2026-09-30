@@ -57,6 +57,13 @@ import Testing
         #expect(TileKinds.kind(id: "nope") == nil)
     }
 
+    // The anecdotes read a third party's feed in cloned character voices;
+    // they are held back from the store until they are reworked
+    // (pixelclocktiles-9ig). Every other kind is offered.
+    @Test func onlyTheAnecdotesAreHeldBackFromTheStore() {
+        #expect(TileKinds.all.filter { !$0.isOffered }.map { $0.id } == [AnecdotesKind.id])
+    }
+
     @Test func eachKindAnswersWhatTheCatalogueAnswered() {
         for kind in TileKinds.all {
             let facts = Facts(

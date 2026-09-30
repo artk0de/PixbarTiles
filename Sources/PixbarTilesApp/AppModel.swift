@@ -263,7 +263,9 @@ final class AppModel: ObservableObject {
     func changeLampVPN(_ key: TileKey, to vpnId: String) -> TileSaveOutcome { tileBook.changeLampVPN(key, to: vpnId) }
     func removeTile(_ key: TileKey) { tileBook.removeTile(key) }
     func candidate(for connectorId: String) -> TileCandidate? { tileBook.candidate(for: connectorId) }
-    func tileCandidates() -> [(connectorId: String, name: String)] { tileBook.tileCandidates() }
+    func tileCandidates() -> [(connectorId: String, name: String)] {
+        tileBook.tileCandidates().filter { !unofferedKinds.contains($0.connectorId) }
+    }
     func moveTile(_ source: TileKey, to destination: TileKey) { tileBook.moveTile(source, to: destination) }
     func tileName(of record: TileRecord) -> String { tileBook.tileName(of: record) }
     func tileTitle(of record: TileRecord) -> TileTitle { tileBook.tileTitle(of: record) }
@@ -352,6 +354,7 @@ final class AppModel: ObservableObject {
         clockSessions.ulanzi(for: clockId)
     }
     private let defaults: UserDefaults
+    private let unofferedKinds: Set<String>
     /// Whether macOS says the user is busy, and what to call it when it does.
     private let focusStatus: any FocusStatusReading
     /// The clock every tile's window is read against.
@@ -397,6 +400,10 @@ final class AppModel: ObservableObject {
         probe: (@Sendable (String) async -> UlanziProbe.Detection)? = nil,
         installer: CatalogueIconInstaller,
         anecdotes: (any AnecdoteReplaying)? = nil,
+        // Kinds the Add tile menu leaves out though they stay registered —
+        // `live()` passes every kind not `isOffered`; a test naming its own
+        // connectors offers them all.
+        unofferedKinds: Set<String> = [],
         defaults: UserDefaults = .standard,
         pasteboard: NSPasteboard = .general,
         alerts: any BatteryWarningPresenting,
@@ -476,6 +483,7 @@ final class AppModel: ObservableObject {
             session: { clockSessions[$0] }
         )
         self.relocate = relocate
+        self.unofferedKinds = unofferedKinds
         self.defaults = defaults
         self.registry = registry
         self.makeUlanziDevice = makeUlanziDevice

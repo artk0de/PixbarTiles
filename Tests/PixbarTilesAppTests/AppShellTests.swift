@@ -192,6 +192,22 @@ private func scratchStore() -> URL {
     // `StubConnector(5 * 60)` tests are what carry that rule.
 }
 
+// A kind held back from the store is still registered — a tile already
+// stored keeps running — but the Add tile menu does not offer it.
+@Test @MainActor func theStoreDoesNotOfferAKindHeldBack() throws {
+    let suite = "app-model-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let subject = AppModel.live(
+        defaults: defaults, transport: StubTransport(), anecdoteStore: scratchStore()
+    )
+
+    #expect(subject.registry.connector(id: AnecdotesKind.id) != nil)
+    #expect(subject.tileCandidates().map(\.connectorId).contains(AnecdotesKind.id) == false)
+    #expect(subject.tileCandidates().map(\.connectorId).contains(WeatherKind.id))
+}
+
 // And of the set it registers, the order is registration order: the
 // anecdotes are what this app is for, and the ambient set is what it also
 // does while nobody is asking it anything. Which of them get a row is no

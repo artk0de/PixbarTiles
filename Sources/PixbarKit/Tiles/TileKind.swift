@@ -24,6 +24,9 @@ public protocol TileKind: Sendable {
     static var models: Set<ClockModel> { get }
     static var instancing: Instancing { get }
     static var isAudible: Bool { get }
+    /// Whether the store's Add tile menu offers it. A kind held back is still
+    /// registered, so a tile already stored keeps running.
+    static var isOffered: Bool { get }
     /// The name of one tile of this kind beside the kind's own name —
     /// `GitHub (TeaRAGs)` — or nil for a kind a clock carries one of.
     static func secondaryName(of tile: TileRecord, parameters: Parameters?) -> String?
@@ -32,6 +35,7 @@ public protocol TileKind: Sendable {
 extension TileKind {
     public static var instancing: Instancing { .single }
     public static var isAudible: Bool { false }
+    public static var isOffered: Bool { true }
     public static func secondaryName(of tile: TileRecord, parameters: Parameters?) -> String? { nil }
 }
 

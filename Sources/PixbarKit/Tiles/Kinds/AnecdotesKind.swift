@@ -11,4 +11,7 @@ public enum AnecdotesKind: TileKind {
     )
     public static let models: Set<ClockModel> = [.awtrix3]
     public static let isAudible = true
+    /// Held back until reworked (pixelclocktiles-9ig): it reads a third
+    /// party's feed and voices it in cloned character voices.
+    public static let isOffered = false
 }

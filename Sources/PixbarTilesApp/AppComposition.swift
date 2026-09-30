@@ -273,6 +273,7 @@ extension AppModel {
             probe: { host in await UlanziProbe.detect(host: host, transport: transport) },
             installer: installer,
             anecdotes: anecdotes.connector,
+            unofferedKinds: Set(TileKinds.all.filter { !$0.isOffered }.map { $0.id }),
             defaults: defaults,
             alerts: BatteryAlert(
                 dialog: ModalBatteryDialog(), notifications: SystemBatteryNotifier()

@@ -72,6 +72,17 @@ enum WindowFocus {
         )
     }
 
+    /// Brings the app forward for a window just opened from the panel — a
+    /// clock's settings, a tile's, the store. The polite activation first;
+    /// refused (most clicks from the menu bar are), the forced one, or the
+    /// window opens inactive under the panel that asked for it.
+    static func activate(
+        polite: () -> Bool = { NSRunningApplication.current.activate(options: activation) },
+        force: () -> Void = { NSApp.activate(ignoringOtherApps: true) }
+    ) {
+        if polite() == false { force() }
+    }
+
     /// Closes the pinned window. The unpin button sits INSIDE that window,
     /// and a SwiftUI `dismissWindow` from there left it open beside the
     /// popover — two panels again.

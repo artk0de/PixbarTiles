@@ -84,7 +84,7 @@ struct ClockSettingsWindow: View {
         // the defect this ordering closes.
         store.show(clockId)
         open(id: "tile-store")
-        NSApp.activate()
+        WindowFocus.activate()
     }
 }
 
@@ -269,7 +269,7 @@ private struct ClockTileCard: View {
                 Button {
                     model.openDetail(for: key)
                     open(id: "tile-settings")
-                    NSApp.activate()
+                    WindowFocus.activate()
                 } label: {
                     // The panel's own gear, not an SF Symbol: this list and
                     // the panel are the same app, and two vocabularies for

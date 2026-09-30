@@ -88,7 +88,7 @@ struct TileStoreWindow: View {
         .onChange(of: store.lastAdded) { _, added in
             guard added != nil else { return }
             open(id: "tile-settings")
-            NSApp.activate()
+            WindowFocus.activate()
         }
     }
 

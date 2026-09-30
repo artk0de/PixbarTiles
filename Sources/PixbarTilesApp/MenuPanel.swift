@@ -81,7 +81,7 @@ struct MenuPanel: View {
     /// user's attention and stayed there.
     private func openAndFocus(_ open: () -> Void) {
         open()
-        NSApp.activate()
+        WindowFocus.activate()
     }
 
     /// The History is the panel's one swap: it is read here, where a

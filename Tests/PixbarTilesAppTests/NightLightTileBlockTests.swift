@@ -18,7 +18,9 @@ import Testing
 
     @Test func eachSceneOffersASwitchPerMotionItDeclares() {
         #expect(NightLightTileBlock.motionKeys(of: .moon) == ["starTwinkle", "cloudMotion"])
-        #expect(NightLightTileBlock.motionKeys(of: .fireplace) == ["flames", "sparks"])
+        #expect(NightLightTileBlock.motionKeys(of: .fireflies) == ["flyMotion"])
+        #expect(NightLightTileBlock.motionKeys(of: .fireplace).isEmpty)
+        #expect(NightLightTileBlock.motionKeys(of: .embers).isEmpty)
         #expect(NightLightTileBlock.motionTitle("cloudMotion") == "Cloud motion")
         #expect(NightLightTileBlock.motionTitle("glowBreath") == "Glow breath")
     }
@@ -27,7 +29,7 @@ import Testing
         let light = record(NightLightKind.id, on: desk)
         let records = [record(WeatherKind.id, on: kitchen), light, record(WeatherKind.id, on: desk), record(ClaudeKind.id, on: desk)]
         let choices = NightLightTileBlock.morningChoices(of: light.key, among: records, name: { $0.key.connectorId })
-        #expect(choices.map(\.title) == ["First in order", "weather", "claude"])
+        #expect(choices.map(\.title) == ["First tile in the list", "weather", "claude"])
         #expect(choices.map(\.tileId) == [nil, records[2].key.tileId, records[3].key.tileId])
     }
 

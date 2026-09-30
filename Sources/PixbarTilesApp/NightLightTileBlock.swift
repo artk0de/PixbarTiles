@@ -46,16 +46,30 @@ struct NightLightTileBlock: View {
                 ))
             }
         }
-        Section("Night and morning") {
-            // The one tile that brings itself to the front: when its hours or
-            // Sleep begin, and back to the morning tile when they end.
-            Toggle("Turn on by itself", isOn: binding(\.autoShow))
-            Picker("In the morning show", selection: binding(\.morningTileId)) {
+        Section {
+            // The one tile that brings itself to the front: when its Focus or
+            // hours begin, and back to the chosen tile when they end.
+            Toggle("Switch the clock to it when it starts", isOn: binding(\.autoShow))
+            Picker("When it stops, switch the clock to", selection: binding(\.morningTileId)) {
                 ForEach(morning, id: \.self) { Text($0.title).tag($0.tileId) }
             }
             .disabled(!config.autoShow)
+        } header: {
+            Text("Turning on and off")
+        } footer: {
+            Text(Self.switchingNote)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
+
+    /// What starts and stops the night light, said where the switches are:
+    /// the words alone left the user asking what "by itself" meant.
+    static let switchingNote =
+        "It starts and stops with the Focus modes and hours set on the Common tab. "
+        + "With the switch on, the clock shows it as it starts and moves to the tile picked above as it stops; "
+        + "with it off, it runs only when you turn the clock to it yourself."
 
     private func edit(_ change: (inout NightLightTileConfig) -> Void) {
         var edited = config
@@ -67,10 +81,9 @@ struct NightLightTileBlock: View {
         Binding(get: { config[keyPath: path] }, set: { value in edit { $0[keyPath: path] = value } })
     }
 
-    /// The motion switches a scene declares, in its layers' order, once each.
+    /// The motion switches a scene offers.
     static func motionKeys(of scene: NightLightScene) -> [String] {
-        var seen: Set<String> = []
-        return scene.animatedScene.layers.compactMap(\.key).filter { seen.insert($0).inserted }
+        scene.motionSwitches
     }
 
     /// A motion key as a switch's words: `cloudMotion` → "Cloud motion".
@@ -87,12 +100,12 @@ struct NightLightTileBlock: View {
         return sentence.prefix(1).uppercased() + sentence.dropFirst()
     }
 
-    /// "First in order", then every other tile on the night light's clock in
+    /// "First tile in the list", then every other tile on the night light's clock in
     /// stored order.
     static func morningChoices(
         of key: TileKey, among records: [TileRecord], name: (TileRecord) -> String
     ) -> [MorningChoice] {
-        [MorningChoice(title: "First in order", tileId: nil)]
+        [MorningChoice(title: "First tile in the list", tileId: nil)]
             + records
             .filter { $0.key.clockId == key.clockId && $0.key != key }
             .map { MorningChoice(title: name($0), tileId: $0.key.tileId) }

@@ -46,7 +46,7 @@ public struct NightLightTileConfig: TileParameters {
     public var morningTileId: String?
 
     public init(
-        scene: NightLightScene = .embers, brightness: Int = 5, speed: NightLightSpeed = .normal,
+        scene: NightLightScene = .glow, brightness: Int = 5, speed: NightLightSpeed = .normal,
         stilled: Set<String> = [], autoShow: Bool = true, morningTileId: String? = nil
     ) {
         self.scene = scene

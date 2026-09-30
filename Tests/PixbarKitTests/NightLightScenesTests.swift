@@ -3,6 +3,12 @@ import Testing
 @testable import PixbarKit
 
 @Suite struct NightLightScenesTests {
+    /// The picker lists the scenes in the user's order of interest
+    /// (2026-09-30).
+    @Test func theScenesAreListedInTheUsersOrder() {
+        #expect(NightLightScene.allCases == [.glow, .moon, .horizon, .fireplace, .embers, .fireflies])
+    }
+
     @Test func theOracleHoldsEverySceneTheTileOffers() throws {
         let oracle = try AnimationOracle.load()
         #expect(Set(oracle.scenes.keys) == Set(NightLightScene.allCases.map(\.rawValue)))

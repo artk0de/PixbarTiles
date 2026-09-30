@@ -10,6 +10,12 @@ import Testing
         return String(decoding: try encoder.encode(config), as: UTF8.self)
     }
 
+    /// A new tile starts on the soft glow, the first scene the picker lists
+    /// (the user's pick, 2026-09-30).
+    @Test func aNewTileStartsOnTheSoftGlow() {
+        #expect(NightLightTileConfig().scene == .glow)
+    }
+
     @Test func theDefaultsWriteNothing() throws {
         let config = TileConfig(NightLightTileConfig(), kind: NightLightKind.self)
         #expect(try json(config) == #"{"nightlight":{}}"#)

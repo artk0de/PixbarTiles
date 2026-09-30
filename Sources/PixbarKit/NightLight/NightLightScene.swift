@@ -1,6 +1,8 @@
 /// The six night-light scenes, as stored in a tile's config.
 public enum NightLightScene: String, CaseIterable, Codable, Sendable {
-    case embers, horizon, moon, fireflies, fireplace, glow
+    /// In the order the picker lists them: the user's order of interest
+    /// (2026-09-30).
+    case glow, moon, horizon, fireplace, embers, fireflies
 
     public var displayName: String {
         switch self {

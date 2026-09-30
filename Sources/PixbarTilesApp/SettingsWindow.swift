@@ -162,6 +162,8 @@ struct GeneralTab: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Button("Open Full Disk Access Settings…") { FullDiskAccess.openSettings() }
+                .controlSize(.small)
             microphonesSection
             iconSection
             Divider()

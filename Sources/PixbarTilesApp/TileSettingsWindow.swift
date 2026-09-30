@@ -159,7 +159,8 @@ struct TileSettingsWindow: View {
                         // The three connectors whose own block carries the
                         // refresh under a name of its own. One stored value,
                         // one control, where its reader looks for it.
-                        showsRefresh: namesItsOwnRefresh(key) == false
+                        showsRefresh: namesItsOwnRefresh(key) == false,
+                        focusNamesLocked: model.canNameSleep == false
                     )
                 }
                 // What the model said no to, under the controls that asked.

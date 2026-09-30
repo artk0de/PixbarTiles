@@ -105,9 +105,7 @@ enum FocusRuleLine {
     /// running without claiming to know why. Neither line announces "no
     /// access"; only this one talks about access at all.
     ///
-    /// No button beside it. `x-apple.systempreferences:` URLs for this pane
-    /// were not verified to land on it, and a button that opens the wrong pane
-    /// is worse than a sentence naming the right one.
+    /// A button beside it opens the pane (`FullDiskAccess.openSettings`).
     static let whichFocusesSilenceDependsOnFullDiskAccess =
         "macOS tells apps only that some Focus is on, never which one. Without "
             + "Full Disk Access every Focus reads as Other Focus to your tiles; "

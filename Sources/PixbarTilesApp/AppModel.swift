@@ -600,6 +600,11 @@ final class AppModel: ObservableObject {
     var detailTileKey: TileKey? { pageFollower.detailTileKey }
     var tileOnScreen: [UUID: TileKey] { pageFollower.tileOnScreen }
     func openDetail(for key: TileKey) { pageFollower.openDetail(for: key) }
+    /// Whether this Mac can tell Sleep from any other Focus: Focus access
+    /// granted and the Do Not Disturb database readable (Full Disk Access).
+    var canNameSleep: Bool {
+        focusStatus.access == .authorized && focusStatus.activeMode != .cannotTell
+    }
     func closeDetail() { pageFollower.closeDetail() }
     func pageSwitchesSettled() async { await pageFollower.pageSwitchesSettled() }
     func ownsPage(_ key: TileKey) -> Bool { pageFollower.ownsPage(key) }

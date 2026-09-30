@@ -324,3 +324,23 @@ private func editor(_ policy: TilePolicy) -> some View {
     #expect(hint.contains("Run"))
     #expect(hint.contains("Hold"))
 }
+
+// MARK: - Focus names behind Full Disk Access
+
+// Without Full Disk Access every Focus reads as "any other Focus": the four
+// named boxes would decide nothing, so they are locked until access is given.
+@Test func theNamedFocusesAreLockedUntilTheMacCanNameThem() {
+    let named = TilePolicyEditor.focusGrid.flatMap { $0 }
+    #expect(named.allSatisfy { TilePolicyEditor.isLocked($0, focusNamesLocked: true) })
+    #expect(TilePolicyEditor.isLocked(.noFocus, focusNamesLocked: true) == false)
+    #expect(named.allSatisfy { TilePolicyEditor.isLocked($0, focusNamesLocked: false) == false })
+}
+
+@Test @MainActor func theMacNamesSleepOnlyWithFocusAccessAndTheDatabaseReadable() {
+    let blind = testModel(focusStatus: StubFocusStatus(access: .authorized, activeMode: .cannotTell))
+    let seeing = testModel(focusStatus: StubFocusStatus(access: .authorized, activeMode: .noFocus))
+    let refused = testModel(focusStatus: StubFocusStatus(access: .denied, activeMode: .noFocus))
+    #expect(blind.canNameSleep == false)
+    #expect(seeing.canNameSleep)
+    #expect(refused.canNameSleep == false)
+}

@@ -33,6 +33,10 @@ struct TilePolicyEditor: View {
     /// of its own — "Fetch weather every" beside the weather's "Change every".
     /// One stored value gets one control, wherever the reader looks for it.
     var showsRefresh = true
+    /// True while this Mac cannot tell one Focus from another (no Full Disk
+    /// Access): every Focus then reads as "any other Focus", so the named
+    /// boxes would decide nothing and are drawn locked.
+    var focusNamesLocked = false
 
     /// Whether the words behind the question mark are up.
     @State private var showingFocusHint = false
@@ -41,6 +45,12 @@ struct TilePolicyEditor: View {
     /// every other mark in this app that is chrome rather than content.
     @Environment(\.colorScheme) private var scheme
     private var hintInk: UInt32 { PixelInk.secondary(dark: scheme == .dark) }
+
+    /// A named mode's box is locked while the Mac cannot name modes; "No
+    /// Focus" is read without the database and stays open.
+    nonisolated static func isLocked(_ focus: MacFocus, focusNamesLocked: Bool) -> Bool {
+        focusNamesLocked && focusGrid.contains { $0.contains(focus) }
+    }
 
     /// The Focuses the "works in" boxes run over: every case but `.unknown`.
     nonisolated static let worksInBoxes: [MacFocus] = MacFocus.allCases.filter { $0 != .unknown }
@@ -187,6 +197,12 @@ struct TilePolicyEditor: View {
             // A square of four, then the absence of a mode under it. As five
             // switches in a column the four modes macOS actually ships did not
             // read as a set at all, and "No Focus" read as a fifth one.
+            if focusNamesLocked {
+                Button { FullDiskAccess.ask() } label: {
+                    Label("Focus modes need Full Disk Access", systemImage: "lock.fill")
+                }
+                .buttonStyle(.link)
+            }
             Grid(horizontalSpacing: 8, verticalSpacing: 8) {
                 ForEach(Array(Self.focusGrid.enumerated()), id: \.offset) { row in
                     GridRow {
@@ -262,13 +278,26 @@ struct TilePolicyEditor: View {
     /// A button rather than a switch. Two switches side by side in a column
     /// this narrow leave "Do Not Disturb" no room to be read, and what a
     /// reader wants from a square of four is which ones are LIT.
+    ///
+    /// Locked, the box keeps its state and asks for Full Disk Access instead.
+    @ViewBuilder
     private func focusBox(_ focus: MacFocus) -> some View {
-        Toggle(isOn: worksIn(focus)) {
-            Label(focus.displayName, systemImage: Self.symbol(focus))
-                .frame(maxWidth: .infinity, alignment: .leading)
+        if Self.isLocked(focus, focusNamesLocked: focusNamesLocked) {
+            Button { FullDiskAccess.ask() } label: {
+                Label(focus.displayName, systemImage: "lock.fill")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .foregroundStyle(.secondary)
+            .help("Needs Full Disk Access to tell this Focus from the others")
+            .frame(maxWidth: .infinity)
+        } else {
+            Toggle(isOn: worksIn(focus)) {
+                Label(focus.displayName, systemImage: Self.symbol(focus))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .toggleStyle(.button)
+            .frame(maxWidth: .infinity)
         }
-        .toggleStyle(.button)
-        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder

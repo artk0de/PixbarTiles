@@ -129,6 +129,13 @@ final class TileRunner: ObservableObject, TileRunning {
         }
     }
 
+    /// Runs one connector now, because the user asked.
+    ///
+    /// The task is owned here rather than by the button's action closure, for
+    /// the same reason the timers are: teardown has to be able to wait for it.
+    /// A run started by hand puts the same held banner on the clock as a
+    /// scheduled one, and a quit that does not wait for it kills the process
+    /// during the release and leaves the banner up.
     func runNow(_ key: TileKey) {
         taskBag.run { [weak self] in
             await self?.runAndReport(key)

@@ -296,18 +296,6 @@ final class AppModel: ObservableObject {
     /// produces through it. Anything that needs a connector's real OUTPUT
     /// asks `connector(for:)` instead.
     let registry: ConnectorRegistry
-    /// How a clock's own registry is built — the one its session pushes
-    /// through, closed over that clock's place, its tile's metric and its
-    /// key in the secret store.
-    ///
-    /// Optional because a test wiring a model by hand names its connectors
-    /// directly and has no per-clock story; those fall back to `registry`,
-    /// which is what they were reading before this existed.
-    private let makeClockRegistry: (@MainActor (ClockRecord) -> ConnectorRegistry)?
-    /// Built once per clock and kept: a registry's connectors read their
-    /// stores on every call, so one instance stays current, and rebuilding it
-    /// per preview would re-read the secret store on every keystroke.
-    private var clockRegistries: [UUID: ConnectorRegistry] = [:]
     /// The selected clock's health, which is what the glyph is about.
     var monitor: DeviceMonitor {
         let id = selectedClockId ?? clock?.id
@@ -336,10 +324,8 @@ final class AppModel: ObservableObject {
     /// Whether nothing is configured: the panel's "No clocks yet" state, which
     /// a fresh install reaches and the Clocks section answers.
     var hasNoClocks: Bool { clocks.isEmpty }
-    /// One session per clock, each with its own delivery chain and custody —
-    /// so a clock that stops answering holds up only its own tiles.
-    private var sessions: [UUID: any ConnectorRunning] = [:]
-    private let makeSession: @MainActor (ClockRecord) -> any ConnectorRunning
+    /// One session per clock, and each clock's own registry (`ClockSessions`).
+    private let clockSessions: ClockSessions
     private let tiles: TileStore
     /// Where what is learned about the clocks is written down for the next
     /// launch.
@@ -372,7 +358,7 @@ final class AppModel: ObservableObject {
     var lastFailures: [String: String] { projected(tileLastFailures) }
     var lastMaintenanceFailure: [String: String] { projected(tileLastMaintenanceFailure) }
 
-    private func session(for key: TileKey) -> (any ConnectorRunning)? { sessions[key.clockId] }
+    private func session(for key: TileKey) -> (any ConnectorRunning)? { clockSessions[key.clockId] }
 
     /// The connector a tile's OWN clock runs — the instance whose output that
     /// clock would receive.
@@ -391,13 +377,11 @@ final class AppModel: ObservableObject {
     /// factory for, which is every hand-wired test and the VPN tile — the
     /// latter is not a `Connector` at all and answers nil from both.
     func connector(for key: TileKey) -> (any Connector)? {
-        guard let makeClockRegistry,
-            let clock = clocks.first(where: { $0.id == key.clockId })
+        guard let clock = clocks.first(where: { $0.id == key.clockId }),
+            let own = clockSessions.registry(for: clock)
         else {
             return registry.connector(id: key.connectorId)
         }
-        let own = clockRegistries[clock.id] ?? makeClockRegistry(clock)
-        clockRegistries[clock.id] = own
         // Built for the tile's stored record, the one its clock would run: a
         // factory reads the tile's settings off it.
         return own.connector(for: runningTile(key)) ?? registry.connector(id: key.connectorId)
@@ -561,7 +545,7 @@ final class AppModel: ObservableObject {
     /// slot is an AWTRIX session — the cast is the model check, kept honest by
     /// the factory that only ever builds a Ulanzi slot for a TC002 record.
     private func ulanziSession(for clockId: UUID) -> (any UlanziConnectorRunning)? {
-        sessions[clockId] as? any UlanziConnectorRunning
+        clockSessions.ulanzi(for: clockId)
     }
     /// The dual probe behind Add by address: whichever body decodes names the
     /// model. Nil where no caller adds by address.
@@ -748,7 +732,7 @@ final class AppModel: ObservableObject {
     ) {
         self.clocks = clocks
         self.tiles = tiles
-        self.makeSession = makeSession
+        self.clockSessions = ClockSessions(make: makeSession, makeRegistry: makeClockRegistry)
         self.clockStore = ClockStore(defaults: defaults)
         self.deviceHost = clocks.first?.address ?? ""
         self.typedHost = clocks.first?.address ?? ""
@@ -761,7 +745,6 @@ final class AppModel: ObservableObject {
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.registry = registry
-        self.makeClockRegistry = makeClockRegistry
         self.makeUlanziDevice = makeUlanziDevice
         self.makeUlanziBattery = makeUlanziBattery
         self.probe = probe
@@ -779,7 +762,7 @@ final class AppModel: ObservableObject {
         self.pollSleep = pollSleep
         self.micSleep = micSleep
         for clock in self.clocks {
-            sessions[clock.id] = makeSession(clock)
+            clockSessions.open(clock)
             // A TC002 clock's health is its own: /getBase answering, and
             // nothing else — no battery, no relocation, no stats to carry.
             guard clock.model == .awtrix3 else {
@@ -1656,7 +1639,7 @@ final class AppModel: ObservableObject {
     /// Nil for a clock the poll has found unreachable, like every other send.
     private func pageShowing(for key: TileKey) -> (any ClockPageShowing)? {
         guard ownsPage(key), !clockIsUnreachable(key.clockId) else { return nil }
-        return sessions[key.clockId] as? any ClockPageShowing
+        return clockSessions[key.clockId] as? any ClockPageShowing
     }
 
     /// The tile whose page each clock is showing: what the clock said, or —
@@ -1682,7 +1665,7 @@ final class AppModel: ObservableObject {
     /// returns; the model hears that word too, on its way to the session, and
     /// forgets which page it put up. Nil when the clock has no such session.
     func ulanziWatcher(for clockId: UUID) -> (any UlanziClockWatching)? {
-        guard let session = sessions[clockId] as? any UlanziClockWatching else { return nil }
+        guard let session = clockSessions[clockId] as? any UlanziClockWatching else { return nil }
         return PageBeliefForgettingWatcher(session: session) { [weak self] in
             self?.forgetPageBelief(clockId: clockId)
         }
@@ -1721,7 +1704,7 @@ final class AppModel: ObservableObject {
     }
 
     private func readTileOnScreen(clockId: UUID) async {
-        guard !clockIsUnreachable(clockId), let clock = sessions[clockId] as? any ClockPageShowing else {
+        guard !clockIsUnreachable(clockId), let clock = clockSessions[clockId] as? any ClockPageShowing else {
             tileOnScreen[clockId] = nil
             return
         }
@@ -1788,7 +1771,7 @@ final class AppModel: ObservableObject {
         guard let follow = pageFollow else { return }
         pageFollow = nil
         guard let original = follow.original, let shown = follow.shown, original != shown,
-            let clock = sessions[follow.clockId] as? any ClockPageShowing
+            let clock = clockSessions[follow.clockId] as? any ClockPageShowing
         else { return }
         do {
             try await clock.showPage(original)
@@ -1924,7 +1907,7 @@ final class AppModel: ObservableObject {
         tileOrderRevision += 1
         // The TC002 runs its pages in creation order: its slot re-creates the
         // ones now out of place. After the write, so it reads the new order.
-        if let ordering = sessions[source.clockId] as? any UlanziPageOrdering {
+        if let ordering = clockSessions[source.clockId] as? any UlanziPageOrdering {
             Task { await ordering.pagesReordered() }
         }
     }
@@ -2249,7 +2232,7 @@ final class AppModel: ObservableObject {
 
     /// The session of the clock carrying the anecdote tile.
     private var anecdoteSession: (any ConnectorRunning)? {
-        anecdoteClock.flatMap { sessions[$0] }
+        anecdoteClock.flatMap { clockSessions[$0] }
     }
 
     /// The clock carrying the anecdote tile.
@@ -2320,7 +2303,7 @@ final class AppModel: ObservableObject {
         // one clock, an Ulanzi upsert on another. A tile whose connector the
         // registry does not know gets no timer inside `reschedule`, and the
         // VPN tiles get their own path in B18.
-        for record in tiles.all() where sessions[record.key.clockId] != nil {
+        for record in tiles.all() where clockSessions[record.key.clockId] != nil {
             reschedule(record.key, resuming: true)
         }
         restockAtLaunch()
@@ -2427,7 +2410,7 @@ final class AppModel: ObservableObject {
         let due = tiles.all()
             .filter {
                 registry.connector(id: $0.key.connectorId) != nil
-                    && sessions[$0.key.clockId] != nil
+                    && clockSessions[$0.key.clockId] != nil
                     && $0.policy.isPaused == false
             }
             .map(\.key)
@@ -2512,7 +2495,7 @@ final class AppModel: ObservableObject {
         let hour = currentHour
         let byClock = Dictionary(grouping: tiles.all().filter { $0.key.connectorId == VPNConnector.id }, by: \.key.clockId)
         for (clockId, vpnTiles) in byClock {
-            guard let indicators = sessions[clockId]?.indicators else { continue }
+            guard let indicators = clockSessions[clockId]?.indicators else { continue }
             let vpn = self.vpn
             taskBag.run { [weak self] in
                 var claims: [LampClaim] = []
@@ -2628,7 +2611,7 @@ final class AppModel: ObservableObject {
         // setting, and its pages are the app's own doing (D4: a quit leaves
         // the knob cycle empty of them).
         await withTaskGroup(of: Void.self) { group in
-            for session in sessions.values {
+            for (_, session) in clockSessions.all {
                 if let tc002 = session as? any UlanziConnectorRunning {
                     group.addTask { await tc002.shutdown() }
                 } else {
@@ -2646,7 +2629,7 @@ final class AppModel: ObservableObject {
         // corners.
         let covered = Dictionary(grouping: tiles.all().filter { $0.key.connectorId == VPNConnector.id }, by: \.key.clockId)
         for (clockId, vpnTiles) in covered {
-            guard let indicators = sessions[clockId]?.indicators else { continue }
+            guard let indicators = clockSessions[clockId]?.indicators else { continue }
             for slot in Set(vpnTiles.compactMap { $0.config?.lamp?.slot }).sorted(by: { $0.rawValue < $1.rawValue }) {
                 await indicators.show(.off, on: slot)
             }
@@ -2679,8 +2662,7 @@ final class AppModel: ObservableObject {
         // so `reloadClocks` builds one at the new one. The clock's registry
         // goes with it, for the same reason: its connectors are closed over
         // the clock as it was.
-        sessions[clockId] = nil
-        clockRegistries[clockId] = nil
+        clockSessions.drop(clockId)
         reloadClocks()
     }
 
@@ -2885,15 +2867,14 @@ final class AppModel: ObservableObject {
     func reloadClocks() {
         let stored = ClockStore(defaults: defaults).all()
         let kept = Set(stored.map(\.id))
-        for (id, session) in sessions where !kept.contains(id) {
+        for (id, session) in clockSessions.all where !kept.contains(id) {
             for key in timers.keys where key.clockId == id {
                 timers.removeValue(forKey: key)?.cancel()
             }
             taskBag.run {
                 await session.restoreDeviceState(borrowedBy: nil)
             }
-            sessions[id] = nil
-            clockRegistries[id] = nil
+            clockSessions.drop(id)
         }
         // The healths follow the same list: a clock gone from the store has
         // no answer left to give, and a TC002 new to it probes from the next
@@ -2910,12 +2891,10 @@ final class AppModel: ObservableObject {
         }
         // The health list moved, and the panel's dots hang off it.
         healthRevision += 1
-        for clock in stored where sessions[clock.id] == nil {
-            sessions[clock.id] = makeSession(clock)
-        }
+        for clock in stored { clockSessions.open(clock) }
         clocks = stored
         if selectedClockId.map(kept.contains) != true { selectedClockId = stored.first?.id }
-        for record in tiles.all() where timers[record.key] == nil && sessions[record.key.clockId] != nil {
+        for record in tiles.all() where timers[record.key] == nil && clockSessions[record.key.clockId] != nil {
             reschedule(record.key)
         }
         deviceHost = selectedClockId.flatMap { clock($0)?.address } ?? (stored.first?.address ?? "")
@@ -2942,7 +2921,7 @@ final class AppModel: ObservableObject {
         // A tile whose connector the registry does not know — the VPN among
         // them, which is not a scene connector — gets no schedule here.
         guard let connector = registry.connector(id: key.connectorId),
-            sessions[key.clockId] != nil
+            clockSessions[key.clockId] != nil
         else { return }
         guard let record = storedTile(key), record.policy.isPaused == false else {
             tileNextRun[key] = .held(Self.switchedOff)

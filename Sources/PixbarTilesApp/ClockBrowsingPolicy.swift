@@ -56,7 +56,7 @@ final class ClockBrowsingPolicy {
     /// the main actor, so delivery does too, and the compiler cannot see that
     /// through Combine.
     func watch(_ model: AppModel) {
-        reachability = model.$isDeviceOnline.sink { [weak self] answering in
+        reachability = model.clockHealthMonitor.$isDeviceOnline.sink { [weak self] answering in
             MainActor.assumeIsolated { self?.clockAnswers(answering) }
         }
         clocksSectionWatch = model.$clocksSectionVisible.sink { [weak self] visible in

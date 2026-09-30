@@ -208,25 +208,6 @@ final class AppModel: ObservableObject {
     /// address, and taking the type would drag a browser, a probe and a
     /// deadline into every test that has no opinion about any of them.
     typealias RelocatingHost = @MainActor (String?) async -> String?
-    /// How often reachability is re-asked. Not a user setting: it costs one
-    /// request and the answer drives a glyph, not a delivery.
-    ///
-    /// A minute, down from three requests a minute. Nothing the answer feeds
-    /// moves faster than that: the glyph, the schedule's hold reason, and a
-    /// battery trend measured over an hour and a half. What twenty seconds
-    /// bought was 4,320 requests a day at a clock that spends them on its own
-    /// battery — and the one case it really did buy, a panel showing a reading
-    /// older than the person looking at it, is bought outright by
-    /// `refreshOnPanelOpen` for one request per open.
-    static let monitorInterval: TimeInterval = 60
-    /// How close together two panel opens have to be to count as one.
-    ///
-    /// SwiftUI hands `.onAppear` out per appearance rather than per user
-    /// gesture — a rebuild, or a bounce out to the settings and back, is
-    /// another one — and the panel is a surface somebody opens, reads and
-    /// reopens. Five seconds is long enough to swallow that and short enough
-    /// that a deliberate second look still gets a reading of its own.
-    static let panelRefreshFloor: TimeInterval = 5
     /// How often a held run asks whether the meeting is over.
     ///
     /// Five seconds. Not a user setting, and not the schedule's interval: what
@@ -297,16 +278,12 @@ final class AppModel: ObservableObject {
     /// asks `connector(for:)` instead.
     let registry: ConnectorRegistry
     /// The selected clock's health, which is what the glyph is about.
-    var monitor: DeviceMonitor {
-        let id = selectedClockId ?? clock?.id
-        return id.flatMap { healths[$0] }?.monitor
-            ?? DeviceMonitor(device: device, history: InMemoryBatteryHistoryStore())
-    }
-    /// One health per clock: its own monitor, its own unanswered-poll count.
-    private var healths: [UUID: ClockHealth] = [:]
-    /// Held so that a relocation can re-point it, which is the whole reason
-    /// this reference exists here rather than only inside the monitor.
-    private let device: AwtrixDevice
+    var monitor: DeviceMonitor { clockHealthMonitor.monitor(of: selectedClockId ?? clock?.id) }
+    /// Every clock's health and the poll that asks them (`ClockHealthMonitor`).
+    let clockHealthMonitor: ClockHealthMonitor
+    /// Relays the health monitor's changes as this model's own, for the
+    /// facades that rebuild off `objectWillChange`.
+    private var healthPulse: AnyCancellable?
     /// Which clock the panel shows and the glyph is about. Phase 5's switcher
     /// writes it; until then it is the first clock unless something set it.
     static let selectedClockKey = "selectedClockId"
@@ -318,7 +295,7 @@ final class AppModel: ObservableObject {
             defaults.set(selectedClockId?.uuidString, forKey: Self.selectedClockKey)
             // The glyph answers for the selected clock alone, and it answers
             // when the selection moves — not at the next poll (D7).
-            isDeviceOnline = answerForSelectedClock()
+            clockHealthMonitor.selectedClockId = selectedClockId
         }
     }
     /// Whether nothing is configured: the panel's "No clocks yet" state, which
@@ -518,19 +495,13 @@ final class AppModel: ObservableObject {
     /// an unreachable clock doing nothing at all, with no explanation.
     @Published private(set) var replayResult: String?
     @Published private(set) var iconStatus: String?
-    /// Mirrored from `monitor` rather than read through it, because the poll
-    /// below is what learns the answer and a view that wants only the glyph
-    /// should not have to observe a second object to get it.
-    @Published private(set) var isDeviceOnline = false
+    /// Whether the selected clock is answering — the glyph's one answer.
+    var isDeviceOnline: Bool { clockHealthMonitor.isDeviceOnline }
     /// The microphones the schedule waits for. Published because the settings'
     /// tick boxes bind to them: the defaults behind it are persistence rather
     /// than state.
     @Published private(set) var watchedMicrophones: [WatchedMicrophone]
 
-    /// One TC002 health per clock: its own `/getBase` probe, its own answer.
-    /// The AWTRIX clocks keep theirs in `healths` — a different object, for a
-    /// firmware with nothing to say beyond whether it is there.
-    private var ulanziHealths: [UUID: UlanziClockHealth] = [:]
     /// Builds the device a TC002 clock's health probes. The device is the
     /// same one the clock's own slot pushes through, so a health answer and a
     /// page push cannot disagree about whether the clock is there.
@@ -561,13 +532,6 @@ final class AppModel: ObservableObject {
     private let pasteboard: NSPasteboard
     /// The delivery cadence, one sleeper per scheduled connector.
     private let scheduleSleep: Sleeping
-    /// The reachability cadence, one sleeper for the whole app. Separate from
-    /// `scheduleSleep` because they are two clocks, not one: a fixed 20-second
-    /// poll and a per-connector interval the user chooses and the retry policy
-    /// bends. Kept apart so that whoever drives one can say which one they
-    /// meant — an aggregate cannot, and a test waiting on "something is asleep"
-    /// gets whichever loop won the race.
-    private let pollSleep: Sleeping
     /// The cadence a held run is released on, one sleeper for the whole app.
     ///
     /// A third clock rather than a share of either of the two above, for the
@@ -576,13 +540,6 @@ final class AppModel: ObservableObject {
     /// the microphone rather than the schedule — otherwise "held then released"
     /// cannot be told from "ran late", which is this feature's whole claim.
     private let micSleep: Sleeping
-    /// Where a threshold crossing goes.
-    ///
-    /// A collaborator rather than a call into AppKit, and it has no default for
-    /// the reason `AppDelegate.discovery` has none: the real one raises a modal
-    /// dialog and asks macOS for notification permission, and a default would
-    /// put both in front of whoever is running `swift test`.
-    private let alerts: any BatteryWarningPresenting
     /// Whether macOS says the user is busy, and what to call it when it does.
     private let focusStatus: any FocusStatusReading
     /// The clock every tile's window is read against.
@@ -603,16 +560,7 @@ final class AppModel: ObservableObject {
     /// the host queues them), a replay (it puts the same held banner on the
     /// clock as a run), a restore (it writes the clock's own overlay back), a
     /// write to the lamps (triggers overlap and the display serialises them).
-    private let taskBag = TaskBag()
-    /// The reachability poll's loop.
-    private static let monitorLoop = "monitorLoop"
-    /// The one-off reading a panel open asked for, still going.
-    ///
-    /// Owned rather than detached, for the reason every other task here is:
-    /// teardown can only wait for a task it holds, and this one writes
-    /// `isDeviceOnline` and can raise a battery dialog. A quit that did not
-    /// wait for it is a dialog arriving after the app is gone.
-    private static let panelRefresh = "panelRefresh"
+    private let taskBag: TaskBag
     /// The restock the launch fires: a minute of synthesis that a quit would
     /// otherwise kill halfway through a batch.
     private static let launchRestock = "launchRestock"
@@ -622,13 +570,6 @@ final class AppModel: ObservableObject {
     private static let microphoneWatch = "microphoneWatch"
     /// The removal of the icons the app uploaded — never two at once.
     private static let iconRemoval = "iconRemoval"
-    /// When the last panel open was honoured, or nil while none has been.
-    ///
-    /// The instant rather than a flag, because "already running" is not the
-    /// question: the request takes milliseconds against a healthy clock, so a
-    /// guard on the task alone would let a panel opened twice in a second
-    /// through twice.
-    private var lastPanelRefresh: Date?
     /// Tiles with a display-settings push on the wire, and those whose look
     /// changed again while it was — see `pushDisplaySettings(_:)`.
     private var displayPushes: Set<TileKey> = []
@@ -736,7 +677,11 @@ final class AppModel: ObservableObject {
         self.clockStore = ClockStore(defaults: defaults)
         self.deviceHost = clocks.first?.address ?? ""
         self.typedHost = clocks.first?.address ?? ""
-        self.device = device
+        let taskBag = TaskBag()
+        self.taskBag = taskBag
+        self.clockHealthMonitor = ClockHealthMonitor(
+            device: device, pollSleep: pollSleep, alerts: alerts, taskBag: taskBag
+        )
         self.relocate = relocate
         self.location = StoredLocation(
             defaults: defaults, clockId: clocks.first?.id ?? UUID()
@@ -750,7 +695,6 @@ final class AppModel: ObservableObject {
         self.probe = probe
         self.installer = installer
         self.anecdotes = anecdotes
-        self.alerts = alerts
         self.focusStatus = focusStatus
         self.vpn = vpn
         self.vpnPresence = vpnPresence
@@ -759,7 +703,6 @@ final class AppModel: ObservableObject {
         self.watchedMicrophones = watching
         self.secrets = secrets
         self.scheduleSleep = sleep
-        self.pollSleep = pollSleep
         self.micSleep = micSleep
         for clock in self.clocks {
             clockSessions.open(clock)
@@ -767,12 +710,12 @@ final class AppModel: ObservableObject {
             // nothing else — no battery, no relocation, no stats to carry.
             guard clock.model == .awtrix3 else {
                 if let device = makeUlanziDevice(clock) {
-                    ulanziHealths[clock.id] = ulanziHealth(for: clock, device: device)
+                    clockHealthMonitor.track(ulanziHealth(for: clock, device: device))
                 }
                 continue
             }
             let wired = makeDeviceAndHistory(clock)
-            healths[clock.id] = ClockHealth(
+            clockHealthMonitor.track(ClockHealth(
                 clock: clock,
                 device: wired.device,
                 history: wired.history,
@@ -781,11 +724,16 @@ final class AppModel: ObservableObject {
                 didMove: { [weak self] clockId, address in
                     await self?.clockDidMove(clockId, to: address)
                 }
-            )
+            ))
         }
         let saved = defaults.string(forKey: Self.selectedClockKey).flatMap(UUID.init(uuidString:))
         selectedClockId = clocks.contains(where: { $0.id == saved })
             ? saved : clocks.first?.id
+        clockHealthMonitor.selectedClockId = selectedClockId
+        clockHealthMonitor.onPolled = { [weak self] in self?.pollAnswered() }
+        healthPulse = clockHealthMonitor.objectWillChange.sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.objectWillChange.send() }
+        }
     }
 
     /// The composition root: one device host in, every collaborator wired.
@@ -1638,7 +1586,7 @@ final class AppModel: ObservableObject {
     /// clock whose slot can switch.
     /// Nil for a clock the poll has found unreachable, like every other send.
     private func pageShowing(for key: TileKey) -> (any ClockPageShowing)? {
-        guard ownsPage(key), !clockIsUnreachable(key.clockId) else { return nil }
+        guard ownsPage(key), !clockHealthMonitor.clockIsUnreachable(key.clockId) else { return nil }
         return clockSessions[key.clockId] as? any ClockPageShowing
     }
 
@@ -1704,7 +1652,7 @@ final class AppModel: ObservableObject {
     }
 
     private func readTileOnScreen(clockId: UUID) async {
-        guard !clockIsUnreachable(clockId), let clock = clockSessions[clockId] as? any ClockPageShowing else {
+        guard !clockHealthMonitor.clockIsUnreachable(clockId), let clock = clockSessions[clockId] as? any ClockPageShowing else {
             tileOnScreen[clockId] = nil
             return
         }
@@ -1790,41 +1738,16 @@ final class AppModel: ObservableObject {
         tileOnScreen[clockId] = key
     }
 
-    /// Bumped whenever any clock's health has moved: a poll answered, a
-    /// health was built or dropped. The panel's dot hangs off per-clock
-    /// health, which is otherwise silent — a `DeviceMonitor` is a nested
-    /// observable no `objectWillChange` of this model carries, and a TC002's
-    /// answering state is a plain field. The facade subscribes to this and
-    /// rebuilds its sections off it.
-    @Published private(set) var healthRevision = 0
 
-    /// One clock's answer to "are you there", as the panel's status dot asks
-    /// it: the three-valued answer both firmwares give, said in one
-    /// vocabulary. `.unknown` is the state before the first poll — the one
-    /// the panel drew as "Checking…", which is neither connected nor down.
-    enum ClockReachability: Equatable, Sendable {
-        case unknown
-        case reachable
-        case unreachable
-    }
 
-    /// The clock's reachability, from its own health: a TC002 by `/getBase`
-    /// answering, an AWTRIX one by the monitor's stats poll. One answer per
-    /// firmware is what lets one dot stand for either.
+    /// Moves once per poll and once per change to the health list.
+    var healthRevision: Int { clockHealthMonitor.healthRevision }
+
+    typealias ClockReachability = ClockHealthMonitor.ClockReachability
+
+    /// The clock's reachability, from its own health (`ClockHealthMonitor`).
     func reachability(of clockId: UUID) -> ClockReachability {
-        if let ulanzi = ulanziHealths[clockId] {
-            switch ulanzi.answering {
-            case .notAsked: return .unknown
-            case .answering: return .reachable
-            case .unreachable: return .unreachable
-            }
-        }
-        guard let health = healths[clockId] else { return .unknown }
-        switch health.monitor.state {
-        case .unknown: return .unknown
-        case .online: return .reachable
-        case .offline: return .unreachable
-        }
+        clockHealthMonitor.reachability(of: clockId)
     }
 
     /// A clock's most recent push, as the dot asks it. The run's own
@@ -1944,30 +1867,15 @@ final class AppModel: ObservableObject {
         return (tileTitle(of: record).text, record.config)
     }
 
-    /// A clock's reachability, as the Clocks section's row says it. The same
-    /// three words for both firmwares, from the one answer the dot reads.
-    func statusLine(of clock: ClockRecord) -> String {
-        DeviceStatusLine.title(for: reachability(of: clock.id))
-    }
 
-    /// A clock's battery, as the panel's statistics line says it — or nil for
-    /// a clock that has never answered, and for a TC002 whose firmware is not
-    /// one the memory read knows. A clock that went away keeps showing its
-    /// last known charge: the panel is the clocks' glance, and a battery that
-    /// vanishes every time the Wi-Fi blips is a figure nobody plans around.
-    ///
-    /// A clock is in exactly one of the two health maps, so this is a
-    /// fall-through rather than a merge.
-    func batteryLine(of clock: ClockRecord) -> String? {
-        BatteryLine.text(for: battery(of: clock))
-    }
+    /// A clock's reachability, as the Clocks section's row says it.
+    func statusLine(of clock: ClockRecord) -> String { clockHealthMonitor.statusLine(of: clock) }
 
-    /// The reading behind that line, for a surface that draws the charge
-    /// rather than saying it — the panel's cards.
-    func battery(of clock: ClockRecord) -> BatteryReading? {
-        if let ulanzi = ulanziHealths[clock.id] { return ulanzi.lastKnownBattery }
-        return healths[clock.id]?.monitor.lastKnownBattery
-    }
+    /// A clock's battery, as the panel's statistics line says it.
+    func batteryLine(of clock: ClockRecord) -> String? { clockHealthMonitor.batteryLine(of: clock) }
+
+    /// The reading behind that line, for the panel's cards.
+    func battery(of clock: ClockRecord) -> BatteryReading? { clockHealthMonitor.battery(of: clock) }
 
     /// Every connector a clock's Add tile menu can offer, in offer order:
     /// the registry's, then the lamp's — it has no face and no session of
@@ -2249,7 +2157,7 @@ final class AppModel: ObservableObject {
         }
         // Nothing is sent to a clock the poll has found unreachable; the
         // History is told why, in the panel's words for the same hold.
-        if let clockId = anecdoteClock, clockIsUnreachable(clockId) {
+        if let clockId = anecdoteClock, clockHealthMonitor.clockIsUnreachable(clockId) {
             replayResult = Self.deviceUnreachable
             return
         }
@@ -2292,7 +2200,7 @@ final class AppModel: ObservableObject {
         // poll is what SPENDS this debt and reading it half-written is one
         // ordering nobody should have to reason about.
         noteLaunchDeliveries()
-        startMonitoring()
+        clockHealthMonitor.startMonitoring()
         startWatchingMicrophones()
         startWatchingTheWorld()
         // The one caller that resumes. A cadence describes the gap BETWEEN
@@ -2581,8 +2489,7 @@ final class AppModel: ObservableObject {
     /// and leave the clock stuck on that banner until somebody walks over and
     /// presses the middle button.
     func teardown() async {
-        // Cancelled, not awaited: a poll in flight writes nothing to a clock.
-        taskBag.cancel(Self.monitorLoop)
+        clockHealthMonitor.stopMonitoring()
         // Before anything is cancelled, so nothing new is scheduled behind the
         // teardown. Both fire from queues of their own, and a path change
         // landing halfway through this would enqueue a write to a clock the
@@ -2636,16 +2543,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func startMonitoring() {
-        taskBag.replace(Self.monitorLoop) { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                await self.poll()
-                do { try await self.pollSleep(Self.monitorInterval) } catch { return }
-            }
-        }
-    }
-
     /// Follows one clock to where it was found: the panel labels that are
     /// about the selected clock, and a session rebuilt at the new address.
     /// Each health has already re-pointed its own device and written the store.
@@ -2679,48 +2576,10 @@ final class AppModel: ObservableObject {
         )
     }
 
-    /// One clock's threshold crossing out of the poll: which clock it was
-    /// about, and what it crossed.
-    private struct Crossing: Sendable {
-        let clock: String
-        let warning: BatteryWarning?
-    }
 
-    /// Asks every clock how it is, once, and hands on everything those answers
-    /// change.
-    ///
-    /// Lifted out of the loop rather than duplicated into `refreshOnPanelOpen`,
-    /// because the reading is only half of what a poll is: the glyph's mirror,
-    /// the schedules' hold reasons and the battery dialog all hang off it, and
-    /// a second caller that took the reading alone would leave a panel showing
-    /// a fresh percentage beside a stale hold reason.
-    private func poll() async {
-        let now = Date()
-        // Every clock concurrently: a clock inside its 15-second timeout does
-        // not hold up the others' readings. Each health's poll carries its own
-        // follow-up — the identity write and, when one is due, the move. One
-        // task per health rather than a task group, whose isolation checker
-        // this pattern otherwise trips a compiler bug in. Both health kinds
-        // poll in the same fan-out: an AWTRIX one returns a battery warning
-        // with its reading, a TC002 one always nil — nothing to cross.
-        var polls: [Task<(String, BatteryWarning?), Never>] = []
-        polls.append(
-            contentsOf: healths.values.map { health in
-                Task { @MainActor in (health.name, await health.poll(at: now)) }
-            }
-        )
-        polls.append(
-            contentsOf: ulanziHealths.values.map { health in
-                Task { @MainActor in (health.name, await health.poll(at: now)) }
-            }
-        )
-        var crossings: [Crossing] = []
-        for task in polls {
-            let (name, warning) = await task.value
-            if warning != nil { crossings.append(Crossing(clock: name, warning: warning)) }
-        }
-        healthRevision += 1
-        isDeviceOnline = answerForSelectedClock()
+    /// Hands on everything a poll's answers change — run by the health
+    /// monitor after each poll, before any battery dialog.
+    private func pollAnswered() {
         forgetFailuresOfUnreachableClocks()
         // The clock going down or coming back changes what is holding every
         // schedule, and this is what learns it. Without the refresh the panel
@@ -2749,15 +2608,6 @@ final class AppModel: ObservableObject {
         // reconciles whatever they missed. Costs nothing when they missed
         // nothing: the display writes only what moved.
         refreshLamps()
-        // Awaited here rather than detached. The dialog does not block — it
-        // schedules itself — and what is awaited is the authorization request,
-        // which happens once. A detached task would be one more thing teardown
-        // cannot wait for, for a warning that fires four times in the life of a
-        // charge.
-        for crossing in crossings {
-            guard let warning = crossing.warning else { continue }
-            await alerts.warn(warning, on: crossing.clock)
-        }
     }
 
     /// Asks for what the panel is about to need: one reading, and what has
@@ -2794,15 +2644,7 @@ final class AppModel: ObservableObject {
         // sharing the throttle would only mean an open inside the floor got no
         // history for a reason that is about the device.
         readHistory()
-        let now = Date()
-        if let last = lastPanelRefresh, now.timeIntervalSince(last) < Self.panelRefreshFloor {
-            return
-        }
-        guard !taskBag.isRunning(Self.panelRefresh) else { return }
-        lastPanelRefresh = now
-        taskBag.startIfIdle(Self.panelRefresh) { [weak self] in
-            await self?.poll()
-        }
+        clockHealthMonitor.pollOnPanelOpen()
     }
 
     /// Watches for the meeting being over, and lets the held run go.
@@ -2876,21 +2718,10 @@ final class AppModel: ObservableObject {
             }
             clockSessions.drop(id)
         }
-        // The healths follow the same list: a clock gone from the store has
-        // no answer left to give, and a TC002 new to it probes from the next
-        // poll on. (An AWTRIX clock added live still gets no health — its
-        // monitor needs the battery history wiring init does, and that debt
-        // is 5b's, not this one's.)
-        for id in healths.keys where !kept.contains(id) { healths[id] = nil }
-        for id in ulanziHealths.keys where !kept.contains(id) { ulanziHealths[id] = nil }
-        for clock in stored
-        where clock.model == .ulanziTC002 && ulanziHealths[clock.id] == nil {
-            if let device = makeUlanziDevice(clock) {
-                ulanziHealths[clock.id] = ulanziHealth(for: clock, device: device)
-            }
+        // The healths follow the same list.
+        clockHealthMonitor.followClocks(stored) { [self] clock in
+            makeUlanziDevice(clock).map { ulanziHealth(for: clock, device: $0) }
         }
-        // The health list moved, and the panel's dots hang off it.
-        healthRevision += 1
         for clock in stored { clockSessions.open(clock) }
         clocks = stored
         if selectedClockId.map(kept.contains) != true { selectedClockId = stored.first?.id }
@@ -3128,23 +2959,6 @@ final class AppModel: ObservableObject {
     /// all between launch and the first poll landing — and "not asked yet" is
     /// not "not there", which is the conflation `DeviceState` exists to
     /// prevent. Each clock answers for its own tiles only.
-    /// Whether the SELECTED clock is answering, across both health kinds —
-    /// the glyph reads one answer, whichever model the selection names.
-    private func answerForSelectedClock() -> Bool {
-        guard let id = selectedClockId else { return false }
-        if let ulanzi = ulanziHealths[id] { return ulanzi.isOnline }
-        return healths[id]?.isOnline ?? false
-    }
-
-    private func clockIsUnreachable(_ clockId: UUID) -> Bool {
-        if let ulanzi = ulanziHealths[clockId] {
-            if case .unreachable = ulanzi.answering { return true }
-            return false
-        }
-        guard let health = healths[clockId] else { return false }
-        if case .offline = health.monitor.state { return true }
-        return false
-    }
 
     /// What is holding this connector's schedule right now, or nil when nothing
     /// is.
@@ -3168,7 +2982,7 @@ final class AppModel: ObservableObject {
     /// matrix for the whole shipped 23:00–08:00 window while the panel blamed a
     /// microphone.
     private func scheduleHold(for key: TileKey) -> String? {
-        if clockIsUnreachable(key.clockId) { return Self.deviceUnreachable }
+        if clockHealthMonitor.clockIsUnreachable(key.clockId) { return Self.deviceUnreachable }
         switch policy(of: key)?.hold(in: currentFocus, atHour: currentHour) {
         case .paused?: return Self.switchedOff
         case .hours?: return Self.duringQuietHours
@@ -3306,7 +3120,7 @@ final class AppModel: ObservableObject {
     /// says why nothing happened — and the restock after it still runs, because
     /// an outage of the clock is not an outage of the feed.
     private func runAndReport(_ key: TileKey) async {
-        if clockIsUnreachable(key.clockId) {
+        if clockHealthMonitor.clockIsUnreachable(key.clockId) {
             tileLastResults[key] = Self.deviceUnreachable
             await restock(key)
             return
@@ -3422,29 +3236,22 @@ final class AppModel: ObservableObject {
         case .delivered, .skipped: tileLastFailures[key] = nil
         // Not evidence: the same rule `note` gives its own cancellation.
         case .cancelled: break
-        case .failed where clockIsUnreachable(key.clockId):
+        case .failed where clockHealthMonitor.clockIsUnreachable(key.clockId):
             tileLastFailures[key] = nil
             tileLastResults[key] = Self.deviceUnreachable
             return
         case let .failed(message):
             tileLastFailures[key] = message
-            recheckClocks()
+            clockHealthMonitor.recheckClocks()
         }
         tileLastResults[key] = Self.words(for: result)
     }
 
-    /// Polls now, in the panel refresh's slot: one in flight is enough, and
-    /// teardown already waits on it.
-    private func recheckClocks() {
-        taskBag.startIfIdle(Self.panelRefresh) { [weak self] in
-            await self?.poll()
-        }
-    }
 
     /// Drops what the tiles of an unreachable clock last failed with — the
     /// failures that were recorded before the poll learned the clock had gone.
     private func forgetFailuresOfUnreachableClocks() {
-        for key in tileLastFailures.keys where clockIsUnreachable(key.clockId) {
+        for key in tileLastFailures.keys where clockHealthMonitor.clockIsUnreachable(key.clockId) {
             tileLastFailures[key] = nil
             tileLastResults[key] = Self.deviceUnreachable
         }

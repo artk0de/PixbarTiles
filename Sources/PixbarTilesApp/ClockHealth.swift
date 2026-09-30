@@ -46,7 +46,7 @@ final class ClockHealth: @unchecked Sendable {
     var isOnline: Bool { monitor.isOnline }
 
     /// One poll: the reading, a crossed threshold if there was one, and the
-    /// relocation rule — exactly `AppModel.poll()`'s first and last steps.
+    /// relocation rule — exactly `ClockHealthMonitor.poll()`'s first and last steps.
     func poll(at now: Date) async -> BatteryWarning? {
         let crossed = await monitor.refresh(at: now)
         await follow()

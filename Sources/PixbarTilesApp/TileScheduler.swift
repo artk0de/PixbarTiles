@@ -6,6 +6,12 @@ import PixbarKit
 protocol TileScheduling: AnyObject {
     func reschedule(_ key: TileKey, resuming: Bool)
     func reconcileTiles()
+    func unschedule(_ key: TileKey)
+    func pushDisplaySettings(_ key: TileKey)
+}
+
+extension TileScheduling {
+    func reschedule(_ key: TileKey) { reschedule(key, resuming: false) }
 }
 
 /// Each tile's delivery loop: when it next runs, what holds it, what a launch

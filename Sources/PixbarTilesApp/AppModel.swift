@@ -217,22 +217,6 @@ final class AppModel: ObservableObject {
         (MacFocus(reading: focusStatus), Calendar.current.component(.hour, from: now()))
     }
 
-    /// A tile's policy as stored, with anything a record from before Phase 4
-    /// does not say taken from its connector's row.
-    private func policy(of key: TileKey) -> TilePolicy? {
-        Self.policy(of: key, in: tiles, registry: registry)
-    }
-
-    static func policy(of key: TileKey, in tiles: TileStore, registry: ConnectorRegistry) -> TilePolicy? {
-        guard let record = tiles.all().first(where: { $0.key == key }) else { return nil }
-        // The VPN is not in the registry (it is not a scene connector), so its
-        // row is named here.
-        let row = key.connectorId == VPNConnector.id
-            ? TileDefaults.vpn
-            : registry.connector(id: key.connectorId)?.defaultPolicy
-                ?? TilePolicy(refreshSeconds: record.policy.refreshSeconds)
-        return TilePolicy(record.policy, defaults: row)
-    }
 
     /// Where this app is talking to the clock right now.
     ///
@@ -294,6 +278,37 @@ final class AppModel: ObservableObject {
     let tileRunner: TileRunner
     /// Each tile's delivery loop and what holds it (`TileScheduler`).
     let tileScheduler: TileScheduler
+    /// The tiles as stored and every move that changes them (`TileBook`).
+    let tileBook: TileBook
+    typealias TileSaveOutcome = TileBook.TileSaveOutcome
+    static let newTileIntervalKey = TileBook.newTileIntervalKey
+    var tileOrderRevision: Int { tileBook.tileOrderRevision }
+    var tileRecords: [TileRecord] { tileBook.tileRecords }
+    var newTileIntervalSeconds: Int? { tileBook.newTileIntervalSeconds }
+    func setNewTileInterval(seconds: Int?) { tileBook.setNewTileInterval(seconds: seconds) }
+    func connector(for key: TileKey) -> (any Connector)? { tileBook.connector(for: key) }
+    func storedTile(_ key: TileKey) -> TileRecord? { tileBook.storedTile(key) }
+    func storedPolicy(of key: TileKey) -> TilePolicy? { tileBook.storedPolicy(of: key) }
+    func setPaused(_ paused: Bool, tile key: TileKey) { tileBook.setPaused(paused, tile: key) }
+    func availability(of connectorId: String, on clockId: UUID) -> TileAvailability {
+        tileBook.availability(of: connectorId, on: clockId)
+    }
+    func addTile(
+        _ connectorId: String, to clockId: UUID, instance: String = "", config: TileConfig? = nil
+    ) -> TileSaveOutcome {
+        tileBook.addTile(connectorId, to: clockId, instance: instance, config: config)
+    }
+    func saveTile(key: TileKey, policy: TilePolicy, config: TileConfig?) -> TileSaveOutcome {
+        tileBook.saveTile(key: key, policy: policy, config: config)
+    }
+    func changeLampVPN(_ key: TileKey, to vpnId: String) -> TileSaveOutcome { tileBook.changeLampVPN(key, to: vpnId) }
+    func removeTile(_ key: TileKey) { tileBook.removeTile(key) }
+    func candidate(for connectorId: String) -> TileCandidate? { tileBook.candidate(for: connectorId) }
+    func tileCandidates() -> [(connectorId: String, name: String)] { tileBook.tileCandidates() }
+    func moveTile(_ source: TileKey, to destination: TileKey) { tileBook.moveTile(source, to: destination) }
+    func tileName(of record: TileRecord) -> String { tileBook.tileName(of: record) }
+    func tileTitle(of record: TileRecord) -> TileTitle { tileBook.tileTitle(of: record) }
+    func detailValue(for key: TileKey) -> (name: String, config: TileConfig?)? { tileBook.detailValue(for: key) }
     var tileNextRun: [TileKey: NextRun] { tileScheduler.tileNextRun }
     func reconcileTiles() { tileScheduler.reconcileTiles() }
     func hold(of key: TileKey) -> TileHold? { tileScheduler.tileHold(of: key) }
@@ -305,10 +320,6 @@ final class AppModel: ObservableObject {
     private let location: StoredLocation
     private let relocate: RelocatingHost?
 
-    /// Bumped when the tiles record's ORDER changes, because the store it
-    /// lives in publishes nothing: the panel's rows are drawn from the
-    /// record, and a reorder has no other way to be seen.
-    @Published private(set) var tileOrderRevision = 0
     /// A by-tile map, seen the way the panel still reads it: the selected
     /// clock's single tiles, by connector.
     var nextRun: [String: NextRun] { projected(tileScheduler.tileNextRun) }
@@ -318,32 +329,6 @@ final class AppModel: ObservableObject {
     var lastFailures: [String: String] { projected(tileLastFailures) }
     var lastMaintenanceFailure: [String: String] { projected(tileLastMaintenanceFailure) }
 
-    /// The connector a tile's OWN clock runs — the instance whose output that
-    /// clock would receive.
-    ///
-    /// The one a preview has to ask. Reading `registry` instead was the defect
-    /// the tile settings window shipped with: that copy exists to NAME
-    /// connectors for the menus, and its instances are deliberately inert —
-    /// z.ai's is built with `key: { nil }`, so the preview of a tile with a
-    /// key saved still reported "check its key"; Claude's carries no metric,
-    /// so a tile set to the day previewed the week; the weather's is closed
-    /// over the FIRST clock's place, so a tile on the second clock previewed
-    /// another city. Every one of those is the preview lying about the clock
-    /// it claims to be showing.
-    ///
-    /// Falls back to the app-level registry for a clock this model has no
-    /// factory for, which is every hand-wired test and the VPN tile — the
-    /// latter is not a `Connector` at all and answers nil from both.
-    func connector(for key: TileKey) -> (any Connector)? {
-        guard let clock = clocks.first(where: { $0.id == key.clockId }),
-            let own = clockSessions.registry(for: clock)
-        else {
-            return registry.connector(id: key.connectorId)
-        }
-        // Built for the tile's stored record, the one its clock would run: a
-        // factory reads the tile's settings off it.
-        return own.connector(for: tileRunner.runningTile(key)) ?? registry.connector(id: key.connectorId)
-    }
 
     /// The selected clock's tile of this connector, which is what the panel's
     /// rows are about until Phase 5 draws tiles.
@@ -549,7 +534,7 @@ final class AppModel: ObservableObject {
         )
         self.lampController = LampController(
             vpn: vpn, tiles: tiles, clockSessions: clockSessions, taskBag: taskBag,
-            policy: { AppModel.policy(of: $0, in: tiles, registry: registry) },
+            policy: { TileBook.policy(of: $0, in: tiles, registry: registry) },
             moment: { AppModel.moment(focusStatus: focusStatus, now: now) }
         )
         self.microphoneWatch = MicrophoneWatch(
@@ -563,12 +548,17 @@ final class AppModel: ObservableObject {
             tiles: tiles, registry: registry, clockSessions: clockSessions, runner: tileRunner,
             reachability: clockHealthMonitor, taskBag: taskBag, sleep: sleep,
             busyMicrophone: { microphoneWatch.busyMicrophone },
-            policy: { AppModel.policy(of: $0, in: tiles, registry: registry) },
+            policy: { TileBook.policy(of: $0, in: tiles, registry: registry) },
             moment: { AppModel.moment(focusStatus: focusStatus, now: now) }
         )
-        self.pageFollower = PageFollower(
+        let pageFollower = PageFollower(
             tiles: tiles, clockSessions: clockSessions, reachability: clockHealthMonitor,
-            policy: { AppModel.policy(of: $0, in: tiles, registry: registry) }
+            policy: { TileBook.policy(of: $0, in: tiles, registry: registry) }
+        )
+        self.pageFollower = pageFollower
+        self.tileBook = TileBook(
+            tiles: tiles, registry: registry, defaults: defaults, clockSessions: clockSessions,
+            lamps: lampController, scheduler: tileScheduler, runner: tileRunner, pages: pageFollower
         )
         self.iconMaintenance = IconMaintenance(installer: installer, taskBag: taskBag)
         self.anecdoteHistory = AnecdoteHistory(
@@ -626,6 +616,8 @@ final class AppModel: ObservableObject {
         relay(pageFollower)
         relay(tileRunner)
         relay(tileScheduler)
+        relay(tileBook)
+        tileBook.clocks = { [unowned self] in self.clocks }
     }
 
     /// The composition root: one device host in, every collaborator wired.
@@ -893,12 +885,6 @@ final class AppModel: ObservableObject {
 
     // MARK: - What the user chose
 
-    /// The selected clock's tile of this connector, as stored.
-    /// The tile's stored record, said for the surfaces that read the config
-    /// it carries.
-    func storedTile(_ key: TileKey) -> TileRecord? {
-        tiles.all().first { $0.key == key }
-    }
 
 
     /// What this connector is set to, on the selected clock's tile.
@@ -928,29 +914,6 @@ final class AppModel: ObservableObject {
         setPaused(!enabled, tile: key)
     }
 
-    /// Pauses or resumes one tile, named by key and not by connector — the
-    /// same connector sits on several clocks, and this names one tile of it.
-    func setPaused(_ paused: Bool, tile key: TileKey) {
-        guard let record = storedTile(key) else { return }
-        let wasRunning = !record.policy.isPaused
-        tiles.update(record) { $0.policy.isPaused = paused }
-        tileScheduler.reschedule(key)
-        // Only on the way OFF, and only on the edge. A tile switched off
-        // stops running, so nothing else will ever put back what it borrowed —
-        // where switching one ON borrows nothing until its first delivery, and
-        // a restore there would write a value that is already on the device.
-        // Dragging the interval slider is neither, and must not touch the clock
-        // at all.
-        if wasRunning && paused {
-            tileRunner.retract(key)
-            // On the TC002 branch a paused tile's page stays in the knob cycle
-            // on the idle frame — paused, never deleted (D4). The slot names
-            // the branch: an AWTRIX session fails the cast, and there the
-            // restore above is what answers the pause.
-            let tc002 = ulanziSession(for: key.clockId)
-            Task { await tc002?.markIdle(tileId: key.tileId) }
-        }
-    }
 
     func setIntervalPosition(_ position: Int, for connector: any Connector) {
         guard let key = selectedKey(connector.id), let record = storedTile(key) else { return }
@@ -962,83 +925,7 @@ final class AppModel: ObservableObject {
         tileScheduler.reschedule(key)
     }
 
-    /// Puts back what one tile borrowed from its clock.
-    ///
-    /// The task is owned here rather than left detached, for the reason every
-    /// other one is: teardown can only wait for a task it holds, and this one
-    /// writes to the device. Keyed by nothing meaningful — switching a
-    /// connector off twice is two restores, and the second finds nothing left
-    /// to give back.
-    enum TileSaveOutcome: Equatable {
-        case saved
-        /// Not saved, with the sentence to show beside the control that asked.
-        case refused(String)
-    }
 
-    /// What the Add tile menu shows for a connector on a clock.
-    func availability(of connectorId: String, on clockId: UUID) -> TileAvailability {
-        guard let clock = clocks.first(where: { $0.id == clockId }),
-            let candidate = candidate(for: connectorId)
-        else { return .notListed }
-        return TileCatalogue.availability(of: candidate, on: clock, tiles: tiles.all(), clocks: clocks)
-    }
-
-    func addTile(
-        _ connectorId: String, to clockId: UUID, instance: String = "", config: TileConfig? = nil
-    ) -> TileSaveOutcome {
-        // A lamp tile's key carries its VPN, and a store card has no VPN to
-        // give — it knows a connector. Left empty, every press landed on the
-        // same key and the second one was refused as a duplicate, which is
-        // why a clock could never carry more than one lamp however many VPNs
-        // the catalogue held.
-        if connectorId == VPNConnector.id, instance.isEmpty {
-            guard let free = freeLampVPN(on: clockId) else {
-                return .refused(
-                    "every VPN already has a tile on \(clocks.first { $0.id == clockId }?.name ?? "this clock")"
-                )
-            }
-            return addTile(
-                connectorId, to: clockId, instance: free.id,
-                config: config ?? .vpn(lampController.startingLamp(for: free, on: clockId))
-            )
-        }
-        let key = TileKey(clockId: clockId, connectorId: connectorId, instance: instance)
-        switch availability(of: connectorId, on: clockId) {
-        case let .unavailable(reason):
-            return .refused(reason)
-        case .notListed:
-            return .refused("already on \(clocks.first { $0.id == clockId }?.name ?? "this clock")")
-        case .available:
-            break
-        }
-        if tiles.all().contains(where: { $0.key == key }) {
-            return .refused("already on \(clocks.first { $0.id == clockId }?.name ?? "this clock")")
-        }
-        var starting = connectorId == VPNConnector.id
-            ? TileDefaults.vpn
-            : registry.connector(id: connectorId)?.defaultPolicy ?? TileDefaults.weather
-        // The user's Defaults answer, when there is one, sets the pace a new
-        // tile starts at. The lamp keeps its own default — its seconds are
-        // presence, not cadence.
-        if connectorId != VPNConnector.id, let fixed = newTileIntervalSeconds {
-            starting.refreshSeconds = fixed
-        }
-        // The settings a previous tile of this connector on this clock left
-        // with come back here — an explicit `config` argument still wins.
-        var config = config
-        if config == nil,
-            let data = defaults.data(forKey: Self.restoreKey(for: key)),
-            let brought = try? JSONDecoder().decode(TileConfig.self, from: data) {
-            config = brought
-            defaults.removeObject(forKey: Self.restoreKey(for: key))
-        }
-        return saveTile(key: key, policy: starting, config: config)
-    }
-
-    /// Where a removed tile's settings wait for its return.
-    private static func restoreKey(for key: TileKey) -> String {
-        "tileConfigRestore.\(key.clockId.uuidString).\(key.connectorId).\(key.instance)"
-    }
 
     // MARK: - The lamp tiles
 
@@ -1050,60 +937,7 @@ final class AppModel: ObservableObject {
 
 
 
-    /// Points a lamp tile at another VPN — the block's Preset picker.
-    ///
-    /// A move and not an edit, because the VPN is the tile's identity: it is
-    /// the key's instance, which is what the migration wrote, what the
-    /// restore key reads, and what keeps two lamps on one clock apart. The
-    /// policy, the lamp and the colour come across untouched, and the window
-    /// is re-aimed at the key the tile now lives under.
-    func changeLampVPN(_ key: TileKey, to vpnId: String) -> TileSaveOutcome {
-        guard var lamp = storedTile(key)?.config?.lamp, let policy = storedPolicy(of: key) else {
-            return .refused("this tile is no longer on the clock")
-        }
-        guard key.instance != vpnId else { return .saved }
-        let moved = TileKey(clockId: key.clockId, connectorId: key.connectorId, instance: vpnId)
-        if tiles.all().contains(where: { $0.key == moved }) {
-            let name = WatchedVPN.preset(id: vpnId)?.displayName ?? vpnId
-            let clock = clocks.first { $0.id == key.clockId }?.name ?? "this clock"
-            return .refused("\(name) already has a tile on \(clock)")
-        }
-        lamp.vpn = vpnId
-        // The old record goes first and without `removeTile`: that path files
-        // the config away under the old key for a re-add to find, and this
-        // config is not being put away — it is moving house.
-        tileScheduler.unschedule(key)
-        try? tiles.replaceAll(tiles.all().filter { $0.key != key })
-        let outcome = saveTile(key: moved, policy: policy, config: .vpn(lamp))
-        if case .saved = outcome, detailTileKey == key { openDetail(for: moved) }
-        return outcome
-    }
 
-    /// Stores what the tile detail says, unless a VPN lamp is claimed by
-    /// another tile at the same moment. A pause takes the tile's app off its
-    /// clock at once; the schedule is rebuilt either way.
-    func saveTile(key: TileKey, policy: TilePolicy, config: TileConfig?) -> TileSaveOutcome {
-
-        if let lamp = config?.lamp,
-            let conflict = LampConflict.check(
-                LampTile(key: key, name: WatchedVPN.preset(id: lamp.vpn)?.displayName ?? lamp.vpn, slot: lamp.slot, policy: policy),
-                against: lampController.lampTiles(on: key.clockId)
-            ) {
-            return .refused(conflict.message)
-        }
-        let wasRunning = storedPolicy(of: key).map { !$0.isPaused } ?? false
-        let lookChanged = storedTile(key)?.config != config
-        tiles.update(TileRecord(key: key, policy: TilePolicyRecord(policy))) {
-            $0.policy = TilePolicyRecord(policy)
-            $0.config = config
-        }
-
-        if wasRunning && policy.isPaused { tileRunner.retract(key) }
-        if key.connectorId == VPNConnector.id { refreshLamps() } else { tileScheduler.reschedule(key) }
-        if wasRunning && lookChanged { tileScheduler.pushDisplaySettings(key) }
-        tileScheduler.reconcileTiles()
-        return .saved
-    }
 
 
     // MARK: - The z.ai key
@@ -1229,27 +1063,16 @@ final class AppModel: ObservableObject {
         var config = record.config?.github ?? GitHubTileConfig(repo: key.instance)
         config.repo = repo
         // Another spelling of the same repository is the same tile.
-        guard instance != key.instance else { return saveTile(key: key, policy: policy, config: .github(config)) }
+        guard instance != key.instance else { return tileBook.saveTile(key: key, policy: policy, config: .github(config)) }
         let moved = TileKey(clockId: key.clockId, connectorId: key.connectorId, instance: instance)
         if tiles.all().contains(where: { $0.key == moved }) {
             return .refused("\(instance) is already on \(clocks.first { $0.id == key.clockId }?.name ?? "this clock")")
         }
-        // `removeTile`'s device half, without filing the config away: it is
-        // moving house, not being put away.
-        tileScheduler.unschedule(key)
-        tileRunner.retract(key)
-        let tc002 = ulanziSession(for: key.clockId)
-        Task { await tc002?.tileRemoved(key.tileId) }
         for stale in [key, moved] {
             defaults.removeObject(forKey: UserDefaultsGitHubSnapshots.key(for: stale))
             defaults.removeObject(forKey: UserDefaultsGitHubDiagnoses.key(for: stale))
         }
-        try? tiles.replaceAll(tiles.all().map {
-            $0.key == key ? TileRecord(key: moved, policy: $0.policy, config: .github(config)) : $0
-        })
-        let outcome = saveTile(key: moved, policy: policy, config: .github(config))
-        if case .saved = outcome, detailTileKey == key { openDetail(for: moved) }
-        return outcome
+        return tileBook.rekey(key, to: moved, config: .github(config))
     }
 
     /// What the tile's last read found wrong, for the clock's tile list —
@@ -1260,39 +1083,6 @@ final class AppModel: ObservableObject {
         return UserDefaultsGitHubDiagnoses(defaults: defaults).diagnosis(for: key)
     }
 
-    func removeTile(_ key: TileKey) {
-        tileScheduler.unschedule(key)
-        // The tile's own settings survive its removal: re-adding the same
-        // connector to the same clock brings them back instead of the
-        // shipped defaults — the remove/re-add cycle is a reset button's
-        // opposite, and a person removing a tile to try again does not mean
-        // their weather place.
-        if let config = tiles.all().first(where: { $0.key == key })?.config,
-            let data = try? JSONEncoder().encode(config) {
-            defaults.set(data, forKey: Self.restoreKey(for: key))
-        }
-        try? tiles.replaceAll(tiles.all().filter { $0.key != key })
-        if key.connectorId == VPNConnector.id {
-            refreshLamps()
-        } else {
-            tileRunner.retract(key)
-            // The TC002's page is the app's own doing, so removal takes it
-            // back through the slot's custody — the empty-body delete that
-            // is the measured contract (phase-3 A9). The cast is the model
-            // check; an AWTRIX slot has nothing to take back here.
-            let tc002 = ulanziSession(for: key.clockId)
-            Task { await tc002?.tileRemoved(key.tileId) }
-        }
-    }
-
-    func storedPolicy(of key: TileKey) -> TilePolicy? { policy(of: key) }
-
-    /// The connector as the store's cards see it, or nil for an id the
-    /// registry does not hold and the lamp is not.
-    func candidate(for connectorId: String) -> TileCandidate? {
-        if connectorId == VPNConnector.id { return TileCandidate(lampController.vpn) }
-        return registry.connector(id: connectorId).map { TileCandidate($0) }
-    }
 
 
 
@@ -1336,74 +1126,9 @@ final class AppModel: ObservableObject {
     }
 
 
-    /// The tiles as they are stored, in stored order — the raw material the
-    /// panel's sections are built from.
-    var tileRecords: [TileRecord] { tiles.all() }
 
 
 
-    /// Drag-reorder, as the panel's rows carry it: `source` is the row the
-    /// drag picked up and `destination` the row it landed on. The order IS
-    /// the tiles record's order — the one record every clock reads its rows
-    /// from — so only the source clock's slice moves and every other clock's
-    /// tiles keep their places in it.
-    ///
-    /// A move that changes nothing is not one: the same row under the drag,
-    /// a destination on another clock (a payload is readable anywhere, and
-    /// only the selected clock's rows are on this panel), a source that is
-    /// gone — each arrives here as a plain refusal.
-    func moveTile(_ source: TileKey, to destination: TileKey) {
-        guard source.clockId == destination.clockId, source != destination else { return }
-        var all = tiles.all()
-        guard let fromIndex = all.firstIndex(where: { $0.key == source }),
-            let destinationRow = all.firstIndex(where: { $0.key == destination })
-        else { return }
-        let moved = all.remove(at: fromIndex)
-        // The destination's ORIGINAL index is where the dragged row lands,
-        // whatever direction the drag ran: ahead of it, the removal has
-        // already pulled every row between up by one; behind it, the insert
-        // pushes them back down.
-        all.insert(moved, at: min(destinationRow, all.count))
-        try? tiles.replaceAll(all)
-        tileOrderRevision += 1
-        // The TC002 runs its pages in creation order: its slot re-creates the
-        // ones now out of place. After the write, so it reads the new order.
-        if let ordering = clockSessions[source.clockId] as? any UlanziPageOrdering {
-            Task { await ordering.pagesReordered() }
-        }
-    }
-
-    /// A tile's display name: the lamp's VPN for a lamp tile, the connector's
-    /// own name for every other.
-    func tileName(of record: TileRecord) -> String {
-        let key = record.key
-        if key.connectorId == VPNConnector.id {
-            return record.config?.lamp.map { WatchedVPN.preset(id: $0.vpn)?.displayName ?? $0.vpn }
-                ?? "VPN"
-        }
-        return registry.connector(id: key.connectorId)?.displayName ?? key.connectorId
-    }
-
-    /// A tile's title where it is named on a card or its window: the
-    /// connector's own name (the VPN tile's is "VPN") and, for an instanced
-    /// tile, the name the kit gives its instance.
-    func tileTitle(of record: TileRecord) -> TileTitle {
-        let connectorId = record.key.connectorId
-        let name = connectorId == VPNConnector.id
-            ? VPNConnector(isUp: { _ in false }).displayName
-            : registry.connector(id: connectorId)?.displayName ?? connectorId
-        return TileTitle(name: name, secondary: TilePresentation.secondaryName(of: record))
-    }
-
-    /// The detail surface's inputs for one tile, beyond the policy it edits:
-    /// its display name and the config a save must carry through. Nil for a
-    /// tile that is gone — there is nothing left for the surface to be open
-    /// for.
-    func detailValue(for key: TileKey) -> (name: String, config: TileConfig?)? {
-        guard let record = storedTile(key) else { return nil }
-        // The window's title: `GitHub (TeaRAGs)`, the card's words.
-        return (tileTitle(of: record).text, record.config)
-    }
 
 
     /// A clock's reachability, as the Clocks section's row says it.
@@ -1415,15 +1140,6 @@ final class AppModel: ObservableObject {
     /// The reading behind that line, for the panel's cards.
     func battery(of clock: ClockRecord) -> BatteryReading? { clockHealthMonitor.battery(of: clock) }
 
-    /// Every connector a clock's Add tile menu can offer, in offer order:
-    /// the registry's, then the lamp's — it has no face and no session of
-    /// its own, so it never joined the registry, and this is where it is
-    /// offered. LAST, because it is the connector a full clock can still
-    /// take: the exhausted-clock menu offers it and nothing else.
-    func tileCandidates() -> [(connectorId: String, name: String)] {
-        registry.all.map { (connectorId: $0.id, name: $0.displayName) }
-            + [(connectorId: VPNConnector.id, name: lampController.vpn.displayName)]
-    }
 
     // MARK: - Clock actions
 
@@ -1554,22 +1270,6 @@ final class AppModel: ObservableObject {
         reloadClocks()
     }
 
-    /// The refresh a NEW tile starts with, when the user has fixed one in
-    /// Defaults — nil leaves every connector starting from its own default,
-    /// which is what the migration left and what no opinion means.
-    var newTileIntervalSeconds: Int? {
-        defaults.object(forKey: Self.newTileIntervalKey) as? Int
-    }
-
-    func setNewTileInterval(seconds: Int?) {
-        if let seconds {
-            defaults.set(seconds, forKey: Self.newTileIntervalKey)
-        } else {
-            defaults.removeObject(forKey: Self.newTileIntervalKey)
-        }
-    }
-
-    static let newTileIntervalKey = "newTileIntervalSeconds"
 
     /// Sends an expert's changes on as this model's own.
     private func relay(_ expert: some ObservableObject) {

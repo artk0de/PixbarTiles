@@ -35,7 +35,7 @@ import Testing
             runner: TileRunner(tiles: tiles, clockSessions: sessions, reachability: reachability, taskBag: taskBag),
             reachability: reachability, taskBag: taskBag, sleep: parked,
             busyMicrophone: { busy },
-            policy: { AppModel.policy(of: $0, in: tiles, registry: registry) },
+            policy: { TileBook.policy(of: $0, in: tiles, registry: registry) },
             moment: { (.noFocus, 12) }
         )
     }

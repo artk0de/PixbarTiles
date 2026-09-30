@@ -26,6 +26,7 @@ import Testing
             .github(GitHubTileConfig(repo: "owner/name")),
             TileConfig(NoParameters(), kind: AnecdotesKind.self),
             .vpn(VPNTileConfig(vpn: "pritunl", slot: .topRight, upColour: "#90EE90", whenDown: .off)),
+            TileConfig(NightLightTileConfig(scene: .glow), kind: NightLightKind.self),
         ]
         #expect(Set(samples.map(\.kindId)) == Set(TileKinds.all.map { $0.id }))
         for sample in samples {

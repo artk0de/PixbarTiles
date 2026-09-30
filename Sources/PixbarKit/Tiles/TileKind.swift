@@ -39,6 +39,7 @@ extension TileKind {
 public enum TileKinds {
     public static let all: [any TileKind.Type] = [
         WeatherKind.self, ClaudeKind.self, ZaiKind.self, GitHubKind.self, AnecdotesKind.self, VPNKind.self,
+        NightLightKind.self,
     ]
 
     public static func kind(id: String) -> (any TileKind.Type)? {

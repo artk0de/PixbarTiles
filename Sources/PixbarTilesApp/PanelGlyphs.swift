@@ -400,6 +400,21 @@ enum PanelGlyph {
         "BBBBBBBBBBB",
     ]
 
+    /// A crescent: the night light's Red Moon, and the night it keeps.
+    static let nightLightTile = [
+        "BBBBBBBBBBB",
+        "BBBBGGGGBBB",
+        "BBBGGGBBBBB",
+        "BBGGGBBBBBB",
+        "BBGGGBBBBBB",
+        "BBGGGBBBBBB",
+        "BBGGGBBBBBB",
+        "BBBGGGBBBBB",
+        "BBBBGGGGBBB",
+        "BBBBBBBBBBB",
+        "BBBBBBBBBBB",
+    ]
+
     /// A cloud. The sun was drawn beside it first and lost at this size: two
     /// shapes in eleven pixels read as one blob.
     static let weatherTile = [

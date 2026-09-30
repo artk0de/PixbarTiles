@@ -36,4 +36,19 @@ public enum TileDefaults {
     /// Event-driven: the sixty seconds are the recheck between events.
     public static let vpn = TilePolicy(refreshSeconds: 60)
 
+    /// The night light, on a Mac that can name Sleep: only while it is in
+    /// Sleep. Every other state is silenced, and an unnamed Focus held — it
+    /// may be a Work Focus at noon. The hour is a recheck: the scene is a loop
+    /// the clock plays by itself.
+    public static let nightLightSleep = TilePolicy(
+        refreshSeconds: 3_600,
+        focus: FocusRule(silencedIn: [.noFocus, .work, .personal, .doNotDisturb], whenUnknown: .hold)
+    )
+
+    /// The night light, on a Mac that cannot name Sleep: 22:00 to 05:59,
+    /// whatever the Focus says.
+    public static let nightLightHours = TilePolicy(
+        refreshSeconds: 3_600,
+        window: .active(HourWindow(startHour: 22, endHour: 6))
+    )
 }

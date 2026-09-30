@@ -62,10 +62,11 @@ public struct TileCandidate: Hashable, Sendable {
         self.blurb = blurb ?? presentation.blurb
     }
 
-    /// A scene connector. The faces it HAS are the models it supports, and
-    /// nothing else says so — not even its kind, whose `models` may only
-    /// repeat them: the AWTRIX face is required, and a connector carrying a
-    /// TC002 face carries `.ulanziTC002` with it.
+    /// A scene connector. The faces it HAS are the models it may support —
+    /// the AWTRIX face is required, and a connector carrying a TC002 face
+    /// carries `.ulanziTC002` with it — and its kind may only narrow them: a
+    /// kind never lends a connector a face it lacks, and a TC002-only kind
+    /// keeps its required AWTRIX face out of the catalogue.
     public init(_ connector: some Connector) {
         var models: Set<ClockModel> = [.awtrix3]
         if connector.ulanziFace != nil {
@@ -73,7 +74,7 @@ public struct TileCandidate: Hashable, Sendable {
         }
         self.init(
             connectorId: connector.id,
-            models: models,
+            models: TileKinds.kind(id: connector.id).map { models.intersection($0.models) } ?? models,
             instancing: connector.instancing,
             isAudible: connector.isAudible
         )

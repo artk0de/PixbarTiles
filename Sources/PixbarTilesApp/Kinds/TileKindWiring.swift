@@ -84,6 +84,7 @@ struct TileArrivalActions {
 enum AppTileKinds {
     static let all: [any TileKindWiring] = [
         WeatherWiring(), ClaudeWiring(), ZaiWiring(), GitHubWiring(), AnecdotesWiring(), VPNWiring(),
+        NightLightWiring(),
     ]
 
     static func wiring(for connectorId: String) -> (any TileKindWiring)? {

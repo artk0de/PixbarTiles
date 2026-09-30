@@ -64,6 +64,9 @@ public struct TileConfig: Sendable {
     /// The GitHub tile's config, or nil for any other tile.
     public var github: GitHubTileConfig? { value(as: GitHubTileConfig.self) }
 
+    /// The night light's config, or nil for any other tile.
+    public var nightLightConfig: NightLightTileConfig? { value(as: NightLightTileConfig.self) }
+
     /// The coding-subscription parameters — the Claude tile's or the z.ai
     /// tile's, and the same list either way — or nil for a tile that is not one.
     public var parameters: CodeUsage.Parameters? {

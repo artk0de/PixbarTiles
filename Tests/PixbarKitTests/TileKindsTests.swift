@@ -38,6 +38,10 @@ import Testing
             presentation: TilePresentation(category: .network, icon: "lock.shield", blurb: "A watched VPN, as a lamp on the clock"),
             models: [.awtrix3], instancing: .perKey, isAudible: false
         ),
+        "nightlight": Facts(
+            presentation: TilePresentation(category: .system, icon: "moon.stars", blurb: "A warm scene for the night"),
+            models: [.ulanziTC002], instancing: .single, isAudible: false
+        ),
     ]
 
     @Test func everyKindHasItsOwnId() {

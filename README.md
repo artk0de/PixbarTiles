@@ -103,7 +103,14 @@ and `Scripts/make_*_face_oracle.py` records them as fixtures under
 
 ## Status
 
-Personal project, free software.
+Personal project.
+
+## License
+
+Source-available under the [PolyForm Shield License 1.0.0](LICENSE). Use it
+anywhere, personal or work machines alike, and change it for your own needs;
+what it does not allow is building a product that competes with it, paid or
+free.
 
 AWTRIX 3 support will be dropped: the firmware is discontinued upstream, and
 the TC001 will be driven through AWTRIX NG instead.

@@ -13,15 +13,23 @@ import Testing
         private let pages: [String: String]
         private var onScreen: String?
         private var switches: [String] = []
+        /// Tiles whose page is not on the clock: taken off out of their hours.
+        private var retracted: Set<String>
 
-        init(pages: [String: String], onScreen: String?) {
+        init(pages: [String: String], onScreen: String?, retracted: Set<String> = []) {
             self.pages = pages
             self.onScreen = onScreen
+            self.retracted = retracted
         }
 
         var shown: [String] { lock.withLock { switches } }
 
-        func page(forTile tileId: String) async throws -> String? { pages[tileId] }
+        func put(_ tileId: String) { lock.withLock { _ = retracted.remove(tileId) } }
+        func takeOff(_ tileId: String) { lock.withLock { _ = retracted.insert(tileId) } }
+
+        func page(forTile tileId: String) async throws -> String? {
+            lock.withLock { retracted.contains(tileId) ? nil : pages[tileId] }
+        }
         func currentPage() async throws -> String? { lock.withLock { onScreen } }
         func showPage(_ page: String) async throws {
             lock.withLock {
@@ -46,7 +54,16 @@ import Testing
 
     private let desk = ClockRecord(name: "Desk", model: .awtrix3, address: "10.0.0.5")
 
-    private func follower(_ clock: PageClock, paused: Set<String> = []) throws -> PageFollower {
+    /// What the follower asked of the off-hours preview, in order.
+    private final class Lending {
+        var offHours: Set<String>
+        var asks: [String] = []
+        init(offHours: Set<String>) { self.offHours = offHours }
+    }
+
+    private func follower(
+        _ clock: PageClock, paused: Set<String> = [], lending: Lending? = nil
+    ) throws -> PageFollower {
         let tiles = TileStore(defaults: UserDefaults(suiteName: "pages-\(UUID().uuidString)")!)
         try tiles.replaceAll(["weather", "claude"].map { id in
             TileRecord(
@@ -60,6 +77,19 @@ import Testing
             tiles: tiles, clockSessions: sessions, reachability: Reachable(),
             policy: { key in
                 tiles.all().first { $0.key == key }.map { TilePolicy($0.policy, defaults: TilePolicy(refreshSeconds: 900)) }
+            },
+            offHours: lending.map { lending in
+                OffHoursPreview(
+                    isOffHours: { lending.offHours.contains($0.connectorId) },
+                    deliver: { key in
+                        lending.asks.append("deliver \(key.connectorId)")
+                        clock.put(key.connectorId)
+                    },
+                    retract: { key in
+                        lending.asks.append("retract \(key.connectorId)")
+                        clock.takeOff(key.connectorId)
+                    }
+                )
             }
         )
     }
@@ -77,6 +107,54 @@ import Testing
         await subject.pageSwitchesSettled()
         #expect(clock.shown == ["p-weather", "p-clock"])
         #expect(subject.tileOnScreen[desk.id] == nil)
+    }
+
+    @Test func aTileOutOfItsHoursIsPutOnTheClockWhileItsSettingsAreOpen() async throws {
+        let clock = PageClock(pages: ["weather": "p-weather"], onScreen: nil, retracted: ["weather"])
+        let lending = Lending(offHours: ["weather"])
+        let subject = try follower(clock, lending: lending)
+        subject.openDetail(for: key("weather"))
+        await subject.pageSwitchesSettled()
+        #expect(lending.asks == ["deliver weather"])
+        #expect(clock.shown == ["p-weather"])
+        subject.closeDetail()
+        await subject.pageSwitchesSettled()
+        #expect(lending.asks == ["deliver weather", "retract weather"])
+    }
+
+    @Test func aTileInItsHoursIsNeitherDeliveredNorTakenOff() async throws {
+        let clock = PageClock(pages: ["weather": "p-weather"], onScreen: nil)
+        let lending = Lending(offHours: [])
+        let subject = try follower(clock, lending: lending)
+        subject.openDetail(for: key("weather"))
+        subject.closeDetail()
+        await subject.pageSwitchesSettled()
+        #expect(lending.asks.isEmpty)
+        #expect(clock.shown == ["p-weather"])
+    }
+
+    @Test func reAimingTakesTheLentTileBackOff() async throws {
+        let clock = PageClock(pages: ["weather": "p-weather", "claude": "p-claude"], onScreen: nil, retracted: ["weather"])
+        let lending = Lending(offHours: ["weather"])
+        let subject = try follower(clock, lending: lending)
+        subject.openDetail(for: key("weather"))
+        subject.openDetail(for: key("claude"))
+        await subject.pageSwitchesSettled()
+        #expect(lending.asks == ["deliver weather", "retract weather"])
+        #expect(clock.shown == ["p-weather", "p-claude"])
+    }
+
+    @Test func aTileWhoseHoursBeganWhileOpenStaysOnTheClock() async throws {
+        let clock = PageClock(pages: ["weather": "p-weather"], onScreen: nil, retracted: ["weather"])
+        let lending = Lending(offHours: ["weather"])
+        let subject = try follower(clock, lending: lending)
+        subject.openDetail(for: key("weather"))
+        await subject.pageSwitchesSettled()
+        lending.offHours = []
+        subject.closeDetail()
+        await subject.pageSwitchesSettled()
+        #expect(lending.asks == ["deliver weather"])
+        #expect(subject.isLending(key("weather")) == false)
     }
 
     @Test func aPausedTileOwnsNoPage() throws {

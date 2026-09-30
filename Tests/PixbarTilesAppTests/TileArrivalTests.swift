@@ -71,4 +71,37 @@ import Testing
         #expect(heard.calls == ["arrived weather 55.0", "left weather"])
         #expect(ran == [weather])
     }
+
+    // The settings window taking a tile it lent back off leaves it the way
+    // its hours closing would: the wiring hears it (on a TC002 its page goes
+    // idle there, since the clock has nothing to retract).
+    @Test func aTileTakenOffByHandIsHeardLeaving() throws {
+        let tiles = TileStore(defaults: UserDefaults(suiteName: "arrival-\(UUID().uuidString)")!)
+        let weather = TileKey(clockId: clock.id, connectorId: WeatherKind.id)
+        try tiles.replaceAll([TileRecord(
+            key: weather, policy: TilePolicyRecord(isPaused: false, refreshSeconds: 900),
+            config: .weather(Coordinates(latitude: 55, longitude: 37))
+        )])
+        let registry = ConnectorRegistry()
+        let sessions = ClockSessions(make: { _ in SpyHost() }, makeRegistry: nil)
+        sessions.open(clock)
+        let taskBag = TaskBag()
+        let reachability = Reachability()
+        let subject = TileScheduler(
+            tiles: tiles, registry: registry, clockSessions: sessions,
+            runner: TileRunner(tiles: tiles, clockSessions: sessions, reachability: reachability, taskBag: taskBag),
+            reachability: reachability, taskBag: taskBag, sleep: parked,
+            busyMicrophone: { nil },
+            policy: { _ in TilePolicy(refreshSeconds: 900) },
+            moment: { (.noFocus, 12) }
+        )
+        let heard = Heard()
+        subject.wirings = { $0 == WeatherKind.id ? Recording(heard: heard) : nil }
+        subject.tileArrivalActions = TileArrivalActions(
+            run: { _ in }, show: { _ in }, idle: { _ in }, morningTile: { _, _, _ in nil }
+        )
+
+        subject.tileLeft(weather)
+        #expect(heard.calls == ["left weather"])
+    }
 }

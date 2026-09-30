@@ -16,6 +16,20 @@ private struct PageBeliefForgettingWatcher: UlanziClockWatching {
     func verifyPages() async { await session.verifyPages() }
 }
 
+/// How the settings window shows a tile its hours or Focus keep off the clock:
+/// the tile is put on for as long as its settings are open and taken off again
+/// when they close, if its time still has not come — the user opened the
+/// window to see what the controls change (2026-09-30).
+struct OffHoursPreview {
+    /// The tile is held off the clock now by its hours or Focus, and draws
+    /// rather than speaks — a preview must never make a tile talk.
+    let isOffHours: @MainActor (TileKey) -> Bool
+    /// Puts the tile's page on its clock now, returning once it is there.
+    let deliver: @MainActor (TileKey) async -> Void
+    /// Takes the tile's page back off its clock.
+    let retract: @MainActor (TileKey) -> Void
+}
+
 /// Which tile's page each clock shows, and the settings window's follow: the
 /// tile whose settings are open has its page brought up on its clock, and
 /// closing the window puts back the page from before — when the clock could
@@ -28,18 +42,30 @@ final class PageFollower: ObservableObject {
     private let reachability: any ReachabilityReading
     /// A tile's policy, as the model resolves it.
     private let policy: @MainActor (TileKey) -> TilePolicy?
+    /// Nil where nothing is lent: the window follows only the tiles on air.
+    private let offHours: OffHoursPreview?
 
     init(
         tiles: TileStore,
         clockSessions: ClockSessions,
         reachability: any ReachabilityReading,
-        policy: @escaping @MainActor (TileKey) -> TilePolicy?
+        policy: @escaping @MainActor (TileKey) -> TilePolicy?,
+        offHours: OffHoursPreview? = nil
     ) {
         self.tiles = tiles
         self.clockSessions = clockSessions
         self.reachability = reachability
         self.policy = policy
+        self.offHours = offHours
     }
+
+    /// The off-hours tile the open settings window put on its clock.
+    private var lent: TileKey?
+
+    /// Whether the settings window has put this tile on its clock out of its
+    /// hours — a look changed there goes to the clock though the schedule
+    /// would hold it.
+    func isLending(_ key: TileKey) -> Bool { lent == key }
 
     /// The tile whose detail surface is open, or nil while none is. The key it
     /// was opened for travels with the surface, so the editor never has to ask
@@ -53,7 +79,10 @@ final class PageFollower: ObservableObject {
         let previous = detailTileKey
         detailTileKey = key
         guard previous != key else { return }
-        queuePageWork { [weak self] in await self?.followPage(to: key) }
+        queuePageWork { [weak self] in
+            self?.giveBack()
+            await self?.followPage(to: key)
+        }
     }
 
     /// Closes the tile's settings, and puts the clock back on the page it
@@ -61,7 +90,17 @@ final class PageFollower: ObservableObject {
     func closeDetail() {
         guard detailTileKey != nil else { return }
         detailTileKey = nil
-        queuePageWork { [weak self] in await self?.returnPage() }
+        queuePageWork { [weak self] in
+            await self?.returnPage()
+            self?.giveBack()
+        }
+    }
+
+    /// Takes the lent tile back off, unless its time came while it was up.
+    private func giveBack() {
+        guard let key = lent else { return }
+        lent = nil
+        if let offHours, offHours.isOffHours(key) { offHours.retract(key) }
     }
 
     /// Which clock the settings window has moved, the page it showed before
@@ -209,6 +248,12 @@ final class PageFollower: ObservableObject {
         // Another clock's window closing, as far as that clock is concerned.
         if let follow = pageFollow, follow.clockId != key.clockId { await returnPage() }
         guard let clock = pageShowing(for: key) else { return }
+        if let offHours, offHours.isOffHours(key) {
+            // Lent before the delivery lands: a look saved meanwhile is
+            // pushed too, rather than held by the schedule.
+            lent = key
+            await offHours.deliver(key)
+        }
         do {
             guard let page = try await clock.page(forTile: key.tileId) else { return }
             if pageFollow == nil {

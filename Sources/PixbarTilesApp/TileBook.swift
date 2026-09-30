@@ -268,7 +268,11 @@ final class TileBook: ObservableObject {
 
         if wasRunning && policy.isPaused { runner.retract(key) }
         if key.connectorId == VPNConnector.id { lamps.refreshLamps() } else { scheduler.reschedule(key) }
-        if wasRunning && lookChanged { scheduler.pushDisplaySettings(key) }
+        if wasRunning && lookChanged {
+            // A tile its settings window put on out of its hours shows the
+            // change there, though the schedule would hold it.
+            if pages.isLending(key) { runner.pushDisplaySettings(key) } else { scheduler.pushDisplaySettings(key) }
+        }
         scheduler.reconcileTiles()
         return .saved
     }

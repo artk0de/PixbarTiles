@@ -442,9 +442,18 @@ final class AppModel: ObservableObject {
             policy: { TileBook.policy(of: $0, in: tiles, registry: registry) },
             moment: { AppModel.moment(focusStatus: focusStatus, now: now) }
         )
+        let scheduler = tileScheduler, runner = tileRunner
         let pageFollower = PageFollower(
             tiles: tiles, clockSessions: clockSessions, reachability: clockHealthMonitor,
-            policy: { TileBook.policy(of: $0, in: tiles, registry: registry) }
+            policy: { TileBook.policy(of: $0, in: tiles, registry: registry) },
+            offHours: OffHoursPreview(
+                isOffHours: { key in
+                    let hold = scheduler.tileHold(of: key)
+                    return (hold == .hours || hold == .focus) && !scheduler.isAudible(key.connectorId)
+                },
+                deliver: { await runner.runAndReport($0) },
+                retract: { scheduler.tileLeft($0) }
+            )
         )
         self.pageFollower = pageFollower
         self.tileBook = TileBook(

@@ -310,6 +310,51 @@ private let circle = CodeUsage.Parameters(resetEvery: 10, resetAfter: 80, layout
         #expect(runs(host) == 0)
     }
 
+    /// The spy, as a clock that can switch pages: the settings window's
+    /// follow only moves a clock that can.
+    private final class PagedSpy: ConnectorRunning, ClockPageShowing, @unchecked Sendable {
+        let spy: SpyHost
+        init(_ spy: SpyHost) { self.spy = spy }
+        func page(forTile tileId: String) async throws -> String? { "p-\(tileId)" }
+        func currentPage() async throws -> String? { nil }
+        func showPage(_ page: String) async throws {}
+        func runOnce(tile: TileRecord) async -> RunResult { await spy.runOnce(tile: tile) }
+        func maintain(tile: TileRecord) async -> MaintenanceResult { await spy.maintain(tile: tile) }
+        func deliver(_ output: AwtrixDelivery) async -> RunResult { await spy.deliver(output) }
+        func nextDelay(tile: TileRecord, interval: TimeInterval) async -> TimeInterval { interval }
+        func restoreDeviceState(borrowedBy tileId: String?) async {
+            await spy.restoreDeviceState(borrowedBy: tileId)
+        }
+        var indicators: IndicatorCustody? { nil }
+    }
+
+    // Out of its hours the tile is off the clock; its settings window puts it
+    // on, a look changed there reaches the clock, and closing takes it off.
+    @Test func aTileOutOfItsHoursIsOnTheClockWhileItsSettingsAreOpen() async throws {
+        let host = SpyHost()
+        let app = testModel(
+            connectors: [claude], clocks: [kitchen],
+            tiles: [TileRecord(
+                key: claudeKey(), policy: TilePolicyRecord(isPaused: false, refreshSeconds: 900),
+                config: .claude(ClaudeTileConfig())
+            )],
+            sessions: [kitchen.id: PagedSpy(host)]
+        )
+        var policy = try #require(app.storedPolicy(of: claudeKey()))
+        // Working hours that start an hour from now: off the clock at present.
+        let hour = Calendar.current.component(.hour, from: Date())
+        policy.window = .active(HourWindow(startHour: (hour + 1) % 24, endHour: (hour + 2) % 24))
+        _ = app.saveTile(key: claudeKey(), policy: policy, config: .claude(ClaudeTileConfig()))
+
+        app.openDetail(for: claudeKey())
+        #expect(await waitUntil { runs(host) == 1 })
+        _ = app.saveTile(key: claudeKey(), policy: policy, config: .claude(ClaudeTileConfig(parameters: circle)))
+        #expect(await waitUntil { runs(host) == 2 })
+
+        app.closeDetail()
+        #expect(await waitUntil { host.calls.contains("restore:\(ClaudeUsageConnector.id)") })
+    }
+
     // A burst of changes while a push is on the wire is ONE more push, made
     // after it — so the last page on the clock is drawn from the last save,
     // never overtaken by a slower run with an older one.

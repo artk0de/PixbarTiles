@@ -277,16 +277,27 @@ final class TileScheduler: ObservableObject, TileScheduling {
             now[record.key] = policy.runs(in: focus, atHour: hour)
         }
         let change = verdicts.update(now)
-        for key in change.left { runner.retract(key) }
         for key in change.arrived where !isAudible(key.connectorId) { runner.runNow(key) }
-        guard let actions = tileArrivalActions else { return }
-        let records = tiles.all()
-        for (keys, arrived) in [(change.arrived, true), (change.left, false)] {
-            for key in keys {
+        if let actions = tileArrivalActions {
+            let records = tiles.all()
+            for key in change.arrived {
                 guard let record = records.first(where: { $0.key == key }) else { continue }
-                wirings(key.connectorId)?.notify(record, arrived: arrived, actions)
+                wirings(key.connectorId)?.notify(record, arrived: true, actions)
             }
         }
+        for key in change.left { tileLeft(key) }
+    }
+
+    /// Takes a tile off its clock the way its hours or Focus closing does:
+    /// retracted, and its kind told — on a TC002, which has nothing to
+    /// retract, the kind is what idles the page and hands the clock on. Also
+    /// the settings window's, taking back a tile it put on out of its hours.
+    func tileLeft(_ key: TileKey) {
+        runner.retract(key)
+        guard let actions = tileArrivalActions,
+            let record = tiles.all().first(where: { $0.key == key })
+        else { return }
+        wirings(key.connectorId)?.notify(record, arrived: false, actions)
     }
 
     /// Builds this tile's delivery loop, replacing whatever it had.

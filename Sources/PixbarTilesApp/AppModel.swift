@@ -280,6 +280,22 @@ final class AppModel: ObservableObject {
     let tileScheduler: TileScheduler
     /// The tiles as stored and every move that changes them (`TileBook`).
     let tileBook: TileBook
+    /// The keys and tokens tiles read through, and the GitHub tiles
+    /// (`TileSecrets`).
+    let tileSecrets: TileSecrets
+    typealias ZaiKeyOutcome = TileSecrets.ZaiKeyOutcome
+    typealias TokenOutcome = TileSecrets.TokenOutcome
+    var lastZaiKeyOutcome: ZaiKeyOutcome? { tileSecrets.lastZaiKeyOutcome }
+    var lastGitHubTokenOutcome: TokenOutcome? { tileSecrets.lastGitHubTokenOutcome }
+    var hasGitHubToken: Bool { tileSecrets.hasGitHubToken }
+    @discardableResult
+    func saveZaiKey(_ typed: String, for key: TileKey) -> ZaiKeyOutcome { tileSecrets.saveZaiKey(typed, for: key) }
+    func hasZaiKey(for key: TileKey) -> Bool { tileSecrets.hasZaiKey(for: key) }
+    @discardableResult
+    func saveGitHubToken(_ token: String) -> TokenOutcome { tileSecrets.saveGitHubToken(token) }
+    func addGitHubTile(repo typed: String, to clockId: UUID) -> Bool { tileSecrets.addGitHubTile(repo: typed, to: clockId) }
+    func changeGitHubRepo(_ key: TileKey, to typed: String) -> TileSaveOutcome { tileSecrets.changeGitHubRepo(key, to: typed) }
+    func gitHubDiagnosis(of key: TileKey) -> GitHubDiagnosis? { tileSecrets.gitHubDiagnosis(of: key) }
     typealias TileSaveOutcome = TileBook.TileSaveOutcome
     static let newTileIntervalKey = TileBook.newTileIntervalKey
     var tileOrderRevision: Int { tileBook.tileOrderRevision }
@@ -560,6 +576,7 @@ final class AppModel: ObservableObject {
             tiles: tiles, registry: registry, defaults: defaults, clockSessions: clockSessions,
             lamps: lampController, scheduler: tileScheduler, runner: tileRunner, pages: pageFollower
         )
+        self.tileSecrets = TileSecrets(secrets: secrets, defaults: defaults, book: tileBook)
         self.iconMaintenance = IconMaintenance(installer: installer, taskBag: taskBag)
         self.anecdoteHistory = AnecdoteHistory(
             anecdotes: anecdotes, pasteboard: pasteboard, taskBag: taskBag,
@@ -617,6 +634,7 @@ final class AppModel: ObservableObject {
         relay(tileRunner)
         relay(tileScheduler)
         relay(tileBook)
+        relay(tileSecrets)
         tileBook.clocks = { [unowned self] in self.clocks }
     }
 
@@ -940,148 +958,6 @@ final class AppModel: ObservableObject {
 
 
 
-    // MARK: - The z.ai key
-
-    /// What a paste did, as the detail surface says it.
-    enum ZaiKeyOutcome: Equatable {
-        case saved
-        case removed
-        /// The store refused, and the field says so — a paste the user
-        /// believes was taken must not quietly never have been.
-        case refused
-    }
-
-    /// The last paste's outcome, for the field to say it out loud.
-    @Published private(set) var lastZaiKeyOutcome: ZaiKeyOutcome?
-
-    /// The key a paste put in, taken out of the record's way: it goes to the
-    /// secret store under the tile's own account, and the tile record
-    /// remembers only the handle. A blank paste is the removal, so the one field is how
-    /// a key is both given and taken back.
-    @discardableResult
-    func saveZaiKey(_ typed: String, for key: TileKey) -> ZaiKeyOutcome {
-        let account = ZaiTileConfig.account(for: key)
-        let pasted = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        let outcome: ZaiKeyOutcome
-        do {
-            if pasted.isEmpty {
-                try secrets.remove(for: .tile(key))
-                outcome = .removed
-            } else {
-                try secrets.save(pasted, for: .tile(key))
-                outcome = .saved
-            }
-        } catch {
-            outcome = .refused
-        }
-        lastZaiKeyOutcome = outcome
-
-        // The policy stands; only the handle joins the record, derived the
-        // same way the connector reads it back. A tile saved before any paste
-        // still gets its config here — there is nothing to read first. The
-        // usage face's settings the record already carries stay: a paste is
-        // about the key, not about when the page shows its resets.
-        if outcome != .refused, let policy = storedPolicy(of: key) {
-            _ = saveTile(
-                key: key, policy: policy,
-                config: .zai(ZaiTileConfig(
-                    keyAccount: account,
-                    parameters: storedTile(key)?.config?.parameters ?? .standard
-                ))
-            )
-        }
-        return outcome
-    }
-
-    /// Whether a key stands behind this tile — as the field's presence line
-    /// puts it, without ever saying what the key is.
-    func hasZaiKey(for key: TileKey) -> Bool {
-        secrets.secret(for: .tile(key)) != nil
-    }
-
-    // MARK: - The GitHub tiles
-
-    /// What a token save did — the same three answers a z.ai paste gets.
-    typealias TokenOutcome = ZaiKeyOutcome
-
-    /// The last token save's outcome, for the field to say it out loud.
-    @Published private(set) var lastGitHubTokenOutcome: TokenOutcome?
-
-    /// The one token every GitHub tile reads through, filed under the
-    /// connector's account and never a tile's. A blank save removes it.
-    @discardableResult
-    func saveGitHubToken(_ token: String) -> TokenOutcome {
-        let account = SecretAccount.connector(GitHubConnector.connectorId)
-        let typed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        let outcome: TokenOutcome
-        do {
-            if typed.isEmpty {
-                try secrets.remove(for: account)
-                outcome = .removed
-            } else {
-                try secrets.save(typed, for: account)
-                outcome = .saved
-            }
-        } catch {
-            outcome = .refused
-        }
-        lastGitHubTokenOutcome = outcome
-        return outcome
-    }
-
-    /// Whether the shared token is stored — one answer for every GitHub tile.
-    var hasGitHubToken: Bool {
-        secrets.secret(for: .connector(GitHubConnector.connectorId)) != nil
-    }
-
-    /// Adds a GitHub tile for `owner/name`: the repository lowercased is the
-    /// tile's instance, so one clock never carries a repository twice while
-    /// another clock may carry it too. False for a malformed name or a
-    /// duplicate.
-    func addGitHubTile(repo typed: String, to clockId: UUID) -> Bool {
-        guard let repo = GitHubRepoName.repo(from: typed),
-            let instance = GitHubRepoName.instance(from: typed)
-        else { return false }
-        let outcome = addTile(
-            GitHubConnector.connectorId, to: clockId, instance: instance,
-            config: .github(GitHubTileConfig(repo: repo))
-        )
-        return outcome == .saved
-    }
-
-    /// Points a GitHub tile at another repository — the block's Repository
-    /// field. A re-key, like `changeLampVPN`, because the repository is the
-    /// key's instance: the tile keeps its place in the clock's order and its
-    /// settings, the old repository's page leaves the clock, and the new one
-    /// starts from a baseline, so nothing it already has is celebrated.
-    func changeGitHubRepo(_ key: TileKey, to typed: String) -> TileSaveOutcome {
-        guard let record = storedTile(key), let policy = storedPolicy(of: key) else {
-            return .refused("this tile is no longer on the clock")
-        }
-        guard let repo = GitHubRepoName.repo(from: typed), let instance = GitHubRepoName.instance(from: typed)
-        else { return .refused("type the repository as owner/name") }
-        var config = record.config?.github ?? GitHubTileConfig(repo: key.instance)
-        config.repo = repo
-        // Another spelling of the same repository is the same tile.
-        guard instance != key.instance else { return tileBook.saveTile(key: key, policy: policy, config: .github(config)) }
-        let moved = TileKey(clockId: key.clockId, connectorId: key.connectorId, instance: instance)
-        if tiles.all().contains(where: { $0.key == moved }) {
-            return .refused("\(instance) is already on \(clocks.first { $0.id == key.clockId }?.name ?? "this clock")")
-        }
-        for stale in [key, moved] {
-            defaults.removeObject(forKey: UserDefaultsGitHubSnapshots.key(for: stale))
-            defaults.removeObject(forKey: UserDefaultsGitHubDiagnoses.key(for: stale))
-        }
-        return tileBook.rekey(key, to: moved, config: .github(config))
-    }
-
-    /// What the tile's last read found wrong, for the clock's tile list —
-    /// the failure, or the permission the token lacks. Written by the
-    /// connector at every read.
-    func gitHubDiagnosis(of key: TileKey) -> GitHubDiagnosis? {
-        guard key.connectorId == GitHubConnector.connectorId else { return nil }
-        return UserDefaultsGitHubDiagnoses(defaults: defaults).diagnosis(for: key)
-    }
 
 
 

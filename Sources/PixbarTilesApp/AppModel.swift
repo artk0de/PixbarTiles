@@ -208,15 +208,6 @@ final class AppModel: ObservableObject {
     /// address, and taking the type would drag a browser, a probe and a
     /// deadline into every test that has no opinion about any of them.
     typealias RelocatingHost = @MainActor (String?) async -> String?
-    /// How often a held run asks whether the meeting is over.
-    ///
-    /// Five seconds. Not a user setting, and not the schedule's interval: what
-    /// this decides is how long after the microphone goes quiet the deferred
-    /// anecdote arrives, and a full enumeration costs 1.36 ms measured on this
-    /// machine. Polled rather than listened for, because devices come and go —
-    /// a listener would need re-registering every time the phone appears, and
-    /// the property it would listen to is on a device that may not exist yet.
-    static let microphoneInterval: TimeInterval = 5
     /// What holds the schedule of a connector the user switched off.
     static let switchedOff = "off"
     /// What holds the schedule while the clock is not answering.
@@ -457,15 +448,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var iconStatus: String?
     /// What has played and the History that shows it (`AnecdoteHistory`).
     let anecdoteHistory: AnecdoteHistory
+    /// The microphones the schedule waits for (`MicrophoneWatch`).
+    let microphoneWatch: MicrophoneWatch
+    var watchedMicrophones: [WatchedMicrophone] { microphoneWatch.watchedMicrophones }
+    var microphoneListing: [MicrophoneChoice] { microphoneWatch.microphoneListing }
+    func setWatched(_ watched: Bool, for input: AudioInput) { microphoneWatch.setWatched(watched, for: input) }
     var historyIsOpen: Bool { anecdoteHistory.historyIsOpen }
     var history: [PlayedAnecdote]? { anecdoteHistory.history }
     var replayResult: String? { anecdoteHistory.replayResult }
     /// Whether the selected clock is answering — the glyph's one answer.
     var isDeviceOnline: Bool { clockHealthMonitor.isDeviceOnline }
-    /// The microphones the schedule waits for. Published because the settings'
-    /// tick boxes bind to them: the defaults behind it are persistence rather
-    /// than state.
-    @Published private(set) var watchedMicrophones: [WatchedMicrophone]
 
     /// Builds the device a TC002 clock's health probes. The device is the
     /// same one the clock's own slot pushes through, so a health answer and a
@@ -490,14 +482,6 @@ final class AppModel: ObservableObject {
     private let defaults: UserDefaults
     /// The delivery cadence, one sleeper per scheduled connector.
     private let scheduleSleep: Sleeping
-    /// The cadence a held run is released on, one sleeper for the whole app.
-    ///
-    /// A third clock rather than a share of either of the two above, for the
-    /// reason those two are apart: an aggregate can only answer "something is
-    /// asleep", and a test that drives the release must be able to say it meant
-    /// the microphone rather than the schedule — otherwise "held then released"
-    /// cannot be told from "ran late", which is this feature's whole claim.
-    private let micSleep: Sleeping
     /// Whether macOS says the user is busy, and what to call it when it does.
     private let focusStatus: any FocusStatusReading
     /// The clock every tile's window is read against.
@@ -505,8 +489,6 @@ final class AppModel: ObservableObject {
     /// What every tile's policy said the last time it was asked, so only a
     /// change is acted on.
     private var verdicts = TileVerdicts()
-    /// Whether a microphone the user cares about is capturing.
-    private let microphone: MicrophoneGate
     /// Where a tile's API key lives. The record holds the handle, this holds
     /// the secret — the split the z.ai tile's whole config is built around.
     let secrets: any SecretStoring
@@ -522,8 +504,6 @@ final class AppModel: ObservableObject {
     /// The restock the launch fires: a minute of synthesis that a quit would
     /// otherwise kill halfway through a batch.
     private static let launchRestock = "launchRestock"
-    /// The loop that lets held runs go when the meeting is over.
-    private static let microphoneWatch = "microphoneWatch"
     /// The removal of the icons the app uploaded — never two at once.
     private static let iconRemoval = "iconRemoval"
     /// Tiles with a display-settings push on the wire, and those whose look
@@ -639,6 +619,9 @@ final class AppModel: ObservableObject {
         self.clockHealthMonitor = ClockHealthMonitor(
             device: device, pollSleep: pollSleep, alerts: alerts, taskBag: taskBag
         )
+        self.microphoneWatch = MicrophoneWatch(
+            gate: microphone, watching: watching, defaults: defaults, sleep: micSleep, taskBag: taskBag
+        )
         self.anecdoteHistory = AnecdoteHistory(
             anecdotes: anecdotes, pasteboard: pasteboard, taskBag: taskBag,
             reachability: clockHealthMonitor,
@@ -662,11 +645,8 @@ final class AppModel: ObservableObject {
         self.vpn = vpn
         self.vpnPresence = vpnPresence
         self.now = now
-        self.microphone = microphone
-        self.watchedMicrophones = watching
         self.secrets = secrets
         self.scheduleSleep = sleep
-        self.micSleep = micSleep
         for clock in self.clocks {
             clockSessions.open(clock)
             // A TC002 clock's health is its own: /getBase answering, and
@@ -696,6 +676,7 @@ final class AppModel: ObservableObject {
         clockHealthMonitor.onPolled = { [weak self] in self?.pollAnswered() }
         relay(clockHealthMonitor)
         relay(anecdoteHistory)
+        relay(microphoneWatch)
     }
 
     /// The composition root: one device host in, every collaborator wired.
@@ -1449,32 +1430,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Every input the system reports, with the watched ones marked.
-    ///
-    /// Asked rather than stored, because the list changes underneath the app:
-    /// the phone appears and vanishes, headphones are plugged in. Costs one
-    /// CoreAudio enumeration — 1.36 ms measured — and is only drawn while the
-    /// settings are open.
-    var microphoneListing: [MicrophoneChoice] {
-        microphone.listing(watching: watchedMicrophones)
-    }
-
-    /// Adds or removes a microphone from the set the schedule waits for.
-    ///
-    /// Removal goes through the same `matches` rule the gate decides with, and
-    /// not through equality on the stored entry: the shipped defaults carry no
-    /// UID, so an entry-equality removal would leave a box that cannot be
-    /// unticked.
-    func setWatched(_ watched: Bool, for input: AudioInput) {
-        let present = microphone.listing(watching: watchedMicrophones).map(\.input)
-        var watching = watchedMicrophones.filter { $0.matches(input, among: present) == false }
-        // Written with the UID this app has just SEEN, which is what upgrades a
-        // shipped default from a name to an identity the moment the user
-        // confirms it.
-        if watched { watching.append(WatchedMicrophone(uid: input.uid, name: input.name)) }
-        watchedMicrophones = watching
-        WatchedMicrophone.save(watching, to: defaults)
-    }
 
     // MARK: - What the panel's facade asks for
 
@@ -2036,7 +1991,16 @@ final class AppModel: ObservableObject {
         // ordering nobody should have to reason about.
         noteLaunchDeliveries()
         clockHealthMonitor.startMonitoring()
-        startWatchingMicrophones()
+        microphoneWatch.start { [weak self] in
+            guard let self else { return }
+            await self.releaseHeldRuns()
+            // After the release, not before it. The label the run was held
+            // under is only stale once the run has gone out, and this is the
+            // turn that sends it — so the panel stops blaming a microphone in
+            // the same five seconds the anecdote is heard, rather than at the
+            // next beat.
+            self.refreshScheduleLabels()
+        }
         startWatchingTheWorld()
         // The one caller that resumes. A cadence describes the gap BETWEEN
         // deliveries, and every OTHER caller of `reschedule` is a settings
@@ -2482,32 +2446,6 @@ final class AppModel: ObservableObject {
         clockHealthMonitor.pollOnPanelOpen()
     }
 
-    /// Watches for the meeting being over, and lets the held run go.
-    ///
-    /// A loop of its own rather than a share of the reachability poll: they
-    /// answer different questions on different cadences, and — the reason that
-    /// decides it — a test driving one must be able to say which it meant. With
-    /// the two folded together, "held then released" could not be told from
-    /// "ran late", which is this feature's entire claim.
-    ///
-    /// The release is AWAITED inside the loop, so a long run cannot be overtaken
-    /// by the next turn, and so teardown waiting on this task waits on the run
-    /// as well.
-    private func startWatchingMicrophones() {
-        taskBag.replace(Self.microphoneWatch) { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                await self.releaseHeldRuns()
-                // After the release, not before it. The label the run was held
-                // under is only stale once the run has gone out, and this is
-                // the turn that sends it — so the panel stops blaming a
-                // microphone in the same five seconds the anecdote is heard,
-                // rather than at the next beat.
-                self.refreshScheduleLabels()
-                do { try await self.micSleep(Self.microphoneInterval) } catch { return }
-            }
-        }
-    }
 
     /// Lets go of the runs a meeting held, once nothing is holding them.
     ///
@@ -2849,9 +2787,7 @@ final class AppModel: ObservableObject {
     /// different uses: the hold decides whether to run, and this decides
     /// whether not running was a WAIT. A meeting during an outage is still a
     /// meeting, and the run it stopped is still owed.
-    private var busyMicrophone: AudioInput? {
-        microphone.capturing(watching: watchedMicrophones)
-    }
+    private var busyMicrophone: AudioInput? { microphoneWatch.busyMicrophone }
 
     private func tick(_ key: TileKey) async {
         // The clock is asked before anything is spent on a delivery it cannot

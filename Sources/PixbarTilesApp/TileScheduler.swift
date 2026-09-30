@@ -50,6 +50,12 @@ final class TileScheduler: ObservableObject, TileScheduling {
     /// What every tile's policy said the last time it was asked, so only a
     /// change is acted on.
     private var verdicts = TileVerdicts()
+    /// The wiring of each connector id, told when a tile's window opens or
+    /// closes.
+    var wirings: @MainActor (String) -> (any TileKindWiring)? = { AppTileKinds.wiring(for: $0) }
+    /// What those wirings may do about it; nil until the model hands it in,
+    /// and until then no wiring is told.
+    var tileArrivalActions: TileArrivalActions?
     /// The delivery cadence, one sleeper per scheduled connector.
     private let scheduleSleep: AppModel.Sleeping
     private let tiles: TileStore
@@ -273,6 +279,14 @@ final class TileScheduler: ObservableObject, TileScheduling {
         let change = verdicts.update(now)
         for key in change.left { runner.retract(key) }
         for key in change.arrived where !isAudible(key.connectorId) { runner.runNow(key) }
+        guard let actions = tileArrivalActions else { return }
+        let records = tiles.all()
+        for (keys, arrived) in [(change.arrived, true), (change.left, false)] {
+            for key in keys {
+                guard let record = records.first(where: { $0.key == key }) else { continue }
+                wirings(key.connectorId)?.notify(record, arrived: arrived, actions)
+            }
+        }
     }
 
     /// Builds this tile's delivery loop, replacing whatever it had.

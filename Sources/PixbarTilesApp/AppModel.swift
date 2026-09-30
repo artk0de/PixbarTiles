@@ -504,6 +504,19 @@ final class AppModel: ObservableObject {
         relay(clockDirectory)
         tileBook.clocks = { [unowned self] in self.clockDirectory.clocks }
         clockDirectory.onClocksChanged = { [unowned self] in self.reloadClocks() }
+        tileScheduler.tileArrivalActions = TileArrivalActions(
+            run: { [unowned self] in self.tileRunner.runNow($0) },
+            show: { [unowned self] in self.pageFollower.showOnClock($0) },
+            idle: { [unowned self] key in
+                let tc002 = self.clockSessions.ulanzi(for: key.clockId)
+                Task { await tc002?.markIdle(tileId: key.tileId) }
+            },
+            morningTile: { [unowned self] clockId, excluding in
+                self.tiles.all().first {
+                    $0.key.clockId == clockId && $0.key != excluding && self.pageFollower.ownsPage($0.key)
+                }?.key
+            }
+        )
     }
 
     // MARK: - What the user chose

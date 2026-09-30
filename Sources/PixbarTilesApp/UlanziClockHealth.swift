@@ -52,6 +52,8 @@ final class UlanziClockHealth: @unchecked Sendable {
     /// battery line, exactly as it did before this existed.
     private let battery: UlanziBattery?
     private var trajectory = UlanziBatteryTrajectory()
+    /// Where the last sample is kept for the next launch.
+    private let store: any UlanziBatteryStore
     /// The clock's session, looked up at each tick rather than held: the
     /// model builds sessions and healths in separate places, and a clock
     /// whose session is gone simply has nobody to tell.
@@ -69,6 +71,7 @@ final class UlanziClockHealth: @unchecked Sendable {
     init(
         clockId: UUID, name: String, device: UlanziDevice, battery: UlanziBattery?,
         batteryDeadline: Duration = .seconds(20),
+        store: any UlanziBatteryStore = InMemoryUlanziBatteryStore(),
         watcher: @escaping @MainActor () -> (any UlanziClockWatching)? = { nil }
     ) {
         self.clockId = clockId
@@ -76,7 +79,14 @@ final class UlanziClockHealth: @unchecked Sendable {
         self.device = device
         self.battery = battery
         self.batteryDeadline = batteryDeadline
+        self.store = store
         self.watcher = watcher
+        // The last launch's charge, until this one reads its own — a clock
+        // that is off never will.
+        if let sample = store.storedSample() {
+            trajectory.accept(sample)
+            lastKnownBattery = trajectory.reading
+        }
     }
 
     var isOnline: Bool { answering == .answering }
@@ -115,6 +125,7 @@ final class UlanziClockHealth: @unchecked Sendable {
                 if let sample = read.sample {
                     trajectory.accept(sample)
                     lastKnownBattery = trajectory.reading
+                    store.save(sample)
                 }
             }
             tellSession(returned: before == .unreachable || restarted)

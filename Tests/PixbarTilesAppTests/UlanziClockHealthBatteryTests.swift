@@ -85,6 +85,33 @@ private func health(
     #expect(gone.lastKnownBattery == nil)
 }
 
+/// The last charge outlives the launch. A clock that is off when the app
+/// starts never answers a poll, so without the stored sample its card has no
+/// battery to go on — and the refresh cannot say a clock last seen running
+/// down may simply have run out (2026-09-30).
+@MainActor
+@Test func aTc002RemembersItsLastChargeAcrossALaunch() async {
+    let store = InMemoryUlanziBatteryStore()
+    let clockId = UUID()
+    let before = UlanziClockHealth(
+        clockId: clockId, name: "Desk",
+        device: UlanziDevice(host: "192.168.1.72", transport: StubIdentityTransport(appVer: "1.1.1")),
+        battery: UlanziBattery(adb: FakeBatteryADB(percent: 14, charging: 0), helper: Data("ELF".utf8)),
+        store: store
+    )
+    _ = await before.poll(at: Date(timeIntervalSince1970: 1_000))
+
+    let nextLaunch = UlanziClockHealth(
+        clockId: clockId, name: "Desk",
+        device: UlanziDevice(host: "192.168.1.72", transport: DeadTransport()),
+        battery: nil,
+        store: store
+    )
+
+    #expect(nextLaunch.lastKnownBattery?.percent == 14)
+    #expect(nextLaunch.lastKnownBattery?.direction == .discharging)
+}
+
 /// An adb route that never answers — what a clock back on the network with
 /// adbd not listening yet looked like to the app: the connect waited forever.
 private actor SilentADB: ADB {

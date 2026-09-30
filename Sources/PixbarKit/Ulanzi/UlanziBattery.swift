@@ -5,7 +5,7 @@ import Foundation
 /// Deliberately not a `BatteryReading`: the percent is a point sample, and an
 /// estimate is a function of the series, which is `UlanziBatteryTrajectory`'s
 /// job.
-public struct UlanziBatterySample: Sendable, Equatable {
+public struct UlanziBatterySample: Sendable, Equatable, Codable {
     public let percent: Int
     public let charging: Bool
     public let millivolts: Int

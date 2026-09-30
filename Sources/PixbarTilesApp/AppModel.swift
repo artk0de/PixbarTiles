@@ -794,6 +794,7 @@ final class AppModel: ObservableObject {
         return UlanziClockHealth(
             clockId: clock.id, name: clock.name, device: device,
             battery: makeUlanziBattery(clock),
+            store: UserDefaultsUlanziBatteryStore(defaults: defaults, clockId: clock.id),
             watcher: { [weak self] in self?.ulanziWatcher(for: clockId) }
         )
     }

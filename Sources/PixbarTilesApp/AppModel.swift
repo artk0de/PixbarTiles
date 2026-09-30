@@ -612,14 +612,32 @@ final class AppModel: ObservableObject {
     /// the secret — the split the z.ai tile's whole config is built around.
     let secrets: any SecretStoring
     private var timers: [TileKey: Task<Void, Never>] = [:]
-    private var monitorLoop: Task<Void, Never>?
+    /// Every other task this model starts and owns (`TaskBag`): teardown can
+    /// only wait for a task it holds. The names below are the work that runs
+    /// under a name; everything else is one-off work that leaves the bag when
+    /// it is done — a run the user asked for (two presses are two runs, and
+    /// the host queues them), a replay (it puts the same held banner on the
+    /// clock as a run), a restore (it writes the clock's own overlay back), a
+    /// write to the lamps (triggers overlap and the display serialises them).
+    private let taskBag = TaskBag()
+    /// The reachability poll's loop.
+    private static let monitorLoop = "monitorLoop"
     /// The one-off reading a panel open asked for, still going.
     ///
     /// Owned rather than detached, for the reason every other task here is:
     /// teardown can only wait for a task it holds, and this one writes
     /// `isDeviceOnline` and can raise a battery dialog. A quit that did not
     /// wait for it is a dialog arriving after the app is gone.
-    private var panelRefresh: Task<Void, Never>?
+    private static let panelRefresh = "panelRefresh"
+    /// The restock the launch fires: a minute of synthesis that a quit would
+    /// otherwise kill halfway through a batch.
+    private static let launchRestock = "launchRestock"
+    /// The read that fills the History; a newer one supersedes the older.
+    private static let historyLoad = "historyLoad"
+    /// The loop that lets held runs go when the meeting is over.
+    private static let microphoneWatch = "microphoneWatch"
+    /// The removal of the icons the app uploaded — never two at once.
+    private static let iconRemoval = "iconRemoval"
     /// When the last panel open was honoured, or nil while none has been.
     ///
     /// The instant rather than a flag, because "already running" is not the
@@ -627,11 +645,6 @@ final class AppModel: ObservableObject {
     /// guard on the task alone would let a panel opened twice in a second
     /// through twice.
     private var lastPanelRefresh: Date?
-    /// Runs the user asked for, still going. Keyed by nothing meaningful: two
-    /// presses of the same button are two runs, and the host queues them behind
-    /// each other rather than one replacing the other.
-    private var manualRuns: [Int: Task<Void, Never>] = [:]
-    private var nextRunKey = 0
     /// Tiles with a display-settings push on the wire, and those whose look
     /// changed again while it was — see `pushDisplaySettings(_:)`.
     private var displayPushes: Set<TileKey> = []
@@ -646,37 +659,9 @@ final class AppModel: ObservableObject {
     /// Optional because most of the suite has no opinion about indicators and
     /// should not have to supply a clock to say so — nil is an app that leaves
     /// the corners alone entirely.
-
-    /// Writes to those corners, still going. Keyed like `manualRuns` and for
-    /// the same reason: triggers overlap, the display serialises them, and
-    /// teardown has to be able to wait for whichever are in flight.
-    private var vpnPushes: [Int: Task<Void, Never>] = [:]
     /// The two things that say the world moved. See `startWatchingTheWorld`.
     private let networkWatcher = NetworkPathWatcher()
     private let focusWatcher = FocusAssertionsWatcher()
-    /// The restock the launch fires, still going.
-    ///
-    /// Owned rather than detached, for the reason every other loop here is:
-    /// teardown can only wait for a task it holds, and this one is a minute of
-    /// synthesis that a quit would otherwise kill halfway through a batch.
-    private var launchRestock: Task<Void, Never>?
-    /// Replays the user asked for, still going, and the read that fills the
-    /// History behind them.
-    ///
-    /// Owned for the reason `manualRuns` is: a replay puts the same held banner
-    /// on the clock as a run, and a quit that does not wait for it kills the
-    /// process during the release. Keyed by nothing meaningful — two presses of
-    /// "Play again" are two replays, and the host queues them behind each other.
-    private var replays: [Int: Task<Void, Never>] = [:]
-    private var nextReplayKey = 0
-    private var historyLoad: Task<Void, Never>?
-    /// Restores the user asked for by switching a connector off, still going.
-    ///
-    /// Owned for the reason `replays` is: each one writes to the device, and a
-    /// quit that did not wait for one would kill the process part-way through
-    /// giving the clock's own overlay back.
-    private var restores: [Int: Task<Void, Never>] = [:]
-    private var nextRestoreKey = 0
     /// Runs still going, per connector.
     ///
     /// A count rather than a flag because two presses are two runs: 37 seconds
@@ -715,9 +700,6 @@ final class AppModel: ObservableObject {
     /// capturing half an hour earlier, after the run it held had already
     /// played.
     private var scheduledDue: [TileKey: Date] = [:]
-    /// The loop that lets them go.
-    private var microphoneWatch: Task<Void, Never>?
-    private var iconRemoval: Task<Void, Never>?
 
     init(
         clocks: [ClockRecord],
@@ -1362,15 +1344,12 @@ final class AppModel: ObservableObject {
             displayPushOwed.insert(key)
             return
         }
-        let runKey = nextRunKey
-        nextRunKey += 1
-        manualRuns[runKey] = Task { [weak self] in
+        taskBag.run { [weak self] in
             repeat {
                 self?.displayPushOwed.remove(key)
                 await self?.runAndReport(key)
             } while !Task.isCancelled && self?.displayPushOwed.contains(key) == true
             self?.displayPushes.remove(key)
-            self?.manualRuns[runKey] = nil
         }
     }
 
@@ -1572,11 +1551,8 @@ final class AppModel: ObservableObject {
     }
 
     private func giveBackDeviceState(_ key: TileKey) {
-        let restoreKey = nextRestoreKey
-        nextRestoreKey += 1
-        restores[restoreKey] = Task { [weak self] in
+        taskBag.run { [weak self] in
             await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.tileId)
-            self?.restores[restoreKey] = nil
         }
     }
 
@@ -2226,8 +2202,7 @@ final class AppModel: ObservableObject {
     /// the older one winning is a surface showing what had played a minute ago.
     private func readHistory() {
         guard let anecdotes else { return }
-        historyLoad?.cancel()
-        historyLoad = Task { [weak self] in
+        taskBag.replace(Self.historyLoad) { [weak self] in
             let played = await anecdotes.history()
             guard let self, !Task.isCancelled else { return }
             self.history = played
@@ -2296,16 +2271,13 @@ final class AppModel: ObservableObject {
             return
         }
         let output = anecdotes.output(for: anecdote)
-        let key = nextReplayKey
-        nextReplayKey += 1
-        replays[key] = Task { [weak self] in
+        taskBag.run { [weak self] in
             let result = await session.deliver(output)
             // Kept, where the run line and the failure count are still not
             // touched. Those two are what the discarded result was ever
             // discarded for; the History is a third place, and it is the one
             // the button was pressed on.
             self?.replayResult = Self.words(for: result)
-            self?.replays[key] = nil
         }
     }
 
@@ -2459,7 +2431,7 @@ final class AppModel: ObservableObject {
                     && $0.policy.isPaused == false
             }
             .map(\.key)
-        launchRestock = Task { [weak self] in
+        taskBag.replace(Self.launchRestock) { [weak self] in
             for key in due {
                 guard let self else { return }
                 await self.restock(key)
@@ -2542,9 +2514,7 @@ final class AppModel: ObservableObject {
         for (clockId, vpnTiles) in byClock {
             guard let indicators = sessions[clockId]?.indicators else { continue }
             let vpn = self.vpn
-            let key = nextRunKey
-            nextRunKey += 1
-            vpnPushes[key] = Task { [weak self] in
+            taskBag.run { [weak self] in
                 var claims: [LampClaim] = []
                 for record in vpnTiles {
                     guard let lamp = record.config?.lamp,
@@ -2561,7 +2531,6 @@ final class AppModel: ObservableObject {
                     .sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
                     await indicators.show(signal, on: slot)
                 }
-                self?.vpnPushes[key] = nil
             }
         }
     }
@@ -2569,23 +2538,17 @@ final class AppModel: ObservableObject {
     /// Takes a tile's app back off its clock now, rather than letting its
     /// lifetime expire.
     ///
-    /// Through the same `manualRuns` bracket `runNow` uses, for the reason that
+    /// Through the same `taskBag` `runNow` uses, for the reason that
     /// one is: teardown can only wait for a task this model is holding.
     private func retract(_ key: TileKey) {
-        let runKey = nextRunKey
-        nextRunKey += 1
-        manualRuns[runKey] = Task { [weak self] in
+        taskBag.run { [weak self] in
             await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.tileId)
-            self?.manualRuns[runKey] = nil
         }
     }
 
     func runNow(_ key: TileKey) {
-        let runKey = nextRunKey
-        nextRunKey += 1
-        manualRuns[runKey] = Task { [weak self] in
+        taskBag.run { [weak self] in
             await self?.runAndReport(key)
-            self?.manualRuns[runKey] = nil
         }
     }
 
@@ -2602,15 +2565,14 @@ final class AppModel: ObservableObject {
     /// time — a second press while one is running would race two passes over
     /// the same record.
     func removeInstalledIcons() {
-        guard iconRemoval == nil else { return }
+        guard !taskBag.isRunning(Self.iconRemoval) else { return }
         // Said before the work, not after it. `removeUploaded` sends one DELETE
         // per recorded icon, and against a device that has stopped answering
         // each one costs the transport's full 15 seconds — the same silence the
         // run button had, on a button one divider away.
         iconStatus = "removing…"
-        iconRemoval = Task { [weak self] in
+        taskBag.startIfIdle(Self.iconRemoval) { [weak self] in
             await self?.reportIconRemoval()
-            self?.iconRemoval = nil
         }
     }
 
@@ -2636,32 +2598,20 @@ final class AppModel: ObservableObject {
     /// and leave the clock stuck on that banner until somebody walks over and
     /// presses the middle button.
     func teardown() async {
-        monitorLoop?.cancel()
-        monitorLoop = nil
+        // Cancelled, not awaited: a poll in flight writes nothing to a clock.
+        taskBag.cancel(Self.monitorLoop)
         // Before anything is cancelled, so nothing new is scheduled behind the
         // teardown. Both fire from queues of their own, and a path change
         // landing halfway through this would enqueue a write to a clock the
         // app is in the middle of giving back.
         networkWatcher.stop()
         focusWatcher.stop()
-        let running = Array(timers.values) + Array(manualRuns.values) + Array(replays.values)
-            + Array(restores.values) + Array(vpnPushes.values)
-            + [iconRemoval, launchRestock, historyLoad, microphoneWatch, panelRefresh]
-            .compactMap { $0 }
-        timers.removeAll()
-        manualRuns.removeAll()
-        replays.removeAll()
-        restores.removeAll()
-        vpnPushes.removeAll()
-        iconRemoval = nil
-        launchRestock = nil
-        historyLoad = nil
-        // Awaited with the rest, not merely cancelled: a release in flight puts
-        // the same held banner on the clock as any other run.
-        microphoneWatch = nil
-        panelRefresh = nil
-        for task in running { task.cancel() }
-        for task in running { await task.value }
+        // Everything else is awaited, not merely cancelled — the microphone
+        // watch included: a release in flight puts the same held banner on the
+        // clock as any other run. The schedule's timers go with it.
+        let timers = Array(self.timers.values)
+        self.timers.removeAll()
+        await taskBag.cancelAndWait(also: timers)
         // Last, and only once everything above has stopped. Every clock is
         // given back what this app borrowed — the weather overlay is a global
         // setting written to flash, and leaving it behind is the same defect as
@@ -2704,8 +2654,7 @@ final class AppModel: ObservableObject {
     }
 
     private func startMonitoring() {
-        monitorLoop?.cancel()
-        monitorLoop = Task { [weak self] in
+        taskBag.replace(Self.monitorLoop) { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.poll()
@@ -2867,11 +2816,10 @@ final class AppModel: ObservableObject {
         if let last = lastPanelRefresh, now.timeIntervalSince(last) < Self.panelRefreshFloor {
             return
         }
-        guard panelRefresh == nil else { return }
+        guard !taskBag.isRunning(Self.panelRefresh) else { return }
         lastPanelRefresh = now
-        panelRefresh = Task { [weak self] in
+        taskBag.startIfIdle(Self.panelRefresh) { [weak self] in
             await self?.poll()
-            self?.panelRefresh = nil
         }
     }
 
@@ -2887,8 +2835,7 @@ final class AppModel: ObservableObject {
     /// by the next turn, and so teardown waiting on this task waits on the run
     /// as well.
     private func startWatchingMicrophones() {
-        microphoneWatch?.cancel()
-        microphoneWatch = Task { [weak self] in
+        taskBag.replace(Self.microphoneWatch) { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.releaseHeldRuns()
@@ -2942,11 +2889,8 @@ final class AppModel: ObservableObject {
             for key in timers.keys where key.clockId == id {
                 timers.removeValue(forKey: key)?.cancel()
             }
-            let restoreKey = nextRestoreKey
-            nextRestoreKey += 1
-            restores[restoreKey] = Task { [weak self] in
+            taskBag.run {
                 await session.restoreDeviceState(borrowedBy: nil)
-                self?.restores[restoreKey] = nil
             }
             sessions[id] = nil
             clockRegistries[id] = nil
@@ -3513,10 +3457,8 @@ final class AppModel: ObservableObject {
     /// Polls now, in the panel refresh's slot: one in flight is enough, and
     /// teardown already waits on it.
     private func recheckClocks() {
-        guard panelRefresh == nil else { return }
-        panelRefresh = Task { [weak self] in
+        taskBag.startIfIdle(Self.panelRefresh) { [weak self] in
             await self?.poll()
-            self?.panelRefresh = nil
         }
     }
 

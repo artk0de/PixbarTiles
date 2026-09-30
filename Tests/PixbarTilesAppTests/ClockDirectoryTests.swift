@@ -28,7 +28,7 @@ import Testing
             clockSessions: ClockSessions(make: { _ in SpyHost() }, makeRegistry: nil),
             tiles: TileStore(defaults: defaults)
         )
-        subject.onClocksChanged = { [weak subject] in subject?.adopt(store.all()) }
+        subject.onClocksChanged = { [weak subject] in subject?.refresh(from: store.all()) }
         return (subject, health, store)
     }
 

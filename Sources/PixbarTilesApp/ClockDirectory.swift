@@ -90,7 +90,7 @@ final class ClockDirectory: ObservableObject {
 
     /// Takes the stored list as this launch's: the selection moves off a clock
     /// that is gone, and the address label follows the selection.
-    func adopt(_ stored: [ClockRecord]) {
+    func refresh(from stored: [ClockRecord]) {
         let kept = Set(stored.map(\.id))
         clocks = stored
         if selectedClockId.map(kept.contains) != true { selectedClockId = stored.first?.id }

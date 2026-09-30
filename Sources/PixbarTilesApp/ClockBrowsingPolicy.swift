@@ -59,7 +59,7 @@ final class ClockBrowsingPolicy {
         reachability = model.clockHealthMonitor.$isDeviceOnline.sink { [weak self] answering in
             MainActor.assumeIsolated { self?.clockAnswers(answering) }
         }
-        clocksSectionWatch = model.$clocksSectionVisible.sink { [weak self] visible in
+        clocksSectionWatch = model.clockDirectory.$clocksSectionVisible.sink { [weak self] visible in
             MainActor.assumeIsolated { self?.clocksSection(visible: visible) }
         }
     }

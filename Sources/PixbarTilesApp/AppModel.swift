@@ -218,24 +218,6 @@ final class AppModel: ObservableObject {
     }
 
 
-    /// Where this app is talking to the clock right now.
-    ///
-    /// Seeded at launch from the stored address and written exactly one other
-    /// way: by a relocation, when the clock stopped answering and was found
-    /// again somewhere else. It used to be a `let`, on the argument that a
-    /// settable address would have to rebuild the device, the monitor and the
-    /// host underneath a running schedule. That argument fell to
-    /// `AwtrixDevice.adopt(host:)` — the device is an actor built once and held
-    /// by all three, so re-pointing it re-points them, and nothing is rebuilt.
-    ///
-    /// Published because the panel draws it, and a panel still naming the
-    /// address that stopped answering invites somebody to fix what is already
-    /// fixed.
-    ///
-    /// Whatever is stored, `AwtrixDevice` normalises it: the hand-written path
-    /// reaches no field and no validation, so a `http://10.0.0.5` typed into a
-    /// terminal has to be dealt with where the URL is built.
-    @Published private(set) var deviceHost: String
     /// The app-level registry: what the menus and the catalogue read.
     ///
     /// Its instances are wired for NAMING a connector, not for running one —
@@ -245,35 +227,45 @@ final class AppModel: ObservableObject {
     /// asks `connector(for:)` instead.
     let registry: ConnectorRegistry
     /// The selected clock's health, which is what the glyph is about.
-    var monitor: DeviceMonitor { clockHealthMonitor.monitor(of: selectedClockId ?? clock?.id) }
+    var monitor: DeviceMonitor { clockHealthMonitor.monitor(of: selectedClockId ?? clockDirectory.firstClock?.id) }
     /// Every clock's health and the poll that asks them (`ClockHealthMonitor`).
     let clockHealthMonitor: ClockHealthMonitor
+    /// The clocks, the selection and the Clocks tab's moves (`ClockDirectory`).
+    let clockDirectory: ClockDirectory
+    static let selectedClockKey = ClockDirectory.selectedClockKey
+    typealias ClockSaveOutcome = ClockDirectory.ClockSaveOutcome
+    var clocks: [ClockRecord] { clockDirectory.clocks }
+    var selectedClockId: UUID? {
+        get { clockDirectory.selectedClockId }
+        set { clockDirectory.selectedClockId = newValue }
+    }
+    var hasNoClocks: Bool { clockDirectory.hasNoClocks }
+    var deviceHost: String { clockDirectory.deviceHost }
+    var selectedClockIsAwtrix: Bool { clockDirectory.selectedClockIsAwtrix }
+    var selectedAddress: String { clockDirectory.selectedAddress }
+    var typedHost: String {
+        get { clockDirectory.typedHost }
+        set { clockDirectory.typedHost = newValue }
+    }
+    var hostNote: String? { clockDirectory.hostNote }
+    var typedLocation: String {
+        get { clockDirectory.typedLocation }
+        set { clockDirectory.typedLocation = newValue }
+    }
+    var locationNote: String? { clockDirectory.locationNote }
+    var clocksSectionVisible: Bool { clockDirectory.clocksSectionVisible }
+    func clocksSectionVisibilityChanged(_ visible: Bool) { clockDirectory.clocksSectionVisibilityChanged(visible) }
+    func addClock(address raw: String) async -> ClockSaveOutcome { await clockDirectory.addClock(address: raw) }
+    func addClock(from discovered: DiscoveredClock) -> ClockSaveOutcome { clockDirectory.addClock(from: discovered) }
+    func renameClock(_ id: UUID, to name: String) { clockDirectory.renameClock(id, to: name) }
+    func removeClock(_ id: UUID) { clockDirectory.removeClock(id) }
+    func moveClock(_ source: UUID, to destination: UUID) { clockDirectory.moveClock(source, to: destination) }
     /// Relays each expert's changes as this model's own, for the facades that
     /// rebuild off `objectWillChange`.
     private var pulses: [AnyCancellable] = []
-    /// Which clock the panel shows and the glyph is about. Phase 5's switcher
-    /// writes it; until then it is the first clock unless something set it.
-    static let selectedClockKey = "selectedClockId"
-
-    /// Every clock this app drives, as the settings list them.
-    @Published private(set) var clocks: [ClockRecord]
-    @Published var selectedClockId: UUID? {
-        didSet {
-            defaults.set(selectedClockId?.uuidString, forKey: Self.selectedClockKey)
-            // The glyph answers for the selected clock alone, and it answers
-            // when the selection moves — not at the next poll (D7).
-            clockHealthMonitor.selectedClockId = selectedClockId
-        }
-    }
-    /// Whether nothing is configured: the panel's "No clocks yet" state, which
-    /// a fresh install reaches and the Clocks section answers.
-    var hasNoClocks: Bool { clocks.isEmpty }
     /// One session per clock, and each clock's own registry (`ClockSessions`).
     private let clockSessions: ClockSessions
     private let tiles: TileStore
-    /// Where what is learned about the clocks is written down for the next
-    /// launch.
-    private let clockStore: ClockStore
     /// Runs the tiles and keeps how each run went (`TileRunner`).
     let tileRunner: TileRunner
     /// Each tile's delivery loop and what holds it (`TileScheduler`).
@@ -331,9 +323,6 @@ final class AppModel: ObservableObject {
     var tileLastResults: [TileKey: String] { tileRunner.tileLastResults }
     var tileLastFailures: [TileKey: String] { tileRunner.tileLastFailures }
     var tileLastMaintenanceFailure: [TileKey: String] { tileRunner.tileLastMaintenanceFailure }
-    /// The place this clock's weather tile reads for. Held so the settings
-    /// field reads and saves through the same record the connector polls.
-    private let location: StoredLocation
     private let relocate: RelocatingHost?
 
     /// A by-tile map, seen the way the panel still reads it: the selected
@@ -370,71 +359,6 @@ final class AppModel: ObservableObject {
         return byTileId
     }
 
-    /// The clock record as this launch has it, by id.
-    private func clock(_ id: UUID) -> ClockRecord? {
-        clocks.first { $0.id == id }
-    }
-
-    /// The clock the one shared device, monitor and installer are built on —
-    /// the first, which for a one-clock install is the only one. B14 gives
-    /// every clock a health of its own.
-    private var clock: ClockRecord? { clocks.first }
-    /// Whether the SELECTED clock is an AWTRIX one — the only kind with a
-    /// battery line, a polled health or a scheduled delivery. The panel's
-    /// status row reads it.
-    var selectedClockIsAwtrix: Bool { selectedClock.map { $0.model == .awtrix3 } ?? false }
-    /// The selected clock's address, as the panel's status block draws it.
-    var selectedAddress: String { selectedClock?.address ?? "" }
-
-    /// The clock the selection names, as this launch has it.
-    private var selectedClock: ClockRecord? { selectedClockId.flatMap { clock($0) } }
-    /// What is in the address field: what the NEXT launch will use, where
-    /// `deviceHost` is what this one is using.
-    ///
-    /// Saved on every change rather than on submit. There is nothing to confirm
-    /// — the value only takes effect at the next launch — so a Save button would
-    /// be a step the user has to discover, and a field that looks saved and is
-    /// not is worse than one that never looked saved at all.
-    ///
-    /// `didSet` does not run during initialization, which is what keeps seeding
-    /// the field from writing this launch's address straight back to disk.
-    @Published var typedHost: String {
-        didSet {
-            guard let clock = self.clock else { return }
-            // The save rule the typed field carried, now written here because
-            // the relocation path is this property's last writer: normalise,
-            // refuse a blank, store on the record for the next launch.
-            let trimmed = typedHost.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.isEmpty == false,
-                let host = DeviceAddress.host(from: trimmed)
-            else { return }
-            clockStore.update(clock) { $0.address = host }
-        }
-    }
-    @Published private(set) var hostNote: String?
-    /// What is in the location field.
-    ///
-    /// Saved on every change, for the reason `typedHost` is. Unlike the
-    /// address, this one takes effect at the next poll rather than at the next
-    /// launch: the weather connector reads the stored pair every time it
-    /// produces, so there is nothing to rebuild.
-    ///
-    /// `didSet` does not run during initialization, which is what keeps seeding
-    /// the field from writing the stored location straight back to disk.
-    @Published var typedLocation: String {
-        didSet { locationNote = LocationField.save(typedLocation, to: location) }
-    }
-    @Published private(set) var locationNote: String?
-    /// Whether the Settings window's Clocks tab is on screen. The second
-    /// reason a browse runs — the list a clock seen advertising itself joins
-    /// is drawn there — and it replaces the old sheet flag, which answered
-    /// about a surface that no longer exists.
-    @Published private(set) var clocksSectionVisible = false
-
-    /// Told by the Clocks tab's own appearances, which is what makes the
-    /// flag honest: a window closed without the view going away would leave
-    /// a browse running for the life of the process.
-    func clocksSectionVisibilityChanged(_ visible: Bool) { clocksSectionVisible = visible }
 
     /// What has played and the History that shows it (`AnecdoteHistory`).
     let anecdoteHistory: AnecdoteHistory
@@ -471,9 +395,6 @@ final class AppModel: ObservableObject {
     private func ulanziSession(for clockId: UUID) -> (any UlanziConnectorRunning)? {
         clockSessions.ulanzi(for: clockId)
     }
-    /// The dual probe behind Add by address: whichever body decodes names the
-    /// model. Nil where no caller adds by address.
-    private let probe: (@Sendable (String) async -> UlanziProbe.Detection)?
     private let defaults: UserDefaults
     /// Whether macOS says the user is busy, and what to call it when it does.
     private let focusStatus: any FocusStatusReading
@@ -536,17 +457,20 @@ final class AppModel: ObservableObject {
         pollSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) },
         micSleep: @escaping Sleeping = { try await Task.sleep(for: .seconds($0)) }
     ) {
-        self.clocks = clocks
         self.tiles = tiles
         let clockSessions = ClockSessions(make: makeSession, makeRegistry: makeClockRegistry)
         self.clockSessions = clockSessions
-        self.clockStore = ClockStore(defaults: defaults)
-        self.deviceHost = clocks.first?.address ?? ""
-        self.typedHost = clocks.first?.address ?? ""
+        let clockStore = ClockStore(defaults: defaults)
         let taskBag = TaskBag()
         self.taskBag = taskBag
         self.clockHealthMonitor = ClockHealthMonitor(
             device: device, pollSleep: pollSleep, alerts: alerts, taskBag: taskBag
+        )
+        self.clockDirectory = ClockDirectory(
+            clocks: clocks, clockStore: clockStore,
+            location: StoredLocation(defaults: defaults, clockId: clocks.first?.id ?? UUID()),
+            defaults: defaults, probe: probe, health: clockHealthMonitor,
+            clockSessions: clockSessions, tiles: tiles
         )
         self.lampController = LampController(
             vpn: vpn, tiles: tiles, clockSessions: clockSessions, taskBag: taskBag,
@@ -587,15 +511,10 @@ final class AppModel: ObservableObject {
             session: { clockSessions[$0] }
         )
         self.relocate = relocate
-        self.location = StoredLocation(
-            defaults: defaults, clockId: clocks.first?.id ?? UUID()
-        )
-        self.typedLocation = LocationField.text(for: location.current)
         self.defaults = defaults
         self.registry = registry
         self.makeUlanziDevice = makeUlanziDevice
         self.makeUlanziBattery = makeUlanziBattery
-        self.probe = probe
         self.focusStatus = focusStatus
         self.now = now
         self.secrets = secrets
@@ -621,10 +540,6 @@ final class AppModel: ObservableObject {
                 }
             ))
         }
-        let saved = defaults.string(forKey: Self.selectedClockKey).flatMap(UUID.init(uuidString:))
-        selectedClockId = clocks.contains(where: { $0.id == saved })
-            ? saved : clocks.first?.id
-        clockHealthMonitor.selectedClockId = selectedClockId
         clockHealthMonitor.onPolled = { [weak self] in self?.pollAnswered() }
         relay(clockHealthMonitor)
         relay(anecdoteHistory)
@@ -635,7 +550,9 @@ final class AppModel: ObservableObject {
         relay(tileScheduler)
         relay(tileBook)
         relay(tileSecrets)
-        tileBook.clocks = { [unowned self] in self.clocks }
+        relay(clockDirectory)
+        tileBook.clocks = { [unowned self] in self.clockDirectory.clocks }
+        clockDirectory.onClocksChanged = { [unowned self] in self.reloadClocks() }
     }
 
     /// The composition root: one device host in, every collaborator wired.
@@ -1017,134 +934,6 @@ final class AppModel: ObservableObject {
     func battery(of clock: ClockRecord) -> BatteryReading? { clockHealthMonitor.battery(of: clock) }
 
 
-    // MARK: - Clock actions
-
-    enum ClockSaveOutcome: Equatable {
-        case added
-        /// Not added, with the sentence to show beside the control that asked.
-        case refused(String)
-    }
-
-    /// Adds the clock the dual probe finds at the address. Status codes are
-    /// not trusted — this firmware answers the AWTRIX stats path with a
-    /// redirect — so the model is whichever body DECODES.
-    func addClock(address raw: String) async -> ClockSaveOutcome {
-        let outcome = await self.addOutcome(at: raw)
-        // Logged where the outcome is known rather than at the button: a
-        // refusal the sheet did not show (it closed, the surface switched) is
-        // still diagnosable from the system log.
-        AppLog.clocks.notice(
-            "add by address: \(self.outcomeLine(outcome, name: raw), privacy: .public)"
-        )
-        return outcome
-    }
-
-    private func addOutcome(at raw: String) async -> ClockSaveOutcome {
-        guard let host = DeviceAddress.host(from: raw) else {
-            return .refused("not an address: \(raw)")
-        }
-        if clockStore.all().contains(where: { $0.address == host }) {
-            return .refused("already configured at \(host)")
-        }
-        guard let probe else { return .refused("no probe wired for \(host)") }
-        switch await probe(host) {
-        case .undetermined:
-            return .refused("nothing answered at \(host)")
-        case .ulanzi:
-            return store(ClockRecord(name: "Clock", model: .ulanziTC002, address: host))
-        case .otherDevice:
-            return store(ClockRecord(name: "Clock", model: .awtrix3, address: host))
-        }
-    }
-
-    /// Adds a clock discovery has seen. The list already carried what the
-    /// browse and the broadcasts agreed on, so the record is what it said.
-    func addClock(from discovered: DiscoveredClock) -> ClockSaveOutcome {
-        let name = discovered.model.lowercased()
-        let model: ClockModel = name.contains("tc002") || name.contains("ulanzi")
-            ? .ulanziTC002 : .awtrix3
-        if clockStore.all().contains(where: { $0.address == discovered.address }) {
-            let outcome = ClockSaveOutcome.refused("already configured at \(discovered.address)")
-            AppLog.clocks.notice(
-                "add from discovery: \(self.outcomeLine(outcome, name: discovered.name), privacy: .public)"
-            )
-            return outcome
-        }
-        let outcome = store(
-            ClockRecord(name: discovered.name, model: model, address: discovered.address)
-        )
-        AppLog.clocks.notice(
-            "add from discovery: \(self.outcomeLine(outcome, name: discovered.name), privacy: .public)"
-        )
-        return outcome
-    }
-
-    /// The sentence the log carries for an outcome — the same words the
-    /// Clocks section says, minus the name an addition already carries.
-    private func outcomeLine(
-        _ outcome: ClockSaveOutcome, name: String
-    ) -> String {
-        ClockAddOutcomeLine.title(for: outcome, added: name)
-    }
-
-    /// A rename writes through the store and touches nothing else.
-    func renameClock(_ id: UUID, to name: String) {
-        guard let record = clock(id) else { return }
-        clockStore.update(record) { $0.name = name }
-        reloadClocks()
-    }
-
-    /// Removes the clock: every tile off it first, then the record, then the
-    /// spine takes the session down — its lendings given back, its timers
-    /// cancelled, and the selection moved off it if it was the one selected.
-    ///
-    /// The view's inline confirmation is what stands in front of this; the
-    /// model does it the moment it is asked.
-    func removeClock(_ id: UUID) {
-        guard clock(id) != nil else { return }
-        // The TC002's pages are the app's own doing: the slot's teardown
-        // releases every owned name — the empty-body delete per page. The
-        // slot is resolved before the reload below drops it.
-        let tc002 = ulanziSession(for: id)
-        Task { await tc002?.shutdown() }
-        try? tiles.replaceAll(tiles.all().filter { $0.key.clockId != id })
-        try? clockStore.replaceAll(clockStore.all().filter { $0.id != id })
-        reloadClocks()
-    }
-
-    /// Stores a new clock and brings the sessions in line with it.
-    private func store(_ record: ClockRecord) -> ClockSaveOutcome {
-        var clocks = clockStore.all()
-        clocks.append(record)
-        do {
-            try clockStore.replaceAll(clocks)
-        } catch {
-            return .refused("the clock could not be stored")
-        }
-        reloadClocks()
-        return .added
-    }
-
-    // MARK: - Settings
-
-    /// Reorders the clocks — a drag in the Clocks tab: `source` moves to the
-    /// place `destination` holds. The order IS the store's, the one the
-    /// panel's sections follow, and a move that changes nothing (a row
-    /// dropped on itself, a clock that is gone) is not one.
-    func moveClock(_ source: UUID, to destination: UUID) {
-        guard source != destination else { return }
-        var all = clockStore.all()
-        guard let fromIndex = all.firstIndex(where: { $0.id == source }),
-            let destinationRow = all.firstIndex(where: { $0.id == destination })
-        else { return }
-        let moved = all.remove(at: fromIndex)
-        // The destination's ORIGINAL index is where the dragged row lands,
-        // whatever direction the drag ran — the same rule the tile rows move
-        // by.
-        all.insert(moved, at: min(destinationRow, all.count))
-        try? clockStore.replaceAll(all)
-        reloadClocks()
-    }
 
 
     /// Sends an expert's changes on as this model's own.
@@ -1265,14 +1054,7 @@ final class AppModel: ObservableObject {
     /// about the selected clock, and a session rebuilt at the new address.
     /// Each health has already re-pointed its own device and written the store.
     private func clockDidMove(_ clockId: UUID, to address: String) async {
-        deviceHost = address
-        if selectedClockId == clockId || selectedClockId == nil {
-            typedHost = address
-            // `typedHost` has a `didSet` that saves and then says so, and what
-            // it says is "Saved — takes effect at next launch". Both halves are
-            // wrong here: nobody typed, and it took effect at once.
-            hostNote = nil
-        }
+        clockDirectory.clockMoved(clockId, to: address)
         // The session's own device was built at the old address; it is dropped
         // so `reloadClocks` builds one at the new one. The clock's registry
         // goes with it, for the same reason: its connectors are closed over
@@ -1388,12 +1170,10 @@ final class AppModel: ObservableObject {
             makeUlanziDevice(clock).map { ulanziHealth(for: clock, device: $0) }
         }
         for clock in stored { clockSessions.open(clock) }
-        clocks = stored
-        if selectedClockId.map(kept.contains) != true { selectedClockId = stored.first?.id }
+        clockDirectory.adopt(stored)
         for record in tiles.all() where !tileScheduler.isScheduled(record.key) && clockSessions[record.key.clockId] != nil {
             tileScheduler.reschedule(record.key)
         }
-        deviceHost = selectedClockId.flatMap { clock($0)?.address } ?? (stored.first?.address ?? "")
     }
 
 

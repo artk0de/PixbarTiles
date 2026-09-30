@@ -25,7 +25,7 @@ import Testing
         #expect(subject.saveZaiKey("  sk-123 \n", for: key) == .saved)
         #expect(store.secret(for: .tile(key)) == "sk-123")
         #expect(subject.hasZaiKey(for: key))
-        guard case let .zai(config)? = book.storedTile(key)?.config else {
+        guard let config = book.storedTile(key)?.config?.key else {
             Issue.record("the tile carries no z.ai config")
             return
         }

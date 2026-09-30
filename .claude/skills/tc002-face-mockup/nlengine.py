@@ -97,12 +97,14 @@ class Layer:
     `pixels` are (x, y, (r, g, b)) as drawn. `multiplier(frame, n, index, x, y)`
     answers per mille for the index-th pixel, `offset(frame, n)` the whole-pixel
     shift of the layer (x wraps round the panel, y clips). `key` names the
-    setting that stops the layer's motion — it is then drawn as it stands.
+    setting that stops the layer's motion. A stopped layer holds its first
+    frame (`holds="frame"`), or with `holds="position"` stays where it is
+    and keeps its light — a firefly that stops flying still glows.
     Later layers draw over earlier ones. `tint`, when given, replaces the
     scene's for this layer."""
 
-    def __init__(self, name, pixels, multiplier=still, offset=fixed, key=None, tint=None):
-        self.name, self.pixels, self.key = name, pixels, key
+    def __init__(self, name, pixels, multiplier=still, offset=fixed, key=None, tint=None, holds="frame"):
+        self.name, self.pixels, self.key, self.holds = name, pixels, key, holds
         self.multiplier, self.offset, self.tint = multiplier, offset, tint
 
 
@@ -128,15 +130,18 @@ class PixelScene:
         return self.cycle_frames * den // num
 
     def render(self, frame, n, off=frozenset()):
-        """One frame as rows of RGB or None; a layer whose key is in `off`
-        holds its first frame's position at full base colour."""
+        """One frame as rows of RGB or None; a layer whose key is in `off` is
+        stopped (see `Layer`). It used to be drawn at full base with no
+        offset, which lit every cell a silhouette-cutting layer could ever
+        reach: the stopped fireplace and glow read as solid blocks."""
         grid = [[None] * W for _ in range(H)]
         for layer in self.layers:
-            moving = layer.key not in off
-            dx, dy = layer.offset(frame, n) if moving else (0, 0)
+            stopped = layer.key in off
+            dx, dy = layer.offset(0 if stopped else frame, n)
+            lit_at = 0 if stopped and layer.holds == "frame" else frame
             tint = layer.tint or self.tint
             for i, (x, y, c) in enumerate(layer.pixels):
-                m = layer.multiplier(frame, n, i, x, y) if moving else 1000
+                m = layer.multiplier(lit_at, n, i, x, y)
                 xx, yy = (x + dx) % W, y + dy
                 if not 0 <= yy < H:
                     continue

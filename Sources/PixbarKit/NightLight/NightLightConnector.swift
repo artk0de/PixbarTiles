@@ -38,7 +38,10 @@ public struct NightLightConnector: Connector {
         let settings = config()
         return try AnimatedPage.delivery(
             settings.scene.animatedScene, speed: settings.speed.animationSpeed,
-            stilled: settings.stilled, brightness: settings.brightness
+            // Only the motions the scene offers to stop: a key stored for
+            // another scene, or before a switch was withdrawn, does nothing.
+            stilled: settings.stilled.intersection(settings.scene.motionSwitches),
+            brightness: settings.brightness
         )
     }
 

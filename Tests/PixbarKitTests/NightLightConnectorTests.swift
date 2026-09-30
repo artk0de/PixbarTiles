@@ -22,6 +22,14 @@ import Testing
         #expect(connector(sleep: false).defaultPolicy == TileDefaults.nightLightHours)
     }
 
+    @Test func aStoppedMotionTheSceneDoesNotOfferIsIgnored() async throws {
+        let stale = NightLightTileConfig(scene: .fireplace, stilled: ["flames", "sparks"])
+        let delivered = try await connector(stale).produceUlanzi()
+        #expect(delivered == (try AnimatedPage.delivery(
+            NightLightScene.fireplace.animatedScene, speed: .normal, stilled: [], brightness: 5
+        )))
+    }
+
     @Test func whatItDeliversIsTheScenesPageAtItsSettings() async throws {
         let config = NightLightTileConfig(scene: .moon, brightness: 3, speed: .double, stilled: ["cloudMotion"])
         let delivered = try await connector(config).produceUlanzi()

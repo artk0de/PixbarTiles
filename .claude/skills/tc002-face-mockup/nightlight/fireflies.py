@@ -69,5 +69,5 @@ def scene():
         def pulse(frame, n, i, x, y, kp=kp, pp=pp):
             return max(0, ramp(frame, n, kp, pp, LIT_FROM, 1000))
 
-        layers.append(Layer(f"fly{cx}", pixels, pulse, wander, key="flyMotion"))
+        layers.append(Layer(f"fly{cx}", pixels, pulse, wander, key="flyMotion", holds="position"))
     return PixelScene("fireflies", "Светлячки", layers, FRAME_MS, CYCLE_FRAMES, tint=glow)

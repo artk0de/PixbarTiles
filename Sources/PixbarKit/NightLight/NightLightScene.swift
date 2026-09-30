@@ -13,6 +13,20 @@ public enum NightLightScene: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    /// The motions a user may stop, in the order the settings list them.
+    ///
+    /// Only where a stopped motion still reads as the scene: the moon's stars
+    /// and clouds, the fireflies' flight (they keep glowing). Stopping the
+    /// embers' flicker, the fire or the glow left a dead picture on the panel,
+    /// so those scenes offer only their speed (the user's call, 2026-09-30).
+    public var motionSwitches: [String] {
+        switch self {
+        case .moon: ["starTwinkle", "cloudMotion"]
+        case .fireflies: ["flyMotion"]
+        case .embers, .horizon, .fireplace, .glow: []
+        }
+    }
+
     /// The scene on the animation engine — the port of its mockup module in
     /// `tc002-face-mockup/nightlight/`.
     public var animatedScene: AnimatedScene {

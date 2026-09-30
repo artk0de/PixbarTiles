@@ -67,7 +67,7 @@ enum FirefliesScene {
                 max(0, IntMath.ramp(frame, n, fly.kp, fly.pp, litFrom, 1000))
             }
             return AnimationLayer(name: "fly\(fly.cx)", pixels: pixels, multiplier: pulse, offset: wander,
-                                  key: "flyMotion")
+                                  key: "flyMotion", holds: .position)
         }
         return AnimatedScene(id: "fireflies", frameMs: frameMs, cycleFrames: cycleFrames, layers: layers, tint: tint)
     }()

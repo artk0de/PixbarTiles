@@ -35,15 +35,24 @@ public struct AnimationLayer: Sendable {
     public let offset: Offset
     public let key: String?
     public let tint: AnimatedScene.Tint?
+    /// What a stopped layer keeps still: its whole first frame, or only its
+    /// position — a firefly that stops flying still glows.
+    public let holds: Hold
+
+    public enum Hold: Sendable {
+        case frame, position
+    }
 
     public init(name: String, pixels: [AnimationPixel], multiplier: @escaping Multiplier = still,
-                offset: @escaping Offset = fixed, key: String? = nil, tint: AnimatedScene.Tint? = nil) {
+                offset: @escaping Offset = fixed, key: String? = nil, tint: AnimatedScene.Tint? = nil,
+                holds: Hold = .frame) {
         self.name = name
         self.pixels = pixels
         self.multiplier = multiplier
         self.offset = offset
         self.key = key
         self.tint = tint
+        self.holds = holds
     }
 }
 
@@ -95,11 +104,16 @@ public struct AnimatedScene: Sendable {
         let w = Self.width, h = Self.height
         var grid = [RGB?](repeating: nil, count: w * h)
         for layer in layers {
-            let moving = layer.key.map { !stilled.contains($0) } ?? true
-            let (dx, dy) = moving ? layer.offset(frame, n) : (0, 0)
+            // A stopped layer holds its first frame, or only its position.
+            // At full base with no offset it lit every cell a silhouette-
+            // cutting layer could ever reach: the stopped fireplace and glow
+            // read as solid blocks.
+            let stopped = layer.key.map { stilled.contains($0) } == true
+            let (dx, dy) = layer.offset(stopped ? 0 : frame, n)
+            let litAt = stopped && layer.holds == .frame ? 0 : frame
             let tint = layer.tint ?? self.tint
             for (i, p) in layer.pixels.enumerated() {
-                let m = moving ? layer.multiplier(frame, n, i, p.x, p.y) : 1000
+                let m = layer.multiplier(litAt, n, i, p.x, p.y)
                 let xx = IntMath.floorMod(p.x + dx, w)
                 let yy = p.y + dy
                 guard 0 <= yy, yy < h else { continue }

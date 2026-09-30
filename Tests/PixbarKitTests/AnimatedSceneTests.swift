@@ -14,13 +14,41 @@ import Testing
         #expect(grid[0] == RGB(r: 0, g: 0, b: 50))
     }
 
-    @Test func aStilledLayerDrawsAtFullBaseWithoutItsOffset() {
+    /// A stilled layer holds its first frame: a layer whose multiplier cuts
+    /// its silhouette (the fireplace's flames) drawn at full base lit every
+    /// cell it could ever reach — a solid block on the panel.
+    @Test func aStilledLayerHoldsItsFirstFrame() {
         let moving = AnimationLayer(name: "m", pixels: [AnimationPixel(x: 3, y: 3, colour: RGB(r: 200, g: 0, b: 0))],
-                                    multiplier: { _, _, _, _, _ in 0 }, offset: { _, _ in (dx: 0, dy: -99) },
+                                    multiplier: { frame, _, _, _, _ in frame == 0 ? 500 : 0 },
+                                    offset: { frame, _ in (dx: frame, dy: 0) },
                                     key: "k")
         let still = scene([moving]).render(frame: 4, of: 10, stilled: ["k"])
-        #expect(still[3 * 52 + 3] == RGB(r: 200, g: 0, b: 0))
+        #expect(still == scene([moving]).render(frame: 0, of: 10, stilled: []))
+        #expect(still[3 * 52 + 3] == RGB(r: 100, g: 0, b: 0))
         #expect(scene([moving]).render(frame: 4, of: 10, stilled: []).allSatisfy { $0 == nil })
+    }
+
+    @Test func aStoppedFireflyStaysPutAndKeepsGlowing() {
+        let flies = NightLightScene.fireflies.animatedScene
+        let n = flies.cycleFrames
+        let frames = (0..<n).map { flies.render(frame: $0, of: n, stilled: ["flyMotion"]) }
+        // Still glowing: the frames differ.
+        #expect(Set(frames.map { $0.map { $0 == nil } }).count > 1)
+        // Staying put: every lit cell lies where the flies stood at frame 0.
+        var home: Set<Int> = []
+        for layer in flies.layers {
+            let (dx, dy) = layer.offset(0, n)
+            for p in layer.pixels where (0..<16).contains(p.y + dy) {
+                home.insert((p.y + dy) * 52 + IntMath.floorMod(p.x + dx, 52))
+            }
+        }
+        #expect(frames.allSatisfy { f in f.indices.allSatisfy { f[$0] == nil || home.contains($0) } })
+    }
+
+    @Test func aStilledFireplaceIsItsFirstFrameNotABlock() {
+        let fire = NightLightScene.fireplace.animatedScene
+        let n = fire.cycleFrames
+        #expect(fire.render(frame: 37, of: n, stilled: ["flames", "sparks"]) == fire.render(frame: 0, of: n, stilled: []))
     }
 
     @Test func aTintAnimatesRedOnlyAndHoldsGreenWhereTheRedCarriesIt() {

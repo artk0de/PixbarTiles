@@ -214,7 +214,7 @@ final class AnecdoteHistory: ObservableObject {
             // touched. Those two are what the discarded result was ever
             // discarded for; the History is a third place, and it is the one
             // the button was pressed on.
-            self?.replayResult = AppModel.words(for: result)
+            self?.replayResult = TileRunner.words(for: result)
         }
     }
 

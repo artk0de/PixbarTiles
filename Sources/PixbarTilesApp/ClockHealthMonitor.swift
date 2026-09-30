@@ -165,6 +165,7 @@ final class ClockHealthMonitor: ObservableObject, ReachabilityReading {
     /// answering, an AWTRIX one by the monitor's stats poll. One answer per
     /// firmware is what lets one dot stand for either.
     func reachability(of clockId: UUID) -> ClockReachability {
+        if silentPastDeadline.contains(clockId) { return .unreachable }
         if let ulanzi = ulanziHealths[clockId] {
             switch ulanzi.answering {
             case .notAsked: return .unknown
@@ -214,6 +215,7 @@ final class ClockHealthMonitor: ObservableObject, ReachabilityReading {
     /// not "not there", which is the conflation `DeviceState` exists to
     /// prevent. Each clock answers for its own tiles only.
     func clockIsUnreachable(_ clockId: UUID) -> Bool {
+        if silentPastDeadline.contains(clockId) { return true }
         if let ulanzi = ulanziHealths[clockId] {
             if case .unreachable = ulanzi.answering { return true }
             return false
@@ -299,15 +301,28 @@ final class ClockHealthMonitor: ObservableObject, ReachabilityReading {
         // this pattern otherwise trips a compiler bug in. Both health kinds
         // poll in the same fan-out: an AWTRIX one returns a battery warning
         // with its reading, a TC002 one always nil — nothing to cross.
+        //
+        // The glyph hears each clock as it answers, not once the slowest has
+        // given up: the panel's dot reads a clock's health live, and a glyph
+        // that waited on an unreachable clock's timeout stayed offline for
+        // seconds beside a dot already saying Connected.
         var polls: [Task<(String, BatteryWarning?), Never>] = []
         polls.append(
             contentsOf: healths.values.map { health in
-                Task { @MainActor in (health.name, await health.poll(at: now)) }
+                Task { @MainActor in
+                    let warning = await health.poll(at: now)
+                    self.heard(health.clockId)
+                    return (health.name, warning)
+                }
             }
         )
         polls.append(
             contentsOf: ulanziHealths.values.map { health in
-                Task { @MainActor in (health.name, await health.poll(at: now)) }
+                Task { @MainActor in
+                    let warning = await health.poll(at: now)
+                    self.heard(health.clockId)
+                    return (health.name, warning)
+                }
             }
         )
         var crossings: [Crossing] = []
@@ -331,8 +346,90 @@ final class ClockHealthMonitor: ObservableObject, ReachabilityReading {
 
     /// Whether the SELECTED clock is answering, across both health kinds —
     /// the glyph reads one answer, whichever model the selection names.
+    /// Asks one clock how it is, now — a card's refresh. Only that clock:
+    /// the others keep their own cadence. The dots and the glyph hear the
+    /// answer at once, and whatever hangs off a fresh answer is handed on.
+    ///
+    /// Answered within `deadline` or not at all: a switched-off clock never
+    /// answers, and the refresh used to wait out the request's whole 15 s
+    /// timeout (`URLSessionTransport.defaultTimeout`). A clock on the LAN
+    /// answers in tens of milliseconds, so one silent past the deadline is
+    /// read as unreachable at once. The request goes on; an answer that lands
+    /// after the deadline is the fresher evidence and overturns it.
+    func recheck(_ clockId: UUID, within deadline: Duration = recheckDeadline) async -> ClockReachability {
+        let race = RecheckRace()
+        let inTime: Bool = await withCheckedContinuation { continuation in
+            Task { @MainActor in
+                await self.pollOne(clockId)
+                if race.settle() {
+                    continuation.resume(returning: true)
+                } else {
+                    // Late: the deadline already called it; this answer wins.
+                    self.healthRevision += 1
+                    self.onPolled()
+                }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: deadline)
+                if race.settle() { continuation.resume(returning: false) }
+            }
+        }
+        if !inTime {
+            silentPastDeadline.insert(clockId)
+            mirrorTheSelectedClock()
+        }
+        healthRevision += 1
+        onPolled()
+        return reachability(of: clockId)
+    }
+
+    /// How long a card's refresh waits for its clock (`recheck`).
+    static let recheckDeadline: Duration = .seconds(3)
+
+    /// Clocks a refresh found silent past its deadline, until their own
+    /// request settles one way or the other.
+    private var silentPastDeadline: Set<UUID> = []
+
+    /// Which of a refresh's two ends landed first. Main-actor only, so a plain
+    /// flag is enough.
+    private final class RecheckRace {
+        private var settled = false
+        /// True for the first caller only.
+        func settle() -> Bool {
+            guard !settled else { return false }
+            settled = true
+            return true
+        }
+    }
+
+    /// Polls the one clock, and hears its answer.
+    private func pollOne(_ clockId: UUID) async {
+        let now = Date()
+        if let ulanzi = ulanziHealths[clockId] {
+            _ = await ulanzi.poll(at: now)
+        } else if let health = healths[clockId] {
+            _ = await health.poll(at: now)
+        }
+        heard(clockId)
+    }
+
+    /// A clock's own request has settled: its answer replaces whatever a
+    /// refresh's deadline said, and the glyph hears it.
+    private func heard(_ clockId: UUID) {
+        silentPastDeadline.remove(clockId)
+        mirrorTheSelectedClock()
+    }
+
+    /// The glyph's mirror, written only when it moves: every write of a
+    /// `@Published` value is a change the model relays to every surface.
+    private func mirrorTheSelectedClock() {
+        let answer = answerForSelectedClock()
+        if isDeviceOnline != answer { isDeviceOnline = answer }
+    }
+
     private func answerForSelectedClock() -> Bool {
         guard let id = selectedClockId else { return false }
+        if silentPastDeadline.contains(id) { return false }
         if let ulanzi = ulanziHealths[id] { return ulanzi.isOnline }
         return healths[id]?.isOnline ?? false
     }

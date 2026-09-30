@@ -127,7 +127,8 @@ struct MenuPanel: View {
                                     onClockSettings: {
                                         settings.showClockWindow(section.clock.id)
                                         openAndFocus { openWindow(id: "clock-settings") }
-                                    }
+                                    },
+                                    onRecheck: { await model.recheckClock(section.clock.id) }
                                 )
                             }
                         }
@@ -280,6 +281,16 @@ private struct ClockSectionView: View {
     /// menu interposed in front of a window the click already named is a
     /// question asked twice.
     let onClockSettings: () -> Void
+    /// The refresh: asks this clock now and answers how it found it.
+    let onRecheck: () async -> AppModel.ClockReachability
+
+    /// A refresh under way: the badge says Checking… and the button rests.
+    @State private var checking = false
+    /// What the last refresh found, said for a few seconds (`ClockRecheckNote`).
+    @State private var note: String?
+
+    /// How long a refresh's note stays up.
+    private static let noteSeconds = 5
 
     @Environment(\.colorScheme) private var colorScheme
     private var dark: Bool { colorScheme == .dark }
@@ -302,7 +313,17 @@ private struct ClockSectionView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
-                    StatusBadge(dot: section.dot, words: section.statusLine)
+                    StatusBadge(
+                        dot: checking ? .yellow : section.dot,
+                        words: checking ? DeviceStatusLine.title(for: .unknown) : section.statusLine,
+                        blinking: checking
+                    )
+                }
+                if let note {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
                 }
                 if let reading = section.battery {
                     BatteryRow(reading: reading, live: section.isLive, dark: dark)
@@ -315,24 +336,57 @@ private struct ClockSectionView: View {
         }
         .padding(.leading, 12)
         .padding(.vertical, 12)
-        // The gear's own column, so the badge never slides under it.
-        .padding(.trailing, 36)
+        // The refresh and gear's own column, so the badge never slides
+        // under them.
+        .padding(.trailing, 62)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.fill.quaternary, in: .rect(cornerRadius: 14))
         .overlay(alignment: .topTrailing) {
-            Button(action: onClockSettings) {
-                PixelArt(
-                    map: PanelGlyph.gear,
-                    palette: PanelGlyph.inkPalette(PixelInk.secondary(dark: dark)),
-                    pixel: 1.5
-                )
-                .padding(6)
-                .contentShape(.rect)
+            HStack(spacing: 0) {
+                Button(action: recheck) {
+                    PixelArt(
+                        map: PanelGlyph.recheckArrow,
+                        palette: PanelGlyph.inkPalette(PixelInk.secondary(dark: dark)),
+                        pixel: 1.5
+                    )
+                    .opacity(checking ? 0.4 : 1)
+                    .padding(6)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.borderless)
+                .disabled(checking)
+                .help("Check \(section.clock.name) now")
+                .accessibilityLabel("Check \(section.clock.name) now")
+                Button(action: onClockSettings) {
+                    PixelArt(
+                        map: PanelGlyph.gear,
+                        palette: PanelGlyph.inkPalette(PixelInk.secondary(dark: dark)),
+                        pixel: 1.5
+                    )
+                    .padding(6)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.borderless)
+                .help("\(section.clock.name) settings")
+                .accessibilityLabel("\(section.clock.name) settings")
             }
-            .buttonStyle(.borderless)
             .padding(6)
-            .help("\(section.clock.name) settings")
-            .accessibilityLabel("\(section.clock.name) settings")
+        }
+    }
+
+    /// Asks the clock now; a clock that stays silent gets a note saying why
+    /// it may be, for a few seconds. The battery read is the last one seen —
+    /// a silent clock's charge is the one it had before it went quiet.
+    private func recheck() {
+        checking = true
+        Task { @MainActor in
+            let answer = await onRecheck()
+            checking = false
+            let said = ClockRecheckNote.text(reachable: answer == .reachable, lastBattery: section.battery)
+            withAnimation { note = said }
+            guard said != nil else { return }
+            try? await Task.sleep(for: .seconds(Self.noteSeconds))
+            if note == said { withAnimation { note = nil } }
         }
     }
 
@@ -354,10 +408,20 @@ private struct ClockSectionView: View {
 private struct StatusBadge: View {
     let dot: PanelModel.ClockDot
     let words: String
+    /// A refresh under way: the lamp blinks (`CheckingBlink`).
+    var blinking = false
 
     var body: some View {
         HStack(spacing: 5) {
-            PixelArt(map: PanelGlyph.led, palette: PanelGlyph.ledPalette(for: dot), pixel: 2)
+            if blinking {
+                TimelineView(.periodic(from: .now, by: CheckingBlink.halfBeat)) { context in
+                    lamp.opacity(
+                        CheckingBlink.isLit(elapsed: context.date.timeIntervalSinceReferenceDate) ? 1 : 0.15
+                    )
+                }
+            } else {
+                lamp
+            }
             Text(words)
                 .font(.caption.weight(.medium))
                 .lineLimit(1)
@@ -365,6 +429,10 @@ private struct StatusBadge: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(Self.tint(dot).opacity(0.16), in: .capsule)
+    }
+
+    private var lamp: some View {
+        PixelArt(map: PanelGlyph.led, palette: PanelGlyph.ledPalette(for: dot), pixel: 2)
     }
 
     private static func tint(_ dot: PanelModel.ClockDot) -> Color {

@@ -330,6 +330,11 @@ final class AppModel: ObservableObject {
     /// Whether the selected clock is answering — the glyph's one answer.
     var isDeviceOnline: Bool { clockHealthMonitor.isDeviceOnline }
 
+    /// A clock's card refresh: asks that clock now (`ClockHealthMonitor.recheck`).
+    func recheckClock(_ clockId: UUID) async -> ClockReachability {
+        await clockHealthMonitor.recheck(clockId)
+    }
+
     /// Builds the device a TC002 clock's health probes. The device is the
     /// same one the clock's own slot pushes through, so a health answer and a
     /// page push cannot disagree about whether the clock is there.

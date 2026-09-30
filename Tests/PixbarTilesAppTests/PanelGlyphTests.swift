@@ -16,8 +16,16 @@ private let everyMap: [(String, [String])] = [
     ("bolt", PanelGlyph.bolt),
     ("led", PanelGlyph.led),
     ("gear", PanelGlyph.gear),
+    ("recheckArrow", PanelGlyph.recheckArrow),
     ("power", PanelGlyph.power),
 ]
+
+// The refresh sits beside the gear on a clock's card: the same size, so the
+// two read as a pair of controls.
+@Test func theRecheckArrowIsTheGearsSize() {
+    #expect(PanelGlyph.recheckArrow.count == PanelGlyph.gear.count)
+    #expect(PanelGlyph.recheckArrow.first?.count == PanelGlyph.gear.first?.count)
+}
 
 private func reading(
     _ percent: Int, _ direction: BatteryDirection, left: TimeInterval? = nil

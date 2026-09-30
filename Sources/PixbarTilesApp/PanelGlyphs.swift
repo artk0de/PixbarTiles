@@ -313,6 +313,20 @@ enum PanelGlyph {
         "...GGG...",
     ]
 
+    /// Ask again: a ring turning clockwise, its head at the top right. The
+    /// gear's size, beside the gear on a clock's card.
+    static let recheckArrow = [
+        "...GGG.G.",
+        ".GG...GG.",
+        ".G...GGG.",
+        "G........",
+        "G.......G",
+        "G.......G",
+        ".G.....G.",
+        ".GG...GG.",
+        "...GGG...",
+    ]
+
     /// On the clock now: an almond with a lit pupil, on the card of the tile
     /// whose page the clock is showing.
     static let eyeOpen = [

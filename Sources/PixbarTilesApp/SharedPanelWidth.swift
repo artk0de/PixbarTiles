@@ -45,7 +45,13 @@ struct SharedPanelWidth: ViewModifier {
     /// happens.
     @State private var dragged: CGFloat?
 
-    private var width: CGFloat { dragged ?? PanelWidth.stored(in: defaults).points }
+    /// No wider than the room to the right of the menu bar item, so macOS
+    /// has no reason to push the panel left of it (`PanelPlacement`).
+    private var width: CGFloat {
+        dragged ?? PanelPlacement.shownWidth(
+            stored: PanelWidth.stored(in: defaults).points, room: PanelPlacement.shared.room
+        )
+    }
 
     func body(content: Content) -> some View {
         content

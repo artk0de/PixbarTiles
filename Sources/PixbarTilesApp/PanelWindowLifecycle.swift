@@ -34,6 +34,9 @@ final class PanelWindowLifecycle {
     /// alternative costs a window nobody can see, kept by a reference nobody
     /// reads.
     private weak var panelWindow: NSWindow?
+    /// Set while the panel is being put under its item, so that move is not
+    /// read as the user's drag — the opening click may still be held.
+    private var placing = false
 
     init(model: AppModel, pin: PanelPin, browsingPolicy: ClockBrowsingPolicy, notifications: NotificationCenter) {
         self.model = model
@@ -61,7 +64,25 @@ final class PanelWindowLifecycle {
         // surface left is exactly what did not change. Flagging the whole
         // content view is the cheap way to start every open from clean glass.
         panelWindow?.contentView?.needsDisplay = true
+        placeUnderItem()
         browsingPolicy.panelOpened()
+    }
+
+    /// The panel to the right of its item (`PanelPlacement`): the room is
+    /// measured, which narrows a panel too wide for it, and the window is put
+    /// with its left edge under the item's.
+    private func placeUnderItem() {
+        guard !pin.isPinned, let panel = panelWindow,
+            let item = PanelPlacement.itemFrame(among: NSApp.windows),
+            let visible = (panel.screen ?? NSScreen.main)?.visibleFrame
+        else { return }
+        let room = PanelPlacement.room(item: item, visible: visible)
+        if PanelPlacement.shared.room != room { PanelPlacement.shared.room = room }
+        let x = PanelPlacement.originX(width: panel.frame.width, item: item, visible: visible)
+        guard abs(panel.frame.minX - x) >= 0.5 else { return }
+        placing = true
+        panel.setFrameOrigin(CGPoint(x: x, y: panel.frame.minY))
+        placing = false
     }
 
     /// The panel has gone: whatever the browse was for, nobody can read it now.
@@ -164,6 +185,9 @@ final class PanelWindowLifecycle {
                 lifecycle.panelDidClose()
             },
             whenThePanelsWindow(NSWindow.didMoveNotification) { $0.panelWasDragged() },
+            // A width capped to the room, or a surface of another height,
+            // resizes the window, and macOS places it again: put it back.
+            whenThePanelsWindow(NSWindow.didResizeNotification) { $0.placeUnderItem() },
             notifications.addObserver(
                 forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
             ) { [weak self] _ in MainActor.assumeIsolated { self?.levelThePinnedWindow() } },
@@ -190,6 +214,7 @@ final class PanelWindowLifecycle {
     /// that placement posts the same notification with no button down. Without
     /// the guard the panel would pin itself the first time it was ever shown.
     private func panelWasDragged() {
+        guard !placing else { return }
         AppLog.panel.info(
             """
             panel moved: pinned=\(self.pin.isPinned, privacy: .public) \

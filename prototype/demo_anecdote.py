@@ -54,21 +54,6 @@ LEAD_FIRST_LINE = 0.7
 LEAD_BETWEEN_LINES = 0.25
 LEAD_LAUGHTER = 0.7
 
-# Anecdotes worth replaying on demand. The feed rotates, so a search argument
-# that stops matching falls back to these instead of failing.
-PINNED = {
-    "колобок": (
-        "pinned:kolobok",
-        "- Сеть быстрого питания «Вкусно — и точка» открыла кафе прямо в библиотеке"
-        " - Теперь книги будут читать с кетчупом?",
-    ),
-    "вертолёт": (
-        "pinned:helicopter",
-        "— Ты спишь?\n— Неее, я просто закрыла глаза и слушаю дождь...\n"
-        "— Но дождя нет!!!\n— Я его слушаю по памяти.",
-    ),
-}
-
 DASHES = "-—–"
 ENTITIES = [("&quot;", '"'), ("&apos;", "'"), ("&lt;", "<"), ("&gt;", ">"),
             ("&nbsp;", " "), ("&mdash;", "—"), ("&ndash;", "–"), ("&amp;", "&")]
@@ -339,17 +324,12 @@ def main() -> None:
     elif choice.isdigit():
         guid, text = dialogues[int(choice)]
     else:
-        # A pinned name wins over a feed search: it was curated on purpose, and
-        # the same word can match something else in today's feed.
         needle = choice.lower()
         found = [(g, t) for g, t in anecdotes if needle in t.lower()]
-        if needle in PINNED:
-            guid, text = PINNED[needle]
-        elif found:
+        if found:
             guid, text = found[0]
         else:
-            print(f"nothing in the feed or the pinned set matches {choice!r}")
-            print(f"pinned: {', '.join(PINNED)}")
+            print(f"nothing in the feed matches {choice!r}")
             print("dialogues in today's feed:")
             for index, (_, t) in enumerate(dialogues):
                 print(f"  {index}: {t.splitlines()[0][:70]}")

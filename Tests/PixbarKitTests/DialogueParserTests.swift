@@ -132,9 +132,9 @@ import Testing
 /// pacing lays down, so a joke split into a different number of turns has its
 /// pauses in the wrong places while every pause constant still matches.
 ///
-/// Regenerate with `Scripts/make_parser_parity_corpus.py`, which fetches the
-/// three live feeds and records what `prototype/demo_anecdote.py parse_turns`
-/// makes of each one.
+/// Regenerate with `Scripts/make_parser_parity_corpus.py`, which records what
+/// `prototype/demo_anecdote.py parse_turns` makes of each of its invented
+/// texts — written in the shapes the live feeds were measured to carry.
 private struct ParityCorpus: Decodable {
     struct RecordedTurn: Decodable, Equatable {
         let speaker: String

@@ -402,9 +402,9 @@ device:
 
 ```bash
 cd ~/Dev/Personal/awtrix-connectors/prototype
-python3 demo_anecdote.py колобок      # a pinned anecdote, always available
 python3 demo_anecdote.py              # first dialogue in today's feed
-python3 demo_anecdote.py вертолёт     # the other pinned one — has the female line
+python3 demo_anecdote.py 2            # the third dialogue in today's feed
+python3 demo_anecdote.py <word>       # the first anecdote containing <word>
 python3 test_gender.py                # the female-voice acceptance set
 ```
 

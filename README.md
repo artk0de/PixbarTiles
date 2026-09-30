@@ -13,12 +13,35 @@ connector is a small app you place on a clock as a **tile**; it draws every
 clock model through a face of its own, so the same tile looks right on a 32×8
 TC001 and on a 52×16 TC002.
 
+## Screenshots
+
+| | |
+|---|---|
+| <img src="docs/images/screenshots/1-menu-panel.png" width="400" alt="Menu bar panel"> | <img src="docs/images/screenshots/2-app-settings.png" width="400" alt="App settings"> |
+| The menu bar panel: every clock, its status and a recheck | Settings: the clocks the app drives |
+| <img src="docs/images/screenshots/3-clock-tiles.png" width="400" alt="Clock settings with its tiles"> | <img src="docs/images/screenshots/4-tile-store.png" width="400" alt="Tile Store"> |
+| One clock's tiles, in the order it shows them | The Tile Store, where a tile is added to a clock |
+| <img src="docs/images/screenshots/5-tile-settings.png" width="400" alt="Claude usage tile settings"> | |
+| A tile's settings, with a live preview of the clock | |
+
+## Clock Photos
+
+| | |
+|---|---|
+| <img src="docs/images/photos/IMG_0732.jpg" width="400" alt="Claude usage on a TC002"> | <img src="docs/images/photos/IMG_0734.jpg" width="400" alt="GitHub stars on a TC002"> |
+| Claude usage: the weekly limit | GitHub: a repository's stars |
+| <img src="docs/images/photos/IMG_0735.jpg" width="400" alt="Weather at night on a TC002"> | <img src="docs/images/photos/IMG_0737.jpg" width="400" alt="Night light on a TC002"> |
+| Weather: temperature and feels-like at night | Night light: a warm scene for the dark |
+
 ## Clocks
 
 | Clock | Firmware | Panel | How the app talks to it |
 |---|---|---|---|
 | Ulanzi TC001 | AWTRIX 3 | 32 × 8 | AWTRIX HTTP API: custom apps, notifications, indicators, RTTTL sound |
 | Ulanzi TC002 | stock | 52 × 16 | Custom apps (`/api/custom`), one full-frame GIF per page |
+
+> **AWTRIX 3 is on its way out.** Its support will be dropped and replaced
+> with AWTRIX NG, since AWTRIX 3 is discontinued upstream.
 
 Several clocks of both models can be driven at once. They are listed in
 Settings and found on the network by Bonjour (TC001) or the TC002's UDP
@@ -28,12 +51,12 @@ announcement.
 
 | Tile | What it shows |
 |---|---|
-| Anecdotes | The day's popular anecdotes on the clock, voiced on the Mac in cloned game-character voices |
 | Weather | Current conditions with animated icons, feels-like colour, rotating detail lines, optional moon phase |
 | Claude usage | Claude Code's session and weekly limits, read from Claude Code's status line |
 | z.ai usage | The z.ai coding-plan limits |
 | VPN | A lamp per VPN connection, scheduled by time or Focus |
 | GitHub | Repository activity and events, with an interruption when something happens |
+| Night light | A warm full-screen scene for the night, TC002 only |
 
 A clock's battery is part of its status rather than a tile: the app warns on
 thresholds with a discharge estimate.
@@ -80,5 +103,7 @@ and `Scripts/make_*_face_oracle.py` records them as fixtures under
 
 ## Status
 
-Personal project, free software. AWTRIX 3 is discontinued upstream; moving the
-TC001 support to AWTRIX NG is planned.
+Personal project, free software.
+
+AWTRIX 3 support will be dropped: the firmware is discontinued upstream, and
+the TC001 will be driven through AWTRIX NG instead.

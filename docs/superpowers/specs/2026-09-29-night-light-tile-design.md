@@ -284,8 +284,8 @@ The oracle: `Scripts/make_animation_oracle.py` records the engine's frames into
 - Night light on the TC001: measure AWTRIX `draw`, then a 32×8 face.
 - Idle a page left lit when the app launches outside the window.
 - Hardware brightness on the TC002, if a write endpoint turns out to exist.
-- **Open: the Brightness setting.** Scaling pixels by 20…80 % pushes most of a
-  scene under the panel's floor, where eight levels collapse into one. Before
-  the setting ships, measure the reds at the clock's lower brightness and
-  decide whether a step removes levels from the top (fewer, dimmer levels)
-  rather than scaling every pixel.
+- **Settled 2026-09-30: the Brightness setting.** The worry was that scaling
+  pixels by 20…80 % would push a scene under the panel's floor and collapse
+  its levels into one. Embers pushed at levels 1–5 (`demo-b1` … `demo-b5`) and
+  judged on the panel: every step keeps its levels apart. The per-channel
+  scale `(ch · level + 2) / 5` ships as it is, in both engines.

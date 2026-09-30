@@ -63,7 +63,7 @@ brightness:
 | Going off in the morning | **The page goes to the idle frame and the clock is switched to a chosen tile** — "In the morning show", defaulting to the first tile in the clock's order | The TC002 cannot say which page it showed before, so "go back" has nothing to go back to. Deleting the page costs a full GIF re-upload each night; leaving it lit keeps a night light glowing all day |
 | When is "night" | **The tile's ordinary `TilePolicy`** — the same "Works in" boxes and Hours as every tile | A second scheduler would be a second truth about whether it is night |
 | Default policy | **Sleep only** when Sleep can be named (Focus authorised AND the Do Not Disturb database readable, i.e. Full Disk Access); **22:00–06:00** otherwise | Without Full Disk Access every Focus is `.unknown`; "any Focus" would light the panel for a daytime Work Focus |
-| Where the auto-switch lives | **A capability of the connector's config plus one branch in `reconcileTiles`** (approach B) | A `bringsToFront` flag on `TilePolicy` would edit a hub (fan-in 8, transitive impact 26), its Codable form and a migration, for one consumer. A separate controller would duplicate the scheduler |
+| Where the auto-switch lives | **The kind's wiring: `NightLightWiring.arrived` / `left`**, which `TileScheduler.reconcileTiles` calls on a change of the tile's verdict (the kinds refactor, `2026-09-30-tile-kinds-and-animation-engine-design.md` §1, replaced the planned branch in `reconcileTiles`) | A `bringsToFront` flag on `TilePolicy` would edit a hub (fan-in 8, transitive impact 26), its Codable form and a migration, for one consumer. A separate controller would duplicate the scheduler |
 | Scene choice | **One scene per tile**, picked in settings | Rotating scenes is a feature nobody asked for; a second night-light tile on one clock is not allowed either (`.single`) |
 
 ## Behaviour
@@ -99,13 +99,14 @@ skipped. Settings changes push at once through `pushDisplaySettings`.
 
 ### Coming up and going off
 
-In `AppModel.reconcileTiles`, after the existing `left` / `arrived` handling,
-for a tile whose config says `autoShow`:
+`TileScheduler.reconcileTiles` does its own `left` / `arrived` handling, then
+tells the tile's wiring through `TileArrivalActions`. `NightLightWiring`, for a
+config that says `autoShow`:
 
 | Change | What the app does |
 |---|---|
-| `arrived` | runs the tile (the scene is on the page), then `showOnClock(key)` — the eye click's own path |
-| `left` | `markIdle(tileId:)` on the TC002 session, then `showOnClock(morning)` where `morning` is the configured tile, or the first unpaused, page-owning tile in the clock's order that is not this one |
+| `arrived` | `run` (the scene is on the page), then `show(key)` — the eye click's own path |
+| `left` | `idle(key)` (`markIdle(tileId:)` on the TC002 session), then `show(morning)` where `morning` is `morningTile(clockId, morningTileId, key)`: the configured tile when it is on the clock, else the first unpaused, page-owning tile in the clock's order that is not this one |
 
 A tile without `autoShow` behaves like any silent tile: it runs inside its
 window and is held outside it, and its page stays wherever the knob is.
@@ -120,7 +121,8 @@ bead; the next `left` edge idles it.
 
 `NightLightTileBlock`, under the shared policy editor:
 
-- **Scene** — six choices, each with its animated preview.
+- **Scene** — six choices; the window's preview column plays the chosen one
+  as the GIF the clock will get.
 - **Brightness** — a five-step stepped slider.
 - **Animation speed** — ½× / 1× / 2×, one setting for every scene. The engine
   plays the same whole cycles in twice or half as many frames; the frame delay
@@ -133,20 +135,19 @@ bead; the next `left` edge idles it.
 
 ## Kit
 
-`Sources/PixbarKit/NightLight/`:
-
 | File | Owns |
 |---|---|
-| `NightLightScene.swift` | the six scenes, their stored names, display names |
-| `NightLightTileConfig.swift` | `scene`, `brightness` (1…5), `speed` (½ / 1 / 2), `stilled: Set<String>` (layer keys switched off), `autoShow`, `morningTileId: String?`; Codable, writes nothing at the defaults |
-| `NightLightConnector.swift` | `id "nightlight"`, silent and ambient, `.single`, `defaultPolicy` from `canNameSleep`, `ulanziFace` |
-| `NightLightPalette.swift` | the five colours, interpolation, the brightness scale — integer arithmetic only |
-| `NightLightFrames.swift` | one generator per scene: `(scene) -> [(PixelCanvas, ms)]` |
-| `NightLightFace.swift` | frames → brightness → `FullFrameGif` → one full-page `UlanziScene` |
+| `NightLight/NightLightScene.swift`, `NightLight/Scenes/*` | the six scenes on the animation engine, their stored names, display names |
+| `NightLight/NightLightTileConfig.swift` | `scene`, `brightness` (1…5), `speed` (`NightLightSpeed`: ½ / 1 / 2), `stilled: Set<String>` (layer keys switched off), `autoShow`, `morningTileId: String?`; a `TileParameters`, writes nothing at the defaults |
+| `NightLight/NightLightConnector.swift` | `id "nightlight"`, silent and ambient, `.single`; its reading is `AnimatedPage.delivery` at the tile's settings; `defaultPolicy` from `canNameSleep` |
+| `Tiles/Kinds/NightLightKind.swift` | the kind: category system, `moon.stars`, TC002 only |
+| `Animation/*` | the engine: layers, brightness, `FullFrameGif`, one full-page `UlanziScene` |
 
-Edited: `TileConfig` (case `nightLight`, key `nightlight`), `TileCatalogue`
-(`TilePresentation` row: category system, a moon icon, a blurb),
-`TileDefaults` (two rows).
+Edited: `TileKinds.all` (one line), `TileDefaults` (two rows). The config is
+stored under the kind's id (`{"nightlight":{…}}`) with no edit to
+`TileConfig`. The catalogue lists the tile on TC002 alone because a kind
+narrows a live connector's models: the connector's required AWTRIX face is
+never offered.
 
 ### The animation engine
 
@@ -183,6 +184,35 @@ bank darkens with distance: at most 144 from about x 20, 100 from x 25, and
 from x 33 a floor-level body under a 100 edge. 18 stars, the bright ones
 amber, twinkle behind the clouds.
 
+Warm horizon as approved on the panel: the sheet's panel quantised onto seven
+approved colours — a horizon line along the bottom, the band fading to dark
+red within three rows, a sun gone under at x 8–14 whose dome rises two rows
+higher. Nothing moves; the light does: two sines along the band lift a pixel
+above the line a step where they peak and drop it where they trough, so only
+a few pixels change at a time, and the dome warms a step and back once a
+loop. The line never changes. 144 frames of 250 ms.
+
+Fireflies as approved on the panel: some twenty fireflies wander on closed
+loops across a dark field and glow up and out one by one, every colour an
+amber from the panel pick — a firefly never dims through red, and its core
+stays short of gold. A big one wears a dim amber halo at its brightest; a
+small one is a single dot. 240 frames of 100 ms.
+
+Fireplace as approved on the panel: the sheet's small fire round x 27 — a
+narrow core held at amber 255/100 (no yellow at night), a red body with dark
+holes and side licks, a sparse bed of embers. The embers swing a step on
+their own 2–5 s periods; every flame column slides its cells −1…+2 rows on a
+smoothly drifting energy, so the tongues rise and fall; at most three sparks
+rise a row every 400 ms, fading and drifting aside. 200 frames of 100 ms.
+
+Soft glow as approved on the panel: the tail of a red-amber lamp just past
+the bottom-right corner — an oval of light, near-yellow at its core (255/144,
+as the mock was judged), its rim broken into dim red dots. The glow breathes
+a step up and down on a 12 s sine, each pixel at its own moment so the change
+flows out from the corner; the rim grows and draws back by a pixel on a 24 s
+sine; the free dots flare and settle on their own periods. A pixel steps
+within its own family. 10 frames a second.
+
 Embers as approved on the panel: a bed of coals on rows 10–15 in eight heat
 steps (40, 100, 160, 192 red; 255 with green 40 / 72 / 100 / 144), every hot
 pixel (heat 6 and up) flickering two steps and a third of the rest one step —
@@ -214,29 +244,29 @@ are chosen in the mockup inside `UlanziScene`'s ceiling (≤ 480 frames,
 
 | File | Change |
 |---|---|
-| `ConnectorFactories.swift` | the TC002 factory and the naming instance, with `canNameSleep` |
-| `AppModel.swift` | registration beside the others; the auto-show branch in `reconcileTiles` and one helper for the morning tile |
-| `TileSettingsWindow.swift` / `TileSettingsModel.swift` | the block's dispatch and config setters |
+| `Kinds/NightLightWiring.swift` | new — the per-clock factory, the naming instance, the glyph, the block, `arrived` / `left` |
 | `NightLightTileBlock.swift` | new — the settings block |
-| `PanelGlyphs.swift` | the tile's glyph |
+| `Kinds/TileKindWiring.swift` | one line in `AppTileKinds.all`; `canNameSleep` on `TileEnvironment` and `TileNaming` |
+| `AppComposition.swift` | `canNameSleep` (Focus authorised and the Do Not Disturb database readable) |
+| `AppModel.swift` | `morningTile` in the `TileArrivalActions` it hands the scheduler |
+| `PanelGlyphs.swift` | the crescent glyph |
 
-`AppModel` is the codebase's hub (fan-out 73, 45 commits, bug-fix rate 27 %):
-the branch stays a few lines and is pinned by wiring tests.
+No dispatch file changes: the factories, the settings window and the glyph
+lookup read the wiring.
 
 ## Tests
 
 | Suite | Pins |
 |---|---|
-| `NightLightTileConfigTests` | round-trip; defaults write nothing |
-| `TileConfigTests` | the `nightlight` key |
-| `NightLightConnectorTests` | `defaultPolicy` for Sleep nameable / not; silent, ambient, single, TC002 only |
-| `NightLightPaletteTests` | brightness scaling and interpolation at the edges |
-| `NightLightFaceTests` | every scene's frames and delays equal the oracle fixture; each GIF inside the ceiling; each loop seamless |
-| `NightLightTileWiringTests` | `arrived` + autoShow → run then switch; `left` + autoShow → idle then switch to the morning tile; autoShow off → no switch; first look → nothing |
+| `NightLightTileConfigTests` | round-trip under the `nightlight` key; defaults write nothing; the two default policies; a kind narrowing a connector's models |
+| `NightLightConnectorTests` | `defaultPolicy` for Sleep nameable / not; silent, ambient, single; the delivery is the engine's at the tile's settings |
+| `AnimatedSceneTests`, `NightLightScenesTests` | every scene's frames equal the animation oracle; each GIF inside the ceiling; each loop seamless |
+| `NightLightWiringTests` | `arrived` + autoShow → run then show; `left` + autoShow → idle then show the morning tile, the chosen one first; autoShow off → nothing; the naming instance's policy follows `canNameSleep` |
+| `TileArrivalTests` | the scheduler tells a wiring once per change, never on a first look |
+| `NightLightTileBlockTests` | motion switches per scene; the morning choices; a change saved at once |
 
-The oracle: `Scripts/make_nightlight_face_oracle.py` records the generator's
-frames into `Tests/PixbarKitTests/Fixtures/nightlight_face_oracle.json`. Never
-edited by hand.
+The oracle: `Scripts/make_animation_oracle.py` records the engine's frames into
+`Tests/PixbarKitTests/Fixtures/animation_oracle.json`. Never edited by hand.
 
 ## Order of work
 

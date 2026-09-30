@@ -27,6 +27,16 @@ struct NightLightWiring: TileKindWiring {
         NightLightConnector(config: { NightLightTileConfig() }, canNameSleep: naming.canNameSleep)
     }
 
+    func block(_ context: TileBlockContext<NightLightTileConfig>) -> some View {
+        NightLightTileBlock(
+            config: context.parameters ?? NightLightTileConfig(),
+            morning: NightLightTileBlock.morningChoices(
+                of: context.key, among: context.model.tileRecords, name: { context.model.tileName(of: $0) }
+            ),
+            onChange: { context.settings.setParameters($0, kind: NightLightKind.self) }
+        )
+    }
+
     /// The night starts: the scene is put on its page, then the clock is
     /// switched to it — the one tile the app brings to the front by itself,
     /// because at Sleep or at 22:00 nobody is turning the knob.

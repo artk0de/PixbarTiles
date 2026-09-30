@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>PixbarTiles — ночник, мокапы сцен TC002</title>
+<style>
+  body { background:#1b1b1b; color:#ddd; font:14px -apple-system, sans-serif; margin:24px; max-width:1700px }
+  h1 { font-size:20px } h2 { font-size:15px; margin:0 0 6px }
+  .grid { display:grid; grid-template-columns:repeat(2, max-content); gap:24px }
+  .cell { background:#111; padding:10px; border-radius:8px }
+  .t { font-size:11px; color:#888; margin-top:4px; font-variant-numeric: tabular-nums }
+  .ctl { font-size:12px; color:#aaa; margin-top:6px; display:flex; gap:12px; flex-wrap:wrap; align-items:center }
+  .over { color:#ff6a4a }
+  .spec { background:#111; padding:12px 16px; border-radius:8px; line-height:1.6; margin-bottom:20px }
+  .sw { display:inline-block; width:22px; height:22px; border-radius:4px; vertical-align:middle; margin-right:6px }
+  button, select { background:#2a2a2a; color:#ddd; border:1px solid #444; border-radius:6px; padding:4px 10px; cursor:pointer }
+</style>
+<h1>Ночник — 6 сцен, TC002 52×16</h1>
+<div class="spec">
+  Каждая сцена — одна GIF с бесшовной петлёй; кадры ниже те же, что уйдут на часы (каждая точка — один физический пиксель, без фильтрации).<br>
+  Палитра: <span id="sw"></span><br>
+  Почему тёплые: синий (~480 nm, пик меланопсина) сильнее всего подавляет мелатонин, длинноволновый красный (620–700 nm) — слабее всего;
+  янтарь ~2100 K читается как огонь, а не как экран. Никакого синего, зелёного и холодного белого.
+  <div style="margin-top:8px">
+    Яркость: <select id="lvl"></select>
+    <button id="pp">⏸ пауза</button> <button id="st">⏭ кадр</button>
+  </div>
+</div>
+<div class="grid" id="root"></div>
+<script>
+const D = /*DATA*/null;
+const CELL = 14, DOT = 13, PAD = 14;   // square cells, a 1 px dark grid — the sheet's own look
+const TOGGLE_NAMES = { starTwinkle: "мерцание звёзд", cloudMotion: "облака плывут",
+  emberGlow: "угли мерцают", sparks: "искры", flyMotion: "светлячки летают",
+  horizonLight: "свет живёт", flames: "пламя", glowBreath: "лампа дышит", glowTwinkle: "край мерцает" };
+const RGB = D.palette.map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)));
+document.getElementById("sw").innerHTML = D.swatches.map(h => `<span class="sw" style="background:${h}" title="${h}"></span>`).join("");
+const lvl = document.getElementById("lvl");
+for (const l of [1, 2, 3, 4, 5]) lvl.insertAdjacentHTML("beforeend", `<option value="${l}" ${l === 5 ? "selected" : ""}>${l * 20}%</option>`);
+let paused = false;
+// The same integer step as ngen.scaled: (ch·L + 2) // 5.
+function colourAt(i, L) {
+  const c = RGB[i].map(ch => Math.floor((ch * L + 2) / 5));
+  return c[0] + c[1] + c[2] === 0 ? null : `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+function paint(ctx, px, L) {
+  ctx.fillStyle = "#050505"; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.fillStyle = "#1a1a1a"; ctx.fillRect(PAD - 1, PAD - 1, D.W * CELL + 1, D.H * CELL + 1);
+  for (let y = 0; y < D.H; y++) for (let x = 0; x < D.W; x++) {
+    const i = px[y].charCodeAt(x) - 48;
+    ctx.fillStyle = (D.palette[i] && D.palette[i] !== "#000000" && colourAt(i, L)) || "#000000";
+    ctx.fillRect(PAD + x * CELL, PAD + y * CELL, DOT, DOT);
+  }
+}
+const players = [];
+const root = document.getElementById("root");
+D.scenes.forEach((s, n) => {
+  const cell = document.createElement("div"); cell.className = "cell";
+  cell.innerHTML = `<h2>${n + 1}. ${s.name}</h2>`;
+  const cv = document.createElement("canvas");
+  cv.width = D.W * CELL + 2 * PAD; cv.height = D.H * CELL + 2 * PAD; cell.appendChild(cv);
+  const pl = { s, ctx: cv.getContext("2d"), key: s.default, clock: 0, shown: -1, lvl: null };
+  if (s.engine) {
+    const ctl = document.createElement("div"); ctl.className = "ctl";
+    ctl.innerHTML = `Скорость: <select>${s.engine.speeds.map(v => `<option ${v === "1/1" ? "selected" : ""}>${v}</option>`).join("")}</select>` +
+      s.engine.toggles.map((t, i) => `<label><input type="checkbox" data-bit="${i}" checked> ${TOGGLE_NAMES[t] || t}</label>`).join("");
+    const update = () => {
+      const speed = ctl.querySelector("select").value;
+      let bits = 0;
+      ctl.querySelectorAll("input").forEach(b => { if (!b.checked) bits |= 1 << +b.dataset.bit; });
+      pl.key = `${speed}|${bits}`; pl.shown = -1; pl.clock = 0;
+    };
+    ctl.querySelectorAll("select, input").forEach(e => e.onchange = update);
+    cell.appendChild(ctl);
+  }
+  const t = document.createElement("div"); t.className = "t"; cell.appendChild(t);
+  pl.t = t;
+  if (s.sheet) {
+    cell.insertAdjacentHTML("beforeend",
+      `<div class="t" style="margin-top:10px">эталон — оригинальный мок:</div>` +
+      `<img src="${s.sheet}" style="display:block;width:${cv.width}px;image-rendering:pixelated;border-radius:6px">`);
+  }
+  root.appendChild(cell);
+  players.push(pl);
+});
+function frameAt(frames, ms) {
+  let acc = 0;
+  for (let i = 0; i < frames.length; i++) { acc += frames[i].ms; if (ms < acc) return i; }
+  return frames.length - 1;
+}
+let last = performance.now(), step = 0;
+function tick(now) {
+  const dt = now - last; last = now;
+  const L = +lvl.value;
+  for (const pl of players) {
+    const v = pl.s.variants[pl.key];
+    const loop = v.frames.reduce((a, f) => a + f.ms, 0);
+    if (!paused) pl.clock = (pl.clock + dt) % loop;
+    if (step) pl.clock = (pl.clock + v.frames[frameAt(v.frames, pl.clock)].ms) % loop;
+    const i = frameAt(v.frames, pl.clock);
+    if (i !== pl.shown || pl.lvl !== L) {
+      paint(pl.ctx, v.frames[i].px, L); pl.shown = i; pl.lvl = L;
+      const b = v.b64[L], over = b > D.limit;
+      pl.t.innerHTML = `кадр ${i + 1}/${v.frames.length} · петля ${(loop / 1000).toFixed(1)} s · горит ${v.lit}% дисплея · ` +
+        `${v.colours} цветов · GIF base64 <span class="${over ? "over" : ""}">${b.toLocaleString()} / ${D.limit.toLocaleString()} B</span>`;
+    }
+  }
+  step = 0;
+  requestAnimationFrame(tick);
+}
+document.getElementById("pp").onclick = e => { paused = !paused; e.target.textContent = paused ? "▶ играть" : "⏸ пауза"; };
+document.getElementById("st").onclick = () => { paused = true; document.getElementById("pp").textContent = "▶ играть"; step = 1; };
+requestAnimationFrame(tick);
+</script>

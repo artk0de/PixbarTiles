@@ -83,6 +83,16 @@ enum WindowFocus {
         if polite() == false { force() }
     }
 
+    /// Takes the popover away once it has opened a window. It lives at the
+    /// menu bar's level, above every ordinary window, and does not close when
+    /// the key goes to another window of this app — left up, it covered the
+    /// clock's settings it had just opened. A pinned panel is a window the
+    /// user put there, and stays.
+    static func stepAside(_ panel: NSWindow?, pinned: Bool) {
+        guard !pinned else { return }
+        panel?.orderOut(nil)
+    }
+
     /// Closes the pinned window. The unpin button sits INSIDE that window,
     /// and a SwiftUI `dismissWindow` from there left it open beside the
     /// popover — two panels again.

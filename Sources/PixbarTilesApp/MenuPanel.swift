@@ -79,9 +79,14 @@ struct MenuPanel: View {
     /// hand the key to a window whose app was not asking — without the
     /// explicit activate, every window opened from here appeared behind the
     /// user's attention and stayed there.
+    ///
+    /// The popover steps aside after: the click that asked came from inside
+    /// it, so it is the key window until the opened one takes over.
     private func openAndFocus(_ open: () -> Void) {
+        let panelWindow = NSApp.keyWindow
         open()
         WindowFocus.activate()
+        WindowFocus.stepAside(panelWindow, pinned: pin.isPinned)
     }
 
     /// The History is the panel's one swap: it is read here, where a

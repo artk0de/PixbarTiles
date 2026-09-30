@@ -63,8 +63,9 @@ public struct TileCandidate: Hashable, Sendable {
     }
 
     /// A scene connector. The faces it HAS are the models it supports, and
-    /// nothing else says so — the AWTRIX face is required, and a connector
-    /// carrying a TC002 face carries `.ulanziTC002` with it.
+    /// nothing else says so — not even its kind, whose `models` may only
+    /// repeat them: the AWTRIX face is required, and a connector carrying a
+    /// TC002 face carries `.ulanziTC002` with it.
     public init(_ connector: some Connector) {
         var models: Set<ClockModel> = [.awtrix3]
         if connector.ulanziFace != nil {
@@ -78,12 +79,11 @@ public struct TileCandidate: Hashable, Sendable {
         )
     }
 
-    /// The VPN tile: a lamp on an AWTRIX clock, one per watched VPN, silent.
+    /// The VPN tile, as its kind describes it.
     public init(_ vpn: VPNConnector) {
         self.init(
-            connectorId: vpn.id, models: [.awtrix3], instancing: .perKey, isAudible: false,
-            category: .network, storeIcon: "lock.shield",
-            blurb: "A watched VPN, as a lamp on the clock"
+            connectorId: VPNKind.id, models: VPNKind.models,
+            instancing: VPNKind.instancing, isAudible: VPNKind.isAudible
         )
     }
 
@@ -118,61 +118,26 @@ public struct TilePresentation: Sendable, Equatable {
 
     /// The name of this tile's instance, said beside the tile's own name —
     /// `GitHub (TeaRAGs)`, `VPN (Pritunl)` — or nil for a tile that is the
-    /// only one of its kind on a clock.
-    ///
-    /// Per connector, because only the connector's config knows what names
-    /// an instance: a GitHub tile by its short name, else its repository's
-    /// name as typed (the instance lowercases it); a VPN tile by its VPN.
+    /// only one of its kind on a clock. Its kind decides, because only the
+    /// kind knows what names an instance.
     public static func secondaryName(of tile: TileRecord) -> String? {
-        switch tile.key.connectorId {
-        case GitHubConnector.connectorId:
-            if let short = tile.config?.github?.shortName?.trimmingCharacters(in: .whitespaces), !short.isEmpty {
-                return short
-            }
-            let repo = tile.config?.github?.repo ?? tile.key.instance
-            let name = repo.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? ""
-            return name.isEmpty ? nil : name
-        case VPNConnector.id:
-            if let lamp = tile.config?.lamp {
-                return WatchedVPN.preset(id: lamp.vpn)?.displayName ?? lamp.vpn
-            }
-            return tile.key.instance.isEmpty ? nil : tile.key.instance
-        default:
-            return nil
-        }
+        TileKinds.kind(id: tile.key.connectorId)?.secondaryName(ofStored: tile)
     }
 
-    /// What a connector looks like, by id. A connector with no entry wears
-    /// the "unknown app" mark rather than nothing, so a tile the table has
-    /// not heard of is still visibly a tile.
+    /// What a connector looks like, by id — its kind's presentation. A
+    /// connector no kind knows wears the "unknown app" mark rather than
+    /// nothing, so a tile the kinds have not heard of is still visibly a tile.
     public static func of(connectorId: String) -> TilePresentation {
-        switch connectorId {
-        case WeatherConnector.appName:
-            TilePresentation(
-                category: .weather, icon: "cloud.sun", blurb: "The sky where the clock is"
-            )
-        case ClaudeUsageConnector.id:
-            TilePresentation(
-                category: .dev, icon: "terminal", blurb: "Claude usage, from the status line"
-            )
-        case ZaiUsageConnector.connectorId:
-            TilePresentation(category: .dev, icon: "chart.bar", blurb: "z.ai usage, week to date")
-        case GitHubConnector.connectorId:
-            TilePresentation(
-                category: .dev, icon: "star", blurb: "A repository's stars, forks and PRs"
-            )
-        case "anecdotes":
-            TilePresentation(
-                category: .system, icon: "text.bubble", blurb: "The day's anecdotes, spoken"
-            )
-        case VPNConnector.id:
-            TilePresentation(
-                category: .network, icon: "lock.shield",
-                blurb: "A watched VPN, as a lamp on the clock"
-            )
-        default:
-            TilePresentation(category: .dev, icon: "app.dashed", blurb: "")
-        }
+        TileKinds.kind(id: connectorId)?.presentation
+            ?? TilePresentation(category: .dev, icon: "app.dashed", blurb: "")
+    }
+}
+
+extension TileKind {
+    /// `secondaryName(of:parameters:)` with the tile's own parameters, opened
+    /// to this kind's type.
+    static func secondaryName(ofStored tile: TileRecord) -> String? {
+        secondaryName(of: tile, parameters: tile.config?.value(as: Parameters.self))
     }
 }
 

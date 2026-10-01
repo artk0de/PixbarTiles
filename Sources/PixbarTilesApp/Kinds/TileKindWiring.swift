@@ -83,9 +83,6 @@ struct TileArrivalActions {
     let run: (TileKey) -> Void
     /// Switches the tile's clock to the tile's page.
     let show: (TileKey) -> Void
-    /// Tells a TC002 the tile has nothing to show, so its page leaves the
-    /// rotation.
-    let idle: (TileKey) -> Void
     /// Where the clock is sent back to: the tile on that clock with the
     /// preferred tile id when there is one, else the first unpaused tile in
     /// stored order that owns a page — never the one excluded.

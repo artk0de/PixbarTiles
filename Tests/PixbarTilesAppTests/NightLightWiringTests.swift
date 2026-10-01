@@ -19,7 +19,6 @@ import Testing
         TileArrivalActions(
             run: { log.steps.append("run \($0.connectorId)") },
             show: { log.steps.append("show \($0.connectorId)") },
-            idle: { log.steps.append("idle \($0.connectorId)") },
             morningTile: { [weather, github] _, preferred, _ in
                 preferred == github.tileId ? github : weather
             }
@@ -32,16 +31,18 @@ import Testing
         #expect(log.steps == ["run nightlight", "show nightlight"])
     }
 
-    @Test func itsWindowClosingIdlesItThenShowsTheMorningTile() {
+    // Its page is taken off the clock by the scheduler's retract, whatever
+    // `autoShow` says; an idle frame pushed here would put it back.
+    @Test func itsWindowClosingShowsTheMorningTile() {
         let log = Log()
         NightLightWiring().left(key, NightLightTileConfig(), actions(log))
-        #expect(log.steps == ["idle nightlight", "show weather"])
+        #expect(log.steps == ["show weather"])
     }
 
     @Test func aChosenMorningTileIsTheOneShown() {
         let log = Log()
         NightLightWiring().left(key, NightLightTileConfig(morningTileId: github.tileId), actions(log))
-        #expect(log.steps == ["idle nightlight", "show github"])
+        #expect(log.steps == ["show github"])
     }
 
     @Test func withoutAutoShowTheClockIsLeftAlone() {

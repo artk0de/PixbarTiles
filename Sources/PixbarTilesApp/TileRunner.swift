@@ -121,12 +121,26 @@ final class TileRunner: ObservableObject, TileRunning {
     /// Takes a tile's app back off its clock now, rather than letting its
     /// lifetime expire.
     ///
+    /// On a TC002 that is the page's empty-body delete: it has no lifetime
+    /// and borrows nothing device-wide, so restoring alone left a held tile's
+    /// last scene in the knob cycle for good. Its next delivery re-creates it.
+    ///
     /// Through the same `taskBag` `runNow` uses, for the reason that
     /// one is: teardown can only wait for a task this model is holding.
     func retract(_ key: TileKey) {
+        let pages = clockSessions.ulanzi(for: key.clockId)
         taskBag.run { [weak self] in
             await self?.session(for: key)?.restoreDeviceState(borrowedBy: key.tileId)
+            await pages?.tileRemoved(key.tileId)
         }
+    }
+
+    /// The TC002 half of `retract` alone: the page's delete, and nothing
+    /// asked of an AWTRIX, whose apps expire by their own lifetime and whose
+    /// borrowed state a tile that has not run yet cannot be holding.
+    func removePage(_ key: TileKey) {
+        guard let pages = clockSessions.ulanzi(for: key.clockId) else { return }
+        taskBag.run { await pages.tileRemoved(key.tileId) }
     }
 
     /// Runs one connector now, because the user asked.

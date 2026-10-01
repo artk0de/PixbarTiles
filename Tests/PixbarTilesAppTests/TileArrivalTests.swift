@@ -57,7 +57,7 @@ import Testing
         var ran: [TileKey] = []
         subject.wirings = { $0 == WeatherKind.id ? Recording(heard: heard) : nil }
         subject.tileArrivalActions = TileArrivalActions(
-            run: { ran.append($0) }, show: { _ in }, idle: { _ in }, morningTile: { _, _, _ in nil }
+            run: { ran.append($0) }, show: { _ in }, morningTile: { _, _, _ in nil }
         )
 
         subject.reconcileTiles()
@@ -73,8 +73,8 @@ import Testing
     }
 
     // The settings window taking a tile it lent back off leaves it the way
-    // its hours closing would: the wiring hears it (on a TC002 its page goes
-    // idle there, since the clock has nothing to retract).
+    // its hours closing would: the wiring hears it (on a TC002 its page is
+    // deleted by the same retract).
     @Test func aTileTakenOffByHandIsHeardLeaving() throws {
         let tiles = TileStore(defaults: UserDefaults(suiteName: "arrival-\(UUID().uuidString)")!)
         let weather = TileKey(clockId: clock.id, connectorId: WeatherKind.id)
@@ -98,7 +98,7 @@ import Testing
         let heard = Heard()
         subject.wirings = { $0 == WeatherKind.id ? Recording(heard: heard) : nil }
         subject.tileArrivalActions = TileArrivalActions(
-            run: { _ in }, show: { _ in }, idle: { _ in }, morningTile: { _, _, _ in nil }
+            run: { _ in }, show: { _ in }, morningTile: { _, _, _ in nil }
         )
 
         subject.tileLeft(weather)

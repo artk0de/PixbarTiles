@@ -46,13 +46,14 @@ struct NightLightWiring: TileKindWiring {
         actions.show(key)
     }
 
-    /// The night ends: the page goes idle and the clock is handed to the
-    /// morning tile. The TC002 cannot say what it showed before, so "going
-    /// back" means going to a tile somebody chose, or the first in order.
+    /// The night ends: the clock is handed to the morning tile. The page
+    /// itself is already gone — the scheduler's retract deletes it whatever
+    /// `autoShow` says, and an idle frame pushed here would put it back. The
+    /// TC002 cannot say what it showed before, so "going back" means going to
+    /// a tile somebody chose, or the first in order.
     @MainActor func left(_ key: TileKey, _ parameters: NightLightTileConfig?, _ actions: TileArrivalActions) {
         let settings = parameters ?? NightLightTileConfig()
         guard settings.autoShow else { return }
-        actions.idle(key)
         if let morning = actions.morningTile(key.clockId, settings.morningTileId, key) {
             actions.show(morning)
         }

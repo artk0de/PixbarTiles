@@ -286,12 +286,17 @@ final class TileScheduler: ObservableObject, TileScheduling {
             }
         }
         for key in change.left { tileLeft(key) }
+        // Its page taken off without telling the kind: no window closed in
+        // front of anyone, so there is no morning tile to hand the clock to —
+        // only a page an earlier run may have left behind. Costs nothing when
+        // there is none: custody releases only what it still records.
+        for key in change.heldAtFirstLook { runner.removePage(key) }
     }
 
     /// Takes a tile off its clock the way its hours or Focus closing does:
-    /// retracted, and its kind told — on a TC002, which has nothing to
-    /// retract, the kind is what idles the page and hands the clock on. Also
-    /// the settings window's, taking back a tile it put on out of its hours.
+    /// retracted — a TC002 page deleted outright, so it leaves the knob
+    /// cycle — and its kind told, which may hand the clock on. Also the
+    /// settings window's, taking back a tile it put on out of its hours.
     func tileLeft(_ key: TileKey) {
         runner.retract(key)
         guard let actions = tileArrivalActions,

@@ -62,3 +62,20 @@ private let weather = TileKey(clockId: UUID(), connectorId: "weather")
 
     #expect(change.left.isEmpty)
 }
+
+@Test func aTileHeldAtItsFirstLookIsNamedAsHeld() {
+    var verdicts = TileVerdicts()
+
+    let change = verdicts.update([claude: false, weather: true])
+
+    #expect(change.heldAtFirstLook == [claude])
+}
+
+@Test func aTileAlreadySeenIsNeverHeldAtItsFirstLookAgain() {
+    var verdicts = TileVerdicts()
+    _ = verdicts.update([claude: false])
+
+    let change = verdicts.update([claude: false])
+
+    #expect(change.heldAtFirstLook.isEmpty)
+}

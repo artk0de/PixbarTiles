@@ -19,20 +19,30 @@ public struct TileVerdicts: Sendable {
     /// its first look would push it twice or retract what was just delivered.
     /// A tile missing from `current` is forgotten, so one removed and added
     /// again starts fresh.
+    ///
+    /// A first look that finds the tile held is reported apart, as
+    /// `heldAtFirstLook`: not a change, but a page a previous run may have
+    /// left on the clock — a relaunch inside Sleep's end, a tile switched
+    /// back on out of its hours — which nothing else would ever take off.
     public mutating func update(
         _ current: [TileKey: Bool]
-    ) -> (arrived: Set<TileKey>, left: Set<TileKey>) {
+    ) -> (arrived: Set<TileKey>, left: Set<TileKey>, heldAtFirstLook: Set<TileKey>) {
         defer { last = current }
         var arrived: Set<TileKey> = []
         var left: Set<TileKey> = []
+        var heldAtFirstLook: Set<TileKey> = []
         for (key, runs) in current {
-            guard let before = last[key], before != runs else { continue }
+            guard let before = last[key] else {
+                if !runs { heldAtFirstLook.insert(key) }
+                continue
+            }
+            guard before != runs else { continue }
             if runs {
                 arrived.insert(key)
             } else {
                 left.insert(key)
             }
         }
-        return (arrived, left)
+        return (arrived, left, heldAtFirstLook)
     }
 }
